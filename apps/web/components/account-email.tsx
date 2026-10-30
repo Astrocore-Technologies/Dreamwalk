@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useRef, useState, type FormEvent } from 'react';
+import { useEffect, useState, type FormEvent } from 'react';
 import { api, errorMessage, useClient } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ButtonLink, ErrorBox, Field, Input, Panel } from './ui';
@@ -8,18 +8,32 @@ export function EmailActionPage({ action }: { action: 'reset' | 'verify' }) {
   const { t } = useT();
   const { refresh, setUser } = useClient();
   const [token, setToken] = useState('');
-  const readFragment = useRef(false);
   const [ready, setReady] = useState(false);
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const [done, setDone] = useState(false);
   useEffect(() => {
-    if (readFragment.current) return;
-    readFragment.current = true;
-    const fragment = new URLSearchParams(window.location.hash.slice(1));
-    setToken(fragment.get('token') || '');
-    window.history.replaceState(null, '', window.location.pathname + window.location.search);
-    setReady(true);
+    const readFragment = () => {
+      // Opening another email in the same tab may be a fragment-only navigation,
+      // so the component need not remount. Never consume a token automatically.
+      if (window.location.hash) {
+        const fragment = new URLSearchParams(window.location.hash.slice(1));
+        setToken(fragment.get('token') || '');
+        setDone(false);
+        setError('');
+        window.history.replaceState(
+          window.history.state,
+          '',
+          window.location.pathname + window.location.search,
+        );
+      }
+      // A StrictMode effect replay sees the already-stripped URL. Preserve the
+      // token captured by the first invocation rather than clearing it.
+      setReady(true);
+    };
+    readFragment();
+    window.addEventListener('hashchange', readFragment);
+    return () => window.removeEventListener('hashchange', readFragment);
   }, []);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();

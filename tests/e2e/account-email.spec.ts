@@ -54,7 +54,9 @@ test('email confirmation and recovery consume fragment tokens only after explici
       data: { email, password: nextPassword },
     });
     expect(login.ok()).toBeTruthy();
+    // Reopening an email in the same tab is a hash-only navigation, not a reload.
     await page.goto(`/auth/reset-password/confirm#token=${recovery}`);
+    await expect(page).toHaveURL(/\/auth\/reset-password\/confirm$/);
     await page.getByLabel('Новый пароль', { exact: true }).fill(`Another-${randomUUID()}!`);
     await page.getByRole('button', { name: 'Изменить пароль', exact: true }).click();
     await expect(
