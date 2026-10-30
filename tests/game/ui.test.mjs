@@ -213,3 +213,16 @@ test('playable select labels stay exact independently of option text', async () 
   assert.equal(selects.length, 11);
   for (const match of selects) assert.equal(match[1], match[2]);
 });
+
+test('authored game header reserves status width and stacks on narrow screens', async () => {
+  const css = await readFile(
+    new URL('../../apps/web/components/game/game.module.css', import.meta.url),
+    'utf8',
+  );
+  assert.match(css, /\.roomHeader > div:first-child\s*\{[^}]*flex: 1 1 0;[^}]*min-width: 0;/);
+  assert.match(css, /\.connection\s*\{[^}]*flex: 0 0 auto;[^}]*max-width: 40%;/);
+  assert.match(
+    css.slice(css.indexOf('@media (max-width: 650px)')),
+    /\.roomHeader\s*\{[^}]*flex-direction: column;/,
+  );
+});
