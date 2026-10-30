@@ -97,6 +97,11 @@
   gap: 20px;
   margin-bottom: 24px;
 }
+/* Give the authored title the remaining width, not its huge content basis. */
+.roomHeader > div:first-child {
+  flex: 1 1 0;
+  min-width: 0;
+}
 .back {
   display: inline-flex;
   align-items: center;
@@ -111,11 +116,19 @@
   text-transform: uppercase;
 }
 .connection {
+  flex: 0 0 auto;
+  max-width: 40%;
   display: flex;
   align-items: center;
   gap: 8px;
   color: var(--muted);
   font-size: 0.76rem;
+}
+.connection > span {
+  min-width: 0;
+}
+.connection > svg {
+  flex-shrink: 0;
 }
 .connection[data-connected='true'] {
   color: #84ba9d;
@@ -354,10 +367,12 @@
     font-size: 1.7rem;
   }
   .roomHeader {
+    flex-direction: column;
     align-items: flex-start;
     gap: 8px;
   }
   .connection {
+    max-width: 100%;
     font-size: 0.65rem;
     margin-top: 5px;
   }
@@ -427,4 +442,18 @@
   color: var(--muted);
   font-size: 0.76rem;
   font-variant-numeric: tabular-nums;
+}
+/* Authored names may be one unbroken 120-character token. Let content wrap,
+   never hide overflow at the body level or let flex min-content widen mobile. */
+.root {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.roomHeader > div,
+.object > div,
+.campaignCard > div {
+  min-width: 0;
+}
+.inventory li {
+  min-width: 0;
 }

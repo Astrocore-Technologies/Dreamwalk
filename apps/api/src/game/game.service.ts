@@ -18,21 +18,45 @@ import {
   stopMovement,
   applyAction,
   beginEncounter,
+  requestEncounterJoin,
+  requestEncounterEnd,
   submitIntent,
   resolveRound,
   projectState,
   mockNpcDecision,
   validateNpcProposal,
+  createMockNpcPlan,
+  acceptNpcPlan,
+  stepNpcPlan,
+  recordNpcEvents,
 } from '@dreamwalk/game-core';
 import { Db } from '../db';
 import { Auth } from '../auth';
 import { fail } from '../errors';
+import { PlayableService, sourceAccessSql, sourceLiveSql } from './playable.service';
 
 export const commandSchema = z
   .object({
     protocolVersion: z.literal(1),
     operationId: z.uuid(),
-    type: z.enum(['action', 'encounter.begin', 'encounter.intent', 'npc.request']),
+    npcId: z
+      .string()
+      .regex(/^[\w-]+$/)
+      .max(100)
+      .optional(),
+    type: z.enum([
+      'action',
+      'encounter.begin',
+      'encounter.intent',
+      'encounter.join',
+      'encounter.end',
+      'npc.request',
+    ]),
+    encounterId: z
+      .string()
+      .regex(/^[\w-]+$/)
+      .max(100)
+      .optional(),
     action: gameActionSchema.optional(),
     intent: gameIntentSchema.optional(),
     expectedRevision: z.number().int().nonnegative().optional(),
@@ -40,6 +64,12 @@ export const commandSchema = z
   .strict();
 export const moveSchema = gameMoveSchema.extend({ connectionEpoch: z.number().int() }).strict();
 type Command = z.infer<typeof commandSchema>;
+type RuntimeClock = {
+  paused: boolean;
+  capturedAtMs: number;
+  rounds: Record<string, number>;
+  jobs: Record<string, { dueMs: number; deadlineMs: number }>;
+};
 type Live = {
   state: GameState;
   dbRevision: number;
@@ -49,6 +79,15 @@ type Live = {
   lastAccess: number;
   epoch: number;
   actorEpochs: Record<string, number>;
+  npcPending: boolean;
+  paused: boolean;
+  clock: RuntimeClock;
+  presence: Map<string, number>;
+  campaign: {
+    title: string | null;
+    playableVersionId: string | null;
+    sourceRevision: number | null;
+  };
 };
 const digest = (v: unknown) =>
   createHash('sha256')
@@ -83,6 +122,7 @@ export class GameService implements OnModuleDestroy {
   constructor(
     @Inject(Db) private db: Db,
     @Inject(Auth) private auth: Auth,
+    @Inject(PlayableService) private playable: PlayableService,
   ) {
     this.timer = setInterval(() => {
       for (const id of this.live.keys()) {
@@ -120,7 +160,7 @@ export class GameService implements OnModuleDestroy {
     const cached = this.live.get(id);
     if (cached) return cached;
     const rows = await this.db.query(
-      "SELECT c.*,s.checksum,s.state AS snapshot_state FROM game_campaigns c JOIN game_snapshots s ON s.campaign_id=c.id WHERE c.id=$1 AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL)",
+      `SELECT c.*,s.checksum,s.state AS snapshot_state,v.package->'compiled'->>'title' AS game_title,v.source_revision FROM game_campaigns c JOIN game_snapshots s ON s.campaign_id=c.id LEFT JOIN game_playable_versions v ON v.id=c.source_version_id WHERE c.id=$1 AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL) AND ${sourceLiveSql()}`,
       [id],
     );
     const row = rows[0];
@@ -133,9 +173,48 @@ export class GameService implements OnModuleDestroy {
       if (entity.kind === 'player' || entity.kind === 'npc') {
         entity.path = [];
         entity.movementGeneration = (entity.movementGeneration ?? 0) + 1;
+        const brain = state.npcBrains?.[entity.id];
+        if (entity.kind === 'npc' && brain && !entity.encounterId) {
+          brain.waitingForPath = false;
+          brain.movementGeneration = entity.movementGeneration;
+        }
       }
+    const pendingJobs = await this.db.query(
+      "SELECT id,due_at,deadline_at FROM game_npc_jobs WHERE campaign_id=$1 AND status='queued'",
+      [id],
+    );
+    const savedClock = row.runtime_clock as RuntimeClock;
+    const clock: RuntimeClock = savedClock?.capturedAtMs
+      ? savedClock
+      : {
+          paused: true,
+          capturedAtMs: new Date(row.updated_at).getTime(),
+          rounds: Object.fromEntries(
+            Object.values(state.encounters)
+              .filter((e) => e.phase === 'planning')
+              .map((e) => [e.id, Math.max(0, e.deadlineMs - new Date(row.updated_at).getTime())]),
+          ),
+          jobs: Object.fromEntries(
+            pendingJobs.map((job) => [
+              String(job.id),
+              {
+                dueMs: Math.max(
+                  0,
+                  new Date(job.due_at).getTime() - new Date(row.updated_at).getTime(),
+                ),
+                deadlineMs: Math.max(
+                  0,
+                  new Date(job.deadline_at).getTime() - new Date(row.updated_at).getTime(),
+                ),
+              },
+            ]),
+          ),
+        };
     const live: Live = {
       state,
+      paused: true,
+      clock: { ...clock, paused: true },
+      presence: new Map(),
       dbRevision: Number(row.revision),
       eventSeq: Number(row.event_seq),
       dirty: true,
@@ -143,6 +222,12 @@ export class GameService implements OnModuleDestroy {
       lastAccess: Date.now(),
       epoch: randomInt(1, 2147483647),
       actorEpochs: {},
+      npcPending: pendingJobs.length > 0,
+      campaign: {
+        title: row.game_title ?? null,
+        playableVersionId: row.source_version_id ?? null,
+        sourceRevision: row.source_revision ?? null,
+      },
     };
     this.live.set(id, live);
     return live;
@@ -151,10 +236,17 @@ export class GameService implements OnModuleDestroy {
     z.uuid().parse(id);
     const user = await this.auth.require(req);
     const rows = await this.db.query(
-      "SELECT m.actor_id,c.owner_id FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id WHERE m.campaign_id=$1 AND m.user_id=$2 AND m.status='accepted' AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL)",
+      `SELECT m.actor_id,c.owner_id FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id WHERE m.campaign_id=$1 AND m.user_id=$2 AND m.status='accepted' AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL) AND ${sourceAccessSql('$2')}`,
       [id, user.id],
     );
-    if (!rows[0]) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+    if (!rows[0]) {
+      const stillActive = await this.db.query(
+        `SELECT c.id FROM game_campaigns c WHERE c.id=$1 AND c.status='active' AND ${sourceLiveSql()}`,
+        [id],
+      );
+      if (!stillActive.length) this.live.delete(id);
+      fail(403, 'FORBIDDEN', 'FORBIDDEN');
+    }
     return { user, actorId: String(rows[0].actor_id), ownerId: String(rows[0].owner_id) };
   }
   async list(req: Request) {
@@ -162,7 +254,7 @@ export class GameService implements OnModuleDestroy {
     return {
       campaigns: (
         await this.db.query(
-          "SELECT c.id,c.owner_id,c.playable_version,c.status,m.status AS membership FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id WHERE m.user_id=$1 AND m.status IN ('accepted','pending') ORDER BY c.created_at DESC LIMIT 100",
+          `SELECT c.id,c.owner_id,c.playable_version,c.status,m.status AS membership,c.source_version_id,v.source_revision,v.package->'compiled'->>'title' AS title FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id LEFT JOIN game_playable_versions v ON v.id=c.source_version_id WHERE m.user_id=$1 AND m.status IN ('accepted','pending') AND ${sourceAccessSql('$1')} ORDER BY c.created_at DESC LIMIT 100`,
           [u.id],
         )
       ).map((r) => ({
@@ -171,6 +263,9 @@ export class GameService implements OnModuleDestroy {
         playableVersion: r.playable_version,
         status: r.status,
         membership: r.membership,
+        title: r.title ?? null,
+        playableVersionId: r.source_version_id ?? null,
+        sourceRevision: r.source_revision ?? null,
       })),
     };
   }
@@ -191,13 +286,16 @@ export class GameService implements OnModuleDestroy {
     };
   }
   async create(req: Request, body: unknown) {
-    z.object({ template: z.literal('observatory-v1') })
-      .strict()
+    const input = z
+      .union([
+        z.object({ template: z.literal('observatory-v1') }).strict(),
+        z.object({ playableVersionId: z.uuid() }).strict(),
+      ])
       .parse(body);
     const u = await this.auth.require(req);
     const id = randomUUID(),
       actorId = `player-${u.id}`,
-      state = createObservatoryState([actorId], randomInt(1, 2147483647));
+      seed = randomInt(1, 2147483647);
     await this.db.tx(async (c) => {
       const count = await c.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [u.id]);
       if (!count.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
@@ -206,9 +304,13 @@ export class GameService implements OnModuleDestroy {
         [u.id],
       );
       if (campaigns.rows[0].n >= 20) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+      const sourceVersion = 'playableVersionId' in input ? input.playableVersionId : null;
+      const state = sourceVersion
+        ? await this.playable.resolveForStart(c, u.id, sourceVersion, actorId, seed)
+        : createObservatoryState([actorId], seed);
       await c.query(
-        'INSERT INTO game_campaigns(id,owner_id,playable_version,state) VALUES($1,$2,$3,$4)',
-        [id, u.id, 'observatory-v1', JSON.stringify(state)],
+        'INSERT INTO game_campaigns(id,owner_id,playable_version,state,source_version_id) VALUES($1,$2,$3,$4,$5)',
+        [id, u.id, sourceVersion ?? 'observatory-v1', JSON.stringify(state), sourceVersion],
       );
       await c.query(
         "INSERT INTO game_members(campaign_id,user_id,actor_id,status) VALUES($1,$2,$3,'accepted')",
@@ -237,6 +339,11 @@ export class GameService implements OnModuleDestroy {
           [username],
         );
         if (!member.rows[0]) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+        const sourceAllowed = await c.query(
+          `SELECT c.id FROM game_campaigns c WHERE c.id=$1 AND ${sourceAccessSql('$2')}`,
+          [id, member.rows[0].id],
+        );
+        if (!sourceAllowed.rowCount) fail(403, 'SOURCE_ACCESS_REQUIRED', 'SOURCE_ACCESS_REQUIRED');
         if (member.rows[0].id === access.user.id) fail(400, 'INVALID_ACTION', 'INVALID_ACTION');
         const count = await c.query(
           "SELECT count(*)::int AS n FROM game_members WHERE campaign_id=$1 AND status IN ('pending','accepted')",
@@ -258,7 +365,7 @@ export class GameService implements OnModuleDestroy {
       await this.auth.require(req);
       const live = await this.load(id);
       const rows = await this.db.query(
-        "SELECT m.actor_id,m.status FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id JOIN users owner ON owner.id=c.owner_id WHERE m.campaign_id=$1 AND m.user_id=$2 AND m.status IN ('pending','accepted') AND c.status='active' AND owner.deleted_at IS NULL",
+        `SELECT m.actor_id,m.status FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id JOIN users owner ON owner.id=c.owner_id WHERE m.campaign_id=$1 AND m.user_id=$2 AND m.status IN ('pending','accepted') AND c.status='active' AND owner.deleted_at IS NULL AND ${sourceAccessSql('$2')}`,
         [id, u.id],
       );
       if (!rows[0]) fail(403, 'FORBIDDEN', 'FORBIDDEN');
@@ -297,11 +404,93 @@ export class GameService implements OnModuleDestroy {
       return { ok: true };
     });
   }
+  private async captureClock(
+    state: GameState,
+    id: string,
+    client?: import('pg').PoolClient,
+  ): Promise<RuntimeClock> {
+    const now = Date.now();
+    const query = client
+      ? async (sql: string, values: unknown[]) => (await client.query(sql, values)).rows
+      : (sql: string, values: unknown[]) => this.db.query(sql, values);
+    const jobs = await query(
+      "SELECT id,due_at,deadline_at FROM game_npc_jobs WHERE campaign_id=$1 AND status='queued'",
+      [id],
+    );
+    return {
+      paused: false,
+      capturedAtMs: now,
+      rounds: Object.fromEntries(
+        Object.values(state.encounters)
+          .filter((e) => e.phase === 'planning')
+          .map((e) => [e.id, Math.max(0, e.deadlineMs - now)]),
+      ),
+      jobs: Object.fromEntries(
+        jobs.map((j) => [
+          String(j.id),
+          {
+            dueMs: Math.max(0, new Date(j.due_at).getTime() - now),
+            deadlineMs: Math.max(0, new Date(j.deadline_at).getTime() - now),
+          },
+        ]),
+      ),
+    };
+  }
+  private async pause(id: string, live: Live) {
+    if (live.paused) return;
+    const clock = await this.captureClock(live.state, id);
+    const state = structuredClone(live.state);
+    for (const entity of Object.values(state.entities))
+      if (entity.kind === 'player') {
+        entity.path = [];
+        entity.movementGeneration = (entity.movementGeneration ?? 0) + 1;
+      }
+    live.paused = true;
+    live.clock = { ...clock, paused: true };
+    live.state = state;
+    live.dirty = true;
+    await this.persist(id, live, state, 'campaign.paused');
+  }
+  private async touch(id: string, live: Live, actorId: string) {
+    live.presence.set(actorId, Date.now());
+    live.lastAccess = Date.now();
+    if (!live.paused) return;
+    const state = structuredClone(live.state),
+      now = Date.now();
+    for (const encounter of Object.values(state.encounters))
+      if (encounter.phase === 'planning')
+        encounter.deadlineMs = now + (live.clock.rounds[encounter.id] ?? 0);
+    const saved = live.clock;
+    live.paused = false;
+    try {
+      await this.persist(id, live, state, 'campaign.resumed', undefined, async (c) => {
+        for (const [jobId, remaining] of Object.entries(saved.jobs))
+          await c.query(
+            "UPDATE game_npc_jobs SET due_at=to_timestamp($3/1000.0),deadline_at=to_timestamp($4/1000.0) WHERE id=$1 AND campaign_id=$2 AND status='queued'",
+            [jobId, id, now + remaining.dueMs, now + remaining.deadlineMs],
+          );
+      });
+    } catch (error) {
+      live.paused = true;
+      live.clock = saved;
+      throw error;
+    }
+  }
+  async keepAlive(req: Request, id: string, epoch: number) {
+    return this.serial(id, async () => {
+      if (this.stopping) return;
+      const access = await this.access(req, id),
+        live = this.live.get(id);
+      if (!live || epoch !== (live.actorEpochs[access.actorId] ?? live.epoch)) return;
+      await this.touch(id, live, access.actorId);
+    });
+  }
   async connected(req: Request, id: string) {
     return this.serial(id, async () => {
       if (this.stopping) fail(503, 'UNAVAILABLE', 'UNAVAILABLE');
       const access = await this.access(req, id),
         live = await this.load(id);
+      await this.touch(id, live, access.actorId);
       const epoch = randomInt(1, 2147483647);
       live.actorEpochs[access.actorId] = epoch;
       const state = structuredClone(live.state),
@@ -312,12 +501,12 @@ export class GameService implements OnModuleDestroy {
       return { actorId: access.actorId, connectionEpoch: epoch };
     });
   }
-  async snapshot(req: Request, id: string) {
+  async snapshot(req: Request, id: string, markPresence = true) {
     return this.serial(id, async () => {
       if (this.stopping) fail(503, 'UNAVAILABLE', 'UNAVAILABLE');
       const a = await this.access(req, id);
       const live = await this.load(id);
-      live.lastAccess = Date.now();
+      if (markPresence) await this.touch(id, live, a.actorId);
       return this.envelope(id, live, a.actorId);
     });
   }
@@ -334,6 +523,8 @@ export class GameService implements OnModuleDestroy {
     const projection = this.project(live.state, actorId);
     return {
       type: 'snapshot',
+      campaign: live.campaign,
+      paused: live.paused,
       serverNowMs: Date.now(),
       streamId: `${id}:${actorId}:${live.actorEpochs[actorId] ?? live.epoch}`,
       projectionRevision: projection.revision,
@@ -347,6 +538,7 @@ export class GameService implements OnModuleDestroy {
       if (this.stopping) fail(503, 'UNAVAILABLE', 'UNAVAILABLE');
       const a = await this.access(req, id);
       const live = await this.load(id);
+      await this.touch(id, live, a.actorId);
       if (input.connectionEpoch !== (live.actorEpochs[a.actorId] ?? live.epoch))
         fail(409, 'STALE_STATE', 'STALE_STATE');
       const result = moveInput(live.state, a.actorId, {
@@ -367,6 +559,7 @@ export class GameService implements OnModuleDestroy {
       if (this.stopping) fail(503, 'UNAVAILABLE', 'UNAVAILABLE');
       const a = await this.access(req, id),
         live = await this.load(id);
+      await this.touch(id, live, a.actorId);
       if (input.connectionEpoch !== (live.actorEpochs[a.actorId] ?? live.epoch))
         fail(409, 'STALE_STATE', 'STALE_STATE');
       const result = stopMovement(live.state, a.actorId);
@@ -385,6 +578,7 @@ export class GameService implements OnModuleDestroy {
       const a = await this.access(req, id);
       const live = await this.load(id),
         hash = digest(canonical(command));
+      await this.touch(id, live, a.actorId);
       if (leaseEpoch !== undefined && leaseEpoch !== (live.actorEpochs[a.actorId] ?? live.epoch))
         fail(409, 'STALE_STATE', 'STALE_STATE');
       const existing = await this.db.query(
@@ -405,21 +599,68 @@ export class GameService implements OnModuleDestroy {
       else if (command.type === 'npc.request' && (this.npcCooldown.get(id) ?? 0) > Date.now())
         result = { state: live.state, events: [], error: 'RATE_LIMITED' };
       else result = this.execute(live.state, a.actorId, command);
-      const next = result.error ? live.state : result.state;
+      const npcId = command.npcId ?? command.action?.targetId ?? 'keeper';
+      let job: { id: string; proposal: unknown } | undefined;
+      if (
+        !result.error &&
+        command.type === 'npc.request' &&
+        live.state.rulesetVersion === 'hybrid-v2'
+      ) {
+        const pending = await this.db.query(
+          "SELECT id FROM game_npc_jobs WHERE campaign_id=$1 AND npc_id=$2 AND status='queued'",
+          [id, npcId],
+        );
+        const count = (
+          await this.db.query('SELECT count(*)::int AS n FROM game_npc_jobs WHERE campaign_id=$1', [
+            id,
+          ])
+        )[0];
+        if (
+          pending.length ||
+          count.n >= 1000 ||
+          (live.state.npcBrains?.[npcId]?.nextDecisionTick ?? 0) > live.state.tick
+        )
+          result = { state: live.state, events: [], error: 'RATE_LIMITED' };
+        else job = { id: randomUUID(), proposal: createMockNpcPlan(result.state, npcId) };
+      }
+      const next = result.error
+        ? live.state
+        : recordNpcEvents(live.state, result.state, result.events, command.operationId).state;
       const response = {
         status: result.error ? 'rejected' : 'committed',
         code: result.error,
         operationId: command.operationId,
         events: result.events,
+        ...(job ? { jobId: job.id } : {}),
         projection: this.project(next, a.actorId),
       };
-      await this.persist(id, live, next, command.type, {
-        actorId: a.actorId,
-        command,
-        hash,
-        response,
-      });
-      if (command.type === 'npc.request' && !result.error) this.scheduleNpc(id);
+      await this.persist(
+        id,
+        live,
+        next,
+        command.type,
+        {
+          actorId: a.actorId,
+          command,
+          hash,
+          response,
+        },
+        job
+          ? async (c) => {
+              await c.query(
+                "INSERT INTO game_npc_jobs(id,campaign_id,npc_id,requester_actor_id,proposal,due_at,deadline_at) VALUES($1,$2,$3,$4,$5,now()+interval '150 milliseconds',now()+interval '8 seconds')",
+                [job.id, id, npcId, a.actorId, JSON.stringify(job.proposal)],
+              );
+            }
+          : undefined,
+      );
+      if (job) live.npcPending = true;
+      if (
+        command.type === 'npc.request' &&
+        !result.error &&
+        live.state.rulesetVersion !== 'hybrid-v2'
+      )
+        this.scheduleNpc(id);
       return response;
     });
   }
@@ -427,10 +668,26 @@ export class GameService implements OnModuleDestroy {
     if (command.type === 'action' && command.action)
       return applyAction(state, actorId, command.action);
     if (command.type === 'encounter.begin') return beginEncounter(state, actorId, Date.now());
+    if (command.type === 'encounter.join' && command.encounterId)
+      return requestEncounterJoin(state, actorId, command.encounterId);
+    if (command.type === 'encounter.end') return requestEncounterEnd(state, actorId);
     if (command.type === 'encounter.intent' && command.intent)
       return submitIntent(state, actorId, command.intent);
-    if (command.type === 'npc.request')
-      return applyAction(state, actorId, { kind: 'talk', targetId: 'keeper' });
+    if (command.type === 'npc.request') {
+      const npcId = command.npcId ?? command.action?.targetId ?? 'keeper';
+      if (state.rulesetVersion !== 'hybrid-v2')
+        return applyAction(state, actorId, { kind: 'talk', targetId: npcId });
+      const visible = projectState(state, actorId).entities.find(
+        (e) => e.id === npcId && e.kind === 'npc',
+      );
+      if (!visible) return { state, events: [], error: 'TARGET_UNAVAILABLE' };
+      if (visible.encounterId || state.entities[actorId].encounterId)
+        return { state, events: [], error: 'WRONG_MODE' };
+      return {
+        state,
+        events: [{ kind: 'npc.requested', actorId, targetId: npcId, mapId: visible.mapId }],
+      };
+    }
     return { state, events: [], error: 'INVALID_ACTION' };
   }
   private async persist(
@@ -442,9 +699,21 @@ export class GameService implements OnModuleDestroy {
     extra?: (c: import('pg').PoolClient) => Promise<void>,
   ) {
     const seq = live.eventSeq + 1;
+    let savedClock = live.clock;
     await this.db.tx(async (c) => {
+      await c.query(
+        'SELECT a.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1 FOR SHARE OF a',
+        [id],
+      );
+      if (operation) {
+        const allowed = await c.query(
+          `SELECT c.id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id WHERE c.id=$1 AND m.actor_id=$2 AND m.status='accepted' AND ${sourceAccessSql('m.user_id')}`,
+          [id, operation.actorId],
+        );
+        if (!allowed.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+      }
       const update = await c.query(
-        "UPDATE game_campaigns SET state=$1,revision=revision+1,event_seq=$2,updated_at=now() WHERE id=$3 AND revision=$4 AND status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=game_campaigns.owner_id AND owner.deleted_at IS NULL) RETURNING revision",
+        `UPDATE game_campaigns SET state=$1,revision=revision+1,event_seq=$2,updated_at=now() WHERE id=$3 AND revision=$4 AND status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=game_campaigns.owner_id AND owner.deleted_at IS NULL) AND ${sourceLiveSql('game_campaigns')} RETURNING revision`,
         [JSON.stringify(state), seq, id, live.dbRevision],
       );
       if (!update.rowCount) {
@@ -472,8 +741,16 @@ export class GameService implements OnModuleDestroy {
           ],
         );
       if (extra) await extra(c);
+      savedClock = live.paused
+        ? { ...live.clock, paused: true }
+        : await this.captureClock(state, id, c);
+      await c.query('UPDATE game_campaigns SET runtime_clock=$2 WHERE id=$1', [
+        id,
+        JSON.stringify(savedClock),
+      ]);
     });
     live.state = state;
+    live.clock = savedClock;
     live.dbRevision++;
     live.eventSeq = seq;
     live.dirty = false;
@@ -483,27 +760,120 @@ export class GameService implements OnModuleDestroy {
   private async advance(id: string) {
     const live = this.live.get(id);
     if (!live || this.stopping) return;
-    if (Date.now() - live.lastAccess > 5000) {
-      if (live.dirty) await this.persist(id, live, live.state, 'movement.checkpoint');
+    if (![...live.presence.values()].some((last) => Date.now() - last <= 5000)) {
+      if (!live.paused) await this.pause(id, live);
+      else if (live.dirty) await this.persist(id, live, live.state, 'campaign.paused.checkpoint');
+      // Keep the paused lease briefly so heartbeat grace can recover a stalled tab.
+      if (Date.now() - live.lastAccess < 15000) return;
       this.live.delete(id);
       this.npcCooldown.delete(id);
       for (const actor of Object.keys(live.state.entities))
         this.projections.delete(actor + ':' + live.state.seed);
       return;
     }
+    if (live.paused) return;
     // No catch-up based on user clocks or network packet volume: exactly one fixed simulation step.
-    const result = tick(live.state, 1);
-    live.state = result.state;
+    const before = live.state;
+    const result = tick(before, 1);
+    live.state = recordNpcEvents(
+      before,
+      result.state,
+      result.events,
+      `tick-${result.state.tick}`,
+    ).state;
     live.dirty = true;
     for (const encounter of Object.values(live.state.encounters))
       if (encounter.phase === 'planning') {
         const resolved = resolveRound(live.state, encounter.id, Date.now());
         if (!resolved.error && resolved.events.length)
-          await this.persist(id, live, resolved.state, 'round.resolved');
+          await this.persist(
+            id,
+            live,
+            recordNpcEvents(
+              live.state,
+              resolved.state,
+              resolved.events,
+              `round-${encounter.id}-${encounter.round}`,
+            ).state,
+            'round.resolved',
+          );
       }
+    if (live.state.rulesetVersion === 'hybrid-v2') {
+      if (live.npcPending && live.state.tick % 4 === 0) await this.processNpcJobs(id, live);
+      for (const npcId of Object.keys(live.state.npcBrains ?? {})) {
+        const beforeNpc = live.state,
+          step = stepNpcPlan(beforeNpc, npcId);
+        if (!step.error) {
+          const next = recordNpcEvents(
+            beforeNpc,
+            step.state,
+            step.events,
+            `npc-step-${npcId}-${step.state.tick}`,
+          ).state;
+          if (step.events.length) await this.persist(id, live, next, 'npc.plan.step');
+          else if (next !== beforeNpc) {
+            live.state = next;
+            live.dirty = true;
+          }
+        }
+      }
+    }
     if (live.dirty && Date.now() - live.lastCheckpoint >= 1000)
       await this.persist(id, live, live.state, 'movement.checkpoint');
     if (live.state.tick % 2 === 0) this.notify(id);
+  }
+  private async processNpcJobs(id: string, live: Live) {
+    const jobs = await this.db.query(
+      "SELECT * FROM game_npc_jobs WHERE campaign_id=$1 AND status='queued' AND due_at<=now() ORDER BY created_at LIMIT 8",
+      [id],
+    );
+    for (const job of jobs) {
+      const allowed = await this.db.query(
+        `SELECT c.id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.actor_id=$2 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('m.user_id')}`,
+        [id, job.requester_actor_id],
+      );
+      const expired = new Date(job.deadline_at).getTime() < Date.now();
+      const result: GameResult = !allowed.length
+        ? { state: live.state, events: [], error: 'FORBIDDEN' }
+        : expired
+          ? { state: live.state, events: [], error: 'STALE_STATE' }
+          : acceptNpcPlan(live.state, String(job.npc_id), job.proposal);
+      const next = result.error
+        ? live.state
+        : recordNpcEvents(live.state, result.state, result.events, `npc-job-${job.id}`).state;
+      await this.persist(
+        id,
+        live,
+        next,
+        result.error ? `npc.plan.fallback.${result.error}` : 'npc.plan.accepted',
+        undefined,
+        async (c) => {
+          if (!result.error) {
+            const stillAllowed = await c.query(
+              `SELECT c.id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.actor_id=$2 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('m.user_id')}`,
+              [id, job.requester_actor_id],
+            );
+            if (!stillAllowed.rowCount) fail(409, 'STALE_STATE', 'STALE_STATE');
+          }
+          const updated = await c.query(
+            "UPDATE game_npc_jobs SET status=$2,result_code=$3,completed_at=now() WHERE id=$1 AND status='queued' RETURNING id",
+            [
+              job.id,
+              result.error ? (allowed.length ? 'stale' : 'cancelled') : 'accepted',
+              result.error ?? null,
+            ],
+          );
+          if (!updated.rowCount) fail(409, 'STALE_STATE', 'STALE_STATE');
+        },
+      );
+    }
+    live.npcPending =
+      (
+        await this.db.query(
+          "SELECT id FROM game_npc_jobs WHERE campaign_id=$1 AND status='queued' LIMIT 1",
+          [id],
+        )
+      ).length > 0;
   }
   private scheduleNpc(id: string) {
     if (this.npcJobs.has(id)) return;
@@ -515,12 +885,14 @@ export class GameService implements OnModuleDestroy {
       return;
     }
     const proposal = mockNpcDecision(live.state, 'keeper');
+    const jobEpoch = live.epoch;
     // Provider boundary is deliberately asynchronous; no SQL lock or simulation tick waits here.
     const handle = setTimeout(() => {
       this.npcTimers.delete(handle);
       if (this.stopping) return;
       void this.serial(id, async () => {
         const current = await this.load(id);
+        if (current.epoch !== jobEpoch || current.paused) return;
         const result = validateNpcProposal(current.state, 'keeper', proposal);
         if (!result.error) await this.persist(id, current, result.state, 'npc.decision');
         else await this.persist(id, current, current.state, `npc.fallback.${result.error}`);
@@ -545,7 +917,14 @@ export class GameService implements OnModuleDestroy {
       if (!actor) return;
       actor.path = [];
       actor.movementGeneration = (actor.movementGeneration ?? 0) + 1;
-      await this.persist(id, live, state, 'movement.disconnected');
+      // Halting a silent peer is safe even if a database outage delays its checkpoint.
+      // Never continue the old hot path while retrying durable persistence.
+      live.state = state;
+      live.dirty = true;
+      live.presence.delete(actorId);
+      if (![...live.presence.values()].some((last) => Date.now() - last <= 5000))
+        await this.pause(id, live);
+      else await this.persist(id, live, state, 'movement.disconnected');
     });
   }
   async delivered(id: string) {
@@ -563,7 +942,8 @@ export class GameService implements OnModuleDestroy {
     clearInterval(this.timer);
     for (const [id, live] of this.live)
       await this.serial(id, async () => {
-        if (live.dirty) await this.persist(id, live, live.state, 'movement.checkpoint');
+        if (!live.paused) await this.pause(id, live);
+        else if (live.dirty) await this.persist(id, live, live.state, 'campaign.paused.checkpoint');
       });
   }
 }

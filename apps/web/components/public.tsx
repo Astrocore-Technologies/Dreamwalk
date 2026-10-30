@@ -1,4 +1,5 @@
 'use client';
+import { AdventureLaunch } from './game/adventure-launch';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
 import {
@@ -439,12 +440,7 @@ export function AdventurePage({ slug }: { slug: string }) {
                 {tr('Управление')}
               </ButtonLink>
             )}
-            <Button disabled>{tr('Игровой режим появится позже')}</Button>
-            <small>
-              {tr(
-                'Сейчас доступны просмотр мира и подготовка героя. Запуск сессий — на следующем этапе.',
-              )}
-            </small>
+            <AdventureLaunch adventure={a} />
           </div>
           <button
             className="subtle-button"

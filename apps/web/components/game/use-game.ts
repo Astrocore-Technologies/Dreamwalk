@@ -16,13 +16,23 @@ export type CampaignSummary = {
   playableVersion: string;
   status: string;
   membership: 'accepted' | 'pending';
+  title?: string | null;
+  sourceRevision?: number | null;
+  playableVersionId?: string | null;
 };
 export type { GameEnvelope } from '@dreamwalk/contracts';
 export type CommandBody = {
   protocolVersion: 1;
   operationId: string;
   expectedRevision?: number;
-  type: 'action' | 'encounter.begin' | 'encounter.intent' | 'npc.request';
+  type:
+    | 'action'
+    | 'encounter.begin'
+    | 'encounter.intent'
+    | 'encounter.join'
+    | 'encounter.end'
+    | 'npc.request';
+  encounterId?: string;
   action?: GameAction;
   intent?: GameIntentInput;
 };
@@ -34,6 +44,7 @@ type CommandResult = {
   events?: GameEvent[];
 };
 export function useGame(campaignId: string) {
+  const [campaign, setCampaign] = useState<GameEnvelope['campaign']>();
   const [projection, setProjection] = useState<GameProjection | null>(null);
   const [connection, setConnection] = useState<
     'connecting' | 'connected' | 'reconnecting' | 'superseded'
@@ -75,6 +86,7 @@ export function useGame(campaignId: string) {
       return;
     }
     envelope.current = value;
+    setCampaign(value.campaign);
     const self = value.projection.entities.find((entity) => entity.id === value.projection.actorId);
     seq.current = Math.max(seq.current, self?.lastInputSeq || 0);
     if (typeof value.serverNowMs === 'number') setClockOffset(value.serverNowMs - Date.now());
@@ -272,6 +284,7 @@ export function useGame(campaignId: string) {
   );
   return {
     projection,
+    campaign,
     connection,
     error,
     setError,

@@ -1,9 +1,24 @@
 import { z } from 'zod';
+export const bundledGameAssetManifest = {
+  id: 'observatory-prototype-atlas-v1',
+  sha256: 'dbfdb127d64aabc022b094d261ecb3825a1760e4301e3f2abeb73f9cd0c47886',
+} as const;
+export const gameAssetManifestSchema = z
+  .object({
+    id: z.literal(bundledGameAssetManifest.id),
+    sha256: z.literal(bundledGameAssetManifest.sha256),
+  })
+  .strict();
+
 export const gameIdSchema = z
   .string()
   .min(1)
   .max(100)
-  .regex(/^[\w-]+$/);
+  .regex(/^[\w-]+$/)
+  .refine(
+    (id) => !Object.prototype.hasOwnProperty.call(Object.prototype, id),
+    'Reserved identifier',
+  );
 export const gamePointSchema = z
   .object({ x: z.number().int().min(0).max(63), y: z.number().int().min(0).max(63) })
   .strict();
@@ -82,6 +97,8 @@ export type GameError =
 export interface GameEntity extends GamePoint {
   id: string;
   kind: 'player' | 'npc' | 'item' | 'door';
+  label?: string;
+  visual?: 'key' | 'token' | 'door' | 'keeper' | 'traveler';
   mapId: string;
   revision: number;
   ownerId?: string;
@@ -98,6 +115,7 @@ export interface GameEntity extends GamePoint {
 }
 export interface GameMap {
   id: string;
+  label?: string;
   width: number;
   height: number;
   blocked: GamePoint[];
@@ -106,6 +124,7 @@ export interface GameMap {
     id: string;
     x: number;
     y: number;
+    label?: string;
     destinationMapId: string;
     destination: GamePoint;
     doorId?: string;
@@ -119,6 +138,10 @@ export interface RoundIntent {
 }
 export interface GameEncounter {
   id: string;
+  policy?: { maxRounds: number; planningMs: number };
+  pendingJoinIds?: string[];
+  endVotes?: string[];
+  coordinatorId?: string;
   mapId: string;
   generation: number;
   round: number;
@@ -129,8 +152,12 @@ export interface GameEncounter {
   intents: Record<string, RoundIntent>;
 }
 export interface GameState {
+  assetManifest?: typeof bundledGameAssetManifest;
   schemaVersion: 1;
-  rulesetVersion: 'observatory-v1';
+  rulesetVersion: 'observatory-v1' | 'hybrid-v2';
+  startMapId?: string;
+  npcBrains?: Record<string, NpcBrain>;
+  roundPolicy?: { maxRounds: number; planningMs: number };
   seed: number;
   tick: number;
   revision: number;
@@ -151,6 +178,7 @@ export interface GameResult {
   error?: GameError;
 }
 export interface GameProjection {
+  assetManifest?: typeof bundledGameAssetManifest;
   schemaVersion: 1;
   rulesetVersion: string;
   tick: number;
@@ -160,6 +188,14 @@ export interface GameProjection {
   entities: GameEntity[];
   inventory: GameEntity[];
   encounter?: GameEncounter;
+  nearbyEncounters?: {
+    id: string;
+    mapId: string;
+    area: GameEncounter['area'];
+    round: number;
+    phase: 'planning';
+    participantCount: number;
+  }[];
 }
 export const npcProposalSchema = z
   .object({
@@ -177,6 +213,7 @@ export type NpcProposal = z.infer<typeof npcProposalSchema>;
 export const gameMapSchema = z
   .object({
     id: gameIdSchema,
+    label: z.string().trim().min(1).max(120).optional(),
     width: z.number().int().min(1).max(64),
     height: z.number().int().min(1).max(64),
     blocked: z.array(gamePointSchema).max(4096),
@@ -188,6 +225,7 @@ export const gameMapSchema = z
             id: gameIdSchema,
             x: z.number().int().min(0).max(63),
             y: z.number().int().min(0).max(63),
+            label: z.string().trim().min(1).max(120).optional(),
             destinationMapId: gameIdSchema,
             destination: gamePointSchema,
             doorId: gameIdSchema.optional(),
@@ -206,7 +244,7 @@ export const gameMapSchema = z
 export const playableVersionSchema = z
   .object({
     schemaVersion: z.literal(1),
-    rulesetVersion: z.literal('observatory-v1'),
+    rulesetVersion: z.enum(['observatory-v1', 'hybrid-v2']),
     maps: z.array(gameMapSchema).min(1).max(16),
   })
   .strict()
@@ -223,6 +261,8 @@ export const gamePublicEntitySchema = z
   .object({
     id: gameIdSchema,
     kind: z.enum(['player', 'npc', 'item', 'door']),
+    label: z.string().trim().min(1).max(120).optional(),
+    visual: z.enum(['key', 'token', 'door', 'keeper', 'traveler']).optional(),
     mapId: gameIdSchema,
     x: z.number().int().min(0).max(63),
     y: z.number().int().min(0).max(63),
@@ -239,6 +279,16 @@ export const gamePublicEntitySchema = z
 export const gamePublicEncounterSchema = z
   .object({
     id: gameIdSchema,
+    policy: z
+      .object({
+        maxRounds: z.number().int().min(2).max(10),
+        planningMs: z.number().int().min(5000).max(120000),
+      })
+      .strict()
+      .optional(),
+    pendingJoinIds: z.array(gameIdSchema).max(4).optional(),
+    endVotes: z.array(gameIdSchema).max(24).optional(),
+    coordinatorId: gameIdSchema.optional(),
     mapId: gameIdSchema,
     generation: z.number().int().nonnegative(),
     round: z.number().int().positive(),
@@ -269,8 +319,9 @@ export const gamePublicEncounterSchema = z
   .strict();
 export const gameProjectionSchema = z
   .object({
+    assetManifest: gameAssetManifestSchema.optional(),
     schemaVersion: z.literal(1),
-    rulesetVersion: z.literal('observatory-v1'),
+    rulesetVersion: z.enum(['observatory-v1', 'hybrid-v2']),
     tick: z.number().int().nonnegative().safe(),
     revision: z.number().int().nonnegative().safe(),
     actorId: gameIdSchema,
@@ -278,6 +329,28 @@ export const gameProjectionSchema = z
     entities: z.array(gamePublicEntitySchema).min(1).max(512),
     inventory: z.array(gamePublicEntitySchema).max(128),
     encounter: gamePublicEncounterSchema.optional(),
+    nearbyEncounters: z
+      .array(
+        z
+          .object({
+            id: gameIdSchema,
+            mapId: gameIdSchema,
+            area: z
+              .object({
+                x: z.number().int().min(0).max(63),
+                y: z.number().int().min(0).max(63),
+                width: z.number().int().min(1).max(64),
+                height: z.number().int().min(1).max(64),
+              })
+              .strict(),
+            round: z.number().int().positive(),
+            phase: z.literal('planning'),
+            participantCount: z.number().int().min(1).max(24),
+          })
+          .strict(),
+      )
+      .max(16)
+      .optional(),
   })
   .strict()
   .superRefine((p, ctx) => {
@@ -329,6 +402,15 @@ export const gameProjectionSchema = z
 export const gameEnvelopeSchema = z
   .object({
     type: z.enum(['snapshot', 'delta']),
+    campaign: z
+      .object({
+        title: z.string().max(120).nullable(),
+        playableVersionId: z.string().uuid().nullable(),
+        sourceRevision: z.number().int().nonnegative().nullable(),
+      })
+      .strict()
+      .optional(),
+    paused: z.boolean().optional(),
     streamId: z.string().min(1).max(300),
     projectionRevision: z.number().int().nonnegative().safe(),
     baseProjectionRevision: z.number().int().nonnegative().safe().optional(),
@@ -344,3 +426,129 @@ export const gameEnvelopeSchema = z
       ctx.addIssue({ code: 'custom', message: 'Delta requires a base revision' });
   });
 export type GameEnvelope = z.infer<typeof gameEnvelopeSchema>;
+export const gameVisualSchema = z.enum(['key', 'token', 'door', 'keeper', 'traveler']);
+const authoredLabel = z.string().trim().min(1).max(120);
+export const authoredGameDraftSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    title: authoredLabel,
+    startMapId: gameIdSchema,
+    maps: z
+      .array(
+        z
+          .object({
+            id: gameIdSchema,
+            label: authoredLabel,
+            sourceLocationId: z.string().min(1).max(80).optional(),
+            width: z.number().int().min(5).max(32),
+            height: z.number().int().min(5).max(32),
+            blocked: z.array(gamePointSchema).max(1024),
+            spawns: z.array(gamePointSchema).min(1).max(4),
+            exits: z
+              .array(
+                z
+                  .object({
+                    id: gameIdSchema,
+                    x: z.number().int().min(0).max(31),
+                    y: z.number().int().min(0).max(31),
+                    destinationMapId: gameIdSchema,
+                    destination: gamePointSchema,
+                    doorId: gameIdSchema.optional(),
+                  })
+                  .strict(),
+              )
+              .max(16),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(4),
+    objects: z
+      .array(
+        z
+          .object({
+            id: gameIdSchema,
+            kind: z.enum(['item', 'door']),
+            label: authoredLabel,
+            mapId: gameIdSchema,
+            x: z.number().int().min(0).max(31),
+            y: z.number().int().min(0).max(31),
+            visual: z.enum(['key', 'token', 'door']),
+            locked: z.boolean().optional(),
+            open: z.boolean().optional(),
+            keyId: gameIdSchema.optional(),
+            ownerNpcId: gameIdSchema.optional(),
+          })
+          .strict(),
+      )
+      .max(32),
+    npcs: z
+      .array(
+        z
+          .object({
+            id: gameIdSchema,
+            sourceNpcId: z.string().uuid().optional(),
+            label: authoredLabel,
+            mapId: gameIdSchema,
+            x: z.number().int().min(0).max(31),
+            y: z.number().int().min(0).max(31),
+            visual: z.enum(['keeper', 'traveler']),
+            goal: z.enum(['patrol', 'help']),
+            patrolTarget: gamePointSchema.optional(),
+          })
+          .strict(),
+      )
+      .max(8),
+    roundPolicy: z
+      .object({
+        maxRounds: z.number().int().min(2).max(10),
+        planningMs: z.number().int().min(5000).max(120000),
+      })
+      .strict(),
+  })
+  .strict();
+export type AuthoredGameDraft = z.infer<typeof authoredGameDraftSchema>;
+export interface NpcMemoryFact {
+  eventId: string;
+  kind: 'item_taken' | 'actor_seen' | 'door_changed' | 'helped';
+  targetId?: string;
+  tick: number;
+}
+export interface NpcBrain {
+  waitingForPath?: boolean;
+  planMapId?: string;
+  movementGeneration?: number;
+  traits: ('cautious' | 'helpful')[];
+  goal: 'patrol' | 'help';
+  patrolTarget: GamePoint;
+  facts: NpcMemoryFact[];
+  plan: GameAction[];
+  cursor: number;
+  nextDecisionTick: number;
+  generation: number;
+}
+export interface PlayablePackage {
+  assetManifest: typeof bundledGameAssetManifest;
+  schemaVersion: 1;
+  rulesetVersion: 'hybrid-v2';
+  title: string;
+  startMapId: string;
+  maps: Record<string, GameMap>;
+  entities: Record<string, GameEntity>;
+  npcBrains: Record<string, NpcBrain>;
+  roundPolicy: { maxRounds: number; planningMs: number };
+}
+
+export const npcPlanProposalSchema = z
+  .object({
+    contextRevision: z.number().int().nonnegative(),
+    mapRevision: z.number().int().nonnegative(),
+    entityRevision: z.number().int().nonnegative(),
+    brainGeneration: z.number().int().nonnegative(),
+    deadlineTick: z.number().int().nonnegative(),
+    actions: z.array(gameActionSchema).min(1).max(3),
+    targetRevisions: z
+      .record(gameIdSchema, z.number().int().nonnegative())
+      .refine((v) => Object.keys(v).length <= 3),
+  })
+  .strict();

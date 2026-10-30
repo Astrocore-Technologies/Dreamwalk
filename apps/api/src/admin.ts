@@ -218,6 +218,7 @@ export class AdminController {
       b = z
         .object({
           decision: z.enum(['approve', 'reject', 'quarantine']),
+          reviewedPlayableVersionId: z.uuid().nullable().optional(),
           reason: z.string().trim().min(3).max(2000),
         })
         .strict()
@@ -237,6 +238,11 @@ export class AdminController {
       if (b.decision === 'approve') {
         if (row.status !== 'pending_review')
           fail(409, 'STATE_CONFLICT', 'История должна ожидать модерации.');
+        if (
+          row.submitted_game_version_id &&
+          b.reviewedPlayableVersionId !== row.submitted_game_version_id
+        )
+          fail(409, 'STALE_REVIEW', 'Reload the submitted playable review before approval.');
         await this.content.validateReferences(
           row.owner_id as string,
           adventureSchema.parse(row.data),
@@ -253,15 +259,25 @@ export class AdminController {
           const { secrets: _secrets, biography: _biography, ...safe } = n.data;
           return { ...safe, ...safeNpcMetadata(n.data), id: n.id };
         });
-        const snapshot = { ...row.data, status: 'published', publicNpcs };
+        const snapshot = {
+          ...row.data,
+          status: 'published',
+          publicNpcs,
+          playableVersionId: row.submitted_game_version_id ?? null,
+        };
         const privateVersion = {
           ...snapshot,
           npcDefinitions: npcRows.map((n) => ({ ...n.data, id: n.id })),
         };
-        await c.query(
-          'INSERT INTO adventure_versions(adventure_id,version,snapshot) VALUES($1,$2,$3)',
+        const savedVersion = await c.query(
+          'INSERT INTO adventure_versions(adventure_id,version,snapshot) VALUES($1,$2,$3) RETURNING id',
           [id, version, JSON.stringify(privateVersion)],
         );
+        if (row.submitted_game_version_id)
+          await c.query(
+            'INSERT INTO game_playable_approvals(playable_version_id,adventure_version_id) VALUES($1,$2)',
+            [row.submitted_game_version_id, savedVersion.rows[0].id],
+          );
         await c.query(
           "UPDATE adventures SET version=$2,status='published',published_snapshot=$3,updated_at=now() WHERE id=$1",
           [id, version, JSON.stringify(snapshot)],

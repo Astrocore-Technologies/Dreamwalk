@@ -164,3 +164,108 @@ the client cannot submit a replacement world.
 The prototype's encounter is one coordinated round followed by exploration. Full
 combat, author map publishing, paid providers, billing and Discord are not implemented
 by these endpoints. See `game-acceptance.md` for actual verification and remaining gates.
+
+### Authored playable versions (mock-only extension)
+
+Playable authoring is separate from public narrative DTOs. An ordinary story is not
+implicitly a playable map. Only a validated, compiled immutable package can start a
+new authored campaign.
+
+- `GET /studio/adventures/:id/playable-draft`: owner-only `{draft,revision}`, null/0 initially.
+- `PUT /studio/adventures/:id/playable-draft`: `{expectedRevision,draft}`; bounded strict
+  authored-grid schema, owned NPC/location references and domain map validation. A stale
+  revision is rejected. Changing a map invalidates a pending submission but preserves
+  the last approved public version.
+- `POST /studio/adventures/:id/playable-versions`: `{expectedRevision}` freezes a private
+  test package and returns `{versionId}`. Identical packages are reused; versions are
+  immutable and bounded per story. Compilation is not public approval.
+- `GET /studio/adventures/:id/playable-versions`: owner-only version metadata.
+- `GET /game/adventures/:id/playable-versions`: only versions available to that reader;
+  private invitees require accepted source-story invitation, public readers see the
+  current approved version. No raw package or private NPC memory is returned.
+- `POST /game/campaigns`: legacy `{template:"observatory-v1"}` or new
+  `{playableVersionId}`. Each campaign pins the chosen source package, initial maps,
+  NPC/item definitions and a fixed bundled asset ID/checksum. Author edits do not
+  silently upgrade existing campaigns. New public starts require the latest approved
+  package; already-running campaigns retain their previous approved package while the
+  source remains available.
+- Story submit freezes the exact playable package for review. Approval binds that
+  package to the immutable narrative version. Moderator inspection uses
+  `GET /admin/adventures/:id/playable-review`, admin/public/pending only: the submitted
+  map topology and safe entity labels/placements, never private NPC brains or secrets.
+  Narrative-only submissions return `compiled:null`; read failures do not enable approval.
+  Playable approval requires `reviewedPlayableVersionId` matching the pending immutable
+  version under the locked submission row; missing or stale review binding returns
+  `409 STALE_REVIEW`. Narrative-only approval does not require this field.
+
+Campaign membership is not permission to read a private source. Source permission is
+checked at entry, each outgoing projection and durable mutation. Private invitation
+revocation closes access; archive/withdrawal suspends source access without deleting
+party progress. Pending mock jobs are cancelled on source invalidation/revocation.
+
+### Multiple local rounds and persistent mock decisions
+
+Authored `hybrid-v2` campaigns add `encounter.join` with `encounterId` and
+`encounter.end` commands, using the existing operation ID/version envelope. Join is
+queued until a safe round boundary; blocked/remote joins cannot teleport. Ending is
+an explicit participant vote, with a bounded configured maximum round count. Flee is
+a checked action from the boundary, not unrestricted movement out of a conflict.
+Each round consumes locked intentions once, persists the next deadline and defaults
+missing intentions safely. Other maps keep exploring. Legacy `observatory-v1` saves
+retain the previously tested one-round behavior.
+
+`npc.request` may identify an authored `npcId`. It queues a durable mock-only proposal,
+with context/target revisions and a deadline. On acceptance, at most three allowlisted
+steps execute through normal world rules. The NPC may approach, transfer an item it
+already owns and patrol; it cannot mint currency/items or execute generated code.
+Every step revalidates current conditions. Bounded observed-event facts (16) and plan
+cursor are private saved state; projection schemas exclude them. Recovery can replan
+an unfinished accepted NPC movement from its checkpoint, but never resumes old player
+input or connection leases. No autonomous unbounded planning or paid background work.
+
+Account export contains an author's own playable drafts/packages separately and a
+player's own mock-request metadata only (not proposals/other players' inventories).
+Confirmed source-author erasure tombstones the source package and dependent campaign
+state/history, pauses those campaigns and clears contextual jobs; deleting a party
+member preserves the remaining world while removing that actor's current references.
+
+### Studio draft autosave concurrency
+
+Existing adventure and NPC owner DTOs expose `editRevision`. Their ordinary PATCH and
+optional translation correction accept `expectedEditRevision`; under a row lock a
+stale token returns HTTP409 `STALE_STATE` without changing data. Actual narrative/NPC
+changes increment the token, including translation changes. Narrative and playable-map
+revisions are independent; map saves do not manufacture narrative conflicts. Save
+responses contain the exact committed row/revision, not a later post-commit SELECT.
+
+The client debounces valid existing drafts and serializes requests. Edits made while a
+request is in flight remain local and are sent using its acknowledged revision. Manual
+save/playtest uses the same pending work rather than issuing a concurrent write.
+Invalid fields remain local; a visible status explains why they are not yet saved.
+Network failure has an explicit retry; a version conflict stops automatic retry and
+never silently replaces local input. Reloading server data requires confirmation.
+First creation of a new adventure/NPC remains an explicit save, clearly indicated;
+subsequent edits autosave. Publication and approval remain explicit operations.
+
+### Connection grace and offline simulation
+
+The gateway checks session/source authorization every second. Peer silence has a
+2-second movement-stop threshold sampled by that loop (not a hard 2.000-second wall
+clock guarantee) and a 5-second close threshold. A temporarily stalled browser keeps
+its connection during the grace period but must use the updated movement generation;
+old input cannot resume. A peer that never responds is closed and its lease stopped.
+
+When the last live player disconnects, the campaign checkpoints and pauses immediately.
+HTTP-only inactive presence expires after five seconds. A paused hot lease may remain
+cached briefly for heartbeat recovery, but simulation and NPC ticks do not advance.
+Migration 015 stores remaining round durations and queued mock-job due/expiry durations
+atomically with the authoritative checkpoint. First authorized resume restores deadlines
+as current time plus the saved remainder, once under the campaign writer; reconnect does
+not consume offline time or replay missed rounds. Process crash recovery uses the last
+durable remaining-time checkpoint, conservatively recovering up to a checkpoint interval
+rather than inventing elapsed offline play. Other connected participants keep their
+campaign running, including players on other maps.
+
+No client access means no endless background NPC simulation/provider loop. Autonomous
+event-driven NPC decision starts are a future approved direction; current mock decisions
+remain explicitly requested and bounded.

@@ -41,7 +41,9 @@ jobs:
       - run: npm run db:seed
       - run: npm run typecheck
       - run: npm run lint
-      - run: npm test
+      - run: npm run test:unit
+      - name: Game rules, UI projection and autosave controller tests
+        run: npm run test:game
       - run: npm run build
         env:
           NODE_ENV: production

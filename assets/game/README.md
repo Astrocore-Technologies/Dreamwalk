@@ -5,3 +5,5 @@
 The identical runtime file is `apps/web/public/game/observatory-atlas.svg`. Canvas renders ten 64×64 frames via PixiJS textures: terrain, wall, local hero, keeper, key, shut door, open door, token, stairs, companion. Terrain, objects and actors are independent layers; walking is interpolated by the renderer, while positions and game rules remain server authoritative. Artwork is intentionally temporary, not a final character atlas or animation production pipeline.
 
 Creator: Dreamwalk project implementation. Rights: original source supplied to the repository owner under the same terms as this project's original code. No third-party license attribution required. Schema version: 1. Pixel dimensions: 640×64. No private or personalized resources.
+
+Authored playable packages pin this atlas by immutable ID and full SHA-256. The web allowlist resolves that pair only to `/game/observatory-atlas.dbfdb127.svg`; unknown pairs fail closed to the HTML controls rather than loading an arbitrary remote resource. The original `/game/observatory-atlas.svg` remains available for fixture compatibility. Both copies are verified in `tests/game/ui.test.mjs`.

@@ -33,6 +33,19 @@ import {
 import { Db, camel } from './db';
 import { Auth } from './auth';
 import { fail } from './errors';
+import { PlayableService } from './game/playable.service';
+const expectedEditRevisionSchema = z.number().int().min(1).max(Number.MAX_SAFE_INTEGER).optional();
+function draftPatch(body: unknown) {
+  const { expectedEditRevision, ...patch } = z
+    .object({ expectedEditRevision: expectedEditRevisionSchema })
+    .passthrough()
+    .parse(body);
+  return { expectedEditRevision, patch };
+}
+function checkEditRevision(row: Record<string, unknown>, expected: number | undefined) {
+  if (expected !== undefined && Number(row.edit_revision) !== expected)
+    fail(409, 'STALE_STATE', 'Draft changed in another editor. Reload before saving.');
+}
 export const adventureSelect = `SELECT a.*,u.name AS author_name,u.handle AS author_handle,(SELECT count(*)::int FROM favorites f WHERE f.adventure_id=a.id) AS favorite_count FROM adventures a JOIN users u ON u.id=a.owner_id`;
 export const publicAdventureSql =
   "a.visibility='public' AND a.published_snapshot IS NOT NULL AND a.status<>'archived'";
@@ -66,7 +79,12 @@ export function adventureView(
     status: usePublished && row.published_snapshot ? 'published' : row.status,
     visibility: row.visibility,
     version: row.version,
+    editRevision: !usePublished && !reader ? Number(row.edit_revision ?? 1) : undefined,
     author: { name: row.author_name, handle: row.author_handle },
+    playableVersionId: (usePublished
+      ? data.playableVersionId
+      : (row.published_snapshot as Record<string, unknown> | null)?.playableVersionId) as
+      string | null | undefined,
     favoriteCount: row.favorite_count ?? 0,
     createdAt: (row.created_at as Date).toISOString(),
     updatedAt: (row.updated_at as Date).toISOString(),
@@ -76,6 +94,7 @@ function entityView(row: Record<string, unknown>): Record<string, unknown> {
   return {
     ...(row.data as Record<string, unknown>),
     id: row.id,
+    ...(row.edit_revision === undefined ? {} : { editRevision: Number(row.edit_revision) }),
     createdAt: (row.created_at as Date).toISOString(),
     updatedAt: (row.updated_at as Date).toISOString(),
   };
@@ -150,10 +169,11 @@ export class Content {
       );
   }
   async save(id: string, userId: string, body: unknown) {
-    const patch = parsePatch(adventureSchema.partial(), body);
+    const input = draftPatch(body);
+    const patch = parsePatch(adventureSchema.partial(), input.patch);
     if (patch.status && ['published', 'pending_review'].includes(patch.status))
       fail(403, 'FORBIDDEN', 'Для публикации отправьте историю на модерацию.');
-    await this.db.tx(async (c) => {
+    const saved = await this.db.tx(async (c) => {
       const old = (
         await c.query('SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 FOR UPDATE', [
           id,
@@ -161,6 +181,7 @@ export class Content {
         ])
       ).rows[0];
       if (!old) fail(404, 'NOT_FOUND', 'Приключение не найдено.');
+      checkEditRevision(old, input.expectedEditRevision);
       const data = adventureSchema.parse({
         ...old.data,
         status: old.status,
@@ -207,8 +228,9 @@ export class Content {
           JSON.stringify({ visibility: data.visibility }),
         ]);
       }
+      return (await c.query(adventureSelect + ' WHERE a.id=$1', [id])).rows[0];
     });
-    return adventureView(await this.own(id, userId));
+    return adventureView(saved);
   }
 }
 @Controller('api/v1')
@@ -220,6 +242,7 @@ export class ContentController {
     private auth: Auth,
     @Inject(Content)
     private content: Content,
+    @Inject(PlayableService) private playable: PlayableService,
   ) {}
   @Get('genres')
   async genres() {
@@ -287,6 +310,7 @@ export class ContentController {
         const n = entityView(r);
         delete n.secrets;
         delete n.biography;
+        if (access !== 'owner') delete n.editRevision;
         return { ...n, ...safeNpcMetadata(npcSchema.parse(r.data)) };
       });
     }
@@ -560,7 +584,8 @@ export class ContentController {
   }
   private async saveNpcOriginal(id: string, body: unknown, req: Request) {
     const user = await this.auth.require(req),
-      patch = parsePatch(npcSchema.partial(), body);
+      input = draftPatch(body),
+      patch = parsePatch(npcSchema.partial(), input.patch);
     await this.auth.ownedAsset(user.id, patch.portraitAssetId ?? null);
     if (
       patch.modelProfileId &&
@@ -573,6 +598,7 @@ export class ContentController {
         await c.query('SELECT * FROM npcs WHERE id=$1 AND owner_id=$2 FOR UPDATE', [id, user.id])
       ).rows[0];
       if (!old) fail(404, 'NOT_FOUND', 'NPC not found.');
+      checkEditRevision(old, input.expectedEditRevision);
       const original = npcSchema.parse(old.data),
         data = npcSchema.parse({
           ...original,
@@ -606,7 +632,10 @@ export class ContentController {
       locale = localeSchema.parse(value);
     const b = npcTranslationSchema
       .omit({ sourceRevision: true })
-      .extend({ expectedSourceRevision: z.number().int().min(1) })
+      .extend({
+        expectedSourceRevision: z.number().int().min(1),
+        expectedEditRevision: expectedEditRevisionSchema,
+      })
       .strict()
       .parse(body);
     return this.db.tx(async (c) => {
@@ -614,10 +643,12 @@ export class ContentController {
         await c.query('SELECT * FROM npcs WHERE id=$1 AND owner_id=$2 FOR UPDATE', [id, user.id])
       ).rows[0];
       if (!row) fail(404, 'NOT_FOUND', 'NPC not found.');
+      checkEditRevision(row, b.expectedEditRevision);
       const data = npcSchema.parse(row.data);
       if (data.sourceRevision !== b.expectedSourceRevision)
         fail(409, 'SOURCE_REVISION_CONFLICT', 'Original changed.');
-      const { expectedSourceRevision, ...fields } = b;
+      const { expectedSourceRevision, expectedEditRevision: _editRevision, ...fields } = b;
+      void _editRevision;
       data.translations[locale] = {
         ...data.translations[locale],
         ...fields,
@@ -734,6 +765,7 @@ export class ContentController {
           .refine((v) => Object.keys(v).length <= 12)
           .optional(),
         expectedSourceRevision: z.number().int().min(1),
+        expectedEditRevision: expectedEditRevisionSchema,
       })
       .strict()
       .parse(body);
@@ -742,6 +774,7 @@ export class ContentController {
         await c.query('SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 FOR UPDATE', [id, u.id])
       ).rows[0];
       if (!row) fail(404, 'NOT_FOUND', 'Приключение не найдено.');
+      checkEditRevision(row, b.expectedEditRevision);
       const data = adventureSchema.parse({
         ...row.data,
         status: row.status,
@@ -837,20 +870,28 @@ export class ContentController {
     @Req()
     req: Request,
   ) {
-    const u = await this.auth.require(req),
-      row = await this.content.own(id, u.id);
-    if (row.visibility !== 'public')
-      fail(400, 'VALIDATION_FAILED', 'Только публичное приключение отправляется на модерацию.');
-    if (row.status === 'pending_review') return adventureView(row);
-    if (row.status === 'published')
-      fail(409, 'STATE_CONFLICT', 'Эта версия уже опубликована. Сначала сохраните изменения.');
-    const data = adventureSchema.parse(row.data);
-    await this.content.validateReferences(u.id, data, true);
-    await this.db.query(
-      "UPDATE adventures SET status='pending_review',updated_at=now() WHERE id=$1",
-      [id],
-    );
-    await this.db.audit(u.id, 'adventure.submit', id);
+    const u = await this.auth.require(req);
+    await this.db.tx(async (c) => {
+      const row = (
+        await c.query('SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 FOR UPDATE', [id, u.id])
+      ).rows[0];
+      if (!row) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      if (row.visibility !== 'public') fail(400, 'VALIDATION_FAILED', 'Public visibility required');
+      if (row.status === 'pending_review') return;
+      if (row.status === 'published') fail(409, 'STATE_CONFLICT', 'Save changes before submission');
+      await this.content.validateReferences(u.id, adventureSchema.parse(row.data), true);
+      const gameVersion = await this.playable.freeze(c, row, 'review');
+      await c.query(
+        "UPDATE adventures SET status='pending_review',submitted_game_version_id=$2,updated_at=now() WHERE id=$1",
+        [id, gameVersion],
+      );
+      await c.query('INSERT INTO audit(actor_id,action,target_id,details) VALUES($1,$2,$3,$4)', [
+        u.id,
+        'adventure.submit',
+        id,
+        JSON.stringify({ playableVersionId: gameVersion }),
+      ]);
+    });
     return adventureView(await this.content.own(id, u.id));
   }
   @Post('reports')

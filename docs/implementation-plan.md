@@ -39,3 +39,12 @@ Exactly two publication choices: private (author plus accepted invitees) and pub
 ## Later owner update: write once, localized metadata
 
 Store source language and optional title/synopsis variants now, display preferred valid variants with per-field original fallback, and preserve moderation/version/stale-source guarantees. Do not require authors to translate manually. Curated demo variants are allowed; automatic translation waits for a future provider integration and is not simulated. No full adventure/NPC automatic translation is in this milestone.
+
+## Authorized follow-on: bounded authoring and longer local interactions
+
+After PR #4 passed CI, the owner authorized the next local mock-only sequence:
+validated Studio grid templates → immutable playable versions/private tests/public
+moderation; multi-round local coordination with safe joins/leaves; persistent NPC
+mock goals/event memory/action sequences. This includes a basic grid authoring form,
+not a professional level editor, asset generator, combat system or real AI provider.
+The G4 provider/data-policy/budget gate is unchanged.
