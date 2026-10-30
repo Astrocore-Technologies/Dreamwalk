@@ -11,7 +11,7 @@ async function appearance(page: Page, language: 'en' | 'uk' | 'ru', theme: 'dark
     { language, theme },
   );
 }
-async function publicHome(page: Page) {
+async function publicHome(page: Page, preferredSlug?: string) {
   const catalog = await page.request.get('/api/v1/adventures?sort=popular');
   expect(catalog.ok()).toBeTruthy();
   const stories = (await catalog.json()) as { id: string; slug: string }[];
@@ -20,6 +20,18 @@ async function publicHome(page: Page) {
   const featured = page.getByTestId('home-featured');
   await expect(featured).toBeVisible();
   await expect(featured).toHaveAttribute('data-featured-slug', /.+/);
+  if (preferredSlug) {
+    expect(stories.some((story) => story.slug === preferredSlug)).toBe(true);
+    for (
+      let step = 0;
+      step < stories.length &&
+      (await featured.getAttribute('data-featured-slug')) !== preferredSlug;
+      step++
+    ) {
+      await page.getByTestId('home-next').click();
+    }
+    await expect(featured).toHaveAttribute('data-featured-slug', preferredSlug);
+  }
   const slug = await featured.getAttribute('data-featured-slug');
   expect(stories.map((story) => story.slug)).toContain(slug);
   const detail = await page.request.get(`/api/v1/adventures/${slug}?view=published`);
@@ -66,7 +78,7 @@ test('public homepage is art-led, manually navigable, localized and captures act
 }, info) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
   await appearance(page, 'en', 'dark');
-  const { featured, stories } = await publicHome(page);
+  const { featured, stories } = await publicHome(page, 'old-observatory');
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'dark');
   await expect(page.getByTestId('home-continue').locator('a[href="/auth/sign-in"]')).toBeVisible();
@@ -95,7 +107,7 @@ test('public homepage is art-led, manually navigable, localized and captures act
     localStorage.setItem('dreamwalk-language', 'uk');
     localStorage.setItem('dreamwalk-theme', 'light');
   });
-  await publicHome(page);
+  await publicHome(page, 'old-observatory');
   await expect(page.locator('html')).toHaveAttribute('lang', 'uk');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await expect(featured).toBeVisible();
@@ -107,7 +119,7 @@ test('390px homepage preserves readable art, manual touch navigation and public-
 }, info) => {
   await page.setViewportSize({ width: 390, height: 844 });
   await appearance(page, 'ru', 'dark');
-  const { featured, stories } = await publicHome(page);
+  const { featured, stories } = await publicHome(page, 'old-observatory');
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
   const first = await featured.getAttribute('data-featured-slug');
   await screenshot(page, info, 'home-mobile.png');
@@ -170,7 +182,9 @@ test('homepage excludes private and pending submissions and only resumes the cur
     hidden.push(story);
     if (visibility === 'public')
       expect(
-        (await page.request.post(`/api/v1/studio/adventures/${story.id}/submit`)).ok(),
+        (
+          await page.request.post(`/api/v1/studio/adventures/${story.id}/submit`, { data: {} })
+        ).ok(),
       ).toBeTruthy();
   }
   const campaignResponse = await page.request.post('/api/v1/game/campaigns', {
@@ -266,9 +280,9 @@ test('empty/error discovery states stay honest, retry works, and guest sign-in p
   await expect(page.getByTestId('home-featured')).toHaveCount(0);
   await expect(page.locator('[data-home-rail]')).toHaveCount(0);
   await page.unroute(catalog);
-  let failures = 0;
+  let failCatalog = true;
   await page.route(catalog, (route) => {
-    if (failures++ === 0)
+    if (failCatalog)
       return route.fulfill({
         status: 503,
         contentType: 'application/json',
@@ -277,9 +291,10 @@ test('empty/error discovery states stay honest, retry works, and guest sign-in p
     return route.continue();
   });
   await page.reload();
-  const error = page.getByRole('alert');
+  const error = page.getByTestId('home-catalog-error').getByRole('alert');
   await expect(error).toBeVisible();
   await expect(page.getByTestId('home-featured')).toHaveCount(0);
+  failCatalog = false;
   await error.getByRole('button').click();
   await expect(page.getByTestId('home-featured')).toBeVisible();
   await expect(error).toHaveCount(0);

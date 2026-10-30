@@ -99,7 +99,7 @@ export function HomePage() {
     { user } = useClient(),
     router = useRouter();
   const catalog = useResource<Adventure[]>('/adventures?sort=popular');
-  const adventures = (catalog.data || []).filter(
+  const adventures = (catalog.error ? [] : catalog.data || []).filter(
     (item) => item.visibility === 'public' && item.status === 'published',
   );
   const [index, setIndex] = useState(0),
@@ -188,7 +188,11 @@ export function HomePage() {
           <ArrowUpRight size={15} />
         </Link>
       </header>
-      <ErrorBox message={catalog.error} retry={catalog.reload} />
+      {catalog.error && (
+        <div data-testid="home-catalog-error">
+          <ErrorBox message={catalog.error} retry={catalog.reload} />
+        </div>
+      )}
       {catalog.loading ? (
         <Loading />
       ) : active && text ? (
