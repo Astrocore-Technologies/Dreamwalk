@@ -89,9 +89,13 @@ test('author: NPC and complete adventure draft survive reload and submit confirm
     .getByRole('combobox', { name: 'Стартовая сцена', exact: true })
     .selectOption({ label: 'Прибытие' });
   await page.getByRole('button', { name: /Просмотр$/ }).click();
+  // Narrative-only, not-yet-created drafts cannot launch a playable campaign.
   await expect(
-    page.getByRole('button', { name: 'Игровой режим появится на следующем этапе' }),
-  ).toBeDisabled();
+    page.getByText('Сначала сохрани историю, затем добавь игровую карту.', { exact: true }),
+  ).toBeVisible();
+  await expect(
+    page.getByRole('button', { name: 'Сохранить и проверить в игре', exact: true }),
+  ).toHaveCount(0);
   await page.getByRole('button', { name: /Публикация$/ }).click();
   await page
     .getByRole('combobox', { name: 'Режим публикации', exact: true })

@@ -285,3 +285,15 @@ build after the clock-compatibility refinement. Formatting passed for all change
 supported source files. The earlier 62 platform and SMTP regressions remain valid for
 unchanged platform code; the modified game runtime was exercised by the suites above.
 Source is frozen for an authorized next PR; preview restart retains the existing database.
+
+### PR #5 browser acceptance corrections
+
+The first remote run passed runtime/platform/build checks but exposed three browser
+issues. The strict client envelope omitted the new `paused` boolean and rejected otherwise
+valid HTTP/WS projections; the schema now accepts that typed optional field while still
+rejecting unknown fields and invalid types. All 162 received envelopes from the failing
+CI trace parsed with the corrected schema. A permanent real HTTP/WS schema assertion was
+added. Map-editor select labels now have explicit translated accessible names so option
+text cannot alter exact label lookup. The older narrative-only platform scenario now
+asserts the actual first-save/map prerequisite rather than a removed pre-game placeholder.
+No gameplay or autosave assertions were weakened; new browser CI verification follows.

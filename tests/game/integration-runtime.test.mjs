@@ -19,6 +19,7 @@ import {
   connect,
   rejectedSocket,
 } from './support-runtime.mjs';
+import { gameEnvelopeSchema } from '@dreamwalk/contracts';
 import { createObservatoryState, tick } from '@dreamwalk/game-core';
 import { exportGameData, purgeGameData } from '../../scripts/game-data-requests.mjs';
 
@@ -53,6 +54,19 @@ await test(
       );
       const first = await connect(a, id),
         second = await connect(b, id);
+      await t.test(
+        'emitted HTTP and WebSocket envelopes match the strict browser contract',
+        async () => {
+          const httpSnapshot = await snapshot(a, id);
+          assert.equal(typeof httpSnapshot.paused, 'boolean');
+          gameEnvelopeSchema.parse(httpSnapshot);
+          for (const type of ['snapshot', 'delta']) {
+            const message = await until(() => first.messages.find((m) => m.type === type), Boolean);
+            assert.equal(typeof message.paused, 'boolean');
+            gameEnvelopeSchema.parse(message);
+          }
+        },
+      );
       await t.test(
         'movement runs on server ticks, rejects walls, forged fields and old input',
         async () => {

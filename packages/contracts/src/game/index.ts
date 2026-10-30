@@ -410,6 +410,7 @@ export const gameEnvelopeSchema = z
       })
       .strict()
       .optional(),
+    paused: z.boolean().optional(),
     streamId: z.string().min(1).max(300),
     projectionRevision: z.number().int().nonnegative().safe(),
     baseProjectionRevision: z.number().int().nonnegative().safe().optional(),

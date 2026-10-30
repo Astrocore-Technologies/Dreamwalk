@@ -353,6 +353,7 @@ export function PlayableMapEditor({
               </Field>
               <Field label={t('Стартовая карта')}>
                 <Select
+                  aria-label={t('Стартовая карта')}
                   value={draft.startMapId}
                   disabled={preview}
                   onChange={(event) => change({ ...draft, startMapId: event.target.value })}
@@ -409,6 +410,7 @@ export function PlayableMapEditor({
                 </Field>
                 <Field label={t('Связь с локацией истории')}>
                   <Select
+                    aria-label={t('Связь с локацией истории')}
                     value={map.sourceLocationId || ''}
                     onChange={(event) =>
                       updateMap({ sourceLocationId: event.target.value || undefined })
@@ -423,7 +425,11 @@ export function PlayableMapEditor({
                   </Select>
                 </Field>
                 <Field label={t('Инструмент карты')}>
-                  <Select value={tool} onChange={(event) => setTool(event.target.value as Tool)}>
+                  <Select
+                    aria-label={t('Инструмент карты')}
+                    value={tool}
+                    onChange={(event) => setTool(event.target.value as Tool)}
+                  >
                     {Object.entries(toolLabels).map(([key, label]) => (
                       <option key={key} value={key}>
                         {t(label)}
@@ -434,6 +440,7 @@ export function PlayableMapEditor({
                 {tool === 'exit' && (
                   <Field label={t('Карта назначения')}>
                     <Select
+                      aria-label={t('Карта назначения')}
                       value={destination}
                       onChange={(event) => setDestination(event.target.value)}
                     >
@@ -452,7 +459,11 @@ export function PlayableMapEditor({
             )}
             {!preview && (
               <Field label={t('Объект на карте')}>
-                <Select value={selection} onChange={(event) => setSelection(event.target.value)}>
+                <Select
+                  aria-label={t('Объект на карте')}
+                  value={selection}
+                  onChange={(event) => setSelection(event.target.value)}
+                >
                   <option value="">{t('Выбрать объект')}</option>
                   {draft.objects
                     .filter((value) => value.mapId === map.id)
@@ -579,6 +590,7 @@ export function PlayableMapEditor({
                     {object?.kind === 'item' && (
                       <Field label={t('Владелец предмета')}>
                         <Select
+                          aria-label={t('Владелец предмета')}
                           value={object.ownerNpcId || ''}
                           onChange={(event) =>
                             patchSelected({ ownerNpcId: event.target.value || undefined })
@@ -607,6 +619,7 @@ export function PlayableMapEditor({
                         </label>
                         <Field label={t('Ключ от двери')}>
                           <Select
+                            aria-label={t('Ключ от двери')}
                             value={object.keyId || ''}
                             onChange={(event) =>
                               patchSelected({ keyId: event.target.value || undefined })
@@ -628,6 +641,7 @@ export function PlayableMapEditor({
                       <>
                         <Field label={t('Персонаж из библиотеки')}>
                           <Select
+                            aria-label={t('Персонаж из библиотеки')}
                             value={npc.sourceNpcId || ''}
                             onChange={(event) => {
                               const source = npcs.find((value) => value.id === event.target.value);
@@ -647,6 +661,7 @@ export function PlayableMapEditor({
                         </Field>
                         <Field label={t('Поведение NPC')}>
                           <Select
+                            aria-label={t('Поведение NPC')}
                             value={npc.goal}
                             onChange={(event) => patchSelected({ goal: event.target.value })}
                           >
@@ -694,6 +709,7 @@ export function PlayableMapEditor({
                       <>
                         <Field label={t('Карта назначения')}>
                           <Select
+                            aria-label={t('Карта назначения')}
                             value={exit.destinationMapId}
                             onChange={(event) => {
                               const target = draft.maps.find(
@@ -717,6 +733,7 @@ export function PlayableMapEditor({
                         </Field>
                         <Field label={t('Дверь перехода')}>
                           <Select
+                            aria-label={t('Дверь перехода')}
                             value={exit.doorId || ''}
                             onChange={(event) =>
                               patchSelected({ doorId: event.target.value || undefined })

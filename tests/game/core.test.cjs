@@ -409,6 +409,10 @@ test('public encounter schema rejects hidden future intentions and validates env
     projection: p,
   };
   assert.equal(g.gameEnvelopeSchema.safeParse(envelope).success, true);
+  for (const paused of [true, false])
+    assert.equal(g.gameEnvelopeSchema.safeParse({ ...envelope, paused }).success, true);
+  assert.equal(g.gameEnvelopeSchema.safeParse({ ...envelope, paused: 'false' }).success, false);
+  assert.equal(g.gameEnvelopeSchema.safeParse({ ...envelope, hiddenState: {} }).success, false);
   assert.equal(g.gameEnvelopeSchema.safeParse({ ...envelope, type: 'delta' }).success, false);
   assert.equal(
     g.gameEnvelopeSchema.safeParse({ ...envelope, type: 'delta', baseProjectionRevision: 0 })
