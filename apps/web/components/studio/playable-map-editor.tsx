@@ -374,6 +374,7 @@ export function PlayableMapEditor({
           </span>
         </header>
         <AutosaveStatus
+          scope="map"
           status={autosave.status}
           enabled={hydration > 0 && !!draft}
           retry={() => {

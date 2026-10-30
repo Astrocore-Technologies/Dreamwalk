@@ -86,7 +86,9 @@ test('living author version saves personality and reacts without manual NPC requ
       .getByLabel('Биография и мотивы', { exact: true })
       .fill('Protect the courtyard, not a secret live memory.');
     expect((await saved).ok()).toBeTruthy();
-    await expect(editor.locator('[data-autosave-status="saved"]')).toBeVisible();
+    await expect(
+      editor.locator('[data-autosave-scope="map"][data-autosave-status="saved"]'),
+    ).toBeVisible();
     await page.reload();
     await page.getByRole('button', { name: /Локации$/ }).click();
     await editor.getByLabel('Объект на карте', { exact: true }).selectOption('npc:keeper');
@@ -124,7 +126,9 @@ test('living author version saves personality and reacts without manual NPC requ
     await editor.getByRole('button', { name: 'Добавить шаблон обещания', exact: true }).click();
     expect((await promiseSaved).ok()).toBeTruthy();
     await expect(editor.getByLabel('Требовать согласия игрока', { exact: true })).toBeChecked();
-    await expect(editor.locator('[data-autosave-status="saved"]')).toBeVisible();
+    await expect(
+      editor.locator('[data-autosave-scope="map"][data-autosave-status="saved"]'),
+    ).toBeVisible();
     await page.reload();
     await page.getByRole('button', { name: /Локации$/ }).click();
     await editor.getByLabel('Объект на карте', { exact: true }).selectOption('npc:helper');

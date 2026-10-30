@@ -15,7 +15,9 @@ export function AutosaveStatus({
   enabled,
   retry,
   reload,
+  scope,
 }: {
+  scope?: 'map' | 'art';
   status: DraftSaveStatus;
   enabled: boolean;
   retry: () => void;
@@ -23,7 +25,12 @@ export function AutosaveStatus({
 }) {
   const { t } = useT();
   return (
-    <div role="status" className="notice" data-autosave-status={enabled ? status : 'disabled'}>
+    <div
+      data-autosave-scope={scope}
+      role="status"
+      className="notice"
+      data-autosave-status={enabled ? status : 'disabled'}
+    >
       <span>
         {t(
           enabled
