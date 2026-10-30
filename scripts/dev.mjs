@@ -34,6 +34,7 @@ async function run(args) {
 }
 try {
   await run(['run', 'build', '-w', '@dreamwalk/contracts']);
+  await run(['run', 'build', '-w', '@dreamwalk/game-core']);
   await run(['run', 'db:migrate']);
   await run(['run', 'db:seed']);
   if (process.env.LOCAL_ADMIN_EMAIL) {

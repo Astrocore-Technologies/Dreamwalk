@@ -88,3 +88,26 @@ The managed Work environment uses its provided CUA browser and `sites-preview` d
 `AI_PROVIDER=mock`, paid generation/payments/Discord flags off, `GLOBAL_SPEND_CAP=0`. This milestone rejects attempts to enable live providers or money flows. Production also rejects dev auth/faucet and requires HTTPS. `OPENAI_*` model names are future config only; no external availability is asserted. Server credentials never belong in `NEXT_PUBLIC_*`.
 
 Docs: [Architecture](docs/architecture.md), [API contract](docs/api-contract.md), [Plan](docs/implementation-plan.md), [Progress/evidence](docs/progress.md), [Backup/restore](docs/runbooks/backup-restore.md), [Account data operations](docs/runbooks/account-data.md), [Optional email](docs/runbooks/email.md), [agent rules](AGENTS.md).
+
+## Hybrid RPG prototype (G0–G3, local only)
+
+The authenticated `/game` area is an explicitly labelled mock observatory prototype.
+Create a separate campaign, invite another existing account by handle, and have that
+account accept under `/game`. The world includes actual server-validated walking,
+a unique key, a locked door, a second map and a mock keeper. The coordination button
+starts a local one-round simultaneous-intent encounter; it does not pause other maps.
+No paid AI or purchases are enabled. Existing author stories are not automatically playable.
+
+```sh
+npm run test:game              # deterministic rules and adversarial mock cases
+npm run test:game:integration  # fresh isolated PostgreSQL + API/socket/restart tests
+npm run test:e2e               # includes independent-browser game scenario where runner is available
+```
+
+Game integration always provisions a disposable local test cluster and refuses production
+mode. It never uses `.local/preview-live`. Follow the managed-preview recovery runbook
+for the persistent development database; do not remove database lock files blindly.
+
+[Architecture](docs/hybrid-rpg-architecture.ru.md), [ADR](docs/adr/001-hybrid-rpg.md),
+and [acceptance evidence and limits](docs/game-acceptance.md) distinguish implementation
+from checks actually run. New game code is not deployed or published by these commands.

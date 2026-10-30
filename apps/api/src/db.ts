@@ -1,8 +1,8 @@
-import { Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Injectable, OnApplicationShutdown } from '@nestjs/common';
 import { Pool, PoolClient, QueryResultRow } from 'pg';
 import { config } from './config';
 @Injectable()
-export class Db implements OnModuleDestroy {
+export class Db implements OnApplicationShutdown {
   readonly pool = new Pool({ connectionString: config.DATABASE_URL, max: 10 });
   async query<T extends QueryResultRow = QueryResultRow>(
     sql: string,
@@ -32,7 +32,7 @@ export class Db implements OnModuleDestroy {
       JSON.stringify(details),
     ]);
   }
-  async onModuleDestroy() {
+  async onApplicationShutdown() {
     await this.pool.end();
   }
 }

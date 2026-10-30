@@ -158,6 +158,7 @@ async function snapshot(client) {
 }
 try {
   await run('npm', ['run', 'build', '-w', '@dreamwalk/contracts']);
+  await run('npm', ['run', 'build', '-w', '@dreamwalk/game-core']);
   await run('npm', ['run', 'build', '-w', '@dreamwalk/api']);
   await run('npm', ['run', 'db:migrate']);
   await run('npm', ['run', 'db:seed']);

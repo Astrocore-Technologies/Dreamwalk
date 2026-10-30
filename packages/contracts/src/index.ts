@@ -415,3 +415,5 @@ export interface Invitation {
   createdAt: string;
   updatedAt: string;
 }
+
+export * from './game';

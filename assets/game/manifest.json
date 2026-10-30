@@ -1,0 +1,25 @@
+{
+  "schemaVersion": 1,
+  "id": "observatory-prototype-atlas-v1",
+  "file": "observatory-atlas.svg",
+  "runtimePath": "/game/observatory-atlas.svg",
+  "sha256": "dbfdb127d64aabc022b094d261ecb3825a1760e4301e3f2abeb73f9cd0c47886",
+  "width": 640,
+  "height": 64,
+  "frameSize": 64,
+  "creator": "Dreamwalk project implementation",
+  "provenance": "Original code-authored SVG; no external assets or paid generation",
+  "visibility": "public",
+  "frames": [
+    "floor",
+    "wall",
+    "hero",
+    "keeper",
+    "key",
+    "door-closed",
+    "door-open",
+    "token",
+    "stairs",
+    "companion"
+  ]
+}
