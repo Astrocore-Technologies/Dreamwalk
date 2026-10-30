@@ -1,3 +1,4 @@
+import { semanticGameProjection } from './projection-clock';
 import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import type { Request } from 'express';
@@ -269,7 +270,11 @@ export class GameService implements OnModuleDestroy {
     // Never project a cached pre-erasure checkpoint after observing a newer durable revision.
     const cached = this.live.get(id);
     if (cached && Number(rows[0].revision) > cached.dbRevision) this.live.delete(id);
-    return { user, actorId: String(rows[0].actor_id), ownerId: String(rows[0].owner_id) };
+    return {
+      user,
+      actorId: String(rows[0].actor_id),
+      ownerId: String(rows[0].owner_id),
+    };
   }
   /** Player-facing metadata only; decision contexts remain server-private. */
   async aiStatus(req: Request, id: string) {
@@ -369,7 +374,11 @@ export class GameService implements OnModuleDestroy {
     const base = buildNpcDecisionContext(state, npcId);
     if (purpose !== 'plan') return base;
     const archivedEpisodes = await recallNpcEpisodes(this.db, id, state, npcId);
-    return { ...base, archivedEpisodes, contextHash: digest({ base, archivedEpisodes }) };
+    return {
+      ...base,
+      archivedEpisodes,
+      contextHash: digest({ base, archivedEpisodes }),
+    };
   }
   private speechContext(
     state: GameState,
@@ -804,7 +813,7 @@ export class GameService implements OnModuleDestroy {
   private project(state: GameState, actorId: string): GameProjection {
     const projection = projectState(state, actorId),
       key = actorId + ':' + state.seed;
-    const hash = digest({ ...projection, tick: 0, revision: 0 });
+    const hash = digest(semanticGameProjection(projection));
     const prior = this.projections.get(key),
       revision = prior ? (prior.hash === hash ? prior.revision : prior.revision + 1) : 1;
     this.projections.set(key, { hash, revision });
@@ -912,7 +921,11 @@ export class GameService implements OnModuleDestroy {
           (live.state.npcBrains?.[npcId]?.nextDecisionTick ?? 0) > live.state.tick
         )
           result = { state: live.state, events: [], error: 'RATE_LIMITED' };
-        else job = { id: randomUUID(), proposal: createMockNpcPlan(result.state, npcId) };
+        else
+          job = {
+            id: randomUUID(),
+            proposal: createMockNpcPlan(result.state, npcId),
+          };
       }
       const next = result.error
         ? live.state
@@ -981,7 +994,14 @@ export class GameService implements OnModuleDestroy {
         return { state, events: [], error: 'WRONG_MODE' };
       return {
         state,
-        events: [{ kind: 'npc.requested', actorId, targetId: npcId, mapId: visible.mapId }],
+        events: [
+          {
+            kind: 'npc.requested',
+            actorId,
+            targetId: npcId,
+            mapId: visible.mapId,
+          },
+        ],
       };
     }
     return { state, events: [], error: 'INVALID_ACTION' };
@@ -991,7 +1011,12 @@ export class GameService implements OnModuleDestroy {
     live: Live,
     state: GameState,
     kind: string,
-    operation?: { actorId: string; command: Command; hash: string; response: unknown },
+    operation?: {
+      actorId: string;
+      command: Command;
+      hash: string;
+      response: unknown;
+    },
     extra?: (c: import('pg').PoolClient) => Promise<void>,
   ) {
     const seq = live.eventSeq + 1;

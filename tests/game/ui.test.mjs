@@ -140,7 +140,10 @@ test('the renderer only resolves the pinned bundled atlas and its immutable file
     prototypeAtlas.path,
   );
   assert.throws(() =>
-    resolveGameAtlas({ id: 'https://example.com/untrusted.svg', sha256: prototypeAtlas.sha256 }),
+    resolveGameAtlas({
+      id: 'https://example.com/untrusted.svg',
+      sha256: prototypeAtlas.sha256,
+    }),
   );
   assert.throws(() => resolveGameAtlas({ id: prototypeAtlas.id, sha256: 'modified' }));
   const bytes = await readFile(
@@ -329,4 +332,34 @@ test('saved NPC textarea labels do not include their hydrated text content', asy
   );
   assert.match(profile, /aria-label=\{t\('Биография и мотивы'\)\}/);
   assert.match(profile, /aria-label=\{t\('Частные заметки о манере речи'\)\}/);
+});
+
+test('NPC countdowns do not invalidate command revisions but outcomes and positions do', async () => {
+  const { semanticGameProjection } = await import('../../apps/api/src/game/projection-clock.ts');
+  const p = {
+    tick: 5,
+    revision: 7,
+    entities: [{ id: 'helper', x: 2, y: 3 }],
+    npcObligations: [{ id: 'p', status: 'accepted', remainingTicks: 50 }],
+  };
+  assert.deepEqual(
+    semanticGameProjection(p),
+    semanticGameProjection({
+      ...p,
+      tick: 6,
+      revision: 8,
+      npcObligations: [{ ...p.npcObligations[0], remainingTicks: 49 }],
+    }),
+  );
+  assert.notDeepEqual(
+    semanticGameProjection(p),
+    semanticGameProjection({
+      ...p,
+      npcObligations: [{ ...p.npcObligations[0], status: 'fulfilled' }],
+    }),
+  );
+  assert.notDeepEqual(
+    semanticGameProjection(p),
+    semanticGameProjection({ ...p, entities: [{ id: 'helper', x: 3, y: 3 }] }),
+  );
 });
