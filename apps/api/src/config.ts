@@ -16,6 +16,12 @@ export function readConfig(env = process.env) {
       DISCORD_ENABLED: flag,
       DEV_AUTH_ENABLED: flag,
       DEMO_FAUCET_ENABLED: flag,
+      SMTP_HOST: z.string().min(1).optional(),
+      SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
+      SMTP_SECURE: flag,
+      SMTP_USER: z.string().min(1).optional(),
+      SMTP_PASSWORD: z.string().min(1).optional(),
+      SMTP_FROM: z.email().optional(),
       ASSET_DIR: z.string().default('.local/assets'),
       GLOBAL_SPEND_CAP: z.coerce.number().int().min(0).default(0),
     })
@@ -32,6 +38,11 @@ export function readConfig(env = process.env) {
     throw new Error('Unsafe development flags in production.');
   if (c.NODE_ENV === 'production' && !c.WEB_ORIGIN.startsWith('https://'))
     throw new Error('Production requires HTTPS.');
+  if (c.SMTP_HOST && !c.SMTP_FROM) throw new Error('SMTP_FROM is required with SMTP_HOST.');
+  if (Boolean(c.SMTP_USER) !== Boolean(c.SMTP_PASSWORD))
+    throw new Error('SMTP authentication requires both user and password.');
+  if (!c.SMTP_HOST && (c.SMTP_FROM || c.SMTP_USER || c.SMTP_PASSWORD))
+    throw new Error('Incomplete SMTP configuration.');
   return c;
 }
 export const config = readConfig();

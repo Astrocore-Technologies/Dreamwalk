@@ -19,6 +19,9 @@ import {
   adventureSchema,
   heroSchema,
   npcSchema,
+  npcTextFields,
+  npcTranslationSchema,
+  safeNpcMetadata,
   parsePatch,
   type Adventure,
   type User,
@@ -169,7 +172,8 @@ export class Content {
       if (
         data.title !== old.title ||
         data.synopsis !== old.synopsis ||
-        data.sourceLanguage !== (old.data.sourceLanguage ?? 'ru')
+        data.sourceLanguage !== (old.data.sourceLanguage ?? 'ru') ||
+        JSON.stringify(data.tags) !== JSON.stringify(old.data.tags ?? [])
       )
         data.sourceRevision++;
       if (
@@ -283,14 +287,17 @@ export class ContentController {
         const n = entityView(r);
         delete n.secrets;
         delete n.biography;
-        return n;
+        return { ...n, ...safeNpcMetadata(npcSchema.parse(r.data)) };
       });
     }
     return {
       ...result,
       access,
       readOnly: access !== 'owner',
-      npcs: npcPreview,
+      npcs: npcPreview.map((n) => ({
+        ...n,
+        ...safeNpcMetadata(n as unknown as import('@dreamwalk/contracts').NpcMetadata),
+      })),
       versions: (
         await this.db.query(
           'SELECT id,version,created_at FROM adventure_versions WHERE adventure_id=$1 ORDER BY version DESC',
@@ -492,7 +499,16 @@ export class ContentController {
   }
   private async createEntity(table: 'heroes' | 'npcs', body: unknown, req: Request) {
     const u = await this.auth.require(req),
-      data = table === 'heroes' ? heroSchema.parse(body) : npcSchema.parse(body);
+      data =
+        table === 'heroes'
+          ? heroSchema.parse(body)
+          : npcSchema.parse({
+              ...npcSchema.parse(body),
+              sourceLanguage:
+                (body as Record<string, unknown>).sourceLanguage ?? u.settings.language,
+              sourceRevision: 1,
+              translations: {},
+            });
     await this.auth.ownedAsset(u.id, data.portraitAssetId);
     if (
       'modelProfileId' in data &&
@@ -511,6 +527,7 @@ export class ContentController {
     );
   }
   private async editEntity(table: 'heroes' | 'npcs', id: string, body: unknown, req: Request) {
+    if (table === 'npcs') return this.saveNpcOriginal(id, body, req);
     const u = await this.auth.require(req);
     const old = (
       await this.db.query(`SELECT * FROM ${table} WHERE id=$1 AND owner_id=$2`, [id, u.id])
@@ -540,6 +557,87 @@ export class ContentController {
         )
       )[0],
     );
+  }
+  private async saveNpcOriginal(id: string, body: unknown, req: Request) {
+    const user = await this.auth.require(req),
+      patch = parsePatch(npcSchema.partial(), body);
+    await this.auth.ownedAsset(user.id, patch.portraitAssetId ?? null);
+    if (
+      patch.modelProfileId &&
+      !(await this.db.query('SELECT id FROM model_profiles WHERE id=$1', [patch.modelProfileId]))
+        .length
+    )
+      fail(400, 'VALIDATION_FAILED', 'Model not found.');
+    return this.db.tx(async (c) => {
+      const old = (
+        await c.query('SELECT * FROM npcs WHERE id=$1 AND owner_id=$2 FOR UPDATE', [id, user.id])
+      ).rows[0];
+      if (!old) fail(404, 'NOT_FOUND', 'NPC not found.');
+      const original = npcSchema.parse(old.data),
+        data = npcSchema.parse({
+          ...original,
+          ...patch,
+          translations: original.translations,
+          sourceRevision: original.sourceRevision,
+        });
+      if (
+        npcTextFields.some((f) => data[f] !== original[f]) ||
+        data.sourceLanguage !== original.sourceLanguage
+      )
+        data.sourceRevision++;
+      return entityView(
+        (
+          await c.query('UPDATE npcs SET data=$2,updated_at=now() WHERE id=$1 RETURNING *', [
+            id,
+            JSON.stringify(data),
+          ])
+        ).rows[0],
+      );
+    });
+  }
+  @Patch('npcs/:id/translations/:locale')
+  async npcTranslation(
+    @Param('id') id: string,
+    @Param('locale') value: string,
+    @Body() body: unknown,
+    @Req() req: Request,
+  ) {
+    const user = await this.auth.require(req),
+      locale = localeSchema.parse(value);
+    const b = npcTranslationSchema
+      .omit({ sourceRevision: true })
+      .extend({ expectedSourceRevision: z.number().int().min(1) })
+      .strict()
+      .parse(body);
+    return this.db.tx(async (c) => {
+      const row = (
+        await c.query('SELECT * FROM npcs WHERE id=$1 AND owner_id=$2 FOR UPDATE', [id, user.id])
+      ).rows[0];
+      if (!row) fail(404, 'NOT_FOUND', 'NPC not found.');
+      const data = npcSchema.parse(row.data);
+      if (data.sourceRevision !== b.expectedSourceRevision)
+        fail(409, 'SOURCE_REVISION_CONFLICT', 'Original changed.');
+      const { expectedSourceRevision, ...fields } = b;
+      data.translations[locale] = {
+        ...data.translations[locale],
+        ...fields,
+        sourceRevision: expectedSourceRevision,
+      };
+      await c.query('INSERT INTO audit(actor_id,action,target_id,details) VALUES($1,$2,$3,$4)', [
+        user.id,
+        'npc.translation.save',
+        id,
+        JSON.stringify({ locale, sourceRevision: data.sourceRevision }),
+      ]);
+      return entityView(
+        (
+          await c.query('UPDATE npcs SET data=$2,updated_at=now() WHERE id=$1 RETURNING *', [
+            id,
+            JSON.stringify(data),
+          ])
+        ).rows[0],
+      );
+    });
   }
   private async deleteEntity(table: 'heroes' | 'npcs', id: string, req: Request) {
     const u = await this.auth.require(req);
@@ -631,6 +729,10 @@ export class ContentController {
       .object({
         title: z.string().trim().max(120).optional(),
         synopsis: z.string().trim().max(4000).optional(),
+        tags: z
+          .record(z.string().trim().min(1).max(40), z.string().trim().max(40))
+          .refine((v) => Object.keys(v).length <= 12)
+          .optional(),
         expectedSourceRevision: z.number().int().min(1),
       })
       .strict()
@@ -651,13 +753,31 @@ export class ContentController {
           'SOURCE_REVISION_CONFLICT',
           'Оригинал изменился. Обновите страницу перед сохранением перевода.',
         );
-      const previous = data.translations[locale] ?? {};
+      const definitions =
+        (await c.query("SELECT value FROM platform_settings WHERE key='taxonomy'")).rows[0]?.value
+          .tags ?? [];
+      if (
+        b.tags &&
+        Object.keys(b.tags).some(
+          (tag) =>
+            !data.tags.includes(tag) ||
+            definitions.some(
+              (d: { id: string; aliases: string[] }) => d.id === tag || d.aliases.includes(tag),
+            ),
+        )
+      )
+        fail(400, 'VALIDATION_FAILED', 'Invalid custom tag translation.');
+      const previous =
+        data.translations[locale]?.sourceRevision === data.sourceRevision
+          ? data.translations[locale]
+          : {};
       data.translations = {
         ...data.translations,
         [locale]: {
           ...previous,
           ...(b.title === undefined ? {} : { title: b.title }),
           ...(b.synopsis === undefined ? {} : { synopsis: b.synopsis }),
+          ...(b.tags === undefined ? {} : { tags: b.tags }),
           sourceRevision: data.sourceRevision,
         },
       };

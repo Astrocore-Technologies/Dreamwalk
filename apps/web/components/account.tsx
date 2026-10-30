@@ -1,5 +1,7 @@
 'use client';
 import { useT } from '@/lib/i18n';
+import { AccountExports } from './account-exports';
+import { EmailVerification } from './account-email';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { useState, useEffect, type FormEvent } from 'react';
@@ -45,11 +47,17 @@ export function AuthPage({ signup = false, reset = false }: { signup?: boolean; 
     setError('');
     try {
       if (reset) {
-        await api<{ message: string }>('/auth/reset-password', {
+        const response = await api<{ code: string }>('/auth/reset-password', {
           method: 'POST',
           body: JSON.stringify(data),
         });
-        setResult(tr('Почтовая доставка не подключена. Восстановление доступа пока недоступно.'));
+        setResult(
+          response.code === 'EMAIL_DELIVERY_UNAVAILABLE'
+            ? tr('Почтовая доставка не подключена. Восстановление доступа пока недоступно.')
+            : tr(
+                'Если такой аккаунт существует, письмо со ссылкой восстановления придёт на его email.',
+              ),
+        );
       } else {
         const r = await api<{ user: User }>(signup ? '/auth/register' : '/auth/login', {
           method: 'POST',
@@ -613,23 +621,8 @@ function SettingsForm({ privacy }: { privacy: boolean }) {
       {privacy && (
         <Panel className="form-panel">
           <h2>{tr('Управление данными')}</h2>
-          <p className="muted">
-            {tr('Экспорт создаёт запрос на подготовку архива. Это не мгновенная выгрузка.')}
-          </p>
+          <AccountExports />
           <div className="row">
-            <Button
-              variant="secondary"
-              onClick={async () => {
-                try {
-                  await api('/account/export', { method: 'POST', body: '{}' });
-                  toast(tr('Запрос на экспорт данных сохранён'));
-                } catch (e) {
-                  toast(errorMessage(e));
-                }
-              }}
-            >
-              {tr('Запросить экспорт')}
-            </Button>
             <Button variant="danger" onClick={() => setDeleting(true)}>
               {tr('Удалить аккаунт')}
             </Button>
@@ -711,6 +704,7 @@ function SecurityForm() {
     [error, setError] = useState('');
   return (
     <div className="account-layout">
+      <EmailVerification />
       <Panel>
         <h2>
           <Fingerprint size={22} />

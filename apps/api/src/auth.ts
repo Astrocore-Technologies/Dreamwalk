@@ -26,6 +26,7 @@ import {
 import { Db, camel } from './db';
 import { config } from './config';
 import { fail } from './errors';
+import { mailEnabled, sendAccountMail } from './mail';
 const scrypt = promisify(scryptCb);
 export async function hashPassword(password: string) {
   const salt = randomBytes(16).toString('hex');
@@ -190,18 +191,117 @@ export class AccountController {
     res.clearCookie('dreamwalk_session', { path: '/' });
     return { ok: true };
   }
+  private async requestEmail(email: string, purpose: 'reset' | 'verify') {
+    if (!mailEnabled) return { ok: true, code: 'EMAIL_DELIVERY_UNAVAILABLE' };
+    const token = randomBytes(32).toString('hex');
+    const recipient = await this.db.tx(async (c) => {
+      await c.query(
+        "DELETE FROM auth_email_cooldowns WHERE (address_hash,purpose) IN (SELECT address_hash,purpose FROM auth_email_cooldowns WHERE requested_at < now()-interval '1 day' LIMIT 1000)",
+      );
+      await c.query(
+        "DELETE FROM auth_email_tokens WHERE token_hash IN (SELECT token_hash FROM auth_email_tokens WHERE expires_at < now()-interval '1 day' LIMIT 1000)",
+      );
+      // Persist a cooldown even for nonexistent addresses: identical response and rate semantics.
+      const allowed = await c.query(
+        "INSERT INTO auth_email_cooldowns(address_hash,purpose) VALUES($1,$2) ON CONFLICT(address_hash,purpose) DO UPDATE SET requested_at=now() WHERE auth_email_cooldowns.requested_at < now()-interval '1 minute' RETURNING address_hash",
+        [tokenHash(email), purpose],
+      );
+      if (!allowed.rowCount) return null;
+      const row = (
+        await c.query('SELECT * FROM users WHERE email=$1 AND deleted_at IS NULL FOR UPDATE', [
+          email,
+        ])
+      ).rows[0];
+      if (!row || (purpose === 'verify' && row.email_verified)) return null;
+      await c.query('DELETE FROM auth_email_tokens WHERE user_id=$1 AND purpose=$2', [
+        row.id,
+        purpose,
+      ]);
+      await c.query(
+        "INSERT INTO auth_email_tokens(token_hash,user_id,purpose,expires_at) VALUES($1,$2,$3,now()+interval '30 minutes')",
+        [tokenHash(token), row.id, purpose],
+      );
+      return row;
+    });
+    if (recipient) {
+      // Delivery is deliberately detached from the uniform response; never log tokens or SMTP errors.
+      void sendAccountMail(email, purpose, token, recipient.settings?.language ?? 'en').catch(
+        async () => {
+          await this.db
+            .query('DELETE FROM auth_email_tokens WHERE token_hash=$1', [tokenHash(token)])
+            .catch(() => undefined);
+        },
+      );
+    }
+    return { ok: true, code: 'REQUEST_ACCEPTED' };
+  }
   @Post('auth/reset-password')
-  reset(
-    @Body()
-    body: unknown,
-  ) {
-    z.object({ email: z.email() }).parse(body);
-    return {
-      ok: true,
-      code: 'EMAIL_DELIVERY_UNAVAILABLE',
-      message:
-        'Отправка писем ещё не подключена. Для восстановления в закрытом тестировании обратитесь к владельцу платформы. Письмо не отправлено.',
-    };
+  async reset(@Body() body: unknown) {
+    const b = z
+      .object({
+        email: z
+          .email()
+          .max(254)
+          .transform((v) => v.toLowerCase()),
+      })
+      .strict()
+      .parse(body);
+    return this.requestEmail(b.email, 'reset');
+  }
+  @Post('account/email-verification/request')
+  async requestVerification(@Req() req: Request) {
+    const user = await this.auth.require(req);
+    return this.requestEmail(user.email, 'verify');
+  }
+  private async consumeEmailToken(token: unknown, purpose: 'reset' | 'verify', password?: string) {
+    if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token))
+      fail(400, 'TOKEN_INVALID', 'Invalid token.');
+    const passwordHash = password ? await hashPassword(password) : undefined;
+    await this.db.tx(async (c) => {
+      const candidate = (
+        await c.query('SELECT user_id FROM auth_email_tokens WHERE token_hash=$1', [
+          tokenHash(token as string),
+        ])
+      ).rows[0];
+      if (!candidate) fail(400, 'TOKEN_INVALID', 'Invalid token.');
+      // Match request/password/deletion lock order: user first, then bearer row.
+      const user = (
+        await c.query('SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE', [
+          candidate.user_id,
+        ])
+      ).rows[0];
+      if (!user) fail(400, 'TOKEN_INVALID', 'Invalid token.');
+      const row = (
+        await c.query(
+          'SELECT user_id FROM auth_email_tokens WHERE token_hash=$1 AND user_id=$2 AND purpose=$3 AND used_at IS NULL AND expires_at>now() FOR UPDATE',
+          [tokenHash(token as string), user.id, purpose],
+        )
+      ).rows[0];
+      if (!row) fail(400, 'TOKEN_INVALID', 'Invalid token.');
+      await c.query('UPDATE auth_email_tokens SET used_at=now() WHERE token_hash=$1', [
+        tokenHash(token as string),
+      ]);
+      if (purpose === 'reset') {
+        await c.query('UPDATE users SET password_hash=$2 WHERE id=$1', [row.user_id, passwordHash]);
+        await c.query('DELETE FROM sessions WHERE user_id=$1', [row.user_id]);
+      } else {
+        await c.query('UPDATE users SET email_verified=true WHERE id=$1', [row.user_id]);
+      }
+    });
+    return { ok: true };
+  }
+  @Post('auth/reset-password/confirm')
+  async confirmReset(@Body() body: unknown) {
+    const b = z
+      .object({ token: z.unknown(), password: z.string().min(10).max(128) })
+      .strict()
+      .parse(body);
+    return this.consumeEmailToken(b.token, 'reset', b.password);
+  }
+  @Post('auth/verify-email')
+  async verifyEmail(@Body() body: unknown) {
+    const b = z.object({ token: z.unknown() }).strict().parse(body);
+    return this.consumeEmailToken(b.token, 'verify');
   }
   @Patch('account/profile')
   async profile(
@@ -309,6 +409,7 @@ export class AccountController {
     await this.db.tx(async (c) => {
       await c.query('UPDATE users SET password_hash=$2 WHERE id=$1', [u.id, hash]);
       await c.query('DELETE FROM sessions WHERE user_id=$1 AND id<>$2', [u.id, id]);
+      await c.query("DELETE FROM auth_email_tokens WHERE user_id=$1 AND purpose='reset'", [u.id]);
     });
     return { ok: true };
   }
@@ -360,6 +461,8 @@ export class AccountController {
         [u.id, `${u.id}@deleted.invalid`, `deleted_${u.id.replace(/-/g, '')}`],
       );
       await c.query('DELETE FROM sessions WHERE user_id=$1', [u.id]);
+      await c.query('DELETE FROM auth_email_tokens WHERE user_id=$1', [u.id]);
+      await c.query('DELETE FROM auth_email_cooldowns WHERE address_hash=$1', [tokenHash(u.email)]);
       await c.query('DELETE FROM favorites WHERE user_id=$1', [u.id]);
       await c.query('DELETE FROM notifications WHERE user_id=$1', [u.id]);
       await c.query('DELETE FROM heroes WHERE owner_id=$1', [u.id]);

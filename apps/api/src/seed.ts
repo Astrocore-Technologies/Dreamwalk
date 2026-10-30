@@ -1,6 +1,90 @@
 import { Pool } from 'pg';
+import { isDeepStrictEqual } from 'node:util';
 import { settingsSchema, adventureSchema, npcSchema } from '@dreamwalk/contracts';
 import { randomUUID } from 'node:crypto';
+// Curated first-party demo text only; no automatic translation provider.
+const npcCopy: Record<string, { ru: string[]; en: string[]; uk: string[] }> = {
+  Элиас: {
+    ru: ['Элиас', 'Смотритель', 'Сдержанный и наблюдательный', 'Вы всё-таки нашли дорогу.'],
+    en: ['Elias', 'Caretaker', 'Reserved and observant', 'You found your way after all.'],
+    uk: ['Еліас', 'Доглядач', 'Стриманий і спостережливий', 'Ви все-таки знайшли дорогу.'],
+  },
+  Мира: {
+    ru: [
+      'Мира',
+      'Исследовательница',
+      'Любопытная и решительная',
+      'Посмотрите на эту карту. Видите расхождение?',
+    ],
+    en: [
+      'Mira',
+      'Researcher',
+      'Curious and determined',
+      'Look at this map. Do you see the discrepancy?',
+    ],
+    uk: ['Міра', 'Дослідниця', 'Допитлива й рішуча', 'Погляньте на цю карту. Бачите розбіжність?'],
+  },
+  Тик: {
+    ru: [
+      'Тик',
+      'Механический помощник',
+      'Педантичный и добродушный',
+      'До рассвета осталось достаточно времени. Вероятно.',
+    ],
+    en: [
+      'Tick',
+      'Mechanical assistant',
+      'Meticulous and good-natured',
+      'There is enough time before dawn. Probably.',
+    ],
+    uk: [
+      'Тік',
+      'Механічний помічник',
+      'Педантичний і добродушний',
+      'До світанку залишилося достатньо часу. Мабуть.',
+    ],
+  },
+};
+function curatedNpc(data: Record<string, unknown>) {
+  const copy = npcCopy[String(data.name)];
+  if (
+    !copy ||
+    copy.ru.some((v, i) => v !== data[['name', 'role', 'personality', 'greeting'][i]]) ||
+    data.appearance ||
+    data.description ||
+    (data.sourceLanguage && data.sourceLanguage !== 'ru') ||
+    Number(data.sourceRevision ?? 1) !== 1
+  )
+    return data;
+  const sourceRevision = data.sourceRevision ?? 1;
+  const localized = {
+    ...data,
+    description: '',
+    sourceLanguage: 'ru',
+    sourceRevision,
+    translations: Object.fromEntries(
+      (['ru', 'en', 'uk'] as const).map((locale) => [
+        locale,
+        {
+          name: copy[locale][0],
+          role: copy[locale][1],
+          personality: copy[locale][2],
+          greeting: copy[locale][3],
+          description: '',
+          appearance: '',
+          sourceRevision,
+        },
+      ]),
+    ),
+  };
+  if (
+    data.translations &&
+    Object.keys(data.translations).length &&
+    !isDeepStrictEqual(data.translations, localized.translations)
+  )
+    return data;
+  return localized;
+}
 async function main() {
   if (process.env.NODE_ENV === 'production') throw new Error('Demo seed forbidden in production');
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
@@ -196,6 +280,12 @@ async function main() {
         },
       },
     };
+    for (const npc of (await db.query('SELECT id,data FROM npcs WHERE owner_id=$1', [owner]))
+      .rows) {
+      const localized = curatedNpc(npc.data);
+      if (!isDeepStrictEqual(localized, npc.data))
+        await db.query('UPDATE npcs SET data=$2 WHERE id=$1', [npc.id, JSON.stringify(localized)]);
+    }
     for (const s of stories) {
       const existingStory = (await db.query('SELECT * FROM adventures WHERE slug=$1', [s.slug]))
         .rows[0];
@@ -223,18 +313,21 @@ async function main() {
               en: { ...curated[s.slug].en, sourceRevision: revision },
               uk: { ...curated[s.slug].uk, sourceRevision: revision },
             };
-            const unchanged = (['ru', 'en', 'uk'] as const).every(
-              (locale) =>
-                row.published_snapshot?.translations?.[locale]?.title ===
-                  translations[locale].title &&
-                row.published_snapshot?.translations?.[locale]?.synopsis ===
-                  translations[locale].synopsis &&
-                row.published_snapshot?.translations?.[locale]?.sourceRevision === revision,
-            );
+            const publicNpcs = (row.published_snapshot.publicNpcs ?? []).map(curatedNpc);
+            const unchanged =
+              isDeepStrictEqual(publicNpcs, row.published_snapshot.publicNpcs ?? []) &&
+              (['ru', 'en', 'uk'] as const).every(
+                (locale) =>
+                  row.published_snapshot?.translations?.[locale]?.title ===
+                    translations[locale].title &&
+                  row.published_snapshot?.translations?.[locale]?.synopsis ===
+                    translations[locale].synopsis &&
+                  row.published_snapshot?.translations?.[locale]?.sourceRevision === revision,
+              );
             if (!unchanged) {
               const metadata = { sourceLanguage: 'ru', sourceRevision: revision, translations };
               const data = { ...row.data, ...metadata };
-              const published = { ...row.published_snapshot, ...metadata };
+              const published = { ...row.published_snapshot, ...metadata, publicNpcs };
               const previous =
                 (
                   await client.query(
@@ -245,7 +338,16 @@ async function main() {
               const version = Number(row.version) + 1;
               await client.query(
                 'INSERT INTO adventure_versions(adventure_id,version,snapshot) VALUES($1,$2,$3)',
-                [row.id, version, JSON.stringify({ ...previous, ...metadata })],
+                [
+                  row.id,
+                  version,
+                  JSON.stringify({
+                    ...previous,
+                    ...metadata,
+                    publicNpcs,
+                    npcDefinitions: (previous.npcDefinitions ?? []).map(curatedNpc),
+                  }),
+                ],
               );
               await client.query(
                 'UPDATE adventures SET data=$2,published_snapshot=$3,version=$4,updated_at=now() WHERE id=$1',
@@ -294,7 +396,7 @@ async function main() {
             owner,
             JSON.stringify(
               npcSchema.parse({
-                ...n,
+                ...curatedNpc(n),
                 age: 30,
                 secrets: 'Авторская заметка: ключ спрятан в старых часах.',
               }),

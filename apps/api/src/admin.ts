@@ -1,7 +1,14 @@
 import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { z } from 'zod';
-import { modelSchema, runtimeSchema, adventureSchema, parsePatch } from '@dreamwalk/contracts';
+import {
+  modelSchema,
+  controlledTagSchema,
+  runtimeSchema,
+  adventureSchema,
+  parsePatch,
+  safeNpcMetadata,
+} from '@dreamwalk/contracts';
 import { Db, camel } from './db';
 import { Auth, userView } from './auth';
 import { adventureSelect, adventureView, Content, readableAdventureSql } from './content';
@@ -64,13 +71,36 @@ export class AdminController {
       b = z
         .object({
           genres: z.array(z.string().trim().min(2).max(40)).min(1).max(50),
-          tags: z.array(z.string().trim().min(2).max(40)).max(100),
+          tags: z.array(controlledTagSchema).max(100),
         })
         .strict()
         .parse(body);
-    if (new Set(b.genres).size !== b.genres.length || new Set(b.tags).size !== b.tags.length)
+    if (
+      new Set(b.genres).size !== b.genres.length ||
+      new Set(b.tags.map((tag) => tag.id)).size !== b.tags.length
+    )
       fail(400, 'VALIDATION_FAILED', 'Жанры и теги не должны повторяться.');
+    const names = new Map<string, string>();
+    for (const tag of b.tags)
+      for (const name of [tag.id, ...tag.aliases]) {
+        if (names.has(name) && names.get(name) !== tag.id)
+          fail(400, 'VALIDATION_FAILED', 'Ambiguous tag alias.');
+        names.set(name, tag.id);
+      }
     return this.db.tx(async (c) => {
+      const old = (
+        await c.query("SELECT value FROM platform_settings WHERE key='taxonomy' FOR UPDATE")
+      ).rows[0].value;
+      if (
+        old.tags.some(
+          (tag: { id: string; aliases: string[] }) =>
+            !b.tags.some(
+              (next) =>
+                next.id === tag.id && tag.aliases.every((alias) => next.aliases.includes(alias)),
+            ),
+        )
+      )
+        fail(400, 'VALIDATION_FAILED', 'Existing tag identifiers and aliases must be preserved.');
       await c.query("UPDATE platform_settings SET value=$1,updated_at=now() WHERE key='taxonomy'", [
         JSON.stringify(b),
       ]);
@@ -170,6 +200,7 @@ export class AdminController {
       if (r.owner_id !== u.id) {
         delete safe.secrets;
         delete safe.biography;
+        Object.assign(safe, safeNpcMetadata(r.data));
       }
       return { ...safe, ...camel({ ...r, data: undefined }) };
     });
@@ -220,7 +251,7 @@ export class AdminController {
         ).rows;
         const publicNpcs = npcRows.map((n) => {
           const { secrets: _secrets, biography: _biography, ...safe } = n.data;
-          return { ...safe, id: n.id };
+          return { ...safe, ...safeNpcMetadata(n.data), id: n.id };
         });
         const snapshot = { ...row.data, status: 'published', publicNpcs };
         const privateVersion = {

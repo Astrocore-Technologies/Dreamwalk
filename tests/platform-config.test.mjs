@@ -54,3 +54,15 @@ test('production requires HTTPS and malformed booleans are not coerced', () => {
   assert.notEqual(validates({ NODE_ENV: 'production' }).status, 0);
   assert.notEqual(validates({ PAYMENTS_ENABLED: 'yes' }).status, 0);
 });
+test('SMTP requires complete explicit sender and credential configuration', () => {
+  assert.notEqual(validates({ SMTP_HOST: '127.0.0.1' }).status, 0);
+  assert.notEqual(validates({ SMTP_FROM: 'test@example.test' }).status, 0);
+  assert.notEqual(
+    validates({ SMTP_HOST: '127.0.0.1', SMTP_FROM: 'test@example.test', SMTP_USER: 'test' }).status,
+    0,
+  );
+  assert.equal(
+    validates({ SMTP_HOST: '127.0.0.1', SMTP_FROM: 'test@example.test', SMTP_PORT: '2525' }).status,
+    0,
+  );
+});

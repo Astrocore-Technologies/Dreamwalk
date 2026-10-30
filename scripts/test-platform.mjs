@@ -1,6 +1,7 @@
 /** API/DB integration runner. All processes share one isolated local namespace. */
 import { startLocalPostgres } from './postgres-local.mjs';
 import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
 import pg from 'pg';
@@ -65,6 +66,15 @@ try {
       .map((name) => `tests/${name}`),
   ]);
 } finally {
-  api?.kill('SIGTERM');
+  if (api && api.exitCode === null && api.signalCode === null) {
+    const exited = once(api, 'exit');
+    const deadline = setTimeout(() => api.kill('SIGKILL'), 10_000);
+    api.kill('SIGTERM');
+    try {
+      await exited;
+    } finally {
+      clearTimeout(deadline);
+    }
+  }
   if (database) await database.stop();
 }

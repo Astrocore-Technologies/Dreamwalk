@@ -1,5 +1,5 @@
 'use client';
-import { selectAdventureText } from '@dreamwalk/contracts';
+import { selectAdventureText, selectNpcText } from '@dreamwalk/contracts';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
 import { useEffect, useState, type FormEvent } from 'react';
@@ -21,6 +21,7 @@ import {
 } from 'lucide-react';
 import type {
   Adventure,
+  ControlledTag,
   ModelProfile,
   Npc,
   RuntimeProfile,
@@ -532,27 +533,42 @@ function AdminContent() {
           ) : (
             <div className={styles.modelList}>
               {npcs.data
-                ?.filter((n) => (n.name + ' ' + n.role).toLowerCase().includes(query.toLowerCase()))
+                ?.filter((n) =>
+                  (
+                    n.name +
+                    ' ' +
+                    n.role +
+                    ' ' +
+                    selectNpcText(n, locale).name +
+                    ' ' +
+                    selectNpcText(n, locale).role
+                  )
+                    .toLowerCase()
+                    .includes(query.toLowerCase()),
+                )
                 .map((n) => (
                   <Panel key={n.id}>
                     <div className="row">
-                      <h3>{n.name}</h3>
+                      <h3>{selectNpcText(n, locale).name}</h3>
                       <Badge>{t('Личный')}</Badge>
                     </div>
                     <p className="muted">
-                      {n.role} · {n.age} {t(' лет')}
+                      {selectNpcText(n, locale).role} · {n.age} {t(' лет')}
                     </p>
+                    {selectNpcText(n, locale).description && (
+                      <p>{selectNpcText(n, locale).description}</p>
+                    )}
                     <details>
                       <summary>{t('Просмотреть содержание')}</summary>
                       <div className="stack">
                         <p>
-                          <strong>{t('Характер:')}</strong> {n.personality}
+                          <strong>{t('Характер:')}</strong> {selectNpcText(n, locale).personality}
                         </p>
                         <p>
                           <strong>{t('Биография:')}</strong> {n.biography}
                         </p>
                         <p>
-                          <strong>{t('Приветствие:')}</strong> {n.greeting}
+                          <strong>{t('Приветствие:')}</strong> {selectNpcText(n, locale).greeting}
                         </p>
                         <p>
                           <strong>{t('Закрытые знания:')}</strong> {n.secrets}
@@ -576,6 +592,9 @@ function AdminContent() {
               {t('Оригинал')} · {(target.sourceLanguage || 'ru').toUpperCase()}
             </p>
             <p>{target.synopsis}</p>
+            <p>
+              {t('Теги')}: {target.tags.join(' · ')}
+            </p>
             {Object.entries(target.translations || {}).some(
               ([, entry]) => entry?.sourceRevision === target.sourceRevision,
             ) && (
@@ -593,6 +612,12 @@ function AdminContent() {
                       </Badge>
                       <h4>{text.title}</h4>
                       <p>{text.synopsis}</p>
+                      <p>
+                        {t('Теги')}:{' '}
+                        {Object.entries(translation.tags ?? {})
+                          .map(([original, label]) => `${original} → ${label}`)
+                          .join(' · ')}
+                      </p>
                     </section>
                   );
                 })}
@@ -1424,15 +1449,15 @@ function AdminAudit() {
 function AdminTaxonomy() {
   const { t } = useT(),
     { toast } = useClient();
-  const resource = useResource<{ genres: string[]; tags: string[] }>('/admin/taxonomy');
+  const resource = useResource<{ genres: string[]; tags: ControlledTag[] }>('/admin/taxonomy');
   const [genres, setGenres] = useState(''),
-    [tags, setTags] = useState(''),
+    [tags, setTags] = useState<ControlledTag[]>([]),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   useEffect(() => {
     if (resource.data) {
       setGenres(resource.data.genres.join('\n'));
-      setTags(resource.data.tags.join('\n'));
+      setTags(resource.data.tags);
     }
   }, [resource.data]);
   async function save(e: FormEvent) {
@@ -1440,17 +1465,14 @@ function AdminTaxonomy() {
     setBusy(true);
     setError('');
     try {
-      const data = await api<{ genres: string[]; tags: string[] }>('/admin/taxonomy', {
+      const data = await api<{ genres: string[]; tags: ControlledTag[] }>('/admin/taxonomy', {
         method: 'PATCH',
         body: JSON.stringify({
           genres: genres
             .split('\n')
             .map((s) => s.trim())
             .filter(Boolean),
-          tags: tags
-            .split('\n')
-            .map((s) => s.trim())
-            .filter(Boolean),
+          tags,
         }),
       });
       resource.setData(data);
@@ -1487,12 +1509,69 @@ function AdminTaxonomy() {
                   onChange={(e) => setGenres(e.target.value)}
                 />
               </Field>
-              <Field
-                label={t('Рекомендуемые теги')}
-                hint={t('Один тег на строку. До 100 тегов, без повторов.')}
-              >
-                <Textarea rows={12} value={tags} onChange={(e) => setTags(e.target.value)} />
-              </Field>
+              <fieldset className="stack">
+                <legend>{t('Рекомендуемые теги')}</legend>
+                {tags.map((tag, index) => (
+                  <div className="panel stack" key={index}>
+                    <Field label={t('ID тега')}>
+                      <Input
+                        required
+                        pattern="[a-z][a-z0-9-]{1,39}"
+                        maxLength={40}
+                        readOnly={resource.data?.tags.some((existing) => existing.id === tag.id)}
+                        value={tag.id}
+                        onChange={(e) =>
+                          setTags(
+                            tags.map((item, i) =>
+                              i === index ? { ...item, id: e.target.value } : item,
+                            ),
+                          )
+                        }
+                      />
+                    </Field>
+                    {(['uk', 'en', 'ru'] as const).map((language) => (
+                      <Field
+                        key={language}
+                        label={t(
+                          language === 'uk'
+                            ? 'Украинский'
+                            : language === 'en'
+                              ? 'Английский'
+                              : 'Русский',
+                        )}
+                      >
+                        <Input
+                          required
+                          maxLength={40}
+                          value={tag.labels[language]}
+                          onChange={(e) =>
+                            setTags(
+                              tags.map((item, i) =>
+                                i === index
+                                  ? {
+                                      ...item,
+                                      labels: { ...item.labels, [language]: e.target.value },
+                                    }
+                                  : item,
+                              ),
+                            )
+                          }
+                        />
+                      </Field>
+                    ))}
+                  </div>
+                ))}
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={tags.length >= 100}
+                  onClick={() =>
+                    setTags([...tags, { id: '', labels: { uk: '', en: '', ru: '' }, aliases: [] }])
+                  }
+                >
+                  {t('Добавить тег')}
+                </Button>
+              </fieldset>
             </div>
             <ErrorBox message={error} />
             <div className="form-actions">
@@ -1502,7 +1581,7 @@ function AdminTaxonomy() {
                 onClick={() => {
                   if (resource.data) {
                     setGenres(resource.data.genres.join('\n'));
-                    setTags(resource.data.tags.join('\n'));
+                    setTags(resource.data.tags);
                   }
                   setError('');
                 }}

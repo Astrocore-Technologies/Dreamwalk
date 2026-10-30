@@ -4,7 +4,7 @@ Updated 2026-10-30. Base repository: `main`, initial commit `391348b`; it contai
 
 ## Delivered scope
 
-- Next.js16/React19 + NestJS12 modular monolith, strict TypeScript, npm workspaces/lockfile, real PostgreSQL17.10, migrations001–005 and repeatable original-content seed.
+- Next.js16/React19 + NestJS12 modular monolith, strict TypeScript, npm workspaces/lockfile, real PostgreSQL17.10, migrations001–009 and repeatable original-content seed.
 - Original fantasy covers and provenance, self-hosted fonts, owner-approved plum/pearl/gold dark theme and ivory/plum light theme, responsive shell and accessible controls.
 - Real signup/signin/session/onboarding/profile/preferences/security workflows, hero preparation, searchable catalog, favorites/library, separate NPC and adventure studio, safe raster media, version previews and moderation.
 - Owner's later publication rule implemented: private accepted-invitation-only versus public moderator-approved. No unlisted link mode. Invited readers cannot edit or read NPC secrets. Revocation removes future detail/media/library access. Existing approved public version survives draft edits/re-review; withdrawn private content requires new approval to become public again.
@@ -40,15 +40,28 @@ Verification logs, credentials, databases, browser sessions and screenshots of s
 
 Representative desktop, narrow home/library, author studio, administrator overview and published-story screenshots were inspected. They contain synthetic QA runtime data and are not committed.
 
+## Follow-up verification after initial publication
+
+- Initial platform source was published in PR #1 and merged by the owner. A tests-only correction is in draft PR #2. Both PR #2 CI runs passed: typecheck, lint, production build, 7 contract tests, 49 integration/config/locale tests and all 5 Chromium end-to-end tests.
+- Those real CI browser runs verified the 390px layout, account persistence, author submission, language persistence and two-account invitation acceptance/revocation. Earlier local-tool restrictions were not bypassed; the CI browser is separate evidence.
+- Explicit operator export/purge processing now has 55 passing integration/config/locale tests, including owner-only downloads, expiry, physical media deletion, retry and fixed historical tombstones. The account now exposes archive status and authenticated downloads. No live user queue was processed during testing.
+- A real isolated PostgreSQL logical backup/restore drill passed all 11 checks: exact contents of 20 tables, migration checksums, asset hashes, sessions, fresh login, private invitation/asset access and revocation, public versions, ledger balances and immutable triggers. This used synthetic source and fresh restored databases, not the preview database. See the backup runbook.
+- Optional SMTP recovery/verification now passes local capture integration with real Nest/PostgreSQL: disabled-mode no writes, uniform anonymous responses, cooldown, expiry, replay, single-use concurrency, safe request/consume locking and session revocation. Additional export/email browser tests are supplied for the next CI run; initial green CI does not claim coverage of new follow-up changes.
+
 ## Verification limits and external gates
 
-- A second-account browser acceptance flow was paused at the browser tool's reusable-credential handling boundary. **It was not bypassed or claimed complete.** Invitation acceptance/revocation/ACL did pass live PostgreSQL API tests. Playwright multi-context test source is provided but not executed in this managed environment.
-- Organization policy blocked DevTools; actual narrow-window verification is≈500px, **not390px**. No hidden emulation or alternate browser installation was used.
 - Not every admin mutation was clicked in browser: model/runtime/credits/report actions are covered by API tests; actual browser moderation/audit was verified.
-- Email delivery is absent. Reset/verification mail is not sent or falsely reported sent. Export and full physical purge are queued operator workflows; immediate login revocation/anonymization/hiding is implemented.
-- Policy/help/legal pages are truthful closed-test templates, not jurisdiction/age/retention/legal approval. Public launch needs owner decisions, mail/storage/retention setup, backup restore drill and deployment review.
-- External CI was not part of local verification; consult the authorized draft pull request for current remote check results. A full backup/restore drill has not run. The workflow and operator procedure are provided; no deployment is authorized.
-- Game runtime, PixiJS, AI sessions, multiplayer, Discord Activity and real payments remain intentionally unavailable. Platform preparation is not simulated gameplay.
+- External SMTP delivery is not configured or claimed. Local capture testing is separate from real-provider operation. No external emails were sent.
+- Export/purge processing is explicit operator work, not an always-running queue worker. It must be scheduled and operated according to retention policy; backup copies and third-party copies are outside a single live-database erasure operation. Pseudonymous financial/event identifiers remain, while private prose and media are erased.
+- Policy/help/legal pages remain closed-test templates, not jurisdiction/age/retention/legal approval. Public launch requires owner decisions, real mail/storage configuration, a production backup schedule and deployment/security review.
+- The restore drill proves the local logical restoration path, not an external disaster recovery service or production recovery-time objective.
+- Game runtime, PixiJS, AI sessions, multiplayer, Discord Activity, automatic AI translation and real payments remain intentionally unavailable. Platform preparation is not simulated gameplay.
+
+## Latest bundle checks
+
+The complete follow-up bundle includes the approved discovery redesign, operator data processing, optional email, controlled/custom tag localization and revision-bound public NPC translations. No automatic translation provider is active; authors write once and untranslated fields fall back to their original text. Public snapshots retain approved variants, and NPC private notes are never included.
+
+Latest strict typecheck, workspace ESLint, production build, 9 contract tests, 8 locale tests, 62 real PostgreSQL/API/config/locale checks and the SMTP capture integration scenario passed. Dependency audit reports zero vulnerabilities. The interface has 854 keys per language. Final restored-schema/browser checks are recorded in the release handoff and pull request; newly added browser test source is not a claim that the next CI run has passed.
 
 ## Bugs found and fixed during verification
 

@@ -101,3 +101,54 @@ test('metadata translation uses per-field fallback and never selects stale text'
     'Original',
   );
 });
+test('controlled tags resolve stable IDs and legacy aliases; custom translations are revision bound', () => {
+  const {
+    selectAdventureTags,
+    controlledTagSchema,
+    metadataTranslationSchema,
+  } = require('../dist');
+  const definitions = [
+    { id: 'magic', labels: { en: 'Magic', uk: 'Магія', ru: 'Магия' }, aliases: ['Магия'] },
+  ];
+  const story = {
+    tags: ['magic', 'Магия', 'Мой тег'],
+    sourceRevision: 2,
+    translations: { en: { sourceRevision: 2, tags: { 'Мой тег': 'My tag' } } },
+  };
+  assert.deepEqual(selectAdventureTags(story, 'en', definitions), ['Magic', 'Magic', 'My tag']);
+  assert.deepEqual(selectAdventureTags({ ...story, sourceRevision: 3 }, 'en', definitions), [
+    'Magic',
+    'Magic',
+    'Мой тег',
+  ]);
+  assert.deepEqual(selectAdventureTags(story, 'uk', definitions), ['Магія', 'Магія', 'Мой тег']);
+  assert.equal(
+    controlledTagSchema.safeParse({ ...definitions[0], labels: { en: 'Magic' } }).success,
+    false,
+  );
+  assert.equal(
+    metadataTranslationSchema.safeParse({
+      sourceRevision: 1,
+      tags: Object.fromEntries(Array.from({ length: 13 }, (_, i) => ['x' + i, 'x'])),
+    }).success,
+    false,
+  );
+});
+test('NPC public fields use per-field fallback and stale variants never appear ready', () => {
+  const { selectNpcText, safeNpcMetadata, npcTranslationSchema } = require('../dist');
+  const npc = {
+    name: 'Оригінал',
+    description: 'Опис',
+    sourceLanguage: 'uk',
+    sourceRevision: 2,
+    translations: { en: { name: 'Old', description: 'Old description', sourceRevision: 1 } },
+  };
+  assert.equal(selectNpcText(npc, 'en').name, 'Оригінал');
+  assert.equal(selectNpcText(npc, 'en').isFallback, true);
+  assert.equal(selectNpcText(npc, 'en').translationStatus, 'stale');
+  assert.deepEqual(safeNpcMetadata(npc).translations.en, { sourceRevision: 1 });
+  assert.equal(npcTranslationSchema.safeParse({ secrets: 'No', sourceRevision: 2 }).success, false);
+  npc.translations.en = { name: 'Current', sourceRevision: 2 };
+  assert.equal(selectNpcText(npc, 'en').name, 'Current');
+  assert.equal(selectNpcText(npc, 'en').description, 'Опис');
+});

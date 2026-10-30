@@ -22,6 +22,9 @@ import {
 } from 'lucide-react';
 import {
   selectAdventureText,
+  selectNpcText,
+  findControlledTag,
+  type ControlledTag,
   type Adventure,
   type Asset,
   type Invitation,
@@ -331,7 +334,8 @@ function AdventureEditor({ id }: { id: string }) {
     isNew = id === 'new';
   const resource = useResource<Adventure>(isNew ? null : `/studio/adventures/${id}`),
     npcs = useResource<Npc[]>('/npcs'),
-    genres = useResource<string[]>('/genres');
+    genres = useResource<string[]>('/genres'),
+    tagDefinitions = useResource<ControlledTag[]>('/tags');
   const [draft, setDraft] = useState<AdventureDraft>(() => ({
       ...blankDraft,
       sourceLanguage: locale,
@@ -441,7 +445,8 @@ function AdventureEditor({ id }: { id: string }) {
     !savedOriginal ||
     draft.title !== savedOriginal.title ||
     draft.synopsis !== savedOriginal.synopsis ||
-    draft.sourceLanguage !== savedOriginal.sourceLanguage;
+    draft.sourceLanguage !== savedOriginal.sourceLanguage ||
+    JSON.stringify(draft.tags) !== JSON.stringify(savedOriginal.tags);
   const previewText = selectAdventureText(
     {
       ...draft,
@@ -626,20 +631,58 @@ function AdventureEditor({ id }: { id: string }) {
                     onChange={(e) => change('duration', e.target.value)}
                   />
                 </Field>
-                <Field label={t('Теги')} hint={t('Через запятую, до 12 тегов')}>
-                  <Input
-                    value={draft.tags.join(', ')}
-                    onChange={(e) =>
-                      change(
-                        'tags',
-                        e.target.value
-                          .split(',')
-                          .map((s) => s.trim())
-                          .slice(0, 12),
-                      )
-                    }
-                  />
-                </Field>
+                <fieldset className="stack">
+                  <legend>{t('Теги')}</legend>
+                  <ErrorBox message={tagDefinitions.error} retry={tagDefinitions.reload} />
+                  <div className="chip-list">
+                    {tagDefinitions.data?.map((tag) => {
+                      const checked = draft.tags.some(
+                        (value) =>
+                          findControlledTag(value, tagDefinitions.data ?? [])?.id === tag.id,
+                      );
+                      return (
+                        <Button
+                          key={tag.id}
+                          type="button"
+                          variant={checked ? 'primary' : 'secondary'}
+                          aria-pressed={checked}
+                          onClick={() =>
+                            change(
+                              'tags',
+                              checked
+                                ? draft.tags.filter(
+                                    (value) =>
+                                      findControlledTag(value, tagDefinitions.data ?? [])?.id !==
+                                      tag.id,
+                                  )
+                                : [...draft.tags, tag.id].slice(0, 12),
+                            )
+                          }
+                        >
+                          {tag.labels[locale]}
+                        </Button>
+                      );
+                    })}
+                  </div>
+                  <Field label={t('Свои теги')} hint={t('Через запятую, до 12 тегов')}>
+                    <Input
+                      value={draft.tags
+                        .filter((value) => !findControlledTag(value, tagDefinitions.data ?? []))
+                        .join(', ')}
+                      onChange={(e) =>
+                        change(
+                          'tags',
+                          [
+                            ...draft.tags.filter((value) =>
+                              findControlledTag(value, tagDefinitions.data ?? []),
+                            ),
+                            ...e.target.value.split(',').map((value) => value.trim()),
+                          ].slice(0, 12),
+                        )
+                      }
+                    />
+                  </Field>
+                </fieldset>
               </div>
               <Field label={t('Обложка из коллекции')}>
                 <Select
@@ -805,10 +848,10 @@ function AdventureEditor({ id }: { id: string }) {
                           )
                         }
                       />
-                      <span className={styles.avatar}>{n.name[0]}</span>
+                      <span className={styles.avatar}>{selectNpcText(n, locale).name[0]}</span>
                       <span>
-                        <strong>{n.name}</strong>
-                        <small>{n.role || t('Житель мира')}</small>
+                        <strong>{selectNpcText(n, locale).name}</strong>
+                        <small>{selectNpcText(n, locale).role || t('Житель мира')}</small>
                       </span>
                     </label>
                   ))}
@@ -1267,7 +1310,7 @@ function AdventureEditor({ id }: { id: string }) {
 }
 
 function NpcLibrary() {
-  const { t } = useT();
+  const { t, locale } = useT();
   const items = useResource<Npc[]>('/npcs');
   return (
     <>
@@ -1295,12 +1338,16 @@ function NpcLibrary() {
               {n.portraitAssetId ? (
                 <img className={styles.portrait} src={assetUrl(n.portraitAssetId)} alt="" />
               ) : (
-                <div className={styles.portraitLetter}>{n.name[0]}</div>
+                <div className={styles.portraitLetter}>{selectNpcText(n, locale).name[0]}</div>
               )}
               <Badge>{t('Личный')}</Badge>
-              <h2>{n.name}</h2>
-              <p>{n.role || t('Роль пока не выбрана')}</p>
-              <small>{n.personality || t('Характер этой истории ещё предстоит раскрыть.')}</small>
+              <h2>{selectNpcText(n, locale).name}</h2>
+              <p>{selectNpcText(n, locale).role || t('Роль пока не выбрана')}</p>
+              <small>
+                {selectNpcText(n, locale).description ||
+                  selectNpcText(n, locale).personality ||
+                  t('Характер этой истории ещё предстоит раскрыть.')}
+              </small>
               <span className="text-link">
                 {t('Редактировать')}
                 <ArrowRight size={16} />
@@ -1324,6 +1371,10 @@ function NpcLibrary() {
 }
 type NpcDraft = Omit<Npc, 'id' | 'createdAt' | 'updatedAt'>;
 const blankNpc: NpcDraft = {
+  description: '',
+  sourceLanguage: 'ru',
+  sourceRevision: 1,
+  translations: {},
   name: '',
   age: 25,
   role: '',
@@ -1337,13 +1388,13 @@ const blankNpc: NpcDraft = {
   portraitAssetId: null,
 };
 function NpcEditor({ id }: { id: string }) {
-  const { t } = useT();
+  const { t, locale } = useT();
   const router = useRouter(),
     { toast } = useClient(),
     isNew = id === 'new',
     resource = useResource<Npc>(isNew ? null : `/npcs/${id}`),
     models = useResource<ModelProfile[]>('/models');
-  const [draft, setDraft] = useState<NpcDraft>(blankNpc),
+  const [draft, setDraft] = useState<NpcDraft>(() => ({ ...blankNpc, sourceLanguage: locale })),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [dirty, setDirty] = useState(false),
@@ -1354,6 +1405,10 @@ function NpcEditor({ id }: { id: string }) {
     if (resource.data) {
       const n = resource.data;
       setDraft({
+        description: n.description,
+        sourceLanguage: n.sourceLanguage,
+        sourceRevision: n.sourceRevision,
+        translations: n.translations,
         name: n.name,
         age: n.age,
         role: n.role,
@@ -1426,6 +1481,18 @@ function NpcEditor({ id }: { id: string }) {
       <form method="post" className="stack" onSubmit={(e) => void save(e)}>
         <Panel>
           <div className="field-grid">
+            <Field label={t('Язык оригинала')}>
+              <Select
+                value={draft.sourceLanguage}
+                onChange={(e) =>
+                  change('sourceLanguage', e.target.value as NpcDraft['sourceLanguage'])
+                }
+              >
+                <option value="uk">{t('Українська')}</option>
+                <option value="en">{t('English')}</option>
+                <option value="ru">{t('Русский')}</option>
+              </Select>
+            </Field>
             <Field label={t('Имя NPC')}>
               <Input
                 required
@@ -1460,6 +1527,13 @@ function NpcEditor({ id }: { id: string }) {
                 'NPC доступен только автору. Читатели приключения увидят безопасное превью без секретов.',
               )}
             </div>
+            <Field label={t('Публичное описание NPC')}>
+              <Textarea
+                maxLength={4000}
+                value={draft.description}
+                onChange={(e) => change('description', e.target.value)}
+              />
+            </Field>
             <Field label={t('Характер')}>
               <Textarea
                 maxLength={4000}

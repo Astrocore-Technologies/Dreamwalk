@@ -1,0 +1,2 @@
+UPDATE npcs SET data=jsonb_set(jsonb_set(jsonb_set(jsonb_set(data,'{sourceLanguage}',COALESCE(data->'sourceLanguage','"ru"'::jsonb)),'{sourceRevision}',COALESCE(data->'sourceRevision','1'::jsonb)),'{translations}',COALESCE(data->'translations','{}'::jsonb)),'{description}',COALESCE(data->'description','""'::jsonb));
+-- Published historical snapshots remain immutable; selectors support legacy originals.
