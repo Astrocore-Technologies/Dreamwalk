@@ -266,6 +266,37 @@ durable remaining-time checkpoint, conservatively recovering up to a checkpoint 
 rather than inventing elapsed offline play. Other connected participants keep their
 campaign running, including players on other maps.
 
-No client access means no endless background NPC simulation/provider loop. Autonomous
-event-driven NPC decision starts are a future approved direction; current mock decisions
-remain explicitly requested and bounded.
+No client access means no endless background NPC simulation/provider loop. In explicitly
+opted-in `hybrid-v3`, deterministic event-driven NPC routines start automatically; old
+rulesets retain their earlier explicitly requested mock behavior. External provider work
+is not silently started by those routines.
+
+### Living NPC and provider boundary
+
+`npc.speech` is an idempotent game command with `npcId` and `speech` containing a
+`say`/`whisper` channel and bounded text or a supported structured claim. The authenticated
+actor is the speaker; the server determines listeners. User text is untrusted speech,
+never a world-state edit. Public projections include only permitted notices, utterances
+and the recipient's own obligations, not private evidence, beliefs or relationship values.
+
+| Route under `/api/v1`                    | Contract                                                                                                                                             |
+| ---------------------------------------- | ---------------------------------------------------------------------------------------------------------------------------------------------------- |
+| `POST studio/adventures/:id/npc-preview` | Owner-only scratch simulation of exact `expectedRevision`, `npcId`, bounded `ticks` and optional bounded actions; never reads a party's live memory. |
+| `GET game/campaigns/:id/ai`              | Current authorized user's safe job status, provider availability and own demo wallet balance/held/available. No context or proposal.                 |
+| `POST game/campaigns/:id/ai/quote`       | Visible `npcId`, `purpose` plan/summary/speech; speech may include channel and a visible `topicId`. Server constructs all context.                   |
+| `POST game/campaigns/:id/ai/jobs`        | Same intent plus `operationId`, optional `quoteId` and explicit `consent`; idempotent request identity includes the selected speech topic/channel.   |
+| `GET admin/npc-ai/metrics`               | Admin-only aggregate job/budget/latency/memory diagnostics, no actor IDs or raw content.                                                             |
+
+A speech topic is a visible entity, not a client-selected secret observation ID. The
+server derives eligible asked-disclosures and validates the entire actual audience both
+before generation and before commit. Only permitted utterance text and a public style
+enum reach the renderer; private biography, examples, archive and planner memory do not.
+Generated speech keeps private provenance so account erasure can also remove dependent
+paraphrases and retained idempotent response projections.
+
+Provider jobs use separate wall-clock budgets/timeouts. All-offline prevents new dispatch
+and game application; already sent requests may finish and require cost reconciliation.
+The same database transaction accepts a valid result, checkpoints its effect and captures
+demo credits. Stale/invalid results release user holds without forgiving incurred or
+unknown provider cost. Summary application uses the canonical next-revision CAS validator.
+The default provider is network-free mock; live adapter verification requires approval.

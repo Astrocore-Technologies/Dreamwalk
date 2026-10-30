@@ -85,7 +85,7 @@ The managed Work environment uses its provided CUA browser and `sites-preview` d
 
 ## Configuration and safety
 
-`AI_PROVIDER=mock`, paid generation/payments/Discord flags off, `GLOBAL_SPEND_CAP=0`. This milestone rejects attempts to enable live providers or money flows. Production also rejects dev auth/faucet and requires HTTPS. `OPENAI_*` model names are future config only; no external availability is asserted. Server credentials never belong in `NEXT_PUBLIC_*`.
+`AI_PROVIDER=mock`, paid generation/payments/Discord flags off, `GLOBAL_SPEND_CAP=0`. These platform flags still reject live generation and money flows. The separate NPC provider boundary defaults to `NPC_AI_PROVIDER=mock` and external approval off; enabling its trusted HTTP adapter requires explicit operator configuration and separately approved budget, not a player setting. No vendor integration or live cost measurement is claimed. Production also rejects dev auth/faucet and requires HTTPS. Server credentials never belong in `NEXT_PUBLIC_*`.
 
 Docs: [Architecture](docs/architecture.md), [API contract](docs/api-contract.md), [Plan](docs/implementation-plan.md), [Progress/evidence](docs/progress.md), [Backup/restore](docs/runbooks/backup-restore.md), [Account data operations](docs/runbooks/account-data.md), [Optional email](docs/runbooks/email.md), [agent rules](AGENTS.md).
 
@@ -127,3 +127,29 @@ for the persistent development database; do not remove database lock files blind
 [Architecture](docs/hybrid-rpg-architecture.ru.md), [ADR](docs/adr/001-hybrid-rpg.md),
 and [acceptance evidence and limits](docs/game-acceptance.md) distinguish implementation
 from checks actually run. New game code is not deployed or published by these commands.
+
+## Living NPC ruleset
+
+In a saved Studio adventure, open Locations and choose the keeper/helper template or
+explicitly enable reactive NPC behavior. Set bounded personality, habits, authored links,
+initial knowledge and disclosure rules; saved-draft perception preview is owner-only.
+New test/published campaigns pin this `hybrid-v3` package. Existing campaigns do not
+silently upgrade, and publication still requires explicit moderation.
+
+NPCs observe only permitted events, keep personal evidence and relationships, investigate,
+warn, patrol and fulfill promises using real owned items. Their routines do not require
+clicking an NPC-request button and never make paid calls. Players can speak aloud or
+whisper; private speech and memories do not become a shared global NPC mind. Semantic
+episodes are archived separately from bounded hot context and erased with their causal
+dependencies when an account purge is confirmed.
+
+The AI panel is an explicit **mock** operation preview/consent flow. Its plan, summary
+and speech results pass server validation before commit. Demo-credit holds and provider
+cost accounting are separate; timeout does not imply a free provider request. Real-model
+quality, automatic translations, generated artwork and live payments remain gated.
+The approved art direction is drawn 2D; bundled fixture sprites are temporary.
+
+See [NPC architecture](docs/living-npc-architecture.ru.md),
+[coverage and verification](docs/npc-implementation-coverage.md), and
+[provider operations](docs/npc-ai-operations.md). Admin-only aggregate diagnostics are
+available at `GET /api/v1/admin/npc-ai/metrics`; they contain no private prompts or actor IDs.

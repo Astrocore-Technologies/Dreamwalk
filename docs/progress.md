@@ -297,3 +297,77 @@ added. Map-editor select labels now have explicit translated accessible names so
 text cannot alter exact label lookup. The older narrative-only platform scenario now
 asserts the actual first-save/map prerequisite rather than a removed pre-game placeholder.
 No gameplay or autosave assertions were weakened; new browser CI verification follows.
+
+## Living NPC architecture — implementation in progress
+
+The owner approved implementation of the full 19-section living-NPC architecture,
+with real provider calls, purchases, deployment and merge remaining separate gates.
+Baseline is merged PR #5 / main `a015bbc1576d08352a4744d2600b2bde6843c42a`.
+See `docs/npc-implementation-coverage.md`; the historical limitations above are not
+claims about the newer work in progress.
+
+New campaigns explicitly opt into `hybrid-v3`; existing v1/v2 saves retain their
+semantics. The new core contains private evidence/rumor/belief layers, per-actor
+relationships, durable obligations, bounded personality-driven routines, grounded
+summary context and audience-filtered speech. The mock repertoire is deliberately
+finite: investigate, assist with an already owned item, warn, patrol and secure an
+accessible door. It is not an arbitrary profession, combat or container simulator.
+
+Author profiles, knowledge, habits, decision examples and links remain in immutable
+playable versions. The owner sandbox inspects a saved authored draft, never a private
+live party's brain. Runtime speech and public generation use separate audience-safe
+contexts; raw player statements are untrusted data, not authoritative world facts.
+
+A durable AI job/provider boundary and demo-credit reservation accounting are being
+integrated and fault-tested with local fakes. The configurable HTTP JSON adapter is a
+contract for a trusted adapter endpoint, not a verified integration with a named model.
+No external requests or real purchases have been made. Drawn 2D is the only approved
+visual direction; existing fixture sprites are temporary.
+
+At 18:35 UTC, focused tests passed: 60 core checks, 12 real-PG runtime cases before the
+cold-episode archive addition, 14 real-PG AI cases, 30 UI/autosave/locale checks before
+additional authored fields, and 3 pure privacy checks. These are intermediate results,
+not a final aggregate regression. Additional archive, authoring and fault checks are
+underway. Cloud native browser is unavailable; new browser acceptance source exists
+but has not been executed. Final counts and publication status will follow only after
+source freeze and actual verification.
+
+### Living NPC integration checkpoint — 18:56 UTC
+
+The complete current game PostgreSQL/API/WebSocket regression passed **79/79 Node tests**
+in 190.4 seconds (`npm run test:game:integration`), with migrations 001–017 in a disposable
+cluster. This includes the old authored/rounds/clock compatibility scenarios and the new
+AI accounting, evidence, archive, speech, promise, crash and privacy cases. No transport
+or gameplay timeout was relaxed to obtain the pass.
+
+Independent review findings were fixed before this full run: summary application now
+uses next-revision CAS; speech receives allowed words and a separate public style enum;
+erasure removes paraphrased replies and other participants' cached command responses,
+including speech whose speaker identity was not visible. Runtime caches invalidate on a
+newer durable campaign revision. The real cached-response replay case passed in the
+complete run, not only in a pure helper test.
+
+Full workspace ESLint and production build passed. Final platform/SMTP/type/unit reruns
+are still in progress. New two-independent-browser acceptance is prepared but unexecuted
+until authorized CI; it does not inherit a pass from PR #5. Permanent preview has not been
+restarted or reset during this tranche, and no external AI request has been made.
+
+### Living NPC local source freeze — 19:13 UTC
+
+All remaining local checks passed: **62/62** platform integration, **1/1** SMTP capture,
+whole-workspace typecheck, **9/9** contracts, **65/65** core, **18/18** configuration/locales
+and **31/31** UI/autosave/privacy helpers. Complete ESLint, production build and formatting
+checks passed. Three pre-existing formatting warnings in errors.ts, layout.tsx and the
+web tsconfig were corrected without logic/config-value changes; no dependency was added.
+The complete game runtime result remains **79/79** on the frozen functional source.
+
+Coverage, concrete defaults, supported actions and remaining external gates are recorded
+in `docs/npc-implementation-coverage.md`. Provider integration is configurable and locally
+fake-tested, not live-vendor verified. Runtime routines are autonomous and free; provider
+jobs are explicit, not an unapproved paid sponsor loop. Cold history and safe speech are
+implemented, not a claim of arbitrary humanlike intelligence or unlimited simulation.
+
+Prepared for an owner-authorized separate pull request. The new two-context browser
+acceptance must run in its CI before browser completion can be claimed. No deployment,
+merge, real provider request, purchase or permanent preview/database reset occurred.
+The user's separately running Windows copy remains stable merged main, untouched.

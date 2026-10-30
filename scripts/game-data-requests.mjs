@@ -1,5 +1,6 @@
 /** Game extension of the explicit account export/purge transaction. No external calls. */
 import { createHash, randomUUID } from 'node:crypto';
+import { exportNpcAiData, purgeNpcAiData } from './npc-ai-data-requests.mjs';
 
 function canonical(value) {
   if (Array.isArray(value)) return value.map(canonical);
@@ -23,6 +24,151 @@ export function replaceActor(value, previous, replacement) {
     );
   return value;
 }
+/** Remove erased-player cognition, not merely replace its identifier with a stable pseudonym. */
+export function purgeLivingNpcReferences(state, actorId, archivedRoots = [], archivedIds = []) {
+  if (!state || typeof state !== 'object') return state;
+  // A retold observation can live in another NPC's journal without repeating the
+  // original actor field. Erase the causal root across the campaign, not per NPC.
+  const roots = new Set(archivedRoots);
+  const erasedObservationIds = new Set(archivedIds);
+  for (const brain of Object.values(state.npcBrains ?? {}))
+    for (const observation of brain.living?.observations ?? [])
+      if (
+        [observation.actorId, observation.targetId, observation.sourceNpcId].includes(actorId) ||
+        (typeof observation.text === 'string' && observation.text.includes(actorId))
+      )
+        roots.add(observation.rootId);
+  // A generated reply can paraphrase removed speech and itself be heard/retold.
+  // Close the provenance graph before editing any journal or transcript.
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const brain of Object.values(state.npcBrains ?? {}))
+      for (const observation of brain.living?.observations ?? [])
+        if (roots.has(observation.rootId) && !erasedObservationIds.has(observation.id)) {
+          erasedObservationIds.add(observation.id);
+          expanded = true;
+        }
+    for (const utterance of state.npcUtterances ?? [])
+      if (
+        !roots.has(utterance.id) &&
+        (utterance.speakerId === actorId ||
+          (typeof utterance.text === 'string' && utterance.text.includes(actorId)) ||
+          (utterance.sourceObservationIds ?? []).some((id) => erasedObservationIds.has(id)))
+      ) {
+        roots.add(utterance.id);
+        expanded = true;
+      }
+  }
+  for (const [npcId, brain] of Object.entries(state.npcBrains ?? {})) {
+    const memory = brain.living;
+    if (!memory) continue;
+    const removed = new Set();
+    for (const observation of memory.observations ?? []) {
+      if (
+        [observation.actorId, observation.targetId, observation.sourceNpcId].includes(actorId) ||
+        (typeof observation.text === 'string' && observation.text.includes(actorId))
+      ) {
+        removed.add(observation.id);
+        roots.add(observation.rootId);
+      }
+    }
+    const before = (memory.observations ?? []).length;
+    let audienceChanged = false;
+    memory.observations = (memory.observations ?? []).filter((observation) => {
+      if (removed.has(observation.id) || roots.has(observation.rootId)) {
+        removed.add(observation.id);
+        erasedObservationIds.add(observation.id);
+        return false;
+      }
+      audienceChanged ||= (observation.audienceIds ?? []).includes(actorId);
+      observation.audienceIds = (observation.audienceIds ?? []).filter((id) => id !== actorId);
+      return true;
+    });
+    let changed = memory.observations.length !== before || audienceChanged;
+    memory.beliefs = (memory.beliefs ?? []).filter((belief) => {
+      const keep =
+        belief.subjectId !== actorId && !(belief.evidenceIds ?? []).some((id) => removed.has(id));
+      changed ||= !keep;
+      return keep;
+    });
+    for (const [subject, relation] of Object.entries(memory.relationships ?? {})) {
+      if (subject === actorId || (relation.evidenceIds ?? []).some((id) => removed.has(id))) {
+        delete memory.relationships[subject];
+        changed = true;
+      }
+    }
+    memory.obligations = (memory.obligations ?? []).filter((obligation) => {
+      if (obligation.toActorId === actorId || obligation.itemId === actorId) {
+        changed = true;
+        return false;
+      }
+      // Other participants retain their accepted commitments, without erased evidence.
+      obligation.evidenceIds = (obligation.evidenceIds ?? []).filter((id) => !removed.has(id));
+      return true;
+    });
+    const causes = memory.causes ?? [];
+    memory.causes = causes.filter((cause) => !removed.has(cause.observationId));
+    changed ||= causes.length !== memory.causes.length || memory.goal?.targetId === actorId;
+    if (changed) {
+      delete memory.summary;
+      memory.knowledgeRevision = (memory.knowledgeRevision ?? 0) + 1;
+      memory.goal = { kind: 'patrol', revision: (memory.goal?.revision ?? 0) + 1, evidenceIds: [] };
+      brain.plan = [];
+      brain.cursor = 0;
+      brain.waitingForPath = false;
+      brain.generation = (brain.generation ?? 0) + 1;
+      const npc = state.entities?.[npcId];
+      if (npc) {
+        npc.path = [];
+        npc.movementGeneration = (npc.movementGeneration ?? 0) + 1;
+        npc.revision = (npc.revision ?? 0) + 1;
+      }
+    }
+  }
+  if (state.npcNotices)
+    state.npcNotices = state.npcNotices
+      .map((notice) => ({
+        ...notice,
+        audienceIds: (notice.audienceIds ?? []).filter((id) => id !== actorId),
+      }))
+      .filter((notice) => notice.npcId !== actorId && notice.audienceIds.length > 0);
+  if (state.npcUtterances)
+    state.npcUtterances = state.npcUtterances
+      .filter(
+        (utterance) =>
+          utterance.speakerId !== actorId &&
+          !roots.has(utterance.id) &&
+          !(utterance.sourceObservationIds ?? []).some((id) => erasedObservationIds.has(id)) &&
+          !(typeof utterance.text === 'string' && utterance.text.includes(actorId)),
+      )
+      .map((utterance) => ({
+        ...utterance,
+        audienceIds: (utterance.audienceIds ?? []).filter((id) => id !== actorId),
+        speakerKnownToIds: (utterance.speakerKnownToIds ?? []).filter((id) => id !== actorId),
+      }))
+      .filter((utterance) => utterance.audienceIds.length > 0);
+  return state;
+}
+/** Retained idempotent responses are public projections, not private states. */
+export function redactGameOperationSpeech(value, actorId, erasedUtteranceIds) {
+  if (Array.isArray(value))
+    return value.map((item) => redactGameOperationSpeech(item, actorId, erasedUtteranceIds));
+  if (!value || typeof value !== 'object') return value;
+  return Object.fromEntries(
+    Object.entries(value).map(([key, child]) => [
+      key,
+      key === 'npcUtterances' && Array.isArray(child)
+        ? child.filter(
+            (utterance) =>
+              !erasedUtteranceIds.has(utterance.id) &&
+              utterance.speakerId !== actorId &&
+              !(typeof utterance.text === 'string' && utterance.text.includes(actorId)),
+          )
+        : redactGameOperationSpeech(child, actorId, erasedUtteranceIds),
+    ]),
+  );
+}
 export async function exportGameData(client, userId) {
   const rows = (
     await client.query(
@@ -39,12 +185,14 @@ export async function exportGameData(client, userId) {
       [userId],
     )
   ).rows;
+  const aiJobs = await exportNpcAiData(client, userId);
   // Account export is not permission to read other players' inventories or secret world state.
   return rows.map(({ state, actor_id, ...metadata }) => {
     const actor = state.entities?.[actor_id];
     return {
       ...metadata,
       npcRequests: jobs.filter((job) => job.campaign_id === metadata.id),
+      npcAiRequests: aiJobs.filter((job) => job.campaign_id === metadata.id),
       actor: actor ? { id: actor.id, mapId: actor.mapId, x: actor.x, y: actor.y } : null,
       inventory: (actor?.inventory ?? []).map((id) => ({ id })),
     };
@@ -77,7 +225,24 @@ export async function purgeGameData(client, userId) {
       [userId],
     )
   ).rows;
+  await purgeNpcAiData(client, userId, campaigns);
   for (const campaign of campaigns) {
+    const erasedActorId = `player-${userId}`;
+    const archivedRoots = (
+      await client.query(
+        `SELECT DISTINCT root_id FROM game_npc_episodes WHERE campaign_id=$1
+        AND (actor_id=$2 OR target_id=$2 OR source_npc_id=$2 OR strpos(payload::text,$2)>0)`,
+        [campaign.id, erasedActorId],
+      )
+    ).rows.map((row) => row.root_id);
+    // Historical observations are immutable. A confirmed erasure deletes the
+    // affected causal roots rather than leaving personal data in an old payload.
+    const archivedIds = (
+      await client.query(
+        'DELETE FROM game_npc_episodes WHERE campaign_id=$1 AND ($2::boolean OR root_id=ANY($3::text[])) RETURNING observation_id',
+        [campaign.id, campaign.source_owned, archivedRoots],
+      )
+    ).rows.map((row) => row.observation_id);
     // Pending/contextual mock plans can reference the erased actor even when another
     // participant requested them; cancellation is safer than retaining private context.
     await client.query('DELETE FROM game_npc_jobs WHERE campaign_id=$1', [campaign.id]);
@@ -103,7 +268,33 @@ export async function purgeGameData(client, userId) {
     }
     const actorId = `player-${userId}`,
       replacement = `erased-${randomUUID()}`;
-    const state = replaceActor(campaign.state, actorId, replacement);
+    const erasedUtteranceIds = new Set();
+    const deletedReplyRoots = new Set();
+    const eraseDerivedArchive = async () => {
+      const roots = [...erasedUtteranceIds].filter((id) => !deletedReplyRoots.has(id));
+      if (!roots.length) return;
+      const deleted = await client.query(
+        'DELETE FROM game_npc_episodes WHERE campaign_id=$1 AND root_id=ANY($2::text[]) RETURNING observation_id',
+        [campaign.id, roots],
+      );
+      archivedIds.push(...deleted.rows.map((row) => row.observation_id));
+      archivedRoots.push(...roots);
+      for (const root of roots) deletedReplyRoots.add(root);
+    };
+    const cleanPrivateState = (original) => {
+      const speechIds = (original?.npcUtterances ?? []).map((u) => u.id);
+      const cleaned = purgeLivingNpcReferences(original, actorId, archivedRoots, archivedIds);
+      const retained = new Set((cleaned?.npcUtterances ?? []).map((u) => u.id));
+      for (const speechId of speechIds)
+        if (!retained.has(speechId)) erasedUtteranceIds.add(speechId);
+      return cleaned;
+    };
+    const state = replaceActor(
+      cleanPrivateState(structuredClone(campaign.state)),
+      actorId,
+      replacement,
+    );
+    await eraseDerivedArchive();
     const actor = state.entities?.[replacement];
     if (actor) {
       for (const itemId of actor.inventory ?? []) {
@@ -161,16 +352,26 @@ export async function purgeGameData(client, userId) {
     // Immutable history has only fixture semantics in G0–G3; remove identifying actor IDs
     // while preserving other members' items and deterministic world outcomes.
     const events = (
-      await client.query('SELECT sequence,payload FROM game_events WHERE campaign_id=$1', [
-        campaign.id,
-      ])
+      await client.query(
+        'SELECT sequence,payload FROM game_events WHERE campaign_id=$1 ORDER BY sequence',
+        [campaign.id],
+      )
     ).rows;
-    for (const event of events)
+    for (const event of events) {
+      const original = structuredClone(event.payload);
+      if (original?.state) cleanPrivateState(original.state);
+      await eraseDerivedArchive();
+      const payload = replaceActor(original, actorId, replacement);
       await client.query('UPDATE game_events SET payload=$3 WHERE campaign_id=$1 AND sequence=$2', [
         campaign.id,
         event.sequence,
-        replaceActor(event.payload, actorId, replacement),
+        payload,
       ]);
+    }
+    // Old reply provenance may have left the hot window. History is processed
+    // chronologically above; apply its full closure to the current checkpoint too.
+    cleanPrivateState(state);
+    await eraseDerivedArchive();
     await client.query('DELETE FROM game_operations WHERE campaign_id=$1 AND actor_id=$2', [
       campaign.id,
       actorId,
@@ -188,7 +389,11 @@ export async function purgeGameData(client, userId) {
           campaign.id,
           operation.actor_id,
           operation.operation_id,
-          replaceActor(operation.result, actorId, replacement),
+          replaceActor(
+            redactGameOperationSpeech(operation.result, actorId, erasedUtteranceIds),
+            actorId,
+            replacement,
+          ),
         ],
       );
     await client.query(

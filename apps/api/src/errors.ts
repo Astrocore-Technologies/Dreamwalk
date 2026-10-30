@@ -14,13 +14,11 @@ export class Errors implements ExceptionFilter {
   catch(error: unknown, host: ArgumentsHost) {
     const res = host.switchToHttp().getResponse<Response>();
     if (error instanceof ZodError) {
-      res
-        .status(400)
-        .json({
-          code: 'VALIDATION_FAILED',
-          message: error.issues.map((x) => `${x.path.join('.')}: ${x.message}`).join('; '),
-          retryable: false,
-        });
+      res.status(400).json({
+        code: 'VALIDATION_FAILED',
+        message: error.issues.map((x) => `${x.path.join('.')}: ${x.message}`).join('; '),
+        retryable: false,
+      });
       return;
     }
     if (error instanceof HttpException) {
@@ -49,32 +47,26 @@ export class Errors implements ExceptionFilter {
       }
     )?.code;
     if (dbCode === '23505') {
-      res
-        .status(409)
-        .json({
-          code: 'STATE_CONFLICT',
-          message: 'Такая запись уже существует. Проверьте email или имя пользователя.',
-          retryable: false,
-        });
+      res.status(409).json({
+        code: 'STATE_CONFLICT',
+        message: 'Такая запись уже существует. Проверьте email или имя пользователя.',
+        retryable: false,
+      });
       return;
     }
     if (dbCode === '22P02') {
-      res
-        .status(400)
-        .json({
-          code: 'VALIDATION_FAILED',
-          message: 'Некорректный идентификатор.',
-          retryable: false,
-        });
+      res.status(400).json({
+        code: 'VALIDATION_FAILED',
+        message: 'Некорректный идентификатор.',
+        retryable: false,
+      });
       return;
     }
     console.error('API internal failure', error instanceof Error ? error.name : 'Unknown');
-    res
-      .status(500)
-      .json({
-        code: 'INTERNAL_ERROR',
-        message: 'Не удалось выполнить запрос. Попробуйте позже.',
-        retryable: false,
-      });
+    res.status(500).json({
+      code: 'INTERNAL_ERROR',
+      message: 'Не удалось выполнить запрос. Попробуйте позже.',
+      retryable: false,
+    });
   }
 }

@@ -15,6 +15,7 @@ import { config } from './config';
 import { PlayableService } from './game/playable.service';
 import { PlayableController } from './game/playable.controller';
 import { GameService } from './game/game.service';
+import { NpcAiService } from './ai/npc-ai.service';
 import { GameController } from './game/game.controller';
 import { attachGameSockets } from './game/game.socket';
 @Controller('api/v1')
@@ -41,7 +42,7 @@ class Health {
     GameController,
     PlayableController,
   ],
-  providers: [Db, Auth, Content, AssetUploadGuard, GameService, PlayableService],
+  providers: [Db, Auth, Content, AssetUploadGuard, NpcAiService, GameService, PlayableService],
 })
 class AppModule {}
 async function bootstrap() {

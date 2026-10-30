@@ -1,5 +1,7 @@
+import { livingMessages } from './living-locales';
 /** Game UI and curated prototype names; never used to translate author content. */
 export const gameMessages = {
+  ...livingMessages,
   Автосохранено: { ru: 'Автосохранено', en: 'Autosaved', uk: 'Автоматично збережено' },
   'Ожидание автосохранения': {
     ru: 'Ожидание автосохранения',

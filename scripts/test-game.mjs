@@ -5,8 +5,10 @@ import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { readdirSync } from 'node:fs';
 import { startLocalPostgres } from './postgres-local.mjs';
+import { forceMockNpcTestEnvironment } from './mock-npc-test-env.mjs';
 
 if (process.env.NODE_ENV === 'production') throw new Error('Game tests cannot run in production');
+forceMockNpcTestEnvironment();
 async function freePort() {
   const server = net.createServer();
   server.listen(0, '127.0.0.1');

@@ -13,6 +13,7 @@ import { Db, camel } from './db';
 import { Auth, userView } from './auth';
 import { adventureSelect, adventureView, Content, readableAdventureSql } from './content';
 import { fail } from './errors';
+import { NpcAiService } from './ai/npc-ai.service';
 @Controller('api/v1')
 export class AdminController {
   constructor(
@@ -22,11 +23,27 @@ export class AdminController {
     private auth: Auth,
     @Inject(Content)
     private content: Content,
+    @Inject(NpcAiService)
+    private npcAi: NpcAiService,
   ) {}
+  @Get('admin/npc-ai/metrics')
+  async npcAiMetrics(@Req() req: Request) {
+    await this.auth.admin(req);
+    return this.npcAi.metrics();
+  }
   private async walletFor(id: string) {
-    const row = (await this.db.query('SELECT balance FROM wallets WHERE user_id=$1', [id]))[0];
+    const row = (
+      await this.db.query(
+        `SELECT w.balance, COALESCE((SELECT SUM(j.credits) FROM npc_ai_jobs j
+       WHERE j.payer_user_id=w.user_id AND j.reservation_status='held'),0)::bigint AS held
+       FROM wallets w WHERE w.user_id=$1`,
+        [id],
+      )
+    )[0];
     return {
       balance: row?.balance ?? 0,
+      reserved: Number(row?.held ?? 0),
+      available: (row?.balance ?? 0) - Number(row?.held ?? 0),
       mode: 'demo',
       ledger: (
         await this.db.query(
@@ -586,7 +603,15 @@ export class AdminController {
         )
       ).rows[0];
       if (!wallet) fail(404, 'NOT_FOUND', 'Кошелёк не найден.');
-      if (wallet.balance + b.amount < 0)
+      const held = Number(
+        (
+          await c.query(
+            "SELECT COALESCE(SUM(credits),0)::bigint AS total FROM npc_ai_jobs WHERE payer_user_id=$1 AND reservation_status='held'",
+            [b.userId],
+          )
+        ).rows[0].total,
+      );
+      if (wallet.balance + b.amount < held)
         fail(409, 'INSUFFICIENT_CREDITS', 'Недостаточно демонстрационных Искр.');
       await c.query('UPDATE wallets SET balance=balance+$2 WHERE user_id=$1', [b.userId, b.amount]);
       await c.query(

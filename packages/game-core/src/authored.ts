@@ -5,6 +5,7 @@ import {
   type GameState,
   type PlayablePackage,
 } from '@dreamwalk/contracts';
+import { createLivingMemory, refreshLivingPerception } from './living';
 import { addPlayer, createObservatoryState, findPath, validateMapState, walkable } from './index';
 export function createAuthoredDraft(
   template: 'observatory' | 'courtyard' = 'observatory',
@@ -166,6 +167,18 @@ export function compilePlayableDraft(input: unknown): {
       lastInputSeq: 0,
     };
     npcBrains[n.id] = {
+      ...(d.npcBehavior === 'reactive-v1'
+        ? {
+            living: createLivingMemory(
+              n.personality ?? {
+                role: n.goal === 'help' ? 'helper' : 'guard',
+                values: n.goal === 'help' ? ['kindness'] : ['duty'],
+                taboos: ['steal', 'disclose_private'],
+                speechStyle: 'reserved',
+              },
+            ),
+          }
+        : {}),
       traits: ['cautious', 'helpful'],
       goal: n.goal,
       patrolTarget: n.patrolTarget ?? { x: n.x, y: n.y },
@@ -188,10 +201,68 @@ export function compilePlayableDraft(input: unknown): {
       ((e.locked && !e.keyId) || (e.keyId && entities[e.keyId]?.kind !== 'item'))
     )
       errors.push(`entity:${e.id}:key`);
+  if (d.npcBehavior === 'reactive-v1')
+    for (const n of d.npcs) {
+      const memory = npcBrains[n.id].living!;
+      const linked = new Set<string>();
+      for (const link of n.personality?.links ?? []) {
+        if (link.npcId === n.id || entities[link.npcId]?.kind !== 'npc' || linked.has(link.npcId))
+          errors.push(`npc:${n.id}:personality-link`);
+        linked.add(link.npcId);
+        if (entities[link.npcId]?.kind === 'npc' && link.npcId !== n.id) {
+          const evidenceId = `initial-link:${n.id}:${link.npcId}`;
+          memory.observations.push({
+            id: evidenceId,
+            eventId: evidenceId,
+            rootId: evidenceId,
+            kind: 'known_entity',
+            tick: 0,
+            mapId: entities[n.id].mapId,
+            channel: 'direct',
+            confidence: 'witnessed',
+            actorId: link.npcId,
+            targetId: link.npcId,
+            depth: 0,
+            disclosure: 'private',
+            audienceIds: [],
+            revealCondition: 'never',
+          });
+          memory.relationships[link.npcId] = {
+            trust: link.relation === 'rival' ? -1 : link.relation === 'mentor' ? 2 : 1,
+            alertness: link.relation === 'rival' ? 1 : 0,
+            debt: link.relation === 'mentor' ? 1 : 0,
+            evidenceIds: [evidenceId],
+          };
+        }
+      }
+      for (const [i, k] of (n.initialKnowledge ?? []).entries()) {
+        const entity = entities[k.entityId];
+        if (!entity) {
+          errors.push(`npc:${n.id}:knowledge-target`);
+          continue;
+        }
+        memory.observations.push({
+          id: `initial:${n.id}:${i}`,
+          eventId: `initial:${n.id}:${i}`,
+          rootId: `initial:${n.id}:${i}`,
+          kind: 'known_entity',
+          tick: 0,
+          mapId: entity.mapId,
+          point: { x: entity.x, y: entity.y },
+          channel: 'direct',
+          confidence: 'witnessed',
+          targetId: entity.id,
+          depth: 0,
+          disclosure: 'private',
+          audienceIds: [],
+          revealCondition: k.revealCondition,
+        });
+      }
+    }
   const playable: PlayablePackage = {
     assetManifest: { ...bundledGameAssetManifest },
     schemaVersion: 1,
-    rulesetVersion: 'hybrid-v2',
+    rulesetVersion: d.npcBehavior === 'reactive-v1' ? 'hybrid-v3' : 'hybrid-v2',
     title: d.title,
     startMapId: d.startMapId,
     maps,
@@ -290,7 +361,7 @@ export function createStateFromPlayable(
   let state: GameState = {
     assetManifest: { ...playable.assetManifest },
     schemaVersion: 1,
-    rulesetVersion: 'hybrid-v2',
+    rulesetVersion: playable.rulesetVersion,
     seed,
     tick: 0,
     revision: 0,
@@ -307,5 +378,5 @@ export function createStateFromPlayable(
     if (added.error) throw new Error(added.error);
     state = added.state;
   }
-  return state;
+  return state.rulesetVersion === 'hybrid-v3' ? refreshLivingPerception(state).state : state;
 }

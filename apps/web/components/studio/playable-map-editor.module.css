@@ -166,3 +166,33 @@
   white-space: normal;
   overflow-wrap: anywhere;
 }
+
+.livingPolicy {
+  margin: 16px 0;
+  padding: 16px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  min-width: 0;
+}
+.livingPolicy input {
+  width: auto;
+  margin-right: 8px;
+}
+.editor :global(.living-npc-profile) {
+  min-width: 0;
+  padding: 12px;
+  border: 1px solid var(--line);
+  display: grid;
+  gap: 12px;
+}
+.editor :global(.living-npc-profile) fieldset {
+  min-width: 0;
+  display: grid;
+  gap: 8px;
+  border: 0;
+  padding: 0;
+}
+.editor :global(.living-npc-profile) p {
+  font-size: 0.8rem;
+  color: var(--muted);
+}

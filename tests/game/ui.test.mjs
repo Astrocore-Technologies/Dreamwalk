@@ -140,7 +140,10 @@ test('the renderer only resolves the pinned bundled atlas and its immutable file
     prototypeAtlas.path,
   );
   assert.throws(() =>
-    resolveGameAtlas({ id: 'https://example.com/untrusted.svg', sha256: prototypeAtlas.sha256 }),
+    resolveGameAtlas({
+      id: 'https://example.com/untrusted.svg',
+      sha256: prototypeAtlas.sha256,
+    }),
   );
   assert.throws(() => resolveGameAtlas({ id: prototypeAtlas.id, sha256: 'modified' }));
   const bytes = await readFile(
@@ -224,5 +227,139 @@ test('authored game header reserves status width and stacks on narrow screens', 
   assert.match(
     css.slice(css.indexOf('@media (max-width: 650px)')),
     /\.roomHeader\s*\{[^}]*flex-direction: column;/,
+  );
+});
+
+test('living NPC controls preserve saved-version privacy and server-only outcomes', async () => {
+  const read = (path) => readFile(new URL(`../../apps/web/${path}`, import.meta.url), 'utf8');
+  const editor = await read('components/studio/playable-map-editor.tsx');
+  const preview = await read('components/studio/living-npc-preview.tsx');
+  const journal = await read('components/game/living-notices.tsx');
+  const speech = await read('components/game/living-conversation.tsx');
+  const budget = await read('components/game/living-ai-panel.tsx');
+  assert.match(editor, /npcBehavior/);
+  assert.match(editor, /autosave.flush/);
+  assert.match(preview, /expectedRevision = await flush/);
+  assert.match(preview, /\/studio\/adventures\/\$\{adventureId\}\/npc-preview/);
+  assert.doesNotMatch(preview, /\/game\/campaigns/);
+  assert.match(journal, /projection.npcObligations/);
+  assert.match(journal, /projection.npcNotices/);
+  assert.match(speech, /projection.npcUtterances/);
+  assert.match(speech, /type: 'npc.speech'/);
+  for (const source of [journal, speech, budget])
+    assert.doesNotMatch(source, /npcBrains|relationships|dangerouslySetInnerHTML/);
+  assert.match(budget, /quoteId: quote.id/);
+  assert.match(budget, /consent: true/);
+  assert.match(budget, /operationId: operation.current/);
+  assert.match(budget, /provider !== 'mock'/);
+});
+
+test('living NPC author and player copy has complete locale entries', async () => {
+  const files = [
+    'studio/living-npc-profile',
+    'studio/living-npc-examples',
+    'studio/living-npc-preview',
+    'game/living-notices',
+    'game/living-conversation',
+    'game/living-ai-panel',
+  ];
+  for (const file of files) {
+    const source = await readFile(
+      new URL(`../../apps/web/components/${file}.tsx`, import.meta.url),
+      'utf8',
+    );
+    const ast = ts.createSourceFile(file, source, ts.ScriptTarget.Latest, true, ts.ScriptKind.TSX);
+    const visit = (node) => {
+      if (
+        ts.isCallExpression(node) &&
+        node.expression.getText(ast) === 't' &&
+        node.arguments[0] &&
+        ts.isStringLiteral(node.arguments[0])
+      ) {
+        const key = node.arguments[0].text;
+        for (const locale of supportedLocales)
+          assert.ok(dictionaries[locale][key], `${file}: ${locale}: ${key}`);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(ast);
+  }
+});
+
+test('authored habits examples and links stay bounded and private', async () => {
+  const source = await readFile(
+    new URL('../../apps/web/components/studio/living-npc-examples.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /decisionExamples/);
+  assert.match(source, /maxLength=\{240\}/);
+  assert.match(source, /npc.id !== npcId/);
+  assert.match(source, /length \|\| 0\) >= 4/);
+  const publicSpeech = await readFile(
+    new URL('../../apps/web/components/game/living-conversation.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.doesNotMatch(publicSpeech, /decisionExamples|biography|personality|\.links/);
+});
+
+test('speech topics use only visible projected entities and reset quotes', async () => {
+  const source = await readFile(
+    new URL('../../apps/web/components/game/living-ai-panel.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /projection.entities.some\(\(entity\) => entity.id === selectedTopic\)/);
+  assert.match(source, /purpose === 'speech'/);
+  assert.match(source, /recipient, campaignId, purpose, channel, topicId/);
+  assert.match(source, /purpose, channel, topicId/);
+  assert.doesNotMatch(source, /requestedFactIds|disclosureFactIds|observationIds/);
+});
+
+test('public NPC speech style is explicit and separate from private prose', async () => {
+  const profile = await readFile(
+    new URL('../../apps/web/components/studio/living-npc-profile.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(profile, /profile.publicSpeechStyle \|\| 'neutral'/);
+  assert.match(profile, /Частные заметки о манере речи/);
+  for (const key of ['neutral', 'warm', 'formal', 'terse', 'wry'])
+    assert.match(profile, new RegExp(key + ':'));
+});
+
+test('saved NPC textarea labels do not include their hydrated text content', async () => {
+  const profile = await readFile(
+    new URL('../../apps/web/components/studio/living-npc-profile.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(profile, /aria-label=\{t\('Биография и мотивы'\)\}/);
+  assert.match(profile, /aria-label=\{t\('Частные заметки о манере речи'\)\}/);
+});
+
+test('NPC countdowns do not invalidate command revisions but outcomes and positions do', async () => {
+  const { semanticGameProjection } = await import('../../apps/api/src/game/projection-clock.ts');
+  const p = {
+    tick: 5,
+    revision: 7,
+    entities: [{ id: 'helper', x: 2, y: 3 }],
+    npcObligations: [{ id: 'p', status: 'accepted', remainingTicks: 50 }],
+  };
+  assert.deepEqual(
+    semanticGameProjection(p),
+    semanticGameProjection({
+      ...p,
+      tick: 6,
+      revision: 8,
+      npcObligations: [{ ...p.npcObligations[0], remainingTicks: 49 }],
+    }),
+  );
+  assert.notDeepEqual(
+    semanticGameProjection(p),
+    semanticGameProjection({
+      ...p,
+      npcObligations: [{ ...p.npcObligations[0], status: 'fulfilled' }],
+    }),
+  );
+  assert.notDeepEqual(
+    semanticGameProjection(p),
+    semanticGameProjection({ ...p, entities: [{ id: 'helper', x: 3, y: 3 }] }),
   );
 });
