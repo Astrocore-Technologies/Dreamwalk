@@ -27,16 +27,16 @@ test('player: register, save account settings, reload, and cancel deletion', asy
   await page.getByLabel('Имя', { exact: true }).fill('Новое имя путешественника');
   await page.getByLabel('О себе').fill('Люблю тайны и тихие приключения.');
   await page.getByRole('button', { name: 'Сохранить профиль' }).click();
-  await expect(page.getByText('Профиль сохранён', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Профиль сохранён' })).toBeVisible();
   await page.reload();
   await expect(page.getByLabel('Имя', { exact: true })).toHaveValue('Новое имя путешественника');
   await page.goto('/account/settings');
-  await page.getByLabel('Тема', { exact: true }).selectOption('light');
+  await page.getByRole('combobox', { name: 'Тема', exact: true }).selectOption('light');
   await page.getByLabel('Часовой пояс').fill('Europe/Paris');
   await page.getByRole('button', { name: 'Сохранить настройки' }).click();
-  await expect(page.getByText('Настройки сохранены', { exact: true })).toBeVisible();
+  await expect(page.getByRole('status').filter({ hasText: 'Настройки сохранены' })).toBeVisible();
   await page.reload();
-  await expect(page.getByLabel('Тема', { exact: true })).toHaveValue('light');
+  await expect(page.getByRole('combobox', { name: 'Тема', exact: true })).toHaveValue('light');
   await expect(page.getByLabel('Часовой пояс')).toHaveValue('Europe/Paris');
   await page.goto('/account/privacy');
   await page.getByRole('button', { name: /Удалить аккаунт/ }).click();
@@ -85,13 +85,17 @@ test('author: NPC and complete adventure draft survive reload and submit confirm
   await page.getByLabel('Название сцены').first().fill('Прибытие');
   await page.getByLabel('Локация сцены').first().selectOption({ label: 'Двор обсерватории' });
   await page.getByLabel('Начальная ситуация').first().fill('У ворот ждёт смотритель с письмом.');
-  await page.getByLabel('Стартовая сцена', { exact: true }).selectOption({ label: 'Прибытие' });
+  await page
+    .getByRole('combobox', { name: 'Стартовая сцена', exact: true })
+    .selectOption({ label: 'Прибытие' });
   await page.getByRole('button', { name: /Просмотр$/ }).click();
   await expect(
     page.getByRole('button', { name: 'Игровой режим появится на следующем этапе' }),
   ).toBeDisabled();
   await page.getByRole('button', { name: /Публикация$/ }).click();
-  await page.getByLabel('Режим публикации').selectOption('public');
+  await page
+    .getByRole('combobox', { name: 'Режим публикации', exact: true })
+    .selectOption('public');
   await page.getByRole('button', { name: 'Отправить на модерацию' }).click();
   await expect(page.getByRole('dialog')).toBeVisible();
   await page.getByRole('button', { name: 'Отмена', exact: true }).click();
@@ -129,6 +133,9 @@ test('public navigation works on mobile without horizontal overflow', async ({ p
 test('interface locale switches and survives account login', async ({ page }) => {
   const credentials = await register(page);
   await page.goto('/account/settings');
+  // The shell exists before auth has resolved. Wait for the protected settings form
+  // so switching language exercises account persistence, not guest-only storage.
+  await expect(page.getByRole('button', { name: 'Сохранить настройки' })).toBeEnabled();
   await Promise.all([
     page.waitForResponse(
       (response) =>
@@ -141,6 +148,7 @@ test('interface locale switches and survives account login', async ({ page }) =>
   await expect(page.getByRole('heading', { name: 'Make yourself at home' })).toBeVisible();
   await page.reload();
   await expect(page.locator('header').getByRole('combobox')).toHaveValue('en');
+  await expect(page.getByRole('button', { name: 'Save preferences' })).toBeEnabled();
   await Promise.all([
     page.waitForResponse(
       (response) =>
@@ -176,13 +184,17 @@ test('private adventure invitation accepts and revokes without publishing', asyn
       .getByLabel('Синопсис')
       .fill('Этот мир доступен только лично приглашённым участникам.');
     await ownerPage.getByRole('button', { name: /Публикация$/ }).click();
-    await expect(ownerPage.getByLabel('Режим публикации')).toHaveValue('private');
+    await expect(
+      ownerPage.getByRole('combobox', { name: 'Режим публикации', exact: true }),
+    ).toHaveValue('private');
     await ownerPage.getByRole('button', { name: 'Сохранить приватное приключение' }).click();
     await expect(ownerPage).toHaveURL(/\/studio\/adventures\/[a-f0-9-]+$/);
     await ownerPage.getByRole('button', { name: /Публикация$/ }).click();
     await ownerPage.getByLabel('Пригласить по handle').fill(guest.handle);
     await ownerPage.getByRole('button', { name: 'Пригласить', exact: true }).click();
-    await expect(ownerPage.getByText('Приглашение отправлено', { exact: true })).toBeVisible();
+    await expect(
+      ownerPage.getByRole('status').filter({ hasText: 'Приглашение отправлено' }),
+    ).toBeVisible();
     await guestPage.goto('/library');
     await guestPage.getByRole('button', { name: /^Приглашения/ }).click();
     await expect(guestPage.getByText(title, { exact: true })).toBeVisible();
@@ -195,7 +207,9 @@ test('private adventure invitation accepts and revokes without publishing', asyn
       .getByRole('dialog')
       .getByRole('button', { name: 'Отозвать', exact: true })
       .click();
-    await expect(ownerPage.getByText('Приглашение отозвано', { exact: true })).toBeVisible();
+    await expect(
+      ownerPage.getByRole('status').filter({ hasText: 'Приглашение отозвано' }),
+    ).toBeVisible();
     await guestPage.reload();
     await guestPage.getByRole('button', { name: /^Приглашённые миры/ }).click();
     await expect(guestPage.getByText(title, { exact: true })).toHaveCount(0);
