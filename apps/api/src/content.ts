@@ -286,12 +286,23 @@ export class ContentController {
     slug: string,
     @Req()
     req: Request,
+    @Query('view')
+    view?: string,
   ) {
+    if (view !== undefined && view !== 'published') fail(400, 'INVALID_VIEW', 'INVALID_VIEW');
     const rows = await this.db.query(adventureSelect + ' WHERE a.slug=$1', [slug]);
     const row = rows[0];
     if (!row) fail(404, 'NOT_FOUND', 'Приключение не найдено.');
-    const u = await this.auth.current(req);
-    const access = await this.content.access(row, u);
+    const publishedOnly = view === 'published';
+    if (
+      publishedOnly &&
+      (row.visibility !== 'public' || !row.published_snapshot || row.status === 'archived')
+    )
+      fail(404, 'NOT_FOUND', 'Приключение не найдено.');
+    // Discovery must use the approved snapshot even for its signed-in author.
+    // The default detail route retains its existing owner/invitation behavior.
+    const u = publishedOnly ? null : await this.auth.current(req);
+    const access = publishedOnly ? 'public' : await this.content.access(row, u);
     if (!access) fail(404, 'NOT_FOUND', 'Приключение не найдено.');
     const usePublished = access === 'public';
     const result = adventureView(row, usePublished, access !== 'owner');
@@ -322,12 +333,14 @@ export class ContentController {
         ...n,
         ...safeNpcMetadata(n as unknown as import('@dreamwalk/contracts').NpcMetadata),
       })),
-      versions: (
-        await this.db.query(
-          'SELECT id,version,created_at FROM adventure_versions WHERE adventure_id=$1 ORDER BY version DESC',
-          [row.id],
-        )
-      ).map(camel),
+      versions: publishedOnly
+        ? []
+        : (
+            await this.db.query(
+              'SELECT id,version,created_at FROM adventure_versions WHERE adventure_id=$1 ORDER BY version DESC',
+              [row.id],
+            )
+          ).map(camel),
     };
   }
   @Get('creators/:handle')

@@ -59,6 +59,8 @@ jobs:
         run: npm run test:assets:integration
       - name: Image quote, consent, budget and admission integration
         run: npm run test:images:integration
+      - name: Public discovery snapshot isolation
+        run: npm run test:home:integration
       - name: Local SMTP capture integration
         run: npm run test:mail
       - name: Browser dependencies
@@ -87,5 +89,14 @@ jobs:
         with:
           name: reusable-art-preview
           path: test-results/**/custom-art-scene.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Save actual homepage desktop and mobile previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: homepage-preview
+          path: test-results/**/home-*.png
           if-no-files-found: ignore
           retention-days: 7

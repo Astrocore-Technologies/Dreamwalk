@@ -17,12 +17,10 @@ import {
   Clock3,
   UsersRound,
   Heart,
-  Feather,
   Compass,
   Search,
   SlidersHorizontal,
   Shield,
-  BookOpen,
 } from 'lucide-react';
 import {
   api,
@@ -44,7 +42,6 @@ import {
   Input,
   Loading,
   Modal,
-  MoreLink,
   Select,
   Textarea,
 } from './ui';
@@ -104,112 +101,7 @@ export function AdventureCard({
     </Link>
   );
 }
-export function HomePage() {
-  const { t: tr, locale, taxonomy } = useT();
-  const { user } = useClient();
-  const { data, loading, error, reload } = useResource<Adventure[]>('/adventures?sort=popular');
-  const featured = data?.find((item) => item.slug === 'old-observatory') || data?.[0];
-  const details = useResource<Adventure>(
-    featured ? `/adventures/${encodeURIComponent(featured.slug)}` : null,
-  );
-  const text = featured ? selectAdventureText(featured, locale) : null;
-  return (
-    <div className="discovery-page discovery-home">
-      <div className="discovery-intro">
-        <p>
-          {user
-            ? tr('С возвращением, {name}', { name: user.name })
-            : tr('Истории начинаются со знакомства')}
-        </p>
-        <Link href="/library">
-          {tr('Моя библиотека')} <ArrowUpRight size={16} />
-        </Link>
-      </div>
-      <ErrorBox message={error} retry={reload} />
-      {loading ? (
-        <Loading />
-      ) : featured && text ? (
-        <section className="featured-story">
-          <div className="featured-copy">
-            <div className="story-kicker">
-              <span>{tr('В центре внимания')}</span>
-              <span>{taxonomy(featured.genre)}</span>
-            </div>
-            <h1>{text.title}</h1>
-            <Link className="discovery-author" href={`/creators/${featured.author.handle}`}>
-              <span className="tiny-avatar">{featured.author.name[0]}</span>
-              {featured.author.name}
-            </Link>
-            <p className="featured-synopsis">{text.synopsis}</p>
-            {!!details.data?.npcs?.length && (
-              <div className="featured-cast">
-                <span>{tr('Ты встретишь')}</span>
-                {details.data.npcs.slice(0, 3).map((n) => (
-                  <span key={n.id} className="cast-name">
-                    {selectNpcText(n, locale).name}
-                  </span>
-                ))}
-              </div>
-            )}
-            <ButtonLink href={`/adventures/${featured.slug}`}>
-              {tr('Знакомиться с историей')} <ArrowRight size={18} />
-            </ButtonLink>
-          </div>
-          <Link
-            className="featured-art"
-            style={{ backgroundImage: `url('${coverUrl(featured)}')` }}
-            href={`/adventures/${featured.slug}`}
-            aria-label={text.title}
-          >
-            <img src={discoveryCover(featured)} alt="" />
-          </Link>
-        </section>
-      ) : (
-        !error && (
-          <Empty
-            title={tr('Первые миры уже в пути')}
-            description={tr('Опубликованные истории появятся здесь после проверки.')}
-          />
-        )
-      )}
-      <section className="discovery-section">
-        <div className="section-heading">
-          <h2>{tr('Найди свою историю')}</h2>
-          <MoreLink href="/explore">{tr('Все приключения')}</MoreLink>
-        </div>
-        {!!data?.length && (
-          <div className="adventure-grid discovery-grid">
-            {data.slice(0, 4).map((adventure) => (
-              <AdventureCard discovery key={adventure.id} adventure={adventure} />
-            ))}
-          </div>
-        )}
-      </section>
-      <nav className="discovery-shortcuts" aria-label={tr('Твои истории')}>
-        <Link href="/my-characters">
-          <UsersRound size={22} />
-          <span>
-            <strong>{tr('Мои герои')}</strong>
-            <small>{tr('Создай героя для будущей истории')}</small>
-          </span>
-          <ArrowUpRight size={18} />
-        </Link>
-        <Link href="/studio">
-          <Feather size={22} />
-          <span>
-            <strong>{tr('Открыть студию')}</strong>
-            <small>{tr('Расскажи историю на своих условиях')}</small>
-          </span>
-          <ArrowUpRight size={18} />
-        </Link>
-      </nav>
-      <p className="discovery-stage">
-        <BookOpen size={17} />
-        {tr('Сейчас — знакомство с мирами и подготовка героев. Игровые сессии появятся позже.')}
-      </p>
-    </div>
-  );
-}
+export { HomePage } from './home/home-page';
 export function ExplorePage() {
   const { t: tr, locale, taxonomy } = useT();
   const params = useSearchParams();

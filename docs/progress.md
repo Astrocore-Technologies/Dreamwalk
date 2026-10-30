@@ -491,3 +491,25 @@ The approved one-time text/image test ceilings do not silently authorize ongoing
 The separate text smoke kit uses the actual NPC adapter but has made no real request;
 local key entry and execution are paused during the user's power outage. No paid call,
 deployment, merge or restart of the user's stopped installation occurred.
+
+## 2026-10-30 — Image preparation CI and homepage visual refresh
+
+Image-preparation PR #9 passed both exact-head CI runs at
+`fa76d90daafd9d2435ee7c9d8276334ee7abb2bd`, including all **12 browser scenarios** without
+retry. The production external-image gate remains closed; passing the mock workflow is
+not evidence of real image quality, live model access or a provider-enforced cost cap.
+
+The separately requested homepage now prioritizes adventure artwork, embedded approved
+cast, manual neighboring recommendations, accepted campaign continuation and public
+collection rails. Mobile stacks art before copy; all three locales and both themes remain.
+No autoplay, fake popularity or personalization claims were introduced. A new explicit
+published-view query prevents an authenticated author's private draft cast from replacing
+the approved public feature. Existing owner detail behavior is unchanged.
+
+Local final checks passed: production build, whole-workspace types, ESLint, formatting,
+contracts **9/9**, core **95/95**, configuration/locales **18/18**, UI/privacy/launch guards
+**53/53**, platform **62/62**, and discovery PostgreSQL/API **4/4**. Approved portrait bytes
+were tested anonymously as accessible, while an unpublished replacement remained 404.
+Five new browser scenarios and desktop/light/mobile screenshot outputs are prepared but
+not yet executed locally. Exact-head CI and inspection of its actual screenshots remain
+required before the visual handoff; no generated mockup is substituted for those renders.
