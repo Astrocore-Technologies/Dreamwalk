@@ -321,3 +321,12 @@ test('public NPC speech style is explicit and separate from private prose', asyn
   for (const key of ['neutral', 'warm', 'formal', 'terse', 'wry'])
     assert.match(profile, new RegExp(key + ':'));
 });
+
+test('saved NPC textarea labels do not include their hydrated text content', async () => {
+  const profile = await readFile(
+    new URL('../../apps/web/components/studio/living-npc-profile.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(profile, /aria-label=\{t\('Биография и мотивы'\)\}/);
+  assert.match(profile, /aria-label=\{t\('Частные заметки о манере речи'\)\}/);
+});

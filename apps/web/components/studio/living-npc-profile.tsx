@@ -112,6 +112,7 @@ export function LivingNpcProfile({
       <LivingNpcExamples profile={profile} onChange={onChange} npcId={npc.id} npcs={npcs} />
       <Field label={t('Биография и мотивы')}>
         <Textarea
+          aria-label={t('Биография и мотивы')}
           maxLength={2000}
           value={profile.biography || ''}
           onChange={(event) => onChange({ ...profile, biography: event.target.value })}
@@ -201,6 +202,7 @@ export function LivingNpcProfile({
       </p>
       <Field label={t('Частные заметки о манере речи')}>
         <Textarea
+          aria-label={t('Частные заметки о манере речи')}
           maxLength={200}
           value={profile.speechStyle}
           onChange={(e) => onChange({ ...profile, speechStyle: e.target.value })}
