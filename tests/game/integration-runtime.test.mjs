@@ -2,182 +2,25 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { createHash, randomUUID } from 'node:crypto';
-import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import { setTimeout as delay } from 'node:timers/promises';
-import pg from 'pg';
-import WebSocket from 'ws';
-import { createObservatoryState } from '@dreamwalk/game-core';
+import {
+  db,
+  until,
+  startApi,
+  stopApi,
+  client,
+  path,
+  snapshot,
+  actor,
+  operation,
+  command,
+  moveTo,
+  connect,
+  rejectedSocket,
+} from './support-runtime.mjs';
+import { createObservatoryState, tick } from '@dreamwalk/game-core';
 import { exportGameData, purgeGameData } from '../../scripts/game-data-requests.mjs';
-
-const base = process.env.TEST_GAME_API_URL;
-for (const url of [base, process.env.DATABASE_URL])
-  assert.ok(
-    url && ['localhost', '127.0.0.1', '[::1]'].includes(new URL(url).hostname),
-    'Disposable local services required',
-  );
-const origin = process.env.WEB_ORIGIN;
-const db = new pg.Pool({ connectionString: process.env.DATABASE_URL });
-let api;
-const sockets = new Set();
-async function until(read, predicate, timeout = 6000) {
-  const deadline = Date.now() + timeout;
-  let value;
-  do {
-    value = await read();
-    if (predicate(value)) return value;
-    await delay(120);
-  } while (Date.now() < deadline);
-  assert.fail('Expected game state did not arrive before bounded deadline');
-}
-async function startApi() {
-  api = spawn(process.execPath, ['apps/api/dist/main.js'], {
-    env: process.env,
-    stdio: ['ignore', 'ignore', 'pipe'],
-  });
-  api.stderr.on('data', () => {}); // Do not echo private requests, cookies or SQL parameters.
-  await until(
-    async () => {
-      if (api.exitCode !== null) assert.fail(`API exited during startup (${api.exitCode})`);
-      return fetch(`${base}/health`, { signal: AbortSignal.timeout(1500) })
-        .then((r) => r.ok)
-        .catch(() => false);
-    },
-    Boolean,
-    15000,
-  );
-}
-async function stopApi(signal = 'SIGTERM') {
-  if (signal === 'SIGKILL' && api && api.exitCode === null && api.signalCode === null) {
-    const exited = once(api, 'exit');
-    api.kill('SIGKILL');
-    await exited;
-  }
-  for (const socket of sockets) socket.terminate();
-  sockets.clear();
-  if (!api || api.exitCode !== null || api.signalCode !== null) return;
-  const exited = once(api, 'exit');
-  const deadline = setTimeout(() => api.kill('SIGKILL'), 8000);
-  api.kill('SIGTERM');
-  try {
-    await exited;
-  } finally {
-    clearTimeout(deadline);
-  }
-}
-function client() {
-  let cookie = '';
-  return {
-    user: null,
-    handle: '',
-    get cookie() {
-      return cookie;
-    },
-    async request(path, body, method = body === undefined ? 'GET' : 'POST', expected) {
-      const response = await fetch(base + path, {
-        signal: AbortSignal.timeout(5000),
-        method,
-        headers: { origin, 'content-type': 'application/json', ...(cookie ? { cookie } : {}) },
-        body: body === undefined ? undefined : JSON.stringify(body),
-      });
-      const updated = response.headers.getSetCookie();
-      if (updated.length) cookie = updated.map((v) => v.split(';')[0]).join('; ');
-      const value = await response.json();
-      if (expected !== undefined)
-        assert.equal(
-          response.status,
-          expected,
-          `${method} ${path}: ${value.code ?? value.status ?? 'unexpected status'}`,
-        );
-      else
-        assert.ok(response.ok, `${method} ${path}: ${response.status}/${value.code ?? 'unknown'}`);
-      return value;
-    },
-    async register() {
-      const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
-      this.handle = `game_${suffix}`;
-      this.user = (
-        await this.request(
-          '/auth/register',
-          {
-            email: `game-${suffix}@example.test`,
-            handle: this.handle,
-            name: 'Game QA',
-            password: `Synthetic-${randomUUID()}!`,
-          },
-          'POST',
-          201,
-        )
-      ).user;
-      return this;
-    },
-  };
-}
-const path = (id, suffix) => `/game/campaigns/${id}/${suffix}`;
-const snapshot = (c, id) => c.request(path(id, 'snapshot'));
-const actor = (snap) => snap.projection.entities.find((e) => e.id === snap.projection.actorId);
-const operation = (action) => ({
-  protocolVersion: 1,
-  operationId: randomUUID(),
-  type: 'action',
-  action,
-});
-const command = (c, id, body) => c.request(path(id, 'commands'), body);
-async function moveTo(c, id, target) {
-  const snap = await snapshot(c, id),
-    a = actor(snap);
-  await c.request(path(id, 'move'), {
-    connectionEpoch: snap.connectionEpoch,
-    inputSeq: (a.lastInputSeq ?? 0) + 1,
-    movementGeneration: a.movementGeneration,
-    target,
-  });
-  return until(
-    () => snapshot(c, id),
-    (s) => {
-      const p = actor(s);
-      return p.x === target.x && p.y === target.y;
-    },
-    10000,
-  );
-}
-async function connect(c, id, suppliedOrigin = origin) {
-  const ws = new WebSocket(base.replace(/^http/, 'ws') + `/game/socket?campaignId=${id}`, {
-    headers: { origin: suppliedOrigin, ...(c.cookie ? { cookie: c.cookie } : {}) },
-  });
-  sockets.add(ws);
-  const messages = [];
-  ws.on('message', (raw) => {
-    messages.push(JSON.parse(raw.toString()));
-    if (messages.length > 150) messages.shift();
-  });
-  await once(ws, 'open');
-  await until(() => messages.find((m) => m.type === 'snapshot'), Boolean);
-  return { ws, messages };
-}
-async function rejectedSocket(c, id, suppliedOrigin = origin) {
-  const ws = new WebSocket(base.replace(/^http/, 'ws') + `/game/socket?campaignId=${id}`, {
-    headers: { origin: suppliedOrigin, ...(c.cookie ? { cookie: c.cookie } : {}) },
-  });
-  return new Promise((resolve, reject) => {
-    const timeout = setTimeout(() => {
-      ws.terminate();
-      reject(new Error('Handshake rejection timed out'));
-    }, 4000);
-    ws.on('open', () => {
-      clearTimeout(timeout);
-      ws.terminate();
-      reject(new Error('Unauthorized socket opened'));
-    });
-    ws.on('unexpected-response', (_req, response) => {
-      clearTimeout(timeout);
-      response.resume();
-      ws.terminate();
-      resolve(response.statusCode);
-    });
-    ws.on('error', () => {});
-  });
-}
 
 await test(
   'G0–G3: real tick, two sessions, durable actions, local rounds and access revocation',
@@ -232,10 +75,17 @@ await test(
           const accepted = await a.request(path(id, 'move'), input);
           assert.equal(actor(accepted).x, p.x, 'movement target does not teleport the actor');
           await a.request(path(id, 'move'), input, 'POST', 409);
-          await until(
-            () => snapshot(a, id),
-            (s) => actor(s).x === 4,
-          );
+          try {
+            await until(
+              () => snapshot(a, id),
+              (s) => actor(s).x === 4,
+            );
+          } catch (cause) {
+            throw new Error(
+              `Movement did not finish; socket states ${first.ws.readyState}/${second.ws.readyState}; closes ${JSON.stringify([first.closes, second.closes])}`,
+              { cause },
+            );
+          }
           await moveTo(b, id, { x: 4, y: 6 });
           assert.ok(first.messages.some((m) => m.type === 'delta'));
           assert.ok(second.messages.some((m) => m.type === 'delta'));
@@ -434,7 +284,14 @@ await test(
           );
           await stopApi();
           await startApi();
-          assert.equal((await snapshot(winner, id)).projection.encounter.deadlineMs, deadline);
+          const restoredRound = await snapshot(winner, id);
+          const restoredRemaining =
+            restoredRound.projection.encounter.deadlineMs - restoredRound.serverNowMs;
+          const previousRemaining = deadline - roof.serverNowMs;
+          assert.ok(
+            restoredRemaining >= previousRemaining - 1500 &&
+              restoredRemaining <= previousRemaining + 500,
+          );
           const after = await until(
             () => snapshot(winner, id),
             (s) => !s.projection.encounter,
@@ -553,6 +410,44 @@ await test(
             const state = createObservatoryState([actorA, actorB], 42);
             state.entities.key.ownerId = actorB;
             state.entities[actorB].inventory = ['key'];
+            state.entities.keeper.knownIds = [actorA, actorB];
+            state.entities.keeper.path = [{ x: 6, y: 5 }];
+            state.entities.keeper.movementGeneration = 5;
+            state.npcBrains = {
+              keeper: {
+                traits: ['helpful'],
+                goal: 'help',
+                patrolTarget: { x: 7, y: 4 },
+                facts: [
+                  {
+                    eventId: 'synthetic-observation',
+                    kind: 'actor_seen',
+                    targetId: actorB,
+                    tick: 1,
+                  },
+                ],
+                plan: [{ kind: 'give', targetId: actorB, itemId: 'token' }],
+                cursor: 0,
+                waitingForPath: true,
+                nextDecisionTick: 20,
+                generation: 1,
+              },
+            };
+            state.encounters['synthetic-round'] = {
+              id: 'synthetic-round',
+              mapId: 'observatory',
+              generation: 1,
+              round: 1,
+              phase: 'planning',
+              area: { x: 1, y: 4, width: 5, height: 5 },
+              deadlineMs: Date.now() + 30000,
+              participants: [actorA, actorB],
+              intents: {},
+              pendingJoinIds: [actorB],
+              endVotes: [actorB],
+              coordinatorId: actorB,
+            };
+
             for (const [campaignId, owner] of [
               [campaign, ownerId],
               [ownedByMember, memberId],
@@ -586,11 +481,31 @@ await test(
             assert.ok(!JSON.stringify(own).includes('knownIds'));
             await purgeGameData(c, memberId);
             const retained = (
-              await c.query('SELECT state,status FROM game_campaigns WHERE id=$1', [campaign])
+              await c.query('SELECT state,status,runtime_clock FROM game_campaigns WHERE id=$1', [
+                campaign,
+              ])
             ).rows[0];
             assert.equal(retained.status, 'active');
+            assert.deepEqual(retained.runtime_clock.jobs, {});
             assert.ok(retained.state.entities[actorA]);
             assert.ok(!retained.state.entities[actorB]);
+            assert.deepEqual(retained.state.entities.keeper.knownIds, [actorA]);
+            assert.deepEqual(retained.state.npcBrains.keeper.facts, []);
+            assert.deepEqual(retained.state.npcBrains.keeper.plan, []);
+            assert.equal(retained.state.npcBrains.keeper.generation, 2);
+            assert.equal(retained.state.npcBrains.keeper.waitingForPath, false);
+            assert.deepEqual(retained.state.entities.keeper.path, []);
+            assert.equal(retained.state.entities.keeper.movementGeneration, 6);
+            const afterTick = tick(retained.state, 8).state.entities.keeper;
+            assert.deepEqual(
+              [afterTick.x, afterTick.y],
+              [state.entities.keeper.x, state.entities.keeper.y],
+            );
+
+            assert.deepEqual(retained.state.encounters['synthetic-round'].pendingJoinIds, []);
+            assert.deepEqual(retained.state.encounters['synthetic-round'].endVotes, []);
+            assert.equal(retained.state.encounters['synthetic-round'].coordinatorId, actorA);
+
             assert.equal(retained.state.entities.key.ownerId, undefined);
             assert.equal(retained.state.entities.key.x, state.entities[actorB].x);
             assert.equal(

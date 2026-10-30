@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import type { GamePoint, GameProjection } from '@dreamwalk/contracts';
+import { resolveGameAtlas } from '@/lib/game-assets';
 import { useT } from '@/lib/i18n';
 import styles from './game.module.css';
 
@@ -76,7 +77,9 @@ export function GameCanvas({
         observer?.disconnect();
         app.destroy(true, { children: true });
       };
-      const atlas = await Assets.load<InstanceType<typeof Texture>>('/game/observatory-atlas.svg');
+      const atlas = await Assets.load<InstanceType<typeof Texture>>(
+        resolveGameAtlas(latest.current.projection.assetManifest),
+      );
       if (disposed) return;
       const frames = Array.from(
         { length: 10 },
@@ -157,12 +160,14 @@ export function GameCanvas({
                   ? 2
                   : 9
                 : entity.kind === 'npc'
-                  ? 3
+                  ? entity.visual === 'traveler'
+                    ? 9
+                    : 3
                   : entity.kind === 'door'
                     ? entity.open
                       ? 6
                       : 5
-                    : entity.id === 'key'
+                    : entity.visual === 'key' || entity.id === 'key'
                       ? 4
                       : 7;
             let record = sprites.get(entity.id);

@@ -428,3 +428,17 @@
   font-size: 0.76rem;
   font-variant-numeric: tabular-nums;
 }
+/* Authored names may be one unbroken 120-character token. Let content wrap,
+   never hide overflow at the body level or let flex min-content widen mobile. */
+.root {
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.roomHeader > div,
+.object > div,
+.campaignCard > div {
+  min-width: 0;
+}
+.inventory li {
+  min-width: 0;
+}

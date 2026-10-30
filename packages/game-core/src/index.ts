@@ -195,18 +195,21 @@ export function addPlayer(state: GameState, id: string): GameResult {
     return fail(state, 'FORBIDDEN');
   const s = copy(state),
     n = Object.values(s.entities).filter((e) => e.kind === 'player').length;
+  const mapId = s.startMapId ?? 'observatory',
+    map = s.maps[mapId];
+  if (!map?.spawns.length) return fail(state, 'PATH_BLOCKED');
   s.entities[id] = {
     id,
     kind: 'player',
-    mapId: 'observatory',
-    ...s.maps.observatory.spawns[n],
+    mapId,
+    ...map.spawns[n % map.spawns.length],
     revision: 0,
     inventory: [],
     movementGeneration: 0,
     lastInputSeq: 0,
   };
   s.revision++;
-  return result(s, [{ kind: 'actor.joined', actorId: id, mapId: 'observatory' }]);
+  return result(s, [{ kind: 'actor.joined', actorId: id, mapId }]);
 }
 export function moveInput(state: GameState, id: string, input: GameMove): GameResult {
   if (!gameMoveSchema.safeParse(input).success) return fail(state, 'INVALID_ACTION');
@@ -324,10 +327,24 @@ function actionInternal(
       const e = s.encounters[a.encounterId];
       const exit = directions
         .map((d) => ({ x: a.x + d.x, y: a.y + d.y }))
-        .find((p) => !inside(p, e.area) && walkable(s, a.mapId, p, id, true));
+        .find(
+          (p) =>
+            !inside(p, e.area) &&
+            walkable(s, a.mapId, p, id, true) &&
+            !Object.values(s.encounters).some(
+              (other) =>
+                other.id !== e.id &&
+                other.phase === 'planning' &&
+                other.mapId === a.mapId &&
+                inside(p, other.area),
+            ),
+        );
       if (!exit) return fail(state, 'PATH_BLOCKED');
       Object.assign(s.entities[id], exit);
       e.participants = e.participants.filter((p) => p !== id);
+      if (e.endVotes) e.endVotes = e.endVotes.filter((p) => p !== id);
+      if (e.coordinatorId === id)
+        e.coordinatorId = e.participants.filter((p) => s.entities[p]?.kind === 'player').sort()[0];
       delete s.entities[id].encounterId;
       s.entities[id].movementGeneration = (a.movementGeneration ?? 0) + 1;
     }
@@ -340,6 +357,15 @@ function actionInternal(
     if (!exit) return fail(state, 'TARGET_UNAVAILABLE');
     if (distance(a, exit) > 1) return fail(state, 'OUT_OF_RANGE');
     if (exit.doorId && !state.entities[exit.doorId]?.open) return fail(state, 'PATH_BLOCKED');
+    if (
+      Object.values(state.encounters).some(
+        (e) =>
+          e.phase === 'planning' &&
+          e.mapId === exit.destinationMapId &&
+          inside(exit.destination, e.area),
+      )
+    )
+      return fail(state, 'WRONG_MODE');
     if (!walkable(state, exit.destinationMapId, exit.destination, id))
       return fail(state, 'PATH_BLOCKED');
     const s = copy(state);
@@ -356,11 +382,14 @@ function actionInternal(
   if (!target || !visible(state, a, target)) return fail(state, 'TARGET_UNAVAILABLE');
   if (distance(a, target) > 1) return fail(state, 'OUT_OF_RANGE');
   if (
-    !inRound &&
-    (target.encounterId ||
-      Object.values(state.encounters).some(
-        (e) => e.phase === 'planning' && e.mapId === target.mapId && inside(target, e.area),
-      ))
+    (target.encounterId && target.encounterId !== a.encounterId) ||
+    Object.values(state.encounters).some(
+      (e) =>
+        e.phase === 'planning' &&
+        e.mapId === target.mapId &&
+        inside(target, e.area) &&
+        (!inRound || e.id !== a.encounterId),
+    )
   )
     return fail(state, 'WRONG_MODE');
   const s = copy(state),
@@ -479,7 +508,10 @@ export function beginEncounter(state: GameState, id: string, nowMs = 0): GameRes
     phase: 'planning',
     participants,
     area,
-    deadlineMs: nowMs + 30000,
+    deadlineMs: nowMs + (s.roundPolicy?.planningMs ?? 30000),
+    ...(s.roundPolicy
+      ? { policy: { ...s.roundPolicy }, pendingJoinIds: [], endVotes: [], coordinatorId: id }
+      : {}),
     intents: {},
   };
   for (const p of participants) s.entities[p].encounterId = encounterId;
@@ -541,19 +573,105 @@ export function resolveRound(state: GameState, encounterId: string, nowMs: numbe
       events.push(...r.events);
     }
   }
-  // The prototype's coordinated conflict is one round, not an undeclared combat system.
   const e = s.encounters[encounterId];
-  e.phase = 'completed';
+  const players = e.participants.filter((id) => s.entities[id]?.kind === 'player');
+  const completed =
+    !e.policy ||
+    e.round >= e.policy.maxRounds ||
+    players.length === 0 ||
+    players.every((id) => e.endVotes?.includes(id));
   e.intents = {};
-  for (const id of encounter.participants) {
-    delete s.entities[id].encounterId;
-    s.entities[id].path = [];
-    s.entities[id].movementGeneration = (s.entities[id].movementGeneration ?? 0) + 1;
+  if (completed) {
+    e.phase = 'completed';
+    e.pendingJoinIds = [];
+    for (const id of e.participants) {
+      if (!s.entities[id]) continue;
+      delete s.entities[id].encounterId;
+      s.entities[id].path = [];
+      s.entities[id].movementGeneration = (s.entities[id].movementGeneration ?? 0) + 1;
+    }
+    events.push({ kind: 'encounter.completed', mapId: e.mapId });
+  } else {
+    for (const id of [...(e.pendingJoinIds ?? [])].sort()) {
+      const actor = s.entities[id];
+      if (!actor || actor.encounterId || actor.mapId !== e.mapId) continue;
+      const candidates = [
+        { x: actor.x, y: actor.y },
+        ...directions.map((d) => ({ x: actor.x + d.x, y: actor.y + d.y })),
+      ];
+      const point = candidates.find((p) => inside(p, e.area) && walkable(s, e.mapId, p, id, true));
+      if (!point) {
+        events.push({
+          kind: 'encounter.join_rejected',
+          actorId: id,
+          mapId: e.mapId,
+          code: 'PATH_BLOCKED',
+        });
+        continue;
+      }
+      Object.assign(actor, point);
+      actor.path = [];
+      actor.encounterId = e.id;
+      actor.movementGeneration = (actor.movementGeneration ?? 0) + 1;
+      actor.revision++;
+      e.participants.push(id);
+      events.push({ kind: 'encounter.joined', actorId: id, mapId: e.mapId });
+    }
+    e.pendingJoinIds = [];
+    e.endVotes = [];
+    e.round++;
+    e.deadlineMs = nowMs + e.policy!.planningMs;
+    events.push({ kind: 'encounter.round_started', mapId: e.mapId });
   }
   s.revision++;
-  events.push({ kind: 'encounter.completed', mapId: e.mapId });
   return result(s, events);
 }
+export function requestEncounterJoin(
+  state: GameState,
+  id: string,
+  encounterId: string,
+): GameResult {
+  const actor = state.entities[id],
+    e = state.encounters[encounterId];
+  if (
+    !actor ||
+    actor.kind !== 'player' ||
+    !e ||
+    e.phase !== 'planning' ||
+    !e.policy ||
+    e.mapId !== actor.mapId
+  )
+    return fail(state, 'TARGET_UNAVAILABLE');
+  if (actor.encounterId) return fail(state, 'WRONG_MODE');
+  const adjacent = [actor, ...directions.map((d) => ({ x: actor.x + d.x, y: actor.y + d.y }))].some(
+    (p) => inside(p, e.area) && walkable(state, e.mapId, p, id),
+  );
+  if (!adjacent) return fail(state, 'OUT_OF_RANGE');
+  if (e.pendingJoinIds?.includes(id)) return result(state);
+  if ((e.pendingJoinIds?.length ?? 0) >= 4) return fail(state, 'RATE_LIMITED');
+  const s = copy(state);
+  (s.encounters[e.id].pendingJoinIds ??= []).push(id);
+  s.revision++;
+  return result(s, [{ kind: 'encounter.join_requested', actorId: id, mapId: e.mapId }]);
+}
+export function requestEncounterEnd(state: GameState, id: string): GameResult {
+  const actor = state.entities[id],
+    e = actor?.encounterId ? state.encounters[actor.encounterId] : undefined;
+  if (!e || e.phase !== 'planning' || !e.participants.includes(id) || actor.kind !== 'player')
+    return fail(state, 'WRONG_MODE');
+  const s = copy(state),
+    next = s.encounters[e.id];
+  if (!(next.endVotes ??= []).includes(id)) next.endVotes.push(id);
+  if (!next.intents[id]?.ready)
+    next.intents[id] = {
+      revision: (next.intents[id]?.revision ?? 0) + 1,
+      ready: true,
+      action: { kind: 'wait' },
+    };
+  s.revision++;
+  return result(s, [{ kind: 'encounter.end_requested', actorId: id, mapId: e.mapId }]);
+}
+
 export function projectState(s: GameState, id: string): GameProjection {
   const actor = s.entities[id];
   if (!actor) throw new Error('FORBIDDEN');
@@ -572,11 +690,16 @@ export function projectState(s: GameState, id: string): GameProjection {
   const encounter = actor.encounterId
     ? structuredClone(s.encounters[actor.encounterId])
     : undefined;
+  if (encounter) {
+    if (encounter.pendingJoinIds)
+      encounter.pendingJoinIds = encounter.pendingJoinIds.filter((p) => p === id);
+  }
   if (encounter)
     for (const [p, intent] of Object.entries(encounter.intents))
       if (p !== id) intent.action = { kind: 'wait' };
   return {
     schemaVersion: 1,
+    ...(s.assetManifest ? { assetManifest: { ...s.assetManifest } } : {}),
     rulesetVersion: s.rulesetVersion,
     tick: s.tick,
     revision: s.revision,
@@ -587,6 +710,25 @@ export function projectState(s: GameState, id: string): GameProjection {
       .map(clean),
     inventory: (actor.inventory ?? []).map((i) => clean(s.entities[i])),
     encounter,
+    ...(s.rulesetVersion === 'hybrid-v2'
+      ? {
+          nearbyEncounters: Object.values(s.encounters)
+            .filter(
+              (e) =>
+                e.phase === 'planning' &&
+                e.mapId === actor.mapId &&
+                e.participants.some((p) => s.entities[p] && visible(s, actor, s.entities[p])),
+            )
+            .map((e) => ({
+              id: e.id,
+              mapId: e.mapId,
+              area: structuredClone(e.area),
+              round: e.round,
+              phase: 'planning' as const,
+              participantCount: e.participants.length,
+            })),
+        }
+      : {}),
   };
 }
 export function mockNpcDecision(s: GameState, id = 'keeper'): unknown {
@@ -705,10 +847,13 @@ export function buildNpcContext(state: GameState, id: string) {
   if (!npc || npc.kind !== 'npc') throw new Error('FORBIDDEN');
   return {
     actorId: id,
-    traits: ['cautious', 'helpful'],
-    goals: ['watch_observatory', 'help_nearby_visitors'],
+    traits: state.npcBrains?.[id]?.traits ?? ['cautious', 'helpful'],
+    memory: structuredClone(state.npcBrains?.[id]?.facts ?? []),
+    goals: state.npcBrains?.[id]
+      ? [state.npcBrains[id].goal]
+      : ['watch_observatory', 'help_nearby_visitors'],
     allowedActions: ['move_to', 'wait', 'inspect', 'give'] as const,
-    maxPlanActions: 1,
+    maxPlanActions: state.npcBrains?.[id] ? 3 : 1,
     cooldownTicks: 20,
     ownInventory: [...(npc.inventory ?? [])],
     visible: Object.values(state.entities)
@@ -720,3 +865,7 @@ export function buildNpcContext(state: GameState, id: string) {
     entityRevision: npc.revision,
   };
 }
+
+export * from './authored';
+
+export * from './npc';

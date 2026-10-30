@@ -1,0 +1,168 @@
+.editor {
+  margin: 24px 0;
+  padding: 24px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  min-width: 0;
+}
+.editor header {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  align-items: baseline;
+  justify-content: space-between;
+}
+.editor h2 {
+  font-size: 1.25rem;
+  margin: 0 0 8px;
+}
+.editor p,
+.note {
+  color: var(--muted);
+  font-size: 0.82rem;
+}
+.status {
+  color: var(--accent);
+  font-size: 0.72rem;
+}
+.fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 16px;
+  margin: 18px 0;
+}
+.fields input,
+.fields select,
+.inspector input,
+.inspector select {
+  width: 100%;
+  min-width: 0;
+}
+.templates,
+.actions,
+.mapNav {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 10px;
+}
+.templates p {
+  flex-basis: 100%;
+}
+.mapNav {
+  margin: 20px 0;
+}
+.mapNav > button {
+  border: 1px solid var(--line);
+  border-radius: 8px;
+  padding: 9px 14px;
+  background: var(--bg);
+  color: var(--text);
+  cursor: pointer;
+}
+.mapNav > button[aria-pressed='true'] {
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.layout {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 250px;
+  gap: 18px;
+  align-items: start;
+}
+.gridScroll {
+  overflow: auto;
+  max-height: 490px;
+  min-width: 0;
+  padding: 4px;
+  background: var(--bg);
+  border-radius: 8px;
+}
+.grid {
+  display: grid;
+  width: max-content;
+  gap: 1px;
+}
+.grid button {
+  width: 30px;
+  height: 30px;
+  border: 0;
+  border-radius: 2px;
+  cursor: pointer;
+  font-size: 19px;
+  line-height: 1;
+}
+.grid button:focus-visible {
+  outline: 2px solid #f8d897;
+  outline-offset: -2px;
+}
+.tile {
+  background: #433349;
+  color: #ecd4a3;
+}
+.wall {
+  background: #201c29;
+  color: #89748c;
+}
+.inspector {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.inspector h3 {
+  margin: 0;
+}
+.coordinates {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+}
+.inspector label {
+  font-size: 0.8rem;
+}
+.inspector input[type='checkbox'] {
+  width: auto;
+  margin-right: 9px;
+}
+.note {
+  margin: 16px 0;
+}
+@media (max-width: 850px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .inspector {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .inspector h3,
+  .inspector > p,
+  .inspector > button {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 520px) {
+  .editor {
+    padding: 15px;
+  }
+  .fields,
+  .inspector {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .actions {
+    align-items: stretch;
+    flex-direction: column;
+  }
+}
+.editor {
+  overflow-wrap: anywhere;
+}
+.editor header > div,
+.mapNav > button {
+  min-width: 0;
+  max-width: 100%;
+}
+.mapNav > button {
+  white-space: normal;
+  overflow-wrap: anywhere;
+}

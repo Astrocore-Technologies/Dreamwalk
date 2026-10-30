@@ -77,7 +77,7 @@ The managed Work environment uses its provided CUA browser and `sites-preview` d
 
 ## Deliberate limitations
 
-- Play, campaign/lobby, AI generation, Discord Activity and real checkout are unavailable, clearly labeled in UI.
+- A bounded mock game and authored-grid editor are available. Real AI generation, Discord Activity and real checkout remain unavailable and separately gated.
 - Email delivery is optional and disabled without SMTP configuration. Secure recovery/verification is implemented and tested against local SMTP capture; external provider deliverability remains an operator setup step. No external mail was sent during development.
 - Account deletion immediately disables access/anonymizes identity and hides content. An explicit audited operator command processes exports and physical purges; private archives expire after seven days. Financial/event identifiers and backup-retention obligations remain, not a false claim of global erasure.
 - Legal/privacy/content pages are templates requiring owner review, jurisdiction/age decisions and operational setup before public release.
@@ -91,12 +91,28 @@ Docs: [Architecture](docs/architecture.md), [API contract](docs/api-contract.md)
 
 ## Hybrid RPG prototype (G0–G3, local only)
 
-The authenticated `/game` area is an explicitly labelled mock observatory prototype.
-Create a separate campaign, invite another existing account by handle, and have that
-account accept under `/game`. The world includes actual server-validated walking,
-a unique key, a locked door, a second map and a mock keeper. The coordination button
-starts a local one-round simultaneous-intent encounter; it does not pause other maps.
-No paid AI or purchases are enabled. Existing author stories are not automatically playable.
+The authenticated `/game` area can start the compatibility observatory fixture or an
+available immutable authored version. Studio's Locations step has a bounded grid editor:
+choose a template, place walls/spawns/items/doors/NPCs/exits, validate it and launch a
+private test. Public launch requires moderation of the submitted immutable package;
+the moderator reviews its topology and approves that exact version.
+
+Campaign invitation alone does not grant private source-story access. Each invited
+player needs both permissions. Author edits do not change existing campaigns.
+
+Authored campaigns support multiple local simultaneous-intent rounds, boundary joins,
+flee/end votes and configured deadlines; players on other maps continue exploring.
+The mock NPC can approach, give an owned item and patrol using a persisted bounded plan
+and observed-event memory. This is not full combat AI or a professional level editor.
+Old observatory campaigns retain one-round semantics for compatibility.
+
+Game progress saves automatically: significant actions commit before acknowledgement,
+movement checkpoints periodically. There is no manual game-save step. Existing Studio
+narrative, NPC and playable drafts autosave after valid edits with visible status and
+revision conflict protection; first creation and publication remain explicit. Unacknowledged
+offline/invalid input stays in memory with leave warnings, not crash-proof local storage.
+When everyone leaves, simulation and remaining round/mock-job clocks pause durably.
+No paid AI or purchases are enabled. Narrative-only stories are not automatically playable.
 
 ```sh
 npm run test:game              # deterministic rules and adversarial mock cases

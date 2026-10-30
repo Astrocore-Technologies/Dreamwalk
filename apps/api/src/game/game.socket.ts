@@ -32,7 +32,9 @@ export function attachGameSockets(server: Server, game: GameService) {
             last = '',
             requests = 0,
             windowStart = Date.now(),
-            alive = true;
+            lastPeerActivity = performance.now(),
+            silenceStopped = false;
+          let heartbeatCloseTimer: ReturnType<typeof setTimeout> | undefined;
           const send = (data: unknown) => {
             if (ws.readyState === WebSocket.OPEN) {
               if (ws.bufferedAmount > 131072) {
@@ -46,7 +48,7 @@ export function attachGameSockets(server: Server, game: GameService) {
             if (busy || closed) return;
             busy = true;
             try {
-              const snap = await game.snapshot(req as Request, id),
+              const snap = await game.snapshot(req as Request, id, false),
                 serialized = JSON.stringify(snap.projection);
               if (snap.connectionEpoch !== access.connectionEpoch) {
                 ws.close(4001, 'Control superseded');
@@ -74,20 +76,35 @@ export function attachGameSockets(server: Server, game: GameService) {
             if (campaignId === id) void publish();
           });
           // Covers session revocation even while simulation sleeps or no world change occurs.
+          const peerActivity = () => {
+            lastPeerActivity = performance.now();
+            silenceStopped = false;
+            void game
+              .keepAlive(req as Request, id, access.connectionEpoch)
+              .catch(() => ws.close(1008, 'Access expired'));
+          };
           const authTimer = setInterval(() => {
-            if (!alive) {
-              ws.terminate();
+            if (ws.readyState !== WebSocket.OPEN) return;
+            const silentMs = performance.now() - lastPeerActivity;
+            // A briefly stalled tab is not a dead connection. Stop its movement early,
+            // but permit several missed pongs before tearing down its control lease.
+            if (silentMs >= 2000 && !silenceStopped) {
+              silenceStopped = true;
+              void game.disconnected(id, access.actorId, access.connectionEpoch).catch(() => {});
+            }
+            if (silentMs >= 5000) {
+              ws.close(4000, 'Heartbeat timeout');
+              heartbeatCloseTimer = setTimeout(() => ws.terminate(), 250);
+              heartbeatCloseTimer.unref();
               return;
             }
-            alive = false;
             ws.ping();
             void publish();
           }, 1000);
-          ws.on('pong', () => {
-            alive = true;
-          });
+          ws.on('pong', peerActivity);
           authTimer.unref();
           ws.on('message', (bytes) => {
+            peerActivity();
             if (Date.now() - windowStart >= 1000) {
               windowStart = Date.now();
               requests = 0;
@@ -151,6 +168,7 @@ export function attachGameSockets(server: Server, game: GameService) {
             closed = true;
             unsubscribe();
             clearInterval(authTimer);
+            if (heartbeatCloseTimer) clearTimeout(heartbeatCloseTimer);
             void game.disconnected(id, access.actorId, access.connectionEpoch).catch(() => {});
           });
           ws.on('error', () => ws.close());

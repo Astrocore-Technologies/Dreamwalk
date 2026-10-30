@@ -31,30 +31,80 @@ export async function exportGameData(client, userId) {
       [userId],
     )
   ).rows;
+  const jobs = (
+    await client.query(
+      `SELECT j.id,j.campaign_id,j.npc_id,j.status,j.result_code,j.created_at,j.completed_at
+     FROM game_npc_jobs j JOIN game_members m ON m.campaign_id=j.campaign_id AND m.actor_id=j.requester_actor_id
+     WHERE m.user_id=$1`,
+      [userId],
+    )
+  ).rows;
   // Account export is not permission to read other players' inventories or secret world state.
   return rows.map(({ state, actor_id, ...metadata }) => {
-    const actor = state.entities[actor_id];
+    const actor = state.entities?.[actor_id];
     return {
       ...metadata,
+      npcRequests: jobs.filter((job) => job.campaign_id === metadata.id),
       actor: actor ? { id: actor.id, mapId: actor.mapId, x: actor.x, y: actor.y } : null,
       inventory: (actor?.inventory ?? []).map((id) => ({ id })),
     };
   });
 }
+/** Author-owned packages are exported separately, never through another player's campaign. */
+export async function exportPlayableData(client, userId) {
+  const drafts = (
+    await client.query(
+      `SELECT d.* FROM adventure_game_drafts d JOIN adventures a ON a.id=d.adventure_id WHERE a.owner_id=$1`,
+      [userId],
+    )
+  ).rows;
+  const versions = (
+    await client.query(
+      `SELECT v.* FROM game_playable_versions v JOIN adventures a ON a.id=v.adventure_id WHERE a.owner_id=$1`,
+      [userId],
+    )
+  ).rows;
+  return { drafts, versions };
+}
 export async function purgeGameData(client, userId) {
   const campaigns = (
     await client.query(
-      `SELECT c.* FROM game_campaigns c
-    WHERE c.owner_id=$1 OR EXISTS(SELECT 1 FROM game_members m WHERE m.campaign_id=c.id AND m.user_id=$1)
+      `SELECT c.*, EXISTS(SELECT 1 FROM game_playable_versions v JOIN adventures a ON a.id=v.adventure_id
+      WHERE v.id=c.source_version_id AND a.owner_id=$1) AS source_owned FROM game_campaigns c
+    WHERE c.owner_id=$1 OR EXISTS(SELECT 1 FROM game_playable_versions v JOIN adventures a ON a.id=v.adventure_id
+      WHERE v.id=c.source_version_id AND a.owner_id=$1) OR EXISTS(SELECT 1 FROM game_members m WHERE m.campaign_id=c.id AND m.user_id=$1)
     ORDER BY c.id FOR UPDATE`,
       [userId],
     )
   ).rows;
   for (const campaign of campaigns) {
+    // Pending/contextual mock plans can reference the erased actor even when another
+    // participant requested them; cancellation is safer than retaining private context.
+    await client.query('DELETE FROM game_npc_jobs WHERE campaign_id=$1', [campaign.id]);
+    if (campaign.source_owned) {
+      // A source author's erased text/maps/NPC definitions must not survive in other
+      // owners' pinned saves or historical full-state payloads. Retain only tombstones.
+      const erased = { erased: true };
+      await client.query(
+        "UPDATE game_campaigns SET state=$2,runtime_clock='{}'::jsonb,revision=revision+1,status='paused' WHERE id=$1",
+        [campaign.id, erased],
+      );
+      await client.query('UPDATE game_events SET payload=$2 WHERE campaign_id=$1', [
+        campaign.id,
+        erased,
+      ]);
+      await client.query('DELETE FROM game_operations WHERE campaign_id=$1', [campaign.id]);
+      await client.query('UPDATE game_snapshots SET state=$2,checksum=$3 WHERE campaign_id=$1', [
+        campaign.id,
+        erased,
+        createHash('sha256').update(JSON.stringify(erased)).digest('hex'),
+      ]);
+      continue;
+    }
     const actorId = `player-${userId}`,
       replacement = `erased-${randomUUID()}`;
     const state = replaceActor(campaign.state, actorId, replacement);
-    const actor = state.entities[replacement];
+    const actor = state.entities?.[replacement];
     if (actor) {
       for (const itemId of actor.inventory ?? []) {
         const item = state.entities[itemId];
@@ -72,6 +122,39 @@ export async function purgeGameData(client, userId) {
       for (const encounter of Object.values(state.encounters)) {
         encounter.participants = encounter.participants.filter((id) => id !== replacement);
         delete encounter.intents[replacement];
+        if (encounter.pendingJoinIds)
+          encounter.pendingJoinIds = encounter.pendingJoinIds.filter((id) => id !== replacement);
+        if (encounter.coordinatorId === replacement) {
+          if (encounter.participants.length) encounter.coordinatorId = encounter.participants[0];
+          else delete encounter.coordinatorId;
+        }
+        if (!encounter.participants.length) {
+          encounter.phase = 'completed';
+          encounter.pendingJoinIds = [];
+        }
+        if (encounter.endVotes)
+          encounter.endVotes = encounter.endVotes.filter((id) => id !== replacement);
+      }
+      for (const entity of Object.values(state.entities))
+        if (entity.knownIds) entity.knownIds = entity.knownIds.filter((id) => id !== replacement);
+      for (const [npcId, brain] of Object.entries(state.npcBrains ?? {})) {
+        brain.facts = brain.facts.filter((fact) => fact.targetId !== replacement);
+        if (
+          brain.plan.some(
+            (action) => action.targetId === replacement || action.itemId === replacement,
+          )
+        ) {
+          brain.plan = [];
+          brain.cursor = 0;
+          brain.waitingForPath = false;
+          brain.generation++;
+          const npc = state.entities[npcId];
+          if (npc) {
+            npc.path = [];
+            npc.movementGeneration = (npc.movementGeneration ?? 0) + 1;
+            npc.revision++;
+          }
+        }
       }
       state.revision++;
     }
@@ -109,7 +192,7 @@ export async function purgeGameData(client, userId) {
         ],
       );
     await client.query(
-      "UPDATE game_campaigns SET state=$2,revision=revision+1,status=CASE WHEN owner_id=$3 THEN 'paused' ELSE status END WHERE id=$1",
+      "UPDATE game_campaigns SET state=$2,runtime_clock=jsonb_set(runtime_clock,'{jobs}','{}'::jsonb),revision=revision+1,status=CASE WHEN owner_id=$3 THEN 'paused' ELSE status END WHERE id=$1",
       [campaign.id, state, userId],
     );
     const checksum = createHash('sha256')
@@ -122,4 +205,12 @@ export async function purgeGameData(client, userId) {
     ]);
   }
   await client.query('DELETE FROM game_members WHERE user_id=$1', [userId]);
+  await client.query(
+    'DELETE FROM adventure_game_drafts d USING adventures a WHERE a.id=d.adventure_id AND a.owner_id=$1',
+    [userId],
+  );
+  await client.query(
+    `UPDATE game_playable_versions v SET package='{"erased":true}' WHERE EXISTS(SELECT 1 FROM adventures a WHERE a.id=v.adventure_id AND a.owner_id=$1)`,
+    [userId],
+  );
 }

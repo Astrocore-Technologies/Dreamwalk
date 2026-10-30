@@ -46,12 +46,16 @@ try {
     await run(npm, ['run', 'build', '-w', workspace]);
   await run(process.execPath, ['apps/api/dist/migrate.js']);
   await run(process.execPath, ['apps/api/dist/seed.js']);
+  let files = readdirSync('tests/game').filter((name) => /^integration.*\.test\.mjs$/.test(name));
+  if (process.env.GAME_TEST_FILE) {
+    if (!files.includes(process.env.GAME_TEST_FILE))
+      throw new Error('Unknown game integration test file');
+    files = [process.env.GAME_TEST_FILE];
+  }
   await run(process.execPath, [
     '--test',
     '--test-concurrency=1',
-    ...readdirSync('tests/game')
-      .filter((name) => /^integration.*\.test\.mjs$/.test(name))
-      .map((name) => `tests/game/${name}`),
+    ...files.map((name) => `tests/game/${name}`),
   ]);
 } finally {
   await database.stop();

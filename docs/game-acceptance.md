@@ -30,30 +30,46 @@ readiness, a deployment or permission to call paid providers.
 | Actual Pixi render and HTML interaction                         | Managed cloud browser, existing synthetic session | Created campaign, took key, unlocked/opened door, crossed to roof, reloaded; map and inventory persisted |
 | Actual local encounter                                          | Managed cloud browser                             | Planning boundary/timer displayed; timeout returned to exploration                                       |
 | UK interface and narrow layout                                  | Managed cloud browser                             | Observed at approximately 491px; original layered atlas rendered                                         |
-| Two independent browser contexts                                | `tests/e2e/game-cooperation.spec.ts`              | Source prepared; not run locally or remotely for this change yet                                         |
+| Two independent browser contexts                                | `tests/e2e/game-cooperation.spec.ts`              | Passed in GitHub CI for PR #4, head 9843ca7, including 390px overflow assertion                          |
 | Existing platform behavior                                      | `npm run test:integration`                        | 62 checks passed in final rerun                                                                          |
 | Contracts/core/config/locales/UI                                | Root scripts                                      | 9 contracts +24 core +18 config/locales +4 UI checks passed                                              |
 | Full build, lint and types                                      | Root scripts                                      | Final production build, types and lint passed                                                            |
 | SMTP regression                                                 | Local capture only                                | 1 integration scenario passed, no external email                                                         |
 
-## Acceptance gaps versus the full architecture
+## Current scope versus the full architecture
 
-The playable fixture proves the G0–G3 vertical slice, not every future-system feature.
-Two independent browser-context acceptance remains gated on a permitted CI run.
-Author map compilation/publication and arbitrary campaign source ACL are not exposed:
-only the immutable built-in fixture can be started. NPC decisions are single-action,
-explicitly requested mock jobs; broad autonomous schedules, persistent learned memory
-and multi-step planning are not claimed. Encounters demonstrate one-round coordination,
-not multi-round combat, initiative character statistics or automatic joining across a
-boundary. Movement uses bounded orthogonal target paths rather than analog continuous
-input; diagonal/virtual-stick mechanics and final directional animation atlases are
-not claimed. Logical server positions are interpolated by Pixi. The current map floor plan and exits are deliberately known; FOV hides dynamic entities, not undiscovered static geometry. Four simultaneous browser clients and load capacity are not measured.
+The initial fixture proved a G0–G3 vertical slice. The follow-on implements bounded
+Studio grid authoring, immutable private/public playable packages and source access,
+multiple local coordination rounds and persistent mock NPC action sequences. It is
+still not every future-system feature in the architecture.
 
-Network messages contain complete permitted projections rather than compact patches;
-HTTP and socket cursors share validated viewer-local revisions. Recovery loads a full
-checkpoint with checksum and invalidates old paths/leases. Since the latest full snapshot
-is updated atomically on every commit, there is no separate incremental replay worker
-in this prototype. Full private state events are retained, and no restoration invokes AI.
+Two independent browser-context acceptance passed in PR #4 CI on head 9843ca7. The
+new authored Studio and round browser sources must run in a newly authorized CI run;
+existing test source alone is not evidence. Managed CUA has independently verified
+actual Studio customization, private launch, NPC item transfer/patrol, round advancement,
+reload and completion. Independent real-session PG/WS tests cover cooperative access,
+restart and private projections, not just two tabs sharing one cookie.
+
+The editor uses bounded editable grid templates and bundled sprites, not a professional
+map editor or arbitrary uploaded/generated sprite pipeline. The package pins asset ID
+and checksum. Source prose/location/NPC definitions are preserved in private version
+snapshots; prose is not automatically compiled into new mechanics. Automatic content
+translation and real AI remain disabled; original author text is the fallback.
+
+Encounters implement repeated coordination, not a complete combat system or character
+initiative statistics. NPCs safely wait inside encounters. Outside them, explicitly
+requested mock plans can execute up to three validated steps and retain up to 16
+observed-event facts. No unbounded autonomous schedules or learned LLM memory are claimed.
+
+Movement uses bounded orthogonal target paths rather than analog continuous input;
+diagonal/virtual-stick mechanics and a final directional animation pipeline remain
+out of scope. Logical positions are interpolated by Pixi. Static current-map geometry
+and exits are known; FOV hides dynamic entities, not undiscovered floor plans. Four
+simultaneous browser clients and production load capacity have not been measured.
+
+Network messages contain complete permitted projections rather than compact patches.
+Recovery loads full checksum-verified checkpoints; there is no incremental replay
+worker. Full private state events are retained, and restoration never invokes real AI.
 
 ## Explicit limits
 
@@ -62,13 +78,31 @@ deployment. Each committed event currently contains a full private state checkpo
 and the latest snapshot is refreshed each commit. This simplifies prototype recovery
 at higher storage cost; it is not a measured production event-compaction strategy.
 Intermediate positions are not durable until the next checkpoint (target one second).
-Confirmed item/door/round results commit before acknowledgement.
+Confirmed item/door/round results commit before acknowledgement. Offline pause preserves
+remaining round/job time; crash recovery conservatively restores the last checkpoint
+remainder rather than consuming elapsed wall time.
 
-The fixture is immutable and source-independent. Publication/moderation/asset ACL
-of author stories is preserved, but launching arbitrary authored content and its
-version upgrade/migration belongs to a later playable-content/editor stage.
+Both compatibility fixtures and authored packages are immutable. Existing campaigns
+never silently upgrade when an author edits or republishes. Explicit migration of a
+running campaign to another playable package is not implemented.
 
 No load-capacity claim, public launch, Discord embedded verification, real provider
 cost estimate or payment guarantee follows from local tests. G4 requires separately
-approved provider, data policy and spend cap. New code publication remains pending
-owner permission.
+approved provider, data policy and spend cap. The initial slice was merged in PR #4; subsequent additions require their own
+verified handoff and publication authorization.
+
+## Authored-content / multiple-round / persistent-mock extension
+
+The extension is tested separately from the PR #4 baseline. The final combined runtime
+run passed **35/35** after migrations 011–014, submitted-review binding, autosave CAS
+and heartbeat recovery. The clarified true-pause contract adds migration 015 and a
+**4/4** targeted regression for preserved remaining time across offline periods, crash,
+reconnect and queued NPC work. The combined run passed **39/39**; the final affected offline suite passed **5/5**,
+including the added legacy-clock compatibility case (**40 distinct runtime checks**). It covers actual restart, source revoke,
+private/public moderation, stale reviewed-version rejection, immutable package guards,
+queued NPC decision recovery, bounded memory and account export/erasure.
+
+Core rules pass **38/38**; UI/autosave controller checks pass **18/18**. The final
+aggregate build/typecheck/lint and existing-platform regression are recorded in progress.md. New game browser
+sources are not yet executed remotely. These distinctions are intentional: test code,
+focused checks, actual managed-browser observations and full CI are different evidence.

@@ -94,3 +94,106 @@ test('direction releases preserve a bounded tap; explicit stop and blur stop on 
   assert.doesNotMatch(release, /onStop|onMove/);
   assert.match(source, /setInterval\(\(\) => step\(direction.dx, direction.dy\), 150\)/);
 });
+
+test('Studio map tools and localized template labels have complete dictionary coverage', async () => {
+  const text = await readFile(
+    new URL('../../apps/web/components/studio/playable-map-editor.tsx', import.meta.url),
+    'utf8',
+  );
+  const source = ts.createSourceFile(
+    'playable-map-editor.tsx',
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  let count = 0;
+  const visit = (node) => {
+    if (
+      ts.isVariableDeclaration(node) &&
+      ['toolLabels', 'names'].includes(node.name.getText(source))
+    ) {
+      const inspect = (child) => {
+        if (ts.isPropertyAssignment(child) && ts.isStringLiteral(child.initializer)) {
+          count++;
+          for (const locale of supportedLocales)
+            assert.ok(
+              Object.hasOwn(dictionaries[locale], child.initializer.text),
+              `${locale}: ${child.initializer.text}`,
+            );
+        }
+        ts.forEachChild(child, inspect);
+      };
+      inspect(node);
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.ok(count >= 16);
+});
+
+test('the renderer only resolves the pinned bundled atlas and its immutable file matches the hash', async () => {
+  const { resolveGameAtlas, prototypeAtlas } = await import('../../apps/web/lib/game-assets.ts');
+  assert.equal(resolveGameAtlas(), prototypeAtlas.path);
+  assert.equal(
+    resolveGameAtlas({ id: prototypeAtlas.id, sha256: prototypeAtlas.sha256 }),
+    prototypeAtlas.path,
+  );
+  assert.throws(() =>
+    resolveGameAtlas({ id: 'https://example.com/untrusted.svg', sha256: prototypeAtlas.sha256 }),
+  );
+  assert.throws(() => resolveGameAtlas({ id: prototypeAtlas.id, sha256: 'modified' }));
+  const bytes = await readFile(
+    new URL(`../../apps/web/public${prototypeAtlas.path}`, import.meta.url),
+  );
+  assert.equal(createHash('sha256').update(bytes).digest('hex'), prototypeAtlas.sha256);
+  const manifest = JSON.parse(
+    await readFile(new URL('../../assets/game/manifest.json', import.meta.url), 'utf8'),
+  );
+  assert.equal(manifest.immutableRuntimePath, prototypeAtlas.path);
+});
+
+test('Studio wiring preserves explicit playable opt-in, revision saves, private version pinning and publication guard', async () => {
+  // Wiring assertions complement API/core/browser acceptance; not browser execution evidence.
+  const editor = await readFile(
+    new URL('../../apps/web/components/studio/playable-map-editor.tsx', import.meta.url),
+    'utf8',
+  );
+  const studio = await readFile(
+    new URL('../../apps/web/components/studio.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(editor, /createAuthoredDraft\(template\)/);
+  assert.match(editor, /expectedRevision: revision/);
+  assert.match(editor, /const result = await autosave.flush\(\)/);
+  assert.match(editor, /useDraftAutosave<AuthoredGameDraft \| null, DraftResponse>/);
+  assert.match(editor, /playableVersionId: version.versionId/);
+  assert.doesNotMatch(editor, /dangerouslySetInnerHTML|JSON\.parse|<Textarea/);
+  assert.match(studio, /if \(playableFlush.current\) await playableFlush.current\(\)/);
+  assert.match(studio, /useDirtyWarning\(dirty \|\| playableDirty\)/);
+  assert.match(studio, /dirty \|\| playableDirty \? setConfirm\('leave'\)/);
+  assert.match(studio, /hidden=\{step !== 2 && step !== 6\}/);
+});
+
+test('moderation map inspector is read-only and approval waits for review of the submitted version', async () => {
+  const panel = await readFile(
+    new URL('../../apps/web/components/studio/playable-review.tsx', import.meta.url),
+    'utf8',
+  );
+  const admin = await readFile(
+    new URL('../../apps/web/components/admin.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(panel, /\/admin\/adventures\/\$\{adventureId\}\/playable-review/);
+  assert.match(panel, /useResource<ReviewResponse>/);
+  assert.doesNotMatch(
+    panel,
+    /method:|\/game\/campaigns|npcBrains|npcDefinitions|dangerouslySetInnerHTML/,
+  );
+  assert.match(panel, /type="checkbox"/);
+  assert.match(panel, /review.data.versionId === checkedVersion/);
+  assert.match(admin, /reviewedPlayableVersionId: reviewedVersionId/);
+  assert.match(admin, /STALE_REVIEW/);
+  assert.match(admin, /decision === 'approve' && !playableReviewed/);
+  assert.match(admin, /target.status === 'pending_review' && target.visibility === 'public'/);
+});

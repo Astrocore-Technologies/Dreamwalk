@@ -144,3 +144,144 @@ production event-compaction design, proven four-browser/load target or public re
 Next: finish permitted two-context CI and resolve any failures. Stop before G4 until
 the owner chooses a provider/data policy and approves a hard spend cap. Automatic
 translation, paid images, Discord, purchases and deployment remain separate gates.
+
+## 2026-10-30 — PR #4 verified; next mock-only tranche authorized
+
+Both GitHub CI runs passed on `9843ca7e51eeb892c9227d7dd88304da8cfad773`.
+This includes 8 browser scenarios: the game scenario uses two independent browser
+contexts and verifies shared pickup, reload, door/map separation, locale independence
+and the 390px layout. The initial mobile failure was fixed by removing the responsive
+grid's intrinsic minimum width; the strict overflow assertion remains unchanged.
+PR #4 is an open draft at this checkpoint, not merged or deployed.
+
+The owner authorized the next local implementation sequence:
+
+1. Studio authored playable maps, immutable versions, private tests and approved public
+   launches, with separate source-story and campaign access checks.
+2. Multiple local coordination rounds, deterministic joins/leaves and recovery of
+   persisted deadlines without blocking players elsewhere.
+3. Bounded persistent mock NPC goals, event memory and validated action sequences.
+
+Acceptance evidence for these additions is pending. Existing narrative-only stories
+must not be advertised as playable. Author edits must not mutate running campaigns.
+No real AI, paid image generation, payments or deployment is authorized by this tranche.
+
+### Authored runtime milestone (before Studio autosave extension)
+
+- Implemented separately stored authored game drafts and immutable compiled packages,
+  source-location/NPC references, fixed asset manifest and source-aware campaign ACL.
+- Added bounded grid-template editor, private immutable playtest and approved-version
+  launch; existing eight narrative authoring steps remain. This is a basic map form,
+  not a professional level editor or image generator.
+- Added real multiple coordination rounds, boundary join requests, checked flee and
+  completion votes, plus persistent bounded NPC mock plans and 16 observed-event facts.
+- Isolated runtime run passed 29/29 after migration 013: legacy 12, authored 6, rounds 4,
+  NPC plans 7. A later moderator-preview/approval-binding refinement requires the final
+  aggregate rerun. An intermediate replay run hit only a 5-second HTTP transport timeout
+  during local contention; transport bound increased to 15 seconds, gameplay assertions
+  and authoritative round deadlines unchanged.
+- Managed CUA created “Сад місячних ліхтарів” through Studio, changed map title, wall and
+  starting cell to (4,2), saved and launched immutable version 1. The rendered map used
+  those changes. Requested NPC action resulted in its token entering the player's actual
+  inventory and the NPC moving to its patrol point (7,4). Round 1 advanced to round 2;
+  reload retained round 2 and remaining deadline, and an end vote restored exploration.
+- The existing synthetic preview database was retained. UI inspection stopped when the
+  user returned to the preview, rather than competing for navigation.
+- Full production build, typecheck and lint passed before the final moderator and new
+  autosave additions. These are milestone results, not claims about later untested edits.
+
+The owner then explicitly required automatic saves. Game durability is already automatic;
+Studio narrative/NPC/playable autosave with revision guards was implemented and verified below.
+Publication remains an explicit, moderated action. No real provider has been enabled.
+
+### Studio automatic-save evidence
+
+Narrative/NPC edits now use independent monotonic edit revisions (migration 014).
+Real PostgreSQL targeted concurrency checks passed 3/3: simultaneous writers get one
+success and one stale conflict; invalid edits do not overwrite; translation edits
+invalidate old tokens; map/narrative revision streams do not conflict unnecessarily.
+The shared client controller serializes debounced writes and retains edits made during
+in-flight requests. Manual lifecycle actions flush the same writer, not a second PATCH.
+Client-focused typecheck/lint and 26 autosave/UI/locale checks passed.
+
+In a separate managed QA tab, existing narrative title, playable map title and NPC
+public description were edited without pressing Save, acknowledged by the automatic-save
+indicator, then verified after reload. An empty narrative title remained local with a
+visible invalid-field warning. First creation remained explicit. The QA tab was closed;
+the user's existing preview tab was not navigated or altered.
+
+Unacknowledged invalid/offline input is held in browser memory, with leave warnings;
+recovery after a browser crash is not promised. Publication is never automatic.
+
+### Transport regression uncovered under contention
+
+A real healthy client's 2.5-second JavaScript stall reproduced a premature WebSocket
+1006 close in the previous one-missed-pong policy. The gateway now uses a 2-second
+movement-stop threshold sampled every second and a 5-second close grace, while keeping
+one-second authorization checks. Targeted real-socket tests proved recovery of the
+stalled connection with fresh input and closure of a genuinely silent peer. Movement
+and gameplay speed assertions were not relaxed. Final combined evidence follows after
+all frozen-source checks complete.
+
+### Final frozen runtime and offline evidence
+
+The complete frozen runtime suite passed **35/35** (92.2 seconds): legacy cooperative
+gameplay, authored immutable packages and access, moderation review binding, multiround
+lifecycle, persistent NPC jobs, revision-guarded autosave and heartbeat recovery. A new
+separate offline-pause acceptance passed **1/1** on the same frozen API/core: **36 distinct
+runtime checks**, not a claim that all 36 ran in one combined invocation.
+
+After the last WebSocket disconnects and no HTTP access refreshes the campaign, the
+runtime checkpoints and sleeps. SQL-only observations confirmed that tick and NPC state
+stay unchanged; reconnect resumes normal ticks without offline catch-up. Round deadlines
+remain absolute persisted timestamps rather than being extended; an expired round can
+resolve once safely on reconnect. No paid calls or autonomous background simulation run.
+
+PR #4 was merged into main as `32a5f807d124e82bd7ae63ffc343150ae909f3da`. This next tranche
+remains local until separately authorized publication. Its new authored browser scenario
+has not run in CI yet. The workflow now explicitly runs contract/platform unit checks
+and game rules/UI/autosave tests, in addition to runtime and browser checks.
+
+Aggregate checks at 15:58 UTC also passed: full workspace typecheck, ESLint, production
+build, 9 contract + 38 core + 18 platform configuration/locale unit checks, 18 additional
+UI/autosave checks, 62 existing-platform PostgreSQL checks and the SMTP capture scenario.
+Changed-source formatting passed; four pre-existing unrelated files fail whole-repository
+formatting and were intentionally left unchanged.
+
+The owner subsequently clarified that offline pause must also freeze the remaining
+round duration. The absolute-deadline behavior above is therefore superseded work in
+progress, not the final accepted pause contract. Durable clock pause/resume and tests
+that stay offline past the old deadline are being completed before the final handoff.
+
+Migration 015 now implements the clarified true-pause contract: remaining round and
+queued mock-job durations are saved atomically and restored once on resume. Last-player
+disconnect pauses immediately; HTTP-only presence expires after five seconds. A short
+paused hot cache supports stalled-socket recovery without advancing simulation. Crash
+recovery uses the durable remaining-time checkpoint; final regressions are running.
+
+The full true-pause runtime regression passed **39/39** in 139.9 seconds after migration 015. This includes the beyond-deadline disconnect/crash case, one-time resume, another
+player keeping the world active, queued-job time suspension and erasure-clock cleanup.
+A final migration-compatibility refinement reconstructs pre-015 queued-job remaining
+budgets from their durable campaign checkpoint; its five affected offline tests are
+being rerun separately. No remaining-time reset is granted by duplicate reconnects.
+
+### Local handoff status
+
+Final affected offline checks passed **5/5** (45.9 seconds), including pre-015 queued-job
+clock reconstruction. Together with the preceding **39/39** complete runtime run this
+covers **40 distinct runtime checks**; the compatibility refinement was tested by the
+affected suite, not misreported as a later complete 40-check invocation. API/core are
+frozen. No outstanding known functional failure remains in the scoped mock tranche.
+
+New authored Studio/autosave/mobile browser acceptance remains unexecuted in remote CI
+until the next PR is authorized. Actual managed-browser checks and the earlier merged
+PR #4 two-independent-context scenario are separate evidence, not substitutes for that
+new CI run. Remaining product work includes professional editor/asset pipeline, richer
+combat and autonomous observed-event NPC decisions. Real AI, payments, Discord embedded
+verification and deployment remain separate gates; no such operation was enabled.
+
+Final source recheck at 16:14 UTC passed full workspace typecheck, ESLint and production
+build after the clock-compatibility refinement. Formatting passed for all changed
+supported source files. The earlier 62 platform and SMTP regressions remain valid for
+unchanged platform code; the modified game runtime was exercised by the suites above.
+Source is frozen for an authorized next PR; preview restart retains the existing database.

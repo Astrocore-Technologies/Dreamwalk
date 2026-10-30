@@ -268,6 +268,7 @@ export const npcSchema = z
   })
   .strict();
 export type Npc = z.infer<typeof npcSchema> & {
+  editRevision?: number;
   id: string;
   createdAt: string;
   updatedAt: string;
@@ -313,6 +314,9 @@ export const adventureSchema = z
   })
   .strict();
 export type Adventure = z.infer<typeof adventureSchema> & {
+  editRevision?: number;
+  /** Only an approved playable version is advertised publicly; never the private package. */
+  playableVersionId?: string | null;
   access?: 'owner' | 'invited' | 'public' | 'reviewer';
   readOnly?: boolean;
   id: string;

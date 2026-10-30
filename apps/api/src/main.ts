@@ -12,6 +12,8 @@ import { InvitationsController } from './invitations';
 import { DataRequestsController } from './data-requests';
 import { Errors } from './errors';
 import { config } from './config';
+import { PlayableService } from './game/playable.service';
+import { PlayableController } from './game/playable.controller';
 import { GameService } from './game/game.service';
 import { GameController } from './game/game.controller';
 import { attachGameSockets } from './game/game.socket';
@@ -37,8 +39,9 @@ class Health {
     InvitationsController,
     DataRequestsController,
     GameController,
+    PlayableController,
   ],
-  providers: [Db, Auth, Content, AssetUploadGuard, GameService],
+  providers: [Db, Auth, Content, AssetUploadGuard, GameService, PlayableService],
 })
 class AppModule {}
 async function bootstrap() {

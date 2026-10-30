@@ -1,8 +1,9 @@
 'use client';
+import { PlayableReview } from './studio/playable-review';
 import { selectAdventureText, selectNpcText } from '@dreamwalk/contracts';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
-import { useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useState, type FormEvent } from 'react';
 import {
   Activity,
   ArrowRight,
@@ -28,7 +29,7 @@ import type {
   User,
   Wallet,
 } from '@dreamwalk/contracts';
-import { api, useDate, errorMessage, useClient, useResource } from '@/lib/client';
+import { api, ApiError, useDate, errorMessage, useClient, useResource } from '@/lib/client';
 import {
   Badge,
   Button,
@@ -392,25 +393,43 @@ function AdminContent() {
     npcs = useResource<Npc[]>(tab === 'npcs' ? '/admin/npcs' : null),
     [target, setTarget] = useState<Adventure | null>(null),
     [decision, setDecision] = useState<'approve' | 'reject' | 'quarantine'>('approve'),
+    [playableReviewed, setPlayableReviewed] = useState(false),
+    [reviewedVersionId, setReviewedVersionId] = useState<string | null>(null),
     [reason, setReason] = useState(''),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     { toast } = useClient();
+  const onPlayableReviewed = useCallback((value: boolean, versionId: string | null) => {
+    setPlayableReviewed(value);
+    setReviewedVersionId(versionId);
+  }, []);
   async function moderate(e: FormEvent) {
     e.preventDefault();
     if (!target) return;
+    if (decision === 'approve' && !playableReviewed) {
+      setError(t('Сначала проверь отправленную игровую версию.'));
+      return;
+    }
     setBusy(true);
     setError('');
     try {
       await api(`/admin/adventures/${target.id}/moderate`, {
         method: 'POST',
-        body: JSON.stringify({ decision, reason }),
+        body: JSON.stringify({
+          decision,
+          reason,
+          ...(decision === 'approve' ? { reviewedPlayableVersionId: reviewedVersionId } : {}),
+        }),
       });
       toast(t('Решение сохранено в журнале'));
       setTarget(null);
       adventures.reload();
     } catch (e) {
-      setError(t(errorMessage(e)));
+      if (e instanceof ApiError && e.code === 'STALE_REVIEW') {
+        setPlayableReviewed(false);
+        setReviewedVersionId(null);
+        setError(t('Заявка изменилась. Обнови игровую версию и проверь её заново.'));
+      } else setError(t(errorMessage(e)));
     } finally {
       setBusy(false);
     }
@@ -495,6 +514,8 @@ function AdminContent() {
                           variant="secondary"
                           onClick={() => {
                             setTarget(a);
+                            setPlayableReviewed(false);
+                            setReviewedVersionId(null);
                             setReason('');
                             setDecision(
                               a.status === 'pending_review'
@@ -652,6 +673,13 @@ function AdminContent() {
               {t('. Содержимое персонажей можно проверить в отдельной вкладке NPC.')}
             </p>
           </div>
+          {target.status === 'pending_review' && target.visibility === 'public' && (
+            <PlayableReview
+              key={target.id}
+              adventureId={target.id}
+              onReviewed={onPlayableReviewed}
+            />
+          )}
           <form method="post" className="stack" onSubmit={(e) => void moderate(e)}>
             <Field label={t('Решение')}>
               <Select
@@ -683,7 +711,11 @@ function AdminContent() {
               <Button variant="secondary" type="button" onClick={() => setTarget(null)}>
                 {t('Отмена')}
               </Button>
-              <Button busy={busy} type="submit">
+              <Button
+                busy={busy}
+                disabled={decision === 'approve' && !playableReviewed}
+                type="submit"
+              >
                 {t('Сохранить решение')}
               </Button>
             </div>

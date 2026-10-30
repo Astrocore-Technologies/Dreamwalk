@@ -1,6 +1,6 @@
 /** Explicit operator action on ONE request. Never drains queues implicitly. */
 import pg from 'pg';
-import { exportGameData, purgeGameData } from './game-data-requests.mjs';
+import { exportGameData, exportPlayableData, purgeGameData } from './game-data-requests.mjs';
 import { readFile, unlink } from 'node:fs/promises';
 import { resolve, basename } from 'node:path';
 const arg = (name) => process.argv[process.argv.indexOf(name) + 1];
@@ -92,6 +92,7 @@ try {
         generatedAt: new Date().toISOString(),
         profile,
         game: await exportGameData(c, user.id),
+        playable: await exportPlayableData(c, user.id),
         heroes: await rows('SELECT id,data,created_at,updated_at FROM heroes WHERE owner_id=$1', [
           user.id,
         ]),

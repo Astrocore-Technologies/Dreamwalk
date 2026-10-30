@@ -24,7 +24,7 @@ const actionKeys: Record<GameAction['kind'], string> = {
   close: 'Закрыть дверь',
   transition: 'Перейти',
   defend: 'Ждать',
-  flee: 'Перейти',
+  flee: 'Покинуть столкновение',
 };
 const errorKeys: Record<string, string> = {
   OUT_OF_RANGE: 'Слишком далеко. Сначала подойди ближе.',
@@ -36,6 +36,8 @@ const errorKeys: Record<string, string> = {
   FORBIDDEN: 'У тебя нет доступа к этому действию.',
   UNAUTHORIZED: 'Войди в аккаунт, чтобы продолжить.',
   RATE_LIMITED: 'Слишком много запросов. Подожди немного и повтори.',
+  SOURCE_ACCESS_REQUIRED:
+    'У игрока нет доступа к исходной приватной истории. Сначала пригласи его в историю.',
 };
 const eventKeys: Record<string, string> = {
   'action.pick_up': 'Предмет передан',
@@ -129,7 +131,7 @@ function CampaignLobby() {
             <article key={campaign.id} className={styles.campaignCard}>
               <div>
                 <span className={styles.kicker}>{t('Сохранённое прохождение')}</span>
-                <h3>{t('Обсерватория')}</h3>
+                <h3>{campaign.title || t('Обсерватория')}</h3>
                 <code>{campaign.id.slice(0, 8)}</code>
               </div>
               {campaign.membership === 'pending' ? (
@@ -178,8 +180,8 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
   const connected = game.connection === 'connected';
   const nearby = useMemo(() => p?.entities.filter((entity) => entity.id !== p.actorId) || [], [p]);
   useEffect(() => {
-    setSelected({ kind: 'wait' });
-  }, [encounter?.id, encounter?.round]);
+    setSelected((p && encounter?.intents[p.actorId]?.action) || { kind: 'wait' });
+  }, [encounter?.id, encounter?.round, locked]);
   async function invite(event: React.FormEvent) {
     event.preventDefault();
     setInviteBusy(true);
@@ -278,7 +280,22 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             <ArrowLeft size={16} />
             {t('К кампаниям')}
           </Link>
-          <h1>{t(p.map.id === 'roof' ? 'Крыша' : 'Обсерватория')}</h1>
+          {game.campaign?.title && <p className={styles.kicker}>{game.campaign.title}</p>}
+          {game.campaign?.sourceRevision && (
+            <small>
+              {t('Игровая версия {version}', { version: game.campaign.sourceRevision })}
+            </small>
+          )}
+          <h1>
+            {p.map.label ||
+              t(
+                p.map.id === 'roof'
+                  ? 'Крыша'
+                  : p.map.id === 'observatory'
+                    ? 'Обсерватория'
+                    : 'Локация',
+              )}
+          </h1>
           {own && (
             <p
               className={styles.position}
@@ -363,8 +380,17 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
               </p>
               <p>
                 {t('Намерение: {action}', { action: t(actionKeys[selected.kind]) })}
-                {selectedTarget ? ` · ${t(entityKey(selectedTarget, p.actorId))}` : ''}
+                {selectedTarget
+                  ? ` · ${selectedTarget.label || t(entityKey(selectedTarget, p.actorId))}`
+                  : ''}
               </p>
+              {encounter.policy && (
+                <p>
+                  {t('Не более {rounds} раундов. Выход — действием у границы области.', {
+                    rounds: encounter.policy.maxRounds,
+                  })}
+                </p>
+              )}
               <div className={styles.actions}>
                 <Button
                   variant="secondary"
@@ -373,6 +399,26 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                 >
                   {t('Ждать')}
                 </Button>
+                <Button
+                  variant="secondary"
+                  disabled={locked || game.busy}
+                  onClick={() => setSelected({ kind: 'flee' })}
+                >
+                  {t('Покинуть столкновение')}
+                </Button>
+                {encounter.policy && (
+                  <Button
+                    variant="ghost"
+                    disabled={!connected || game.busy || encounter.endVotes?.includes(p.actorId)}
+                    onClick={() => void game.command({ type: 'encounter.end' })}
+                  >
+                    {t(
+                      encounter.endVotes?.includes(p.actorId)
+                        ? 'Завершение запрошено'
+                        : 'Предложить завершить',
+                    )}
+                  </Button>
+                )}
                 <Button
                   disabled={locked || !connected}
                   busy={game.busy}
@@ -383,6 +429,22 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
               </div>
             </section>
           )}
+          {!encounter &&
+            p.nearbyEncounters?.map((near) => (
+              <section key={near.id} className={styles.encounter}>
+                <h2>{t('Столкновение рядом')}</h2>
+                <p>{t('Раунд {round}', { round: near.round })}</p>
+                <Button
+                  disabled={!connected}
+                  busy={game.busy}
+                  onClick={() =>
+                    void game.command({ type: 'encounter.join', encounterId: near.id })
+                  }
+                >
+                  {t('Вступить со следующего раунда')}
+                </Button>
+              </section>
+            ))}
           <section className={styles.objects}>
             <header>
               <h2>{t('Предметы рядом')}</h2>
@@ -399,7 +461,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             {nearby.map((entity) => (
               <article key={entity.id} className={styles.object} data-entity-id={entity.id}>
                 <div>
-                  <h3>{t(entityKey(entity, p.actorId))}</h3>
+                  <h3>{entity.label || t(entityKey(entity, p.actorId))}</h3>
                   <small>
                     {t('Координаты: {x}, {y}', { x: entity.x, y: entity.y })}
                     {entity.kind === 'door'
@@ -437,7 +499,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                         act({
                           kind: entity.locked ? 'unlock' : entity.open ? 'close' : 'open',
                           targetId: entity.id,
-                          ...(entity.locked ? { itemId: 'key' } : {}),
+                          ...(entity.locked ? { itemId: entity.keyId } : {}),
                         })
                       }
                     >
@@ -469,7 +531,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                           })
                         }
                       >
-                        {t('Попросить смотрителя помочь')}
+                        {t('Попросить NPC действовать')}
                       </Button>
                     </>
                   )}
@@ -479,7 +541,16 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             {p.map.exits.map((exit) => (
               <article key={exit.id} className={styles.object}>
                 <div>
-                  <h3>{t(exit.destinationMapId === 'roof' ? 'Крыша' : 'Обсерватория')}</h3>
+                  <h3>
+                    {exit.label ||
+                      t(
+                        exit.destinationMapId === 'roof'
+                          ? 'Крыша'
+                          : exit.destinationMapId === 'observatory'
+                            ? 'Обсерватория'
+                            : 'Переход',
+                      )}
+                  </h3>
                   <small>{t('Координаты: {x}, {y}', { x: exit.x, y: exit.y })}</small>
                 </div>
                 <div className={styles.actions}>
@@ -513,7 +584,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                 {p.inventory.map((item) => (
                   <li key={item.id} data-inventory-id={item.id}>
                     <span>◇</span>
-                    {t(entityKey(item, p.actorId))}
+                    {item.label || t(entityKey(item, p.actorId))}
                   </li>
                 ))}
               </ul>
