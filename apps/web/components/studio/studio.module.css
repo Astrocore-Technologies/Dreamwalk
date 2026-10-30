@@ -1,0 +1,449 @@
+.studioIntro {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  padding: 30px;
+  margin: 22px 0 30px;
+  border: 1px solid var(--border, #3b3042);
+  border-radius: 18px;
+  background: linear-gradient(
+    115deg,
+    color-mix(in srgb, var(--accent) 9%, transparent),
+    transparent
+  );
+}
+.studioIntro h2 {
+  font-family: var(--font-display, Georgia, serif);
+  margin: 0 0 9px;
+  font-size: 27px;
+}
+.studioIntro p {
+  max-width: 650px;
+  color: var(--muted, #b3a6b8);
+  line-height: 1.7;
+  margin: 0;
+}
+.introIcon {
+  color: var(--accent, #d8b879);
+  padding: 19px;
+  background: color-mix(in srgb, var(--accent) 8%, transparent);
+  border-radius: 50%;
+}
+.studioIntro > span {
+  white-space: nowrap;
+  margin-left: auto;
+}
+.adventureList {
+  display: grid;
+  gap: 16px;
+  margin-bottom: 24px;
+}
+.storyRow {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  padding: 17px;
+  background: var(--surface, #251b2c);
+  border: 1px solid var(--border, #3b3042);
+  border-radius: 16px;
+  color: inherit;
+  text-decoration: none;
+  transition: border-color 0.2s;
+}
+.storyRow:hover {
+  border-color: var(--accent, #d8b879);
+}
+.storyRow > img {
+  width: 164px;
+  height: 122px;
+  object-fit: cover;
+  border-radius: 9px;
+}
+.storyRow > div {
+  flex: 1;
+  min-width: 0;
+}
+.storyRow h2 {
+  font-size: 23px;
+  margin: 9px 0;
+}
+.storyRow p {
+  color: var(--muted, #b3a6b8);
+  overflow: hidden;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+  margin: 0 0 10px;
+  line-height: 1.5;
+}
+.storyRow small {
+  color: var(--muted, #b3a6b8);
+}
+.steps {
+  display: flex;
+  gap: 4px;
+  overflow-x: auto;
+  margin: 20px 0 26px;
+  padding-bottom: 12px;
+}
+.steps button {
+  flex: 1;
+  min-width: 108px;
+  border: 0;
+  border-bottom: 2px solid var(--border, #3b3042);
+  background: none;
+  color: var(--muted, #b3a6b8);
+  padding: 12px 6px 16px;
+  text-align: left;
+  font: inherit;
+  font-size: 12px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.steps button span {
+  display: block;
+  font-size: 11px;
+  letter-spacing: 2px;
+  margin-bottom: 11px;
+}
+.steps button.stepActive {
+  border-color: var(--accent, #d8b879);
+  color: var(--accent, #d8b879);
+}
+.editorTitle {
+  display: flex;
+  gap: 20px;
+  align-items: flex-start;
+  margin-bottom: 28px;
+}
+.editorTitle > span {
+  font:
+    32px Georgia,
+    serif;
+  color: var(--accent, #d8b879);
+  opacity: 0.65;
+}
+.editorTitle h2 {
+  margin: 0 0 8px;
+  font-size: 23px;
+}
+.editorTitle p {
+  margin: 0;
+  color: var(--muted, #b3a6b8);
+  line-height: 1.7;
+}
+.nestedCard {
+  border: 1px solid var(--border, #3b3042);
+  border-radius: 12px;
+  padding: 22px;
+  display: grid;
+  gap: 16px;
+  margin: 10px 0;
+}
+.nestedCard h3 {
+  margin: 0;
+  flex: 1;
+  font-size: 16px;
+}
+.nestedCard p {
+  white-space: pre-wrap;
+}
+.assetPreview {
+  width: 100%;
+  height: 220px;
+  object-fit: cover;
+  border-radius: 12px;
+}
+.mediaGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 12px;
+  margin: 20px 0;
+}
+.mediaTile {
+  padding: 4px;
+  background: var(--surface, #251b2c);
+  color: inherit;
+  border: 1px solid var(--border, #3b3042);
+  border-radius: 8px;
+  cursor: pointer;
+}
+.mediaTile img {
+  width: 100%;
+  height: 100px;
+  object-fit: cover;
+  border-radius: 5px;
+}
+.mediaTile span {
+  display: block;
+  font-size: 11px;
+  padding: 5px;
+}
+.npcSelection {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 14px;
+}
+.npcOption {
+  display: flex;
+  gap: 13px;
+  align-items: center;
+  padding: 18px;
+  border: 1px solid var(--border, #3b3042);
+  border-radius: 12px;
+  cursor: pointer;
+}
+.npcOption:has(input:checked) {
+  border-color: var(--accent, #d8b879);
+  background: color-mix(in srgb, var(--accent) 6%, transparent);
+}
+.npcOption small {
+  display: block;
+  color: var(--muted, #b3a6b8);
+  margin-top: 6px;
+}
+.avatar {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent, #d8b879);
+  font:
+    22px Georgia,
+    serif;
+  border-radius: 50%;
+  flex-shrink: 0;
+}
+.checkRow {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 13px;
+  border-bottom: 1px solid var(--border, #3b3042);
+}
+.checkRow input,
+.npcOption input {
+  accent-color: var(--accent, #d8b879);
+  width: 18px;
+  height: 18px;
+  flex-shrink: 0;
+}
+.previewCover {
+  padding: 100px 32px 32px;
+  border-radius: 15px;
+  background-position: center;
+  background-size: cover;
+  color: #fff;
+  min-height: 360px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  justify-content: flex-end;
+}
+.previewCover h2 {
+  font:
+    40px Georgia,
+    serif;
+  max-width: 600px;
+  margin: 15px 0;
+}
+.previewCover p {
+  line-height: 1.8;
+  max-width: 660px;
+  color: #e1e6df;
+}
+.previewCover > span:last-child {
+  color: #c5d2c7;
+  font-size: 13px;
+}
+.preWrap {
+  white-space: pre-wrap;
+  line-height: 1.8;
+  color: var(--muted, #b3a6b8);
+}
+.summaryGrid {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 15px;
+}
+.summaryGrid > div {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--border, #3b3042);
+  border-radius: 10px;
+}
+.summaryGrid svg {
+  width: 20px;
+  color: var(--accent, #d8b879);
+}
+.summaryGrid strong {
+  font-size: 24px;
+}
+.summaryGrid span {
+  color: var(--muted, #b3a6b8);
+  font-size: 13px;
+}
+.readiness {
+  display: grid;
+  grid-template-columns: repeat(2, 1fr);
+  gap: 15px;
+}
+.readiness > div {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+}
+.ready,
+.notReady {
+  width: 26px;
+  height: 26px;
+  display: grid;
+  place-items: center;
+  border-radius: 50%;
+  background: color-mix(in srgb, var(--accent) 12%, transparent);
+  color: var(--accent, #d8b879);
+}
+.notReady {
+  color: #e4b775;
+  background: rgba(228, 183, 117, 0.1);
+}
+.npcCards {
+  display: grid;
+  grid-template-columns: repeat(3, 1fr);
+  gap: 20px;
+}
+.npcCard {
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  padding: 26px;
+  border: 1px solid var(--border, #3b3042);
+  border-radius: 15px;
+  background: var(--surface, #251b2c);
+  text-decoration: none;
+  color: inherit;
+  gap: 12px;
+}
+.npcCard h2 {
+  font:
+    25px Georgia,
+    serif;
+  margin: 4px 0;
+}
+.npcCard p {
+  margin: 0;
+  color: var(--muted, #b3a6b8);
+}
+.npcCard small {
+  color: var(--muted, #b3a6b8);
+  line-height: 1.7;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+}
+.npcCard > a,
+.npcCard > span:last-child {
+  margin-top: auto;
+  padding-top: 16px;
+}
+.portrait,
+.portraitLetter {
+  width: 80px;
+  height: 80px;
+  border-radius: 50%;
+  object-fit: cover;
+  margin-bottom: 12px;
+}
+.portraitLetter {
+  display: grid;
+  place-items: center;
+  font:
+    34px Georgia,
+    serif;
+  color: var(--accent, #d8b879);
+  background: radial-gradient(circle at 30% 20%, #66503b, #251b2c);
+}
+@media (max-width: 800px) {
+  .studioIntro {
+    padding: 22px;
+    gap: 16px;
+    align-items: flex-start;
+  }
+  .studioIntro > span {
+    display: none;
+  }
+  .introIcon {
+    padding: 10px;
+  }
+  .storyRow {
+    gap: 14px;
+  }
+  .storyRow > img {
+    width: 100px;
+    height: 100px;
+  }
+  .storyRow h2 {
+    font-size: 19px;
+  }
+  .npcCards {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .summaryGrid > div {
+    padding: 14px;
+    gap: 8px;
+    flex-wrap: wrap;
+  }
+  .summaryGrid span {
+    width: 100%;
+  }
+  .readiness {
+    grid-template-columns: 1fr;
+  }
+  .previewCover h2 {
+    font-size: 30px;
+  }
+}
+@media (max-width: 540px) {
+  .studioIntro {
+    display: block;
+  }
+  .introIcon {
+    display: none;
+  }
+  .studioIntro h2 {
+    font-size: 24px;
+  }
+  .storyRow > img {
+    width: 72px;
+    height: 95px;
+  }
+  .storyRow > svg {
+    display: none;
+  }
+  .storyRow p {
+    font-size: 13px;
+  }
+  .storyRow small {
+    font-size: 11px;
+  }
+  .npcSelection,
+  .npcCards {
+    grid-template-columns: 1fr;
+  }
+  .editorTitle > span {
+    display: none;
+  }
+  .previewCover {
+    padding: 75px 20px 22px;
+  }
+  .mediaGrid {
+    grid-template-columns: repeat(2, 1fr);
+  }
+  .nestedCard {
+    padding: 15px;
+  }
+}

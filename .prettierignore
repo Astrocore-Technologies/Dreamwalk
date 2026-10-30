@@ -1,0 +1,13 @@
+node_modules
+.next
+dist
+.local
+package-lock.json
+apps/web/public/images
+docs/source-spec.ru.md
+
+.next-dev
+
+apps/web/next-env.d.ts
+
+.npm-cache
