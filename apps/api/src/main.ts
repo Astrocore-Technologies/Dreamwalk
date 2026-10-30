@@ -1,3 +1,5 @@
+import { ImageGenerationService } from './image-generation/service';
+import { ImageGenerationController } from './image-generation/controller';
 import 'reflect-metadata';
 import { Controller, Get, Inject, Module } from '@nestjs/common';
 import { NestFactory } from '@nestjs/core';
@@ -40,6 +42,7 @@ class Health {
     AdminController,
     AssetsController,
     AssetReuseController,
+    ImageGenerationController,
     InvitationsController,
     DataRequestsController,
     GameController,
@@ -51,6 +54,7 @@ class Health {
     Content,
     AssetUploadGuard,
     AssetReuseService,
+    ImageGenerationService,
     NpcAiService,
     GameService,
     PlayableService,

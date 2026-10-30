@@ -1,4 +1,8 @@
 import {
+  eraseImageGeneration,
+  exportImageGeneration,
+} from '../apps/api/dist/image-generation/data-requests.js';
+import {
   eraseReusableAssets,
   exportReusableAssets,
 } from '../apps/api/dist/assets/data-requests.js';
@@ -98,6 +102,7 @@ try {
         game: await exportGameData(c, user.id),
         playable: await exportPlayableData(c, user.id),
         reusableArt: await exportReusableAssets(c, user.id),
+        imageGeneration: await exportImageGeneration(c, user.id),
         heroes: await rows('SELECT id,data,created_at,updated_at FROM heroes WHERE owner_id=$1', [
           user.id,
         ]),
@@ -156,6 +161,18 @@ try {
         }
       await c.query("SET LOCAL dreamwalk.erasure='confirmed'");
       await purgeGameData(c, user.id);
+      const imageCleanup = await eraseImageGeneration(c, user.id);
+      // The deleted account cannot resume admission. Keep DB pointers on rollback so
+      // a failed unlink remains retryable, exactly like original asset cleanup above.
+      for (const filename of imageCleanup.quarantineFilenames) {
+        if (basename(filename) !== filename || !/^[0-9a-f-]{36}\.image-quarantine$/i.test(filename))
+          throw new Error('Unsafe stored quarantine filename');
+        try {
+          await unlink(resolve(process.env.ASSET_DIR || '.local/assets', filename));
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
+      }
       await eraseReusableAssets(c, user.id);
       await c.query(
         `UPDATE adventure_versions v SET snapshot='{"erased":true}' WHERE EXISTS(SELECT 1 FROM adventures a WHERE a.id=v.adventure_id AND a.owner_id=$1)`,

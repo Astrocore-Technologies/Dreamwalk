@@ -454,3 +454,40 @@ with localized limits. No image-generation provider call, paid request, deployme
 or restart of the user's stopped Windows application was performed. Live text/image
 budget preparation remains a separate, default-disabled workstream and is not part
 of this asset publication snapshot.
+
+## 2026-10-30 — Art CI closure and image-generation preparation
+
+Reusable-art PR #8 passed both exact-head CI runs at
+`4543f46f3b91f9d91fb6cd039e0be09bca316063`: all 11 browser scenarios, 115 game runtime,
+23 asset API/PG, 95 core, 48 UI, 18 configuration/locales, 9 contracts, 62 platform
+and the SMTP scenario passed. The new browser scenario produced an actual custom-art
+canvas screenshot. Its initial run exposed ambiguous nested autosave selectors; map
+status now has an explicit semantic scope and both older tests retain their assertions.
+This is verified raster reuse/rendering, not newly generated AI artwork.
+
+The next, separate preparation module adds durable image quotes, explicit per-quote
+consent, one-attempt jobs, shared total/purpose reservation accounting, own-reference
+checks, quarantine cleanup and immutable raster admission. Studio searches for reusable
+art first and makes the zero-cost mock sample unmistakable. A result is not automatically
+bound, published or moderated. Existing and generated uploads share the same sanitizer
+and quota. Ambiguous dispatch retains its budget reservation and is never automatically
+retried; account erasure removes private prompts and quarantined bytes while preserving
+unresolved financial exposure without actor linkage.
+
+Final local verification passed: image API/PostgreSQL **20/20**, existing asset **23/23**,
+full game/NPC runtime **115/115** (231.29s), platform **62/62**, SMTP **1/1**, core **95/95**,
+contracts **9/9**, configuration/locales **18/18**, and UI/autosave/privacy/art/image
+**50/50**. Production build, workspace typecheck, ESLint and formatting passed. The first
+aggregate process was interrupted during platform checks; only the completed earlier
+stages were retained, and all unfinished stages were rerun to successful terminal results.
+No partial log was counted as a passed suite. New image Studio browser acceptance remains
+source-only until its separate exact-head CI; the earlier 11-browser pass does not cover it.
+
+The concrete Images protocol adapter is tested with injected transport, including
+configuration fingerprints, bounds, receipts and invalid outputs. **The production image
+service remains hard-disabled externally**; adding a key cannot enable it. A defensible
+provider request cost ceiling and a validated activation factory remain prerequisites.
+The approved one-time text/image test ceilings do not silently authorize ongoing calls.
+The separate text smoke kit uses the actual NPC adapter but has made no real request;
+local key entry and execution are paused during the user's power outage. No paid call,
+deployment, merge or restart of the user's stopped installation occurred.

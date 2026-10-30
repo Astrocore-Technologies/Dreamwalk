@@ -153,3 +153,18 @@ See [NPC architecture](docs/living-npc-architecture.ru.md),
 [coverage and verification](docs/npc-implementation-coverage.md), and
 [provider operations](docs/npc-ai-operations.md). Admin-only aggregate diagnostics are
 available at `GET /api/v1/admin/npc-ai/metrics`; they contain no private prompts or actor IDs.
+
+## Reusable art and image preparation
+
+`/studio/assets` manages private raster revisions and explicit cross-author reuse grants.
+Adventure Locations can autosave compatible art bindings; playable versions pin the exact
+revision without mutating existing campaigns. See [reusable art](docs/assets-reuse.md).
+
+The adventure-scoped library also offers an explicitly labelled **mock image pipeline**:
+search reusable materials, request a quote, consent, and receive a fixed synthetic raster
+sample as a new immutable library revision. It does not bind or publish the result for you.
+External image generation is hard-disabled; adding a key alone cannot activate it.
+See [generation preparation and remaining live gates](docs/image-generation.md).
+
+Run `npm run test:images:integration` for the isolated PostgreSQL/fixture-provider checks.
+No test command above makes paid image requests or starts the user's separate installation.

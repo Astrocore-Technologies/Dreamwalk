@@ -190,72 +190,82 @@ export class AssetReuseService {
   }
   async register(userId: string, input: unknown) {
     const b = registerRevisionSchema.parse(input);
-    return this.mutate(userId, b.operationId, { action: 'register', ...b }, async (c) => {
-      const upload = (
-        await c.query('SELECT * FROM assets WHERE id=$1 AND owner_id=$2 FOR SHARE', [
-          b.uploadId,
+    return this.mutate(userId, b.operationId, { action: 'register', ...b }, (c) =>
+      this.registerTx(c, userId, b),
+    );
+  }
+  /** Internal transactional admission; callers must hold active author and art-owner quota lock. */
+  async registerTx(
+    c: PoolClient,
+    userId: string,
+    input: unknown,
+    ids?: { familyId: string; revisionId: string },
+  ) {
+    const b = registerRevisionSchema.parse(input);
+    const upload = (
+      await c.query('SELECT * FROM assets WHERE id=$1 AND owner_id=$2 FOR SHARE', [
+        b.uploadId,
+        userId,
+      ])
+    ).rows[0];
+    if (
+      !upload ||
+      (
+        await c.query(
+          'SELECT 1 FROM art_asset_revisions r JOIN art_asset_takedowns t ON t.revision_id=r.id WHERE r.upload_id=$1 LIMIT 1',
+          [b.uploadId],
+        )
+      ).rowCount
+    )
+      fail(404, 'ASSET_NOT_FOUND', 'ASSET_NOT_FOUND');
+    const count = (
+      await c.query(
+        'SELECT count(*)::int AS n FROM art_asset_revisions r JOIN art_asset_families f ON f.id=r.family_id WHERE f.owner_id=$1',
+        [userId],
+      )
+    ).rows[0];
+    if (count.n >= 2000) fail(429, 'ASSET_REVISION_QUOTA', 'ASSET_REVISION_QUOTA');
+    const familyId = b.familyId ?? ids?.familyId ?? randomUUID();
+    let revision = 1;
+    if (b.familyId) {
+      const family = (
+        await c.query('SELECT * FROM art_asset_families WHERE id=$1 AND owner_id=$2 FOR UPDATE', [
+          familyId,
           userId,
         ])
       ).rows[0];
-      if (
-        !upload ||
-        (
-          await c.query(
-            'SELECT 1 FROM art_asset_revisions r JOIN art_asset_takedowns t ON t.revision_id=r.id WHERE r.upload_id=$1 LIMIT 1',
-            [b.uploadId],
-          )
-        ).rowCount
-      )
-        fail(404, 'ASSET_NOT_FOUND', 'ASSET_NOT_FOUND');
-      const count = (
-        await c.query(
-          'SELECT count(*)::int AS n FROM art_asset_revisions r JOIN art_asset_families f ON f.id=r.family_id WHERE f.owner_id=$1',
-          [userId],
-        )
-      ).rows[0];
-      if (count.n >= 2000) fail(429, 'ASSET_REVISION_QUOTA', 'ASSET_REVISION_QUOTA');
-      const familyId = b.familyId ?? randomUUID();
-      let revision = 1;
-      if (b.familyId) {
-        const family = (
-          await c.query('SELECT * FROM art_asset_families WHERE id=$1 AND owner_id=$2 FOR UPDATE', [
-            familyId,
-            userId,
-          ])
-        ).rows[0];
-        if (!family || family.archived_at) fail(404, 'ASSET_NOT_FOUND', 'ASSET_NOT_FOUND');
-        if (family.head_revision !== b.expectedFamilyRevision)
-          fail(409, 'STALE_REVISION', 'STALE_REVISION');
-        revision = family.head_revision + 1;
-      } else
-        await c.query('INSERT INTO art_asset_families(id,owner_id) VALUES($1,$2)', [
-          familyId,
-          userId,
-        ]);
-      const id = randomUUID();
-      await c.query(
-        'INSERT INTO art_asset_revisions(id,family_id,revision,upload_id,metadata,sha256,mime,width,height) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
-        [
-          id,
-          familyId,
-          revision,
-          b.uploadId,
-          b.metadata,
-          upload.sha256,
-          upload.mime,
-          upload.width,
-          upload.height,
-        ],
-      );
-      await c.query('UPDATE art_asset_families SET head_revision=$2 WHERE id=$1', [
+      if (!family || family.archived_at) fail(404, 'ASSET_NOT_FOUND', 'ASSET_NOT_FOUND');
+      if (family.head_revision !== b.expectedFamilyRevision)
+        fail(409, 'STALE_REVISION', 'STALE_REVISION');
+      revision = family.head_revision + 1;
+    } else
+      await c.query('INSERT INTO art_asset_families(id,owner_id) VALUES($1,$2)', [
+        familyId,
+        userId,
+      ]);
+    const id = ids?.revisionId ?? randomUUID();
+    await c.query(
+      'INSERT INTO art_asset_revisions(id,family_id,revision,upload_id,metadata,sha256,mime,width,height) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+      [
+        id,
         familyId,
         revision,
-      ]);
-      return this.dto(
-        (await c.query<Revision>(`${baseRevision} WHERE r.id=$1`, [id])).rows[0],
-        userId,
-      );
-    });
+        b.uploadId,
+        b.metadata,
+        upload.sha256,
+        upload.mime,
+        upload.width,
+        upload.height,
+      ],
+    );
+    await c.query('UPDATE art_asset_families SET head_revision=$2 WHERE id=$1', [
+      familyId,
+      revision,
+    ]);
+    return this.dto(
+      (await c.query<Revision>(`${baseRevision} WHERE r.id=$1`, [id])).rows[0],
+      userId,
+    );
   }
   async catalog(userId: string) {
     return this.db.tx(async (c) => {

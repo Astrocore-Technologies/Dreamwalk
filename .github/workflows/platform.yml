@@ -57,6 +57,8 @@ jobs:
         run: npm run test:game:integration
       - name: Reusable asset ACL and immutable publication integration
         run: npm run test:assets:integration
+      - name: Image quote, consent, budget and admission integration
+        run: npm run test:images:integration
       - name: Local SMTP capture integration
         run: npm run test:mail
       - name: Browser dependencies
