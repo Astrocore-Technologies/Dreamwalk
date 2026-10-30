@@ -120,6 +120,10 @@
 .connection[data-connected='true'] {
   color: #84ba9d;
 }
+.roomGrid > * {
+  /* Canvas intrinsic width must not become the grid item minimum on resize. */
+  min-width: 0;
+}
 .roomGrid {
   display: grid;
   grid-template-columns: minmax(0, 1fr) 280px;
@@ -323,7 +327,7 @@
 }
 @media (max-width: 1100px) {
   .roomGrid {
-    grid-template-columns: 1fr;
+    grid-template-columns: minmax(0, 1fr);
   }
   .hud {
     grid-template-columns: repeat(3, minmax(0, 1fr));
