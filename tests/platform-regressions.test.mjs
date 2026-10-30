@@ -231,7 +231,9 @@ await test('public snapshots, media visibility and taxonomy regressions', async 
         try {
           const changed = {
             genres: [...old.genres, `Test ${suffix}`],
-            tags: [...old.tags, `Tag ${suffix}`],
+            tags: old.tags.map((tag, index) =>
+              index === 0 ? { ...tag, labels: { ...tag.labels, en: `Tag ${suffix}` } } : tag,
+            ),
           };
           await request('PATCH', '/admin/taxonomy', changed);
           assert.deepEqual(await request('GET', '/genres', undefined, 200, false), changed.genres);

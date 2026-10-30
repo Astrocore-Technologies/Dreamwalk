@@ -157,22 +157,26 @@ export function Shell({ children }: { children: React.ReactNode }) {
           >
             <Menu />
           </button>
-          <form
-            className="top-search"
-            onSubmit={(e) => {
-              e.preventDefault();
-              router.push(`/explore?q=${encodeURIComponent(query)}`);
-            }}
-          >
-            <Search size={17} />
-            <input
-              aria-label={tr('Поиск миров')}
-              placeholder={tr('Найти своё следующее приключение')}
-              value={query}
-              onChange={(e) => setQuery(e.target.value)}
-            />
-            <kbd>⌕</kbd>
-          </form>
+          {path === '/explore' ? (
+            <span className="catalog-shell-label">{tr('Открыть миры')}</span>
+          ) : (
+            <form
+              className="top-search"
+              onSubmit={(e) => {
+                e.preventDefault();
+                router.push(`/explore?q=${encodeURIComponent(query)}`);
+              }}
+            >
+              <Search size={17} />
+              <input
+                aria-label={tr('Поиск миров')}
+                placeholder={tr('Найти своё следующее приключение')}
+                value={query}
+                onChange={(e) => setQuery(e.target.value)}
+              />
+              <kbd>⌕</kbd>
+            </form>
+          )}
           <div className="top-actions">
             <select
               className="locale-select"

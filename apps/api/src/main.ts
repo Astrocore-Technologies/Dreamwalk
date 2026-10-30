@@ -9,6 +9,7 @@ import { Content, ContentController } from './content';
 import { AdminController } from './admin';
 import { AssetsController, AssetUploadGuard } from './assets';
 import { InvitationsController } from './invitations';
+import { DataRequestsController } from './data-requests';
 import { Errors } from './errors';
 import { config } from './config';
 @Controller('api/v1')
@@ -31,6 +32,7 @@ class Health {
     AdminController,
     AssetsController,
     InvitationsController,
+    DataRequestsController,
   ],
   providers: [Db, Auth, Content, AssetUploadGuard],
 })
@@ -71,7 +73,9 @@ async function bootstrap() {
         return;
       }
     }
-    const isAuth = req.path.includes('/auth/login') || req.path.includes('/auth/register');
+    const isAuth =
+      mutation &&
+      (req.path.includes('/auth/') || req.path.includes('/account/email-verification/'));
     const key = `${req.ip}:${isAuth ? 'auth' : 'all'}`,
       now = Date.now(),
       limit = isAuth ? 30 : 600;

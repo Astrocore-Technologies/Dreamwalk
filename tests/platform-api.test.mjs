@@ -542,7 +542,7 @@ await test('platform persistence, ownership, moderation and accounting', async (
           201,
         );
         assert.equal(reset.code, 'EMAIL_DELIVERY_UNAVAILABLE');
-        assert.ok(reset.message);
+        assert.deepEqual(reset, { ok: true, code: 'EMAIL_DELIVERY_UNAVAILABLE' });
         const newPassword = `${password}-new`;
         await player.request(
           'POST',

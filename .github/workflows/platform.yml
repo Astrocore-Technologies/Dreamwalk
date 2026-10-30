@@ -47,6 +47,8 @@ jobs:
           NODE_ENV: production
       - name: Live API integration tests
         run: npm run test:integration
+      - name: Local SMTP capture integration
+        run: npm run test:mail
       - name: Browser dependencies
         run: npx playwright install --with-deps chromium
       - name: Browser end-to-end tests

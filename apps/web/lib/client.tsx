@@ -5,6 +5,7 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import type { User, Adventure } from '@dreamwalk/contracts';
 export type { User, Adventure, Hero, Asset, Settings } from '@dreamwalk/contracts';
 const errorKeys: Record<string, string> = {
+  TOKEN_INVALID: 'Ссылка недействительна или уже использована. Запроси новую.',
   ASSET_QUOTA_EXCEEDED: 'Достигнут лимит медиатеки: 200 изображений или 100 МБ.',
   UNAUTHORIZED: 'Войди в аккаунт, чтобы продолжить.',
   FORBIDDEN: 'У тебя нет доступа к этому действию.',

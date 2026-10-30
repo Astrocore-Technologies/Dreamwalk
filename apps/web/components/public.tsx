@@ -1,7 +1,12 @@
 'use client';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
-import { selectAdventureText } from '@dreamwalk/contracts';
+import {
+  selectAdventureText,
+  selectAdventureTags,
+  selectNpcText,
+  type ControlledTag,
+} from '@dreamwalk/contracts';
 import { formatCount } from '@/lib/locales';
 import { useRouter, useSearchParams } from 'next/navigation';
 import { useState, useEffect } from 'react';
@@ -39,19 +44,38 @@ import {
   Loading,
   Modal,
   MoreLink,
-  PageHeading,
-  Panel,
   Select,
   Textarea,
 } from './ui';
-export function AdventureCard({ adventure }: { adventure: Adventure }) {
+function discoveryCover(adventure: Adventure) {
+  // Custom uploads retain their authenticated asset URL and access checks.
+  if (adventure.coverAssetId) return coverUrl(adventure);
+  const posters: Record<string, string> = {
+    'old-observatory': 'observatory',
+    'whispering-forest': 'forest',
+    tidekeepers: 'tidekeepers',
+    'city-of-lanterns': 'city',
+  };
+  return posters[adventure.slug]
+    ? `/images/discovery-${posters[adventure.slug]}.webp`
+    : coverUrl(adventure);
+}
+export function AdventureCard({
+  adventure,
+  discovery = false,
+}: {
+  adventure: Adventure;
+  discovery?: boolean;
+}) {
   const { t: tr, locale, taxonomy } = useT();
   const text = selectAdventureText(adventure, locale);
   return (
     <Link href={`/adventures/${adventure.slug}`} className="adventure-card">
       <div
         className={`card-art art-${adventure.cover}`}
-        style={{ backgroundImage: `url('${coverUrl(adventure)}')` }}
+        style={{
+          backgroundImage: `url('${discovery ? discoveryCover(adventure) : coverUrl(adventure)}'), url('${coverUrl(adventure)}')`,
+        }}
       >
         <span className="card-genre">{taxonomy(adventure.genre || 'Фэнтези')}</span>
         <span className="card-arrow">
@@ -80,139 +104,108 @@ export function AdventureCard({ adventure }: { adventure: Adventure }) {
   );
 }
 export function HomePage() {
-  const { t: tr, locale } = useT();
+  const { t: tr, locale, taxonomy } = useT();
   const { user } = useClient();
   const { data, loading, error, reload } = useResource<Adventure[]>('/adventures?sort=popular');
-  const featured = data?.[0];
+  const featured = data?.find((item) => item.slug === 'old-observatory') || data?.[0];
+  const details = useResource<Adventure>(
+    featured ? `/adventures/${encodeURIComponent(featured.slug)}` : null,
+  );
+  const text = featured ? selectAdventureText(featured, locale) : null;
   return (
-    <div className="home-page">
-      <div className="welcome-line">
-        <span>
-          <span className="small-spark">✧</span>
+    <div className="discovery-page discovery-home">
+      <div className="discovery-intro">
+        <p>
           {user
             ? tr('С возвращением, {name}', { name: user.name })
-            : tr('Маленький шаг за пределы привычного')}
-        </span>
-        <Badge>{tr('ТВОЯ ИСТОРИЯ ЕЩЁ НЕ НАПИСАНА')}</Badge>
-      </div>
-      <section className="hero-banner">
-        <div
-          className="hero-image"
-          style={{
-            backgroundImage: `url('${featured ? coverUrl(featured) : '/images/observatory.webp'}')`,
-          }}
-        />
-        <div className="hero-grain" />
-        <div className="hero-content">
-          <div className="eyebrow">
-            <span className="online-dot" />
-            {tr('МЕСТО ДЛЯ ТВОЕГО ВООБРАЖЕНИЯ')}
-          </div>
-          <h1>
-            {tr('За каждой дверью —')}
-            <br />
-            {tr('новая')} <em>{tr('история.')}</em>
-          </h1>
-          <p>
-            {tr('Миры, полные тайн. Персонажи, которых не забудешь.')}
-            <br className="desktop-break" /> {tr('И ты — в самом центре приключения.')}
-          </p>
-          <div className="hero-buttons">
-            <ButtonLink href="/explore">
-              {tr('Найти приключение')}
-              <ArrowUpRight size={18} />
-            </ButtonLink>
-            <ButtonLink href="/studio" variant="glass">
-              <Feather size={17} />
-              {tr('Создать свой мир')}
-            </ButtonLink>
-          </div>
-          <div className="hero-footnote">
-            <span className="star-cluster">✧ ✦ ✧</span>
-            {tr('Для тех, кому всегда было мало одной реальности')}
-          </div>
-        </div>
-        <div className="hero-label">
-          <span className="label-line" />
-          <span>
-            {tr('МИР В ФОКУСЕ')}
-            <strong>
-              {featured
-                ? selectAdventureText(featured, locale).title
-                : tr('Тайна старой обсерватории')}
-            </strong>
-          </span>
-          <ArrowUpRight size={18} />
-        </div>
-      </section>
-      <div className="quick-grid">
-        <Link href="/my-characters" className="quick-card">
-          <span className="quick-icon">
-            <UsersRound size={22} />
-          </span>
-          <span>
-            <strong>{tr('Кем ты будешь?')}</strong>
-            <small>{tr('Создай героя для будущей истории')}</small>
-          </span>
-          <ArrowUpRight size={19} />
-        </Link>
-        <Link href="/library" className="quick-card">
-          <span className="quick-icon lilac">
-            <BookOpen size={22} />
-          </span>
-          <span>
-            <strong>{tr('Твои маленькие открытия')}</strong>
-            <small>{tr('Любимые миры всегда под рукой')}</small>
-          </span>
-          <ArrowUpRight size={19} />
+            : tr('Истории начинаются со знакомства')}
+        </p>
+        <Link href="/library">
+          {tr('Моя библиотека')} <ArrowUpRight size={16} />
         </Link>
       </div>
+      <ErrorBox message={error} retry={reload} />
+      {loading ? (
+        <Loading />
+      ) : featured && text ? (
+        <section className="featured-story">
+          <div className="featured-copy">
+            <div className="story-kicker">
+              <span>{tr('В центре внимания')}</span>
+              <span>{taxonomy(featured.genre)}</span>
+            </div>
+            <h1>{text.title}</h1>
+            <Link className="discovery-author" href={`/creators/${featured.author.handle}`}>
+              <span className="tiny-avatar">{featured.author.name[0]}</span>
+              {featured.author.name}
+            </Link>
+            <p className="featured-synopsis">{text.synopsis}</p>
+            {!!details.data?.npcs?.length && (
+              <div className="featured-cast">
+                <span>{tr('Ты встретишь')}</span>
+                {details.data.npcs.slice(0, 3).map((n) => (
+                  <span key={n.id} className="cast-name">
+                    {selectNpcText(n, locale).name}
+                  </span>
+                ))}
+              </div>
+            )}
+            <ButtonLink href={`/adventures/${featured.slug}`}>
+              {tr('Знакомиться с историей')} <ArrowRight size={18} />
+            </ButtonLink>
+          </div>
+          <Link
+            className="featured-art"
+            style={{ backgroundImage: `url('${coverUrl(featured)}')` }}
+            href={`/adventures/${featured.slug}`}
+            aria-label={text.title}
+          >
+            <img src={discoveryCover(featured)} alt="" />
+          </Link>
+        </section>
+      ) : (
+        !error && (
+          <Empty
+            title={tr('Первые миры уже в пути')}
+            description={tr('Опубликованные истории появятся здесь после проверки.')}
+          />
+        )
+      )}
       <section className="discovery-section">
         <div className="section-heading">
-          <div>
-            <div className="eyebrow">{tr('СЛЕДУЙ ЗА ЛЮБОПЫТСТВОМ')}</div>
-            <h2>{tr('Миры, которые зовут')}</h2>
-          </div>
+          <h2>{tr('Найди свою историю')}</h2>
           <MoreLink href="/explore">{tr('Все приключения')}</MoreLink>
         </div>
-        <ErrorBox message={error} retry={reload} />
-        {loading ? (
-          <Loading />
-        ) : data?.length ? (
-          <div className="adventure-grid">
-            {data.slice(0, 3).map((adventure) => (
-              <AdventureCard key={adventure.id} adventure={adventure} />
+        {!!data?.length && (
+          <div className="adventure-grid discovery-grid">
+            {data.slice(0, 4).map((adventure) => (
+              <AdventureCard discovery key={adventure.id} adventure={adventure} />
             ))}
           </div>
-        ) : (
-          !error && (
-            <Empty
-              title={tr('Первые миры уже в пути')}
-              description={tr('Опубликованные истории появятся здесь после проверки.')}
-            />
-          )
         )}
       </section>
-      <section className="author-banner">
-        <span className="author-symbol">✳</span>
-        <div>
-          <div className="eyebrow">{tr('ДАЙ ВООБРАЖЕНИЮ ФОРМУ')}</div>
-          <h2>{tr('Есть история, которую можешь рассказать только ты.')}</h2>
-          <p>{tr('Места, герои, неожиданные повороты. Собери их в собственной студии.')}</p>
-        </div>
-        <ButtonLink href="/studio" variant="secondary">
-          {tr('Открыть студию')}
-          <ArrowUpRight size={17} />
-        </ButtonLink>
-      </section>
-      <div className="platform-note">
-        <Shield size={16} />
-        <span>
-          {tr(
-            'Сейчас можно открывать миры и готовить истории. Игровые сессии — следующий этап. Без платных генераций и покупок.',
-          )}
-        </span>
-      </div>
+      <nav className="discovery-shortcuts" aria-label={tr('Твои истории')}>
+        <Link href="/my-characters">
+          <UsersRound size={22} />
+          <span>
+            <strong>{tr('Мои герои')}</strong>
+            <small>{tr('Создай героя для будущей истории')}</small>
+          </span>
+          <ArrowUpRight size={18} />
+        </Link>
+        <Link href="/studio">
+          <Feather size={22} />
+          <span>
+            <strong>{tr('Открыть студию')}</strong>
+            <small>{tr('Расскажи историю на своих условиях')}</small>
+          </span>
+          <ArrowUpRight size={18} />
+        </Link>
+      </nav>
+      <p className="discovery-stage">
+        <BookOpen size={17} />
+        {tr('Сейчас — знакомство с мирами и подготовка героев. Игровые сессии появятся позже.')}
+      </p>
     </div>
   );
 }
@@ -222,17 +215,19 @@ export function ExplorePage() {
   const [query, setQuery] = useState(params.get('q') || ''),
     [genre, setGenre] = useState(''),
     [sort, setSort] = useState('popular');
+  useEffect(() => {
+    setQuery(params.get('q') || '');
+  }, [params]);
   const genres = useResource<string[]>('/genres');
   const { data, loading, error, reload } = useResource<Adventure[]>(
     `/adventures?q=${encodeURIComponent(query)}&genre=${encodeURIComponent(genre)}&sort=${sort}`,
   );
   return (
-    <>
-      <PageHeading
-        eyebrow={tr('АТЛАС ВОЗМОЖНОСТЕЙ')}
-        title={tr('Куда отправимся?')}
-        description={tr('Тихая магия, большие тайны и миры, которые ещё предстоит открыть.')}
-      />
+    <div className="discovery-page discovery-catalog">
+      <div className="catalog-heading">
+        <h1>{tr('Открыть миры')}</h1>
+        <span>{data ? formatCount(locale, data.length) : '…'}</span>
+      </div>
       <div className="catalog-tools">
         <div className="search-field">
           <Search size={18} />
@@ -257,12 +252,17 @@ export function ExplorePage() {
         </div>
       </div>
       <div className="filter-chips">
-        <button className={!genre ? 'active' : ''} onClick={() => setGenre('')}>
+        <button
+          className={!genre ? 'active' : ''}
+          aria-pressed={!genre}
+          onClick={() => setGenre('')}
+        >
           {tr('Все миры')}
         </button>
         {(genres.data || ['Фэнтези', 'Мистика', 'Приключения']).map((item) => (
           <button
             className={genre === item ? 'active' : ''}
+            aria-pressed={genre === item}
             key={item}
             onClick={() => setGenre(item)}
           >
@@ -270,17 +270,13 @@ export function ExplorePage() {
           </button>
         ))}
       </div>
-      <div className="results-line">
-        <span>{data ? formatCount(locale, data.length) : '…'}</span>
-        <span>{tr('Созданы людьми. Для твоего воображения.')}</span>
-      </div>
       <ErrorBox message={error} retry={reload} />
       {loading ? (
         <Loading />
       ) : data?.length ? (
-        <div className="adventure-grid">
+        <div className="adventure-grid discovery-grid">
           {data.map((a) => (
-            <AdventureCard key={a.id} adventure={a} />
+            <AdventureCard discovery key={a.id} adventure={a} />
           ))}
         </div>
       ) : (
@@ -302,7 +298,7 @@ export function ExplorePage() {
           />
         )
       )}
-    </>
+    </div>
   );
 }
 export function AdventurePage({ slug }: { slug: string }) {
@@ -317,6 +313,7 @@ export function AdventurePage({ slug }: { slug: string }) {
     reload,
   } = useResource<Adventure>(`/adventures/${encodeURIComponent(slug)}`);
   const library = useResource<{ favorites: Adventure[] }>(user ? '/library' : null);
+  const tagDefinitions = useResource<ControlledTag[]>('/tags');
   const [saved, setSaved] = useState(false),
     [busy, setBusy] = useState(false),
     [report, setReport] = useState(false),
@@ -330,7 +327,7 @@ export function AdventurePage({ slug }: { slug: string }) {
     return <ErrorBox message={error || tr('Приключение не найдено')} retry={reload} />;
   const text = selectAdventureText(a, locale);
   return (
-    <>
+    <div className="discovery-page discovery-detail">
       <Link
         className="back-link"
         href={a.access === 'invited' ? '/library?tab=shared' : '/explore'}
@@ -352,88 +349,31 @@ export function AdventurePage({ slug }: { slug: string }) {
           )}
         </div>
       )}
-      <section
-        className="detail-hero"
-        style={{
-          backgroundImage: `linear-gradient(0deg,rgba(23,18,29,.98),rgba(23,18,29,.05)),url('${coverUrl(a)}')`,
-        }}
-      >
-        <div>
-          <Badge>{taxonomy(a.genre)}</Badge>
-          {a.visibility === 'private' && <Badge>{tr('Частный мир')}</Badge>}
+      <section className="story-overview">
+        <div className="story-poster" style={{ backgroundImage: `url('${coverUrl(a)}')` }}>
+          <img src={discoveryCover(a)} alt="" />
+        </div>
+        <div className="story-intro">
+          <div className="story-kicker">
+            <span>{taxonomy(a.genre)}</span>
+            {a.visibility === 'private' && <Badge>{tr('Частный мир')}</Badge>}
+          </div>
           <h1>{text.title}</h1>
-          <p>{text.synopsis}</p>
-          <Link className="creator-link" href={`/creators/${a.author.handle}`}>
+          <Link className="discovery-author" href={`/creators/${a.author.handle}`}>
             <span className="tiny-avatar">{a.author.name[0]}</span>
             {a.author.name}
             <ArrowUpRight size={14} />
           </Link>
+          <p className="story-synopsis">{text.synopsis}</p>
+          <div className="story-tags">
+            {selectAdventureTags(a, locale, tagDefinitions.data || []).map((tag, index) => (
+              <span key={index}>#{tag}</span>
+            ))}
+          </div>
         </div>
-      </section>
-      <div className="detail-layout">
-        <div className="stack">
-          <Panel>
-            <h2>{tr('За порогом истории')}</h2>
-            <p className="prose">{a.content?.world || text.synopsis}</p>
-            <div className="filter-chips">
-              {a.tags.map((tag) => (
-                <span className="badge" key={tag}>
-                  #{tag}
-                </span>
-              ))}
-            </div>
-          </Panel>
-          {!!a.npcs?.length && (
-            <Panel>
-              <h2>{tr('Ты встретишь')}</h2>
-              <div className="npc-preview-grid">
-                {a.npcs.map((n) => (
-                  <div key={n.id} className="npc-preview">
-                    <span className="character-orb">{n.name[0]}</span>
-                    <h3>{n.name}</h3>
-                    <span className="muted">{n.role}</span>
-                    <p>«{n.greeting}»</p>
-                  </div>
-                ))}
-              </div>
-            </Panel>
-          )}
-          <Panel>
-            <h2>{tr('Границы истории')}</h2>
-            <p className="muted">
-              {tr('Комфортное приключение начинается с понятных договорённостей.')}
-            </p>
-            <ul className="plain-list">
-              {(a.content?.boundaries?.length
-                ? a.content.boundaries
-                : [tr('Приключения без откровенного контента')]
-              ).map((b) => (
-                <li key={b}>
-                  <Shield size={15} />
-                  {b}
-                </li>
-              ))}
-            </ul>
-          </Panel>
-          {a.access !== 'invited' && (
-            <Panel>
-              <h2>{tr('Версии')}</h2>
-              <p className="muted">
-                {tr('Опубликованные версии сохраняются отдельно от новых черновиков.')}
-              </p>
-              {(a.versions || [{ version: a.version, createdAt: a.updatedAt }]).map((v, i) => (
-                <div className="list-row" key={i}>
-                  <span>{tr('Версия {version}', { version: v.version })}</span>
-                  <small>{date(v.createdAt)}</small>
-                </div>
-              ))}
-            </Panel>
-          )}
-        </div>
-        <aside className="stack">
-          <Panel className="prepare-panel">
-            <span className="eyebrow">{tr('ТВОЁ СЛЕДУЮЩЕЕ ОТКРЫТИЕ')}</span>
-            <h2>{tr('История ждёт тебя')}</h2>
+        <aside className="story-actions">
+          <div className="prepare-panel">
+            <h2>{tr('Перед приключением')}</h2>
             <div className="detail-facts">
               <span>
                 <UsersRound size={18} />
@@ -505,7 +445,7 @@ export function AdventurePage({ slug }: { slug: string }) {
                 'Сейчас доступны просмотр мира и подготовка героя. Запуск сессий — на следующем этапе.',
               )}
             </small>
-          </Panel>
+          </div>
           <button
             className="subtle-button"
             onClick={() => {
@@ -519,6 +459,71 @@ export function AdventurePage({ slug }: { slug: string }) {
             {tr('Сообщить о нарушении')}
           </button>
         </aside>
+      </section>
+      <div className="story-body">
+        <div className="story-sections">
+          {!!a.npcs?.length && (
+            <section className="story-section">
+              <h2>{tr('Ты встретишь')}</h2>
+              <div className="npc-preview-grid">
+                {a.npcs.map((n) => (
+                  <div key={n.id} className="npc-preview">
+                    <span className="character-orb">
+                      {n.portraitAssetId ? (
+                        <img src={assetUrl(n.portraitAssetId)} alt="" />
+                      ) : (
+                        selectNpcText(n, locale).name[0]
+                      )}
+                    </span>
+                    <h3>{selectNpcText(n, locale).name}</h3>
+                    <span className="muted">{selectNpcText(n, locale).role}</span>
+                    {selectNpcText(n, locale).description && (
+                      <p>{selectNpcText(n, locale).description}</p>
+                    )}
+                    {selectNpcText(n, locale).greeting && (
+                      <p>«{selectNpcText(n, locale).greeting}»</p>
+                    )}
+                  </div>
+                ))}
+              </div>
+            </section>
+          )}
+          <section className="story-section">
+            <h2>{tr('За порогом истории')}</h2>
+            <p className="prose">{a.content?.world || text.synopsis}</p>
+          </section>
+          <section className="story-section">
+            <h2>{tr('Границы истории')}</h2>
+            <p className="muted">
+              {tr('Комфортное приключение начинается с понятных договорённостей.')}
+            </p>
+            <ul className="plain-list">
+              {(a.content?.boundaries?.length
+                ? a.content.boundaries
+                : [tr('Приключения без откровенного контента')]
+              ).map((b) => (
+                <li key={b}>
+                  <Shield size={15} />
+                  {b}
+                </li>
+              ))}
+            </ul>
+          </section>
+          {a.access !== 'invited' && (
+            <details className="story-versions">
+              <summary>{tr('Версии')}</summary>
+              <p className="muted">
+                {tr('Опубликованные версии сохраняются отдельно от новых черновиков.')}
+              </p>
+              {(a.versions || [{ version: a.version, createdAt: a.updatedAt }]).map((v, i) => (
+                <div className="list-row" key={i}>
+                  <span>{tr('Версия {version}', { version: v.version })}</span>
+                  <small>{date(v.createdAt)}</small>
+                </div>
+              ))}
+            </details>
+          )}
+        </div>
       </div>
       {report && (
         <Modal title={tr('Сообщить о нарушении')} onClose={() => setReport(false)}>
@@ -561,7 +566,7 @@ export function AdventurePage({ slug }: { slug: string }) {
           </form>
         </Modal>
       )}
-    </>
+    </div>
   );
 }
 export function CreatorPage({ handle }: { handle: string }) {

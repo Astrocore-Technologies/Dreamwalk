@@ -101,3 +101,23 @@ It is owner-only. This explicit save/reconfirm updates that locale's stored revi
 Public catalog search matches original or valid translated fields only from the approved snapshot. Invitations add optional `adventureMetadata` of the same source/translation shape; new invitation notifications include a safe metadata snapshot. Old notifications keep their original title fallback.
 
 Migration005 adds metadata defaults only to editable records, not historical immutable version rows. Seed fixtures include curated RU/UK/EN titles and synopses. Existing unchanged editorial fixtures receive a new immutable version for this metadata upgrade; repeated seed is a no-op, and user-edited records are not overwritten.
+
+### Account data operator processing
+
+- `GET /account/exports`: authenticated owner's request metadata `{id,status,createdAt,completedAt,expiresAt}`; expired artifacts never appear ready.
+- `GET /account/exports/:id/download`: owner-only JSON attachment; completed/unexpired only, otherwise 404; no bearer sharing URLs or caching.
+- Explicit operator command: `node scripts/env-run.mjs node scripts/process-data-request.mjs --request <UUID> --operator <audit-reference>`.
+- Deletion requires the previously confirmed/deleted account plus `--confirm-purge <same-UUID>`. No implicit queue draining. Processing failures retain retryable request state; rerun the exact request. Completed requests are no-ops.
+- Exports expire after seven days. An operator explicitly runs the same command with `--expire` to physically clear an expired artifact. Expired artifacts cannot be downloaded even before cleanup. Schedule this retention operation in production; no scheduler is silently installed.
+- Exports are private PostgreSQL JSON artifacts with an explicit allowlist and owned media bytes, not public filesystem links. They exclude password/session hashes, internal audit and other users' private content.
+- Purge removes media files and mutable personal content, revokes/removes invitations, clears export artifacts, tombstones immutable owned story snapshots and personal ledger reasons/source keys while preserving amounts/version IDs and minimal audit history. The DB trigger allows only exact irreversible tombstone projections for a confirmed deleted account; arbitrary historical changes remain forbidden.
+- Database backups and independently downloaded copies are not erased by this command. Backup expiry and lawful retention require an operator policy. Pseudonymous account/event IDs and monetary history remain; this is not a promise of removing every third-party mention or all copies globally.
+
+### NPC original language and optional localized public text
+
+NPC originals now include `description`, `sourceLanguage` (`uk|en|ru`), server-owned `sourceRevision` and optional `translations[locale]` containing `name/description/role/personality/appearance/greeting` plus `sourceRevision`. Biography and secrets are not valid translation fields. Authors still write once; translation providers remain disabled.
+
+- `selectNpcText(metadata, locale)` selects nonempty revision-matching fields independently, otherwise originals; `safeNpcMetadata` removes stale text from reader DTOs.
+- `PATCH /npcs/:id/translations/:locale` accepts optional public fields and required `expectedSourceRevision`; owner only, stale revision409. This advanced correction API is not a required publication step.
+- Ordinary NPC create forces revision1/empty translations; original edits increment revision and cannot reconfirm variants by resending them. Source language defaults to account preference.
+- Public adventure approval pins safe NPC originals and localized variants into the immutable version. Subsequent NPC edits cannot change already approved previews; new publication approval is required. Seed translations are curated first-party content only, upgraded append-only without changing historical versions.

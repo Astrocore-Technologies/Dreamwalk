@@ -52,6 +52,7 @@ npm run lint
 npm test
 npm run build
 npm run test:integration
+npm run test:mail
 ```
 
 `test:integration` owns a fresh PostgreSQL cluster, applies migrations/seed, launches Nest, tests live HTTP and database invariants, then stops it. No external services, purchases or keys. Private disposable test clusters live in `.local/test-*`; remove only stopped test clusters if reclaiming disk space.
@@ -77,8 +78,8 @@ The managed Work environment uses its provided CUA browser and `sites-preview` d
 ## Deliberate limitations
 
 - Play, campaign/lobby, AI generation, Discord Activity and real checkout are unavailable, clearly labeled in UI.
-- Email delivery is not configured. Password recovery explicitly says no email was sent; use a reviewed operator procedure during closed testing. No fake success email.
-- Account deletion immediately disables access/anonymizes identity and hides content; remaining private resources/immutable records enter a purge request, not a false claim of complete erasure.
+- Email delivery is optional and disabled without SMTP configuration. Secure recovery/verification is implemented and tested against local SMTP capture; external provider deliverability remains an operator setup step. No external mail was sent during development.
+- Account deletion immediately disables access/anonymizes identity and hides content. An explicit audited operator command processes exports and physical purges; private archives expire after seven days. Financial/event identifiers and backup-retention obligations remain, not a false claim of global erasure.
 - Legal/privacy/content pages are templates requiring owner review, jurisdiction/age decisions and operational setup before public release.
 - Production hosting, merge and deployment are outside this implementation. Source review is through an owner-authorized draft pull request.
 
@@ -86,4 +87,4 @@ The managed Work environment uses its provided CUA browser and `sites-preview` d
 
 `AI_PROVIDER=mock`, paid generation/payments/Discord flags off, `GLOBAL_SPEND_CAP=0`. This milestone rejects attempts to enable live providers or money flows. Production also rejects dev auth/faucet and requires HTTPS. `OPENAI_*` model names are future config only; no external availability is asserted. Server credentials never belong in `NEXT_PUBLIC_*`.
 
-Docs: [Architecture](docs/architecture.md), [API contract](docs/api-contract.md), [Plan](docs/implementation-plan.md), [Progress/evidence](docs/progress.md), [Backup/restore](docs/runbooks/backup-restore.md), [agent rules](AGENTS.md).
+Docs: [Architecture](docs/architecture.md), [API contract](docs/api-contract.md), [Plan](docs/implementation-plan.md), [Progress/evidence](docs/progress.md), [Backup/restore](docs/runbooks/backup-restore.md), [Account data operations](docs/runbooks/account-data.md), [Optional email](docs/runbooks/email.md), [agent rules](AGENTS.md).
