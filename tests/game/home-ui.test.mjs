@@ -54,6 +54,8 @@ test('home uses approved detail mode and guards every manual carousel path with 
     'utf8',
   );
   assert.match(s, /view=published/);
+  assert.match(s, /catalog\.error \? \[\] : catalog\.data/);
+  assert.match(s, /data-testid="home-catalog-error"/);
   assert.match(s, /details.data\?\.id === active\?\.id/);
   assert.match(s, /launchGate.current.accepts\(lease\)/);
   assert.match(s, /launchGate.current.busy/);
