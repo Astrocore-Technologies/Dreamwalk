@@ -1,0 +1,43 @@
+{
+  "name": "dreamwalk",
+  "version": "0.1.0",
+  "private": true,
+  "workspaces": [
+    "apps/*",
+    "packages/*"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "node scripts/dev.mjs",
+    "build": "npm run build -w @dreamwalk/contracts && npm run build -w @dreamwalk/api && npm run build -w @dreamwalk/web",
+    "typecheck": "npm run build -w @dreamwalk/contracts && npm run typecheck --workspaces --if-present",
+    "lint": "eslint .",
+    "test": "npm run test --workspaces --if-present",
+    "test:e2e": "playwright test",
+    "db:local": "node scripts/postgres-local.mjs",
+    "db:migrate": "node scripts/env-run.mjs npm run db:migrate -w @dreamwalk/api",
+    "db:seed": "node scripts/env-run.mjs npm run db:seed -w @dreamwalk/api",
+    "test:api": "node scripts/env-run.mjs node --test tests/platform-api.test.mjs",
+    "test:integration": "node scripts/test-platform.mjs",
+    "admin:grant": "node scripts/env-run.mjs node scripts/admin-grant.mjs",
+    "format": "prettier --write apps packages scripts tests docs infra *.json *.mjs *.md",
+    "format:check": "prettier --check apps packages scripts tests docs infra *.json *.mjs *.md",
+    "test:unit": "npm test && node --import tsx --test tests/platform-config.test.mjs tests/platform-locales.test.mjs"
+  },
+  "devDependencies": {
+    "@eslint/js": "^9.39.1",
+    "@playwright/test": "1.64.1",
+    "@types/node": "^24.10.0",
+    "concurrently": "^9.2.1",
+    "embedded-postgres": "17.10.0-beta.17",
+    "eslint": "^9.39.1",
+    "globals": "^16.4.0",
+    "pg": "^8.16.3",
+    "prettier": "3.9.10",
+    "tsx": "^4.20.6",
+    "typescript": "^5.9.3",
+    "typescript-eslint": "^8.46.2"
+  }
+}

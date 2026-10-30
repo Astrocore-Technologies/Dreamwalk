@@ -1,0 +1,30 @@
+[
+  {
+    "id": "observatory",
+    "path": "apps/web/public/images/observatory.webp",
+    "provenance": "Original illustration generated for Dreamwalk with built-in image generation, 2026-10-30",
+    "source": "No third-party reference assets",
+    "sha256": "8f202a961d4eda1bf2ba8668de5ab3ae4656c5c478db1af009ab21cfba32b314"
+  },
+  {
+    "id": "forest",
+    "path": "apps/web/public/images/forest.webp",
+    "provenance": "Original illustration generated for Dreamwalk with built-in image generation, 2026-10-30",
+    "source": "No third-party reference assets",
+    "sha256": "9892911d77c771041f7948920c3e5f143d5555b6a3e405c193b2a527f9da1e2b"
+  },
+  {
+    "id": "harbor",
+    "path": "apps/web/public/images/harbor.webp",
+    "provenance": "Original illustration generated for Dreamwalk with built-in image generation, 2026-10-30",
+    "source": "No third-party reference assets",
+    "sha256": "d29500a9a53ddd1867c406800182cccda75506dc8f5958c6ff1ed85453d83c42"
+  },
+  {
+    "id": "city",
+    "path": "apps/web/public/images/city.webp",
+    "provenance": "Original illustration generated for Dreamwalk with built-in image generation, 2026-10-30",
+    "source": "No third-party reference assets",
+    "sha256": "c539b2343da198b8485ea9af702c1aea287143659cfbd4732ac33fcc86bc1eb8"
+  }
+]

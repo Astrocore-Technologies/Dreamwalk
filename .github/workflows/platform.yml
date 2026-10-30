@@ -1,0 +1,68 @@
+name: Platform checks
+on:
+  push:
+  pull_request:
+permissions:
+  contents: read
+jobs:
+  platform:
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17.10-alpine
+        env:
+          POSTGRES_USER: dreamwalk
+          POSTGRES_DB: dreamwalk_test
+          POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-ephemeral
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U dreamwalk -d dreamwalk_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://dreamwalk:${{ github.run_id }}-${{ github.run_attempt }}-ephemeral@127.0.0.1:55432/dreamwalk_test
+      NODE_ENV: test
+      WEB_ORIGIN: http://localhost:3000
+      AI_PROVIDER: mock
+      PAID_GENERATION_ENABLED: 'false'
+      PAYMENTS_ENABLED: 'false'
+      DISCORD_ENABLED: 'false'
+      DEV_AUTH_ENABLED: 'false'
+      DEMO_FAUCET_ENABLED: 'false'
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - run: npm run build -w @dreamwalk/contracts
+      - run: npm run db:migrate
+      - run: npm run db:seed
+      - run: npm run typecheck
+      - run: npm run lint
+      - run: npm test
+      - run: npm run build
+        env:
+          NODE_ENV: production
+      - name: Live API integration tests
+        run: npm run test:integration
+      - name: Browser dependencies
+        run: npx playwright install --with-deps chromium
+      - name: Browser end-to-end tests
+        run: |
+          NODE_ENV=development npm run dev > /tmp/dreamwalk-web.log 2>&1 &
+          APP_PID=$!
+          trap 'kill "$APP_PID" 2>/dev/null || true' EXIT
+          for attempt in $(seq 1 90); do
+            if curl -sf http://127.0.0.1:3000/ > /dev/null; then break; fi
+            sleep 1
+          done
+          npm run test:e2e
+      - uses: actions/upload-artifact@v4
+        if: failure()
+        with:
+          name: platform-test-evidence
+          path: |
+            test-results/
+            playwright-report/

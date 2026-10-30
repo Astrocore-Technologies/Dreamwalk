@@ -1,0 +1,21 @@
+# Local PostgreSQL only. Set POSTGRES_PASSWORD in your shell or an untracked env file.
+# docker compose -f infra/compose.yml up -d
+services:
+  postgres:
+    image: postgres:17.10-alpine
+    environment:
+      POSTGRES_USER: dreamwalk
+      POSTGRES_DB: dreamwalk
+      POSTGRES_PASSWORD: ${POSTGRES_PASSWORD:?Set a unique local POSTGRES_PASSWORD}
+    ports:
+      - '127.0.0.1:55432:5432'
+    volumes:
+      - dreamwalk-postgres:/var/lib/postgresql/data
+    healthcheck:
+      test: ['CMD-SHELL', 'pg_isready -U dreamwalk -d dreamwalk']
+      interval: 5s
+      timeout: 5s
+      retries: 10
+    restart: unless-stopped
+volumes:
+  dreamwalk-postgres:
