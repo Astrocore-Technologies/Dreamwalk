@@ -12,6 +12,9 @@ import { InvitationsController } from './invitations';
 import { DataRequestsController } from './data-requests';
 import { Errors } from './errors';
 import { config } from './config';
+import { GameService } from './game/game.service';
+import { GameController } from './game/game.controller';
+import { attachGameSockets } from './game/game.socket';
 @Controller('api/v1')
 class Health {
   constructor(
@@ -33,8 +36,9 @@ class Health {
     AssetsController,
     InvitationsController,
     DataRequestsController,
+    GameController,
   ],
-  providers: [Db, Auth, Content, AssetUploadGuard],
+  providers: [Db, Auth, Content, AssetUploadGuard, GameService],
 })
 class AppModule {}
 async function bootstrap() {
@@ -97,6 +101,7 @@ async function bootstrap() {
     next();
   });
   app.enableShutdownHooks();
+  attachGameSockets(app.getHttpServer(), app.get(GameService));
   await app.listen(config.API_PORT, '127.0.0.1');
 }
 void bootstrap();

@@ -26,6 +26,7 @@ import { api, assetUrl, useClient, type User } from '@/lib/client';
 const nav = [
   { href: '/home', label: 'Главная', icon: House },
   { href: '/explore', label: 'Открыть миры', icon: Compass },
+  { href: '/game', label: 'Игровой прототип', icon: Compass },
   { href: '/library', label: 'Моя библиотека', icon: Library },
   { href: '/my-characters', label: 'Мои герои', icon: UsersRound },
 ];

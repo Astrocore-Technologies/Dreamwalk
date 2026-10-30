@@ -1,4 +1,5 @@
 'use client';
+import { GamePage } from '@/components/game/game-page';
 import { EmailActionPage } from '@/components/account-email';
 import { Suspense } from 'react';
 import { usePathname } from 'next/navigation';
@@ -15,6 +16,12 @@ function Router() {
   const { locale } = useT();
   let content: React.ReactNode;
   if (path === '/' || path === '/home') content = <HomePage />;
+  else if (path === '/game' || path.startsWith('/game/'))
+    content = (
+      <Protected>
+        <GamePage campaignId={path.split('/')[2]} />
+      </Protected>
+    );
   else if (path === '/explore') content = <ExplorePage />;
   else if (path.startsWith('/adventures/')) content = <AdventurePage slug={path.split('/')[2]} />;
   else if (path.startsWith('/creators/')) content = <CreatorPage handle={path.split('/')[2]} />;

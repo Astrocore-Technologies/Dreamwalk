@@ -1,3 +1,4 @@
+import { gameMessages } from './game-locales';
 /** UI copy only. User-authored content must never pass through this dictionary. */
 export type Locale = 'ru' | 'en' | 'uk';
 export const supportedLocales: readonly Locale[] = ['uk', 'en', 'ru'];
@@ -8,6 +9,7 @@ export const localeNames: Record<Locale, string> = {
 };
 export const intlLocales: Record<Locale, string> = { uk: 'uk-UA', en: 'en-GB', ru: 'ru-RU' };
 const messages: Record<string, Record<Locale, string>> = {
+  ...gameMessages,
   'ID тега': { ru: 'ID тега', en: 'Tag ID', uk: 'ID тегу' },
   'Добавить тег': { ru: 'Добавить тег', en: 'Add tag', uk: 'Додати тег' },
   'Свои теги': { ru: 'Свои теги', en: 'Custom tags', uk: 'Власні теги' },

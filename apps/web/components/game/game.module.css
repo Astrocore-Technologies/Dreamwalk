@@ -1,0 +1,430 @@
+.root {
+  max-width: 1440px;
+  margin: 0 auto;
+}
+.root h1 {
+  margin: 4px 0 10px;
+  font-size: clamp(1.7rem, 3vw, 2.7rem);
+  letter-spacing: -0.055em;
+}
+.root h2 {
+  font-size: 1.05rem;
+  letter-spacing: -0.02em;
+}
+.root h3 {
+  font-size: 0.96rem;
+  margin: 0;
+}
+.root button {
+  touch-action: manipulation;
+}
+.muted,
+.footnote {
+  color: var(--muted);
+}
+.footnote {
+  font-size: 0.78rem;
+  margin: 20px 0;
+}
+.kicker {
+  color: var(--accent);
+  font-size: 0.72rem;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+}
+.hero {
+  display: grid;
+  grid-template-columns: 240px 1fr;
+  gap: 44px;
+  align-items: center;
+  margin: 30px 0 42px;
+  padding: 40px;
+  border: 1px solid var(--line);
+  background: radial-gradient(ellipse at 5% 10%, #72516a44, transparent 60%), var(--surface);
+  border-radius: 18px;
+}
+.hero h2 {
+  font-size: 2.2rem;
+  margin: 4px 0;
+}
+.hero p {
+  max-width: 580px;
+  color: var(--muted);
+}
+.heroArt {
+  height: 190px;
+  display: grid;
+  place-items: center;
+  color: #d8b879;
+  border: 1px solid #a0806944;
+  border-radius: 50% 50% 4px 4px;
+  background: radial-gradient(ellipse at 50% 0%, #b79ec044, transparent 70%), #211928;
+  position: relative;
+}
+.heroArt::before {
+  content: '';
+  position: absolute;
+  width: 160px;
+  height: 160px;
+  border: 1px solid #d8b87933;
+  border-radius: 50%;
+}
+.heroArt span {
+  position: absolute;
+  left: 40px;
+  top: 30px;
+}
+.campaignList {
+  display: grid;
+  gap: 12px;
+}
+.campaignCard {
+  padding: 22px 24px;
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+  border-bottom: 1px solid var(--line);
+}
+.campaignCard code {
+  font-size: 0.75rem;
+  color: var(--muted);
+}
+.roomHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 20px;
+  margin-bottom: 24px;
+}
+.back {
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.mode {
+  font-size: 0.75rem;
+  color: var(--accent);
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+}
+.connection {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  font-size: 0.76rem;
+}
+.connection[data-connected='true'] {
+  color: #84ba9d;
+}
+.roomGrid > * {
+  /* Canvas intrinsic width must not become the grid item minimum on resize. */
+  min-width: 0;
+}
+.roomGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 280px;
+  gap: 24px;
+  align-items: start;
+}
+.mapSection {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  background: var(--surface);
+}
+.canvasWrap {
+  height: clamp(330px, 55vh, 600px);
+  position: relative;
+  background: #171321;
+  overflow: hidden;
+  touch-action: none;
+}
+.canvas {
+  width: 100%;
+  height: 100%;
+}
+.canvas canvas {
+  display: block;
+  width: 100%;
+  height: 100%;
+}
+.canvasFallback {
+  position: absolute;
+  inset: 30% 10%;
+  color: #f1e9e0;
+}
+.mapTools {
+  display: flex;
+  gap: 6px;
+  position: absolute;
+  top: 14px;
+  right: 14px;
+}
+.mapTools button,
+.dpad button {
+  width: 40px;
+  height: 40px;
+  display: grid;
+  place-items: center;
+  background: #241c2eea;
+  border: 1px solid #5d4a65;
+  border-radius: 8px;
+  color: #f1e9e0;
+  font-size: 1.15rem;
+  cursor: pointer;
+}
+.mapTools button:hover,
+.dpad button:hover {
+  background: #47334f;
+}
+.dpad button:disabled {
+  opacity: 0.4;
+  cursor: default;
+}
+.controls {
+  padding: 12px 16px;
+  display: flex;
+  gap: 20px;
+  justify-content: space-between;
+  align-items: center;
+}
+.controls p {
+  font-size: 0.72rem;
+  color: var(--muted);
+  margin: 0;
+  max-width: 370px;
+}
+.dpad {
+  display: flex;
+  gap: 4px;
+  flex-shrink: 0;
+  touch-action: none;
+}
+.hud {
+  display: grid;
+  gap: 20px;
+}
+.hud section {
+  padding: 0 0 20px;
+  border-bottom: 1px solid var(--line);
+}
+.hud h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin: 0 0 16px;
+}
+.hud h2 svg {
+  color: var(--accent);
+}
+.hud small {
+  font-size: 0.66rem;
+  color: var(--muted);
+}
+.hud form {
+  display: grid;
+  gap: 12px;
+}
+.hud input {
+  min-width: 0;
+  width: 100%;
+}
+.inventory {
+  list-style: none;
+  margin: 0 0 14px;
+  padding: 0;
+  display: grid;
+  gap: 8px;
+}
+.inventory li {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 12px;
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 8px;
+}
+.inventory li span {
+  color: var(--accent);
+  font-size: 1.2rem;
+}
+.journal {
+  margin: 0;
+  padding-left: 18px;
+  max-height: 240px;
+  overflow: auto;
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.journal li {
+  margin: 8px 0;
+}
+.objects {
+  margin-top: 28px;
+}
+.objects > header {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.object {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 14px;
+  justify-content: space-between;
+  padding: 16px 0;
+  border-top: 1px solid var(--line);
+}
+.object small {
+  color: var(--muted);
+  font-size: 0.72rem;
+}
+.actions {
+  display: flex;
+  gap: 6px;
+  flex-wrap: wrap;
+}
+.actions button {
+  min-height: 38px;
+  padding: 8px 12px;
+  font-size: 0.75rem;
+}
+.encounter {
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  padding: 20px;
+  margin-top: 18px;
+  background: var(--surface);
+}
+.encounter > div:first-child {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 15px;
+}
+.encounter h2 {
+  margin: 0;
+}
+.encounter strong {
+  color: var(--accent);
+  font-size: 0.85rem;
+}
+.encounter p {
+  color: var(--muted);
+  font-size: 0.8rem;
+}
+.warning {
+  color: var(--danger);
+  padding: 10px 0;
+}
+@media (max-width: 1100px) {
+  .roomGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .hud {
+    grid-template-columns: repeat(3, minmax(0, 1fr));
+    gap: 18px;
+  }
+  .hud > .footnote {
+    grid-column: 1 / -1;
+  }
+}
+@media (max-width: 650px) {
+  .hero {
+    grid-template-columns: 1fr;
+    padding: 22px;
+    gap: 18px;
+  }
+  .heroArt {
+    height: 130px;
+  }
+  .heroArt::before {
+    width: 110px;
+    height: 110px;
+  }
+  .hero h2 {
+    font-size: 1.7rem;
+  }
+  .roomHeader {
+    align-items: flex-start;
+    gap: 8px;
+  }
+  .connection {
+    font-size: 0.65rem;
+    margin-top: 5px;
+  }
+  .roomGrid {
+    gap: 20px;
+  }
+  .canvasWrap {
+    height: 360px;
+  }
+  .controls {
+    flex-direction: column;
+    gap: 12px;
+    align-items: stretch;
+  }
+  .dpad {
+    justify-content: center;
+  }
+  .dpad button {
+    width: 46px;
+    height: 44px;
+  }
+  .hud {
+    grid-template-columns: 1fr;
+  }
+  .campaignCard {
+    flex-direction: column;
+    align-items: stretch;
+    padding: 18px 0;
+  }
+  .actions {
+    gap: 7px;
+  }
+  .actions button {
+    min-height: 44px;
+  }
+  .object {
+    align-items: flex-start;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .root * {
+    scroll-behavior: auto;
+    transition: none;
+  }
+}
+.members {
+  list-style: none;
+  padding: 0;
+  margin: 0 0 16px;
+}
+.members li {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 0;
+}
+.members li small {
+  display: block;
+}
+.members li button {
+  font-size: 0.65rem;
+  padding: 5px;
+}
+.position {
+  margin: 0 0 8px;
+  color: var(--muted);
+  font-size: 0.76rem;
+  font-variant-numeric: tabular-nums;
+}

@@ -1,0 +1,346 @@
+import { z } from 'zod';
+export const gameIdSchema = z
+  .string()
+  .min(1)
+  .max(100)
+  .regex(/^[\w-]+$/);
+export const gamePointSchema = z
+  .object({ x: z.number().int().min(0).max(63), y: z.number().int().min(0).max(63) })
+  .strict();
+export const gameActionSchema = z
+  .object({
+    kind: z.enum([
+      'move_to',
+      'wait',
+      'inspect',
+      'talk',
+      'distract',
+      'pick_up',
+      'give',
+      'unlock',
+      'open',
+      'close',
+      'transition',
+      'defend',
+      'flee',
+    ]),
+    targetId: gameIdSchema.optional(),
+    itemId: gameIdSchema.optional(),
+    target: gamePointSchema.optional(),
+  })
+  .strict()
+  .superRefine((action, ctx) => {
+    const noTarget = ['wait', 'defend', 'flee'].includes(action.kind);
+    if (
+      noTarget &&
+      (action.targetId !== undefined || action.itemId !== undefined || action.target !== undefined)
+    )
+      ctx.addIssue({ code: 'custom', message: 'Action accepts no target' });
+    if (action.kind === 'move_to') {
+      if (!action.target || action.targetId !== undefined || action.itemId !== undefined)
+        ctx.addIssue({ code: 'custom', message: 'Movement requires only a target point' });
+    } else if (!noTarget) {
+      if (!action.targetId || action.target !== undefined)
+        ctx.addIssue({ code: 'custom', message: 'Action requires an entity or exit target' });
+      if (action.kind === 'give' && !action.itemId)
+        ctx.addIssue({ code: 'custom', message: 'Give requires an item' });
+      if (!['give', 'unlock'].includes(action.kind) && action.itemId !== undefined)
+        ctx.addIssue({ code: 'custom', message: 'Action does not accept an item' });
+    }
+  });
+export type GameAction = z.infer<typeof gameActionSchema>;
+export type GamePoint = z.infer<typeof gamePointSchema>;
+export const gameMoveSchema = z
+  .object({
+    inputSeq: z.number().int().nonnegative(),
+    movementGeneration: z.number().int().nonnegative(),
+    target: gamePointSchema,
+  })
+  .strict();
+export type GameMove = z.infer<typeof gameMoveSchema>;
+export const gameIntentSchema = z
+  .object({
+    encounterId: gameIdSchema,
+    generation: z.number().int().nonnegative(),
+    round: z.number().int().positive(),
+    intentRevision: z.number().int().positive(),
+    action: gameActionSchema,
+    ready: z.boolean(),
+  })
+  .strict();
+export type GameIntentInput = z.infer<typeof gameIntentSchema>;
+export type GameError =
+  | 'FORBIDDEN'
+  | 'STALE_STATE'
+  | 'OUT_OF_RANGE'
+  | 'PATH_BLOCKED'
+  | 'TARGET_UNAVAILABLE'
+  | 'WRONG_MODE'
+  | 'ROUND_LOCKED'
+  | 'RATE_LIMITED'
+  | 'INVALID_ACTION';
+export interface GameEntity extends GamePoint {
+  id: string;
+  kind: 'player' | 'npc' | 'item' | 'door';
+  mapId: string;
+  revision: number;
+  ownerId?: string;
+  locked?: boolean;
+  open?: boolean;
+  keyId?: string;
+  inventory?: string[];
+  movementGeneration?: number;
+  lastInputSeq?: number;
+  path?: GamePoint[];
+  lastMoveTick?: number;
+  encounterId?: string;
+  knownIds?: string[];
+}
+export interface GameMap {
+  id: string;
+  width: number;
+  height: number;
+  blocked: GamePoint[];
+  spawns: GamePoint[];
+  exits: {
+    id: string;
+    x: number;
+    y: number;
+    destinationMapId: string;
+    destination: GamePoint;
+    doorId?: string;
+  }[];
+  revision: number;
+}
+export interface RoundIntent {
+  revision: number;
+  action: GameAction;
+  ready: boolean;
+}
+export interface GameEncounter {
+  id: string;
+  mapId: string;
+  generation: number;
+  round: number;
+  phase: 'planning' | 'completed';
+  participants: string[];
+  area: { x: number; y: number; width: number; height: number };
+  deadlineMs: number;
+  intents: Record<string, RoundIntent>;
+}
+export interface GameState {
+  schemaVersion: 1;
+  rulesetVersion: 'observatory-v1';
+  seed: number;
+  tick: number;
+  revision: number;
+  maps: Record<string, GameMap>;
+  entities: Record<string, GameEntity>;
+  encounters: Record<string, GameEncounter>;
+}
+export interface GameEvent {
+  kind: string;
+  actorId?: string;
+  targetId?: string;
+  mapId?: string;
+  code?: GameError;
+}
+export interface GameResult {
+  state: GameState;
+  events: GameEvent[];
+  error?: GameError;
+}
+export interface GameProjection {
+  schemaVersion: 1;
+  rulesetVersion: string;
+  tick: number;
+  revision: number;
+  actorId: string;
+  map: GameMap;
+  entities: GameEntity[];
+  inventory: GameEntity[];
+  encounter?: GameEncounter;
+}
+export const npcProposalSchema = z
+  .object({
+    contextRevision: z.number().int().nonnegative(),
+    mapRevision: z.number().int().nonnegative(),
+    entityRevision: z.number().int().nonnegative(),
+    deadlineTick: z.number().int().nonnegative(),
+    targetRevision: z.number().int().nonnegative().optional(),
+    encounterGeneration: z.number().int().nonnegative().optional(),
+    round: z.number().int().positive().optional(),
+    action: gameActionSchema,
+  })
+  .strict();
+export type NpcProposal = z.infer<typeof npcProposalSchema>;
+export const gameMapSchema = z
+  .object({
+    id: gameIdSchema,
+    width: z.number().int().min(1).max(64),
+    height: z.number().int().min(1).max(64),
+    blocked: z.array(gamePointSchema).max(4096),
+    spawns: z.array(gamePointSchema).min(1).max(4),
+    exits: z
+      .array(
+        z
+          .object({
+            id: gameIdSchema,
+            x: z.number().int().min(0).max(63),
+            y: z.number().int().min(0).max(63),
+            destinationMapId: gameIdSchema,
+            destination: gamePointSchema,
+            doorId: gameIdSchema.optional(),
+          })
+          .strict(),
+      )
+      .max(32),
+    revision: z.number().int().nonnegative(),
+  })
+  .strict()
+  .superRefine((m, ctx) => {
+    for (const p of [...m.blocked, ...m.spawns, ...m.exits])
+      if (p.x >= m.width || p.y >= m.height)
+        ctx.addIssue({ code: 'custom', message: 'Coordinate outside map' });
+  });
+export const playableVersionSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    rulesetVersion: z.literal('observatory-v1'),
+    maps: z.array(gameMapSchema).min(1).max(16),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    const ids = new Set(v.maps.map((m) => m.id));
+    if (ids.size !== v.maps.length) ctx.addIssue({ code: 'custom', message: 'Duplicate map id' });
+    for (const m of v.maps)
+      for (const e of m.exits)
+        if (!ids.has(e.destinationMapId))
+          ctx.addIssue({ code: 'custom', message: 'Unknown destination map' });
+  });
+/** Wire entities deliberately exclude server-only path, memory, and inventory fields. */
+export const gamePublicEntitySchema = z
+  .object({
+    id: gameIdSchema,
+    kind: z.enum(['player', 'npc', 'item', 'door']),
+    mapId: gameIdSchema,
+    x: z.number().int().min(0).max(63),
+    y: z.number().int().min(0).max(63),
+    revision: z.number().int().nonnegative(),
+    ownerId: gameIdSchema.optional(),
+    locked: z.boolean().optional(),
+    open: z.boolean().optional(),
+    keyId: gameIdSchema.optional(),
+    movementGeneration: z.number().int().nonnegative().optional(),
+    lastInputSeq: z.number().int().nonnegative().optional(),
+    encounterId: gameIdSchema.optional(),
+  })
+  .strict();
+export const gamePublicEncounterSchema = z
+  .object({
+    id: gameIdSchema,
+    mapId: gameIdSchema,
+    generation: z.number().int().nonnegative(),
+    round: z.number().int().positive(),
+    phase: z.enum(['planning', 'completed']),
+    participants: z.array(gameIdSchema).min(1).max(24),
+    area: z
+      .object({
+        x: z.number().int().min(0).max(63),
+        y: z.number().int().min(0).max(63),
+        width: z.number().int().min(1).max(64),
+        height: z.number().int().min(1).max(64),
+      })
+      .strict(),
+    deadlineMs: z.number().int().nonnegative().safe(),
+    intents: z
+      .record(
+        gameIdSchema,
+        z
+          .object({
+            revision: z.number().int().positive(),
+            action: gameActionSchema,
+            ready: z.boolean(),
+          })
+          .strict(),
+      )
+      .refine((v) => Object.keys(v).length <= 24),
+  })
+  .strict();
+export const gameProjectionSchema = z
+  .object({
+    schemaVersion: z.literal(1),
+    rulesetVersion: z.literal('observatory-v1'),
+    tick: z.number().int().nonnegative().safe(),
+    revision: z.number().int().nonnegative().safe(),
+    actorId: gameIdSchema,
+    map: gameMapSchema,
+    entities: z.array(gamePublicEntitySchema).min(1).max(512),
+    inventory: z.array(gamePublicEntitySchema).max(128),
+    encounter: gamePublicEncounterSchema.optional(),
+  })
+  .strict()
+  .superRefine((p, ctx) => {
+    const invalid = (message: string) => ctx.addIssue({ code: 'custom', message });
+    const ids = new Set(p.entities.map((e) => e.id));
+    if (ids.size !== p.entities.length || !ids.has(p.actorId))
+      invalid('Missing actor or duplicate entities');
+    for (const e of p.entities) {
+      if (
+        e.mapId !== p.map.id ||
+        e.x >= p.map.width ||
+        e.y >= p.map.height ||
+        e.ownerId !== undefined
+      )
+        invalid('Invalid visible entity');
+      if (
+        e.id !== p.actorId &&
+        (e.movementGeneration !== undefined || e.lastInputSeq !== undefined)
+      )
+        invalid('Private actor input state');
+    }
+    const itemIds = new Set<string>();
+    for (const e of p.inventory) {
+      if (
+        e.kind !== 'item' ||
+        e.ownerId !== p.actorId ||
+        ids.has(e.id) ||
+        itemIds.has(e.id) ||
+        e.movementGeneration !== undefined ||
+        e.lastInputSeq !== undefined
+      )
+        invalid('Invalid private inventory');
+      itemIds.add(e.id);
+    }
+    if (p.encounter) {
+      const e = p.encounter;
+      if (
+        e.mapId !== p.map.id ||
+        !e.participants.includes(p.actorId) ||
+        new Set(e.participants).size !== e.participants.length
+      )
+        invalid('Invalid encounter membership');
+      for (const [id, intent] of Object.entries(e.intents)) {
+        if (!e.participants.includes(id)) invalid('Intent outside encounter');
+        if (id !== p.actorId && intent.action.kind !== 'wait') invalid('Private future intent');
+      }
+    }
+  });
+export const gameEnvelopeSchema = z
+  .object({
+    type: z.enum(['snapshot', 'delta']),
+    streamId: z.string().min(1).max(300),
+    projectionRevision: z.number().int().nonnegative().safe(),
+    baseProjectionRevision: z.number().int().nonnegative().safe().optional(),
+    connectionEpoch: z.number().int().nonnegative().safe(),
+    serverNowMs: z.number().int().nonnegative().safe().optional(),
+    projection: gameProjectionSchema,
+  })
+  .strict()
+  .superRefine((envelope, ctx) => {
+    if (envelope.projectionRevision !== envelope.projection.revision)
+      ctx.addIssue({ code: 'custom', message: 'Projection revision mismatch' });
+    if (envelope.type === 'delta' && envelope.baseProjectionRevision === undefined)
+      ctx.addIssue({ code: 'custom', message: 'Delta requires a base revision' });
+  });
+export type GameEnvelope = z.infer<typeof gameEnvelopeSchema>;

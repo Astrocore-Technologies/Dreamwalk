@@ -1,5 +1,6 @@
 /** Explicit operator action on ONE request. Never drains queues implicitly. */
 import pg from 'pg';
+import { exportGameData, purgeGameData } from './game-data-requests.mjs';
 import { readFile, unlink } from 'node:fs/promises';
 import { resolve, basename } from 'node:path';
 const arg = (name) => process.argv[process.argv.indexOf(name) + 1];
@@ -90,6 +91,7 @@ try {
         format: 'dreamwalk-account-export-v1',
         generatedAt: new Date().toISOString(),
         profile,
+        game: await exportGameData(c, user.id),
         heroes: await rows('SELECT id,data,created_at,updated_at FROM heroes WHERE owner_id=$1', [
           user.id,
         ]),
@@ -147,6 +149,7 @@ try {
           if (error.code !== 'ENOENT') throw error;
         }
       await c.query("SET LOCAL dreamwalk.erasure='confirmed'");
+      await purgeGameData(c, user.id);
       await c.query(
         `UPDATE adventure_versions v SET snapshot='{"erased":true}' WHERE EXISTS(SELECT 1 FROM adventures a WHERE a.id=v.adventure_id AND a.owner_id=$1)`,
         [user.id],

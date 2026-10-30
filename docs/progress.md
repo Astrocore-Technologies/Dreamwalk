@@ -75,3 +75,72 @@ Latest strict typecheck, workspace ESLint, production build, 9 contract tests, 8
 The local preview uses the preserved development database. Runtime reloads preserve users and stories; the explicit synthetic administrator bootstrap flag is removed after use. No preview session credentials or ephemeral URL are published in this repository.
 
 Next step is owner review of this platform candidate and resolution of explicit operational gates before any public launch. Do not silently start G0, spend money, merge or deploy. The owner separately authorized a draft pull request for source review. See `docs/platform-acceptance.md` for feature-by-feature evidence and `docs/implementation-plan.md` for later phases.
+
+## Hybrid RPG G0–G3 local vertical slice — 2026-10-30
+
+The owner approved the new hybrid architecture and implementation with «приступай».
+This supersedes the former no-free-walking gameplay queue, not the platform or its ACL.
+PR #3 was observed merged by the owner at 13:58:18 UTC (merge
+`e88a9318ce30ae94465c74b58f61ff0c8266e6aa`). Local Git HEAD remains the original
+bootstrap commit: current implementation is in the working tree, not falsely described
+as a checked-out remote game commit. No new game PR, push, merge or deployment has
+been performed as part of this local slice.
+
+Implemented:
+
+- Strict playable-map/action/projection contracts and pure deterministic game-core.
+- Explicit pinned observatory campaign, account membership/invitations, server-owned
+  movement/pathfinding/range/doors/items and separate map locations.
+- PostgreSQL CAS writer, atomic committed state/events/results/outbox, movement
+  checkpoints, snapshot checksums, restart-safe idempotency and private WebSockets.
+- Per-actor control epochs, input generation/sequence, authoritative stop, live
+  session/membership checks and stale-input rejection after reconnect/replacement.
+- One-round local coordinated encounters: parallel intent selection, deterministic
+  item/cell conflict handling, overlap relocation, deadline/default wait and return.
+- Bounded mock NPC decision with perceived context, ownership/allowlist/staleness
+  validation, actual path movement and transfer of an existing token.
+- Pixi renderer with original temporary atlas, accessible HTML actions, touch/keyboard
+  controls, camera, inventory and three complete UI locales. No paid calls.
+- Account exports include only own actor/inventory; erasure anonymizes history,
+  removes the actor/member, preserves party items and pauses deleted-owner campaigns.
+
+### Actually verified
+
+- **24/24 core tests**, including 2,000 seeded trace steps, wire privacy and hostile
+  proposals. **9/9 existing contract tests**; **18/18 config/locale checks**.
+- **12/12 real PostgreSQL/WebSocket integration checks**, rerun on frozen backend/core:
+  two separate accounts, origin/membership rejection, malformed WS, stop/lease swap,
+  simultaneous unique pickup, exact replay/conflict, actual API SIGKILL recovery,
+  door/map split, hidden entities, round deadlines across restart, NPC give/move,
+  export/purge and online access revocation. Independent isolated test DB only.
+- **62/62 platform integration/config/locale checks** rerun after game integration.
+- Local SMTP capture regression passed; no external message sent.
+- Production build, strict workspace typecheck and repository ESLint passed.
+  Game UI/localization/atlas tests pass, including quick-tap regression guard.
+- Managed CUA browser: created a real campaign, walked to key, picked it up (removed
+  from objects, present once in inventory), unlocked/opened door, walked through,
+  changed to roof and reloaded. Roof and key survived. UK and EN UI observed.
+- CUA also observed local encounter boundary/deadline and timeout back to exploration,
+  mock keeper transferred Moon token, and a short ArrowUp press moved (4,6)→(4,5).
+  The initial quick-keyup implementation canceled the step too early; it was fixed
+  and the same actual browser action was repeated successfully.
+- Three real sanitized screenshots were delivered separately; they are not source
+  fixtures. Preview reused the existing development database, recovered by its own
+  PostgreSQL WAL process when necessary, then cleanly restarted without a data reset.
+
+### Remaining gates and honest limits
+
+The independent **two-browser-context** Playwright scenario is written but has **not
+run** for the new game source. Managed local browser restrictions prohibit a separate
+local Playwright runner. A separately authorized draft PR/CI run is the next required
+browser gate; two shared-cookie tabs are not reported as two users.
+
+See `docs/game-acceptance.md` for the precise gap map. This is a fixture vertical slice:
+known static floor plan, dynamic-entity FOV, single-action requested mock decisions,
+one-round coordination, orthogonal goal movement and full checkpoint snapshots. It
+is not a complete tactical combat system, autonomous learned NPC society, map editor,
+production event-compaction design, proven four-browser/load target or public release.
+
+Next: finish permitted two-context CI and resolve any failures. Stop before G4 until
+the owner chooses a provider/data policy and approves a hard spend cap. Automatic
+translation, paid images, Discord, purchases and deployment remain separate gates.

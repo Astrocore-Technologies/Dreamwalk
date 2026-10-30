@@ -121,3 +121,46 @@ NPC originals now include `description`, `sourceLanguage` (`uk|en|ru`), server-o
 - `PATCH /npcs/:id/translations/:locale` accepts optional public fields and required `expectedSourceRevision`; owner only, stale revision409. This advanced correction API is not a required publication step.
 - Ordinary NPC create forces revision1/empty translations; original edits increment revision and cannot reconfirm variants by resending them. Source language defaults to account preference.
 - Public adventure approval pins safe NPC originals and localized variants into the immutable version. Subsequent NPC edits cannot change already approved previews; new publication approval is required. Seed translations are curated first-party content only, upgraded append-only without changing historical versions.
+
+## Local hybrid game prototype (protocol 1)
+
+All routes below use the existing authenticated cookie session and remain scoped to
+accepted campaign membership. `POST /api/v1/game/campaigns` accepts only
+`{"template":"observatory-v1"}`; it does not launch arbitrary public/private stories.
+
+| Route below `/api/v1/game`              | Behavior                                                      |
+| --------------------------------------- | ------------------------------------------------------------- |
+| `GET /campaigns`                        | Own accepted/pending campaign list                            |
+| `POST /campaigns`                       | New isolated pinned fixture campaign                          |
+| `GET /campaigns/:id/members`            | Accepted member roster, no session data                       |
+| `POST /campaigns/:id/invitations`       | Owner invites existing `username` (handle)                    |
+| `POST /campaigns/:id/accept`            | Intended recipient accepts membership                         |
+| `DELETE /campaigns/:id/members/:userId` | Owner revokes another member                                  |
+| `GET /campaigns/:id/snapshot`           | Viewer-specific map/entities/own inventory                    |
+| `POST /campaigns/:id/move`              | Strict target input with epoch, generation and input sequence |
+| `POST /campaigns/:id/stop`              | Stop at authoritative position, not client coordinates        |
+| `POST /campaigns/:id/commands`          | Versioned idempotent action, encounter or mock-NPC command    |
+| `WS /socket?campaignId=:id`             | Cookie/Origin authenticated private snapshots/deltas          |
+
+Commands carry `protocolVersion:1`, UUID `operationId`, type (`action`,
+`encounter.begin`, `encounter.intent`, `npc.request`), corresponding typed payload
+and optional `expectedRevision`. The actor comes from the session, never the body.
+A repeated actor/operation/payload returns its stored result; a different canonical
+payload with the same operation ID returns `IDEMPOTENCY_CONFLICT`. Rejected domain
+actions have `status:rejected` and a semantic code, never invented success narration.
+
+Movement is a bounded path goal processed on fixed server ticks. It does not accept
+speed or elapsed client time. Server stop clears the path and advances generation.
+Opening a new control socket rotates the actor's lease; the superseded socket closes
+with `4001` without stopping its replacement. Access/session revocation closes with
+`1008`. Ping/pong detects silent connections. Each outbound projection rechecks access.
+
+Deltas currently contain a complete allowed projection, with stream-local revision
+and base revision rather than raw cross-campaign event payloads. A gap requests a fresh
+snapshot. Global event sequence, other inventories and NPC private context are not
+part of this public transport. Snapshot/command state is derived from server rules;
+the client cannot submit a replacement world.
+
+The prototype's encounter is one coordinated round followed by exploration. Full
+combat, author map publishing, paid providers, billing and Discord are not implemented
+by these endpoints. See `game-acceptance.md` for actual verification and remaining gates.

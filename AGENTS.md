@@ -1,6 +1,6 @@
 # Dreamwalk
 
-Platform first: finish P0–P4 before gameplay G0. Read docs/implementation-plan.md and docs/progress.md.
+Preserve the completed P0–P4 platform. The owner authorized local hybrid gameplay G0–G3 on 2026-10-30. Read docs/implementation-plan.md, docs/hybrid-rpg-architecture.ru.md and docs/progress.md. Stop before real-provider G4 without separate budget approval.
 
 - npm workspaces, strict TypeScript, Next.js UI, NestJS is sole business-logic owner, PostgreSQL.
 - Ukrainian, English and Russian UI through complete locales; English identifiers. Brand: Dreamwalk.

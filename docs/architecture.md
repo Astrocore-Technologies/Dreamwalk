@@ -22,11 +22,11 @@ Three supported interface locales: `uk`, `en`, `ru`. Localized presentation incl
 
 ## Current execution and cost boundaries
 
-All AI is mock configuration; no external AI request path runs. Payment and Discord flags are false, spend cap is zero. Unsupported live flags fail startup. Wallet is labeled **demo**, not a purchased asset or real money; admin test adjustments are restricted and audited. The UI prepares adventures and heroes but clearly disables play. No game-core, sockets, renderer, paid image generation service or checkout is hidden behind these controls.
+All AI is mock configuration; no external AI request path runs. Payment and Discord flags are false, spend cap is zero. Unsupported live flags fail startup. Wallet is labeled **demo**, not a purchased asset or real money; admin test adjustments are restricted and audited. The platform prepares adventures and heroes. A separate explicitly identified observatory prototype is being added under the approved G0–G3 scope; existing stories without a playable map do not become playable automatically. No paid image generation service or checkout is enabled.
 
-## Later game architecture, deliberately unimplemented
+## Approved hybrid game architecture (local implementation in progress)
 
-A separate deterministic rule core will resolve intents; AI only proposes narration. Campaigns will pin published versions. Layered visual assets and HTML alternatives will preserve scene accessibility; client rendering will not grant permissions. Durable operations will separate short database transactions from external calls: validate → reserve → execute outside transaction → persist/capture → outbox. All side effects must be idempotent; no end-to-end exactly-once guarantee. Discord instances will map to persistent campaigns, never be their identity or ACL.
+A separate deterministic rule core resolves typed intents. AI may propose bounded actions and narration; the server validates knowledge, references, permissions and rules before any commit. Campaigns will pin published versions. Layered visual assets and HTML alternatives will preserve scene accessibility; client rendering will not grant permissions. Durable operations will separate short database transactions from external calls: validate → reserve → execute outside transaction → persist/capture → outbox. All side effects must be idempotent; no end-to-end exactly-once guarantee. Discord instances will map to persistent campaigns, never be their identity or ACL.
 
 ## Assets
 
@@ -45,3 +45,5 @@ NPC definitions and secret notes remain author-only; invited/public readers rece
 Authors write the original title and synopsis once and may identify their source language. Adventure metadata stores `sourceLanguage`, a server-owned `sourceRevision` and optional locale variants. The interface uses a valid preferred-locale field when present, otherwise the original field. Full story/NPC text is not translated. Curated demo metadata has three-language variants. There is no required translation wizard and no provider/job claiming work has been completed.
 
 Changing the original title, synopsis or source language advances the source revision; stale translated fields are not served to readers. An explicit correction/reconfirmation endpoint checks the expected revision and creates a new draft. Ordinary full-form saves cannot silently reconfirm old translations. Published snapshots include the approved metadata variants, and pending edits never replace them before moderation. Automatic provider translation remains a later, explicitly enabled integration.
+
+See [ADR 001](adr/001-hybrid-rpg.md) and the full [approved hybrid plan](hybrid-rpg-architecture.ru.md). The implementation status and actual checks are recorded separately in progress.md; the architecture is not evidence of completed behavior.

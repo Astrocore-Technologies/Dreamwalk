@@ -20,13 +20,17 @@ The original prompt's platform override (§2A, §22, §24) takes precedence over
 | P2    | Create/edit story + NPC, validated links, media/preview/version, moderation submit; drafts hidden; favorites persist                                         | No gameplay required                              |
 | P3    | Append-only integer ledger + idempotency; RBAC and audited mutations; editable model/runtime config                                                          | No paid calls or checkout                         |
 | P4    | Functional platform RC with database and browser evidence; clear unavailable game controls; three complete interface locales                                 | Not public production-ready                       |
-| G0    | Deterministic mock scene, two players, shared item, reconnect/repeat safety                                                                                  | Not in current implementation                     |
-| G1    | Short original adventure, real AI with validation, memory and cost controls                                                                                  | Requires explicit paid-call authorization         |
-| G2    | Image job lifecycle, scoped asset reuse, reservations/quotes/recovery                                                                                        | Requires explicit paid-generation authorization   |
-| G3    | Discord Activity/OAuth, invitations and 1–4 players, real embedded smoke test                                                                                | No private chat scraping                          |
+| G0    | Strict playable maps, campaign access, deterministic core and mock provider                                                                                  | Authorized locally; no paid calls                 |
+| G1    | Two real accounts walk, take one key, open a door, change map and restore progress                                                                           | Local vertical slice, not production              |
+| G2    | Local simultaneous-intent rounds, deadlines, collision and independent locations                                                                             | No full combat system                             |
+| G3    | NPC world actions, perception, bounded mock proposals and adversarial safety                                                                                 | Stop before real AI                               |
+| G4    | Limited real text AI with separate provider budget and kill switch                                                                                           | Requires provider and spend authorization         |
+| G5    | Visual pipeline and author map editor                                                                                                                        | Paid images require separate permission           |
+| G6    | Discord Activity with persistent campaign identity                                                                                                           | Requires integration authorization                |
+| G7    | Load, backup/restore, retention and release hardening                                                                                                        | Not implicit deployment approval                  |
 | L0    | Eligibility, payment verification/refunds, legal/age policy, backups, monitoring                                                                             | Explicit launch/payment authorization required    |
 
-No transition to G0 before platform acceptance or a new explicit owner priority. No external publication is implied by local implementation.
+The owner explicitly authorized the hybrid RPG implementation on 2026-10-30 ("приступай"). G0–G3 now proceed locally against the approved [hybrid architecture](hybrid-rpg-architecture.ru.md). The previous point-and-click/no-free-walking game queue is superseded. External publication, deployment and paid services remain separate gates.
 
 ## Later owner update: publication and sharing
 
