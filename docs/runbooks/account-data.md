@@ -22,3 +22,23 @@ Purge requires a previously confirmed deleted account and matching explicit conf
 Each specified operation is audited. Advisory locking serializes processing of the same request. Failure leaves a retryable state; missing files are safe on retry, unsafe stored paths fail closed. Re-running a completed request does not duplicate effects. Never remove database constraints or edit ledger amounts to make processing succeed.
 
 The integration suite uses disposable synthetic accounts and covers ownership, expiry, file deletion, safe failure/retry and immutable-field protection. It does not process real user requests.
+
+## Living NPC data
+
+The same confirmed transaction removes personal observations and their causal rumor roots,
+relationships, dependent summaries, promises to the erased actor and generated replies
+derived from erased evidence. It clears pending movement/plan dependencies so replay cannot
+resume an erased target. Private historical states, semantic episode archives and retained
+idempotent response projections are included; merely pseudonymizing a speaker while keeping
+their raw speech is not sufficient. Other participants retain legitimate world outcomes and
+unrelated accepted obligations. Erasing the source author tombstones dependent campaigns
+and removes their authored/private episode material entirely.
+
+NPC provider contexts, proposals, quote references and scoped caches are scrubbed or removed.
+Held demo credits are released. Already incurred or uncertain provider cost is **not** erased
+from service accounting: unknown dispatch outcomes remain conservatively counted pending
+trusted reconciliation. Append-only financial ledger entries and minimal reconciliation
+identifiers follow the existing accounting retention policy, not a false claim of total deletion.
+
+Account exports contain only safe metadata for that user's NPC requests. They do not reveal
+another player's inventory, private NPC brain, raw provider prompt, or a party's hidden history.

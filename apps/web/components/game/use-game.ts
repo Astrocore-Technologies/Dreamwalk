@@ -31,7 +31,10 @@ export type CommandBody = {
     | 'encounter.intent'
     | 'encounter.join'
     | 'encounter.end'
-    | 'npc.request';
+    | 'npc.request'
+    | 'npc.speech';
+  npcId?: string;
+  speech?: { channel: 'say' | 'whisper'; text: string };
   encounterId?: string;
   action?: GameAction;
   intent?: GameIntentInput;

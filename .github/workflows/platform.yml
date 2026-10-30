@@ -24,6 +24,8 @@ jobs:
       NODE_ENV: test
       WEB_ORIGIN: http://localhost:3000
       AI_PROVIDER: mock
+      NPC_AI_PROVIDER: mock
+      NPC_AI_EXTERNAL_APPROVED: 'false'
       PAID_GENERATION_ENABLED: 'false'
       PAYMENTS_ENABLED: 'false'
       DISCORD_ENABLED: 'false'

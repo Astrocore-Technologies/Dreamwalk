@@ -1,11 +1,13 @@
 /** API/DB integration runner. All processes share one isolated local namespace. */
 import { startLocalPostgres } from './postgres-local.mjs';
+import { forceMockNpcTestEnvironment } from './mock-npc-test-env.mjs';
 import { spawn } from 'node:child_process';
 import { once } from 'node:events';
 import assert from 'node:assert/strict';
 import { readdirSync } from 'node:fs';
 import pg from 'pg';
 import { setTimeout as delay } from 'node:timers/promises';
+forceMockNpcTestEnvironment();
 process.env.LOCAL_POSTGRES_CLUSTER = `test-${Date.now()}`;
 const database = process.env.DATABASE_URL ? null : await startLocalPostgres();
 process.env.NODE_ENV = 'test';

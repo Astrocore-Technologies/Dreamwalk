@@ -18,6 +18,10 @@ export class PlayableController {
   ) {
     return this.playable.save(r, id, b);
   }
+  @Post('studio/adventures/:id/npc-preview')
+  previewNpc(@Req() r: Request, @Param('id') id: string, @Body() b: unknown) {
+    return this.playable.previewNpc(r, id, b);
+  }
   @Post('studio/adventures/:id/playable-versions') compile(
     @Req() r: Request,
     @Param('id') id: string,

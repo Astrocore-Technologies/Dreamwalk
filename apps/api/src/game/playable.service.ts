@@ -3,8 +3,20 @@ import type { Request } from 'express';
 import type { PoolClient } from 'pg';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { authoredGameDraftSchema, type PlayablePackage } from '@dreamwalk/contracts';
-import { compilePlayableDraft, createStateFromPlayable } from '@dreamwalk/game-core';
+import {
+  authoredGameDraftSchema,
+  gameActionSchema,
+  type PlayablePackage,
+} from '@dreamwalk/contracts';
+import {
+  compilePlayableDraft,
+  createStateFromPlayable,
+  applyAction,
+  recordNpcEvents,
+  tick,
+  stepLivingNpcs,
+  stepNpcPlan,
+} from '@dreamwalk/game-core';
 import { Db } from '../db';
 import { Auth } from '../auth';
 import { fail } from '../errors';
@@ -51,6 +63,86 @@ export class PlayableService {
       )
     )[0];
     return row ?? { draft: null, revision: 0 };
+  }
+  /** A fresh author-owned sandbox only. Never reads a party's campaign or private history. */
+  async previewNpc(req: Request, id: string, body: unknown) {
+    const input = z
+      .object({
+        expectedRevision: z.number().int().positive(),
+        npcId: z
+          .string()
+          .regex(/^[\w-]+$/)
+          .max(100),
+        ticks: z.number().int().min(0).max(120).default(20),
+        actions: z.array(gameActionSchema).max(8).default([]),
+      })
+      .strict()
+      .parse(body);
+    const row = await this.draft(req, id);
+    if (!row.draft || Number(row.revision) !== input.expectedRevision)
+      fail(409, 'STALE_STATE', 'STALE_STATE');
+    const compiled = compilePlayableDraft(row.draft);
+    if (!compiled.playable) fail(400, 'INVALID_MAP', compiled.errors.join(';'));
+    let state = createStateFromPlayable(compiled.playable!, ['preview-player'], 1);
+    if (!state.npcBrains || !Object.hasOwn(state.npcBrains, input.npcId))
+      fail(404, 'NOT_FOUND', 'NOT_FOUND');
+    const outcomes: { status: string; code?: string }[] = [];
+    for (const [index, action] of input.actions.entries()) {
+      const before = state,
+        result = applyAction(state, 'preview-player', action);
+      outcomes.push({
+        status: result.error ? 'rejected' : 'committed',
+        ...(result.error ? { code: result.error } : {}),
+      });
+      if (!result.error)
+        state = recordNpcEvents(
+          before,
+          result.state,
+          result.events,
+          `preview-action-${index}`,
+        ).state;
+    }
+    for (let step = 0; step < input.ticks; step++) {
+      const before = state,
+        next = tick(state, 1);
+      state = recordNpcEvents(
+        before,
+        next.state,
+        next.events,
+        `preview-tick-${next.state.tick}`,
+      ).state;
+      if (state.rulesetVersion === 'hybrid-v3') {
+        const beforeRoutine = state,
+          routine = stepLivingNpcs(state);
+        if (!routine.error)
+          state = recordNpcEvents(
+            beforeRoutine,
+            routine.state,
+            routine.events,
+            `preview-routine-${state.tick}`,
+          ).state;
+        for (const npcId of Object.keys(state.npcBrains ?? {})) {
+          const beforePlan = state,
+            plan = stepNpcPlan(state, npcId);
+          if (!plan.error)
+            state = recordNpcEvents(
+              beforePlan,
+              plan.state,
+              plan.events,
+              `preview-plan-${npcId}-${state.tick}`,
+            ).state;
+        }
+      }
+    }
+    return {
+      sandbox: true,
+      sourceRevision: Number(row.revision),
+      npcId: input.npcId,
+      tick: state.tick,
+      rulesetVersion: state.rulesetVersion,
+      outcomes,
+      brain: state.npcBrains?.[input.npcId],
+    };
   }
   async save(req: Request, id: string, body: unknown) {
     const input = z
@@ -275,6 +367,14 @@ export class PlayableService {
         startMapId: p.startMapId,
         maps: p.maps,
         roundPolicy: p.roundPolicy,
+        npcPolicy: p.rulesetVersion === 'hybrid-v3' ? 'reactive-v1' : null,
+        npcProfiles: Object.entries(p.npcBrains ?? {}).map(([npcId, brain]) => ({
+          npcId,
+          personality: brain.living?.personality ?? null,
+          initialKnowledge: brain.living?.observations.filter((o) => o.tick === 0) ?? [],
+          initialGoal: brain.living?.goal.kind ?? brain.goal,
+          patrolTarget: brain.patrolTarget,
+        })),
         assetManifest: p.assetManifest,
         entities: Object.fromEntries(
           Object.entries(p.entities).map(([key, e]) => [

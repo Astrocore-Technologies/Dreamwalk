@@ -457,3 +457,16 @@
 .inventory li {
   min-width: 0;
 }
+
+/* User-authored speech and NPC names cannot widen the mobile HUD. */
+.hud section,
+.hud form,
+.hud select,
+.hud textarea {
+  min-width: 0;
+  max-width: 100%;
+}
+.hud section,
+.journal li {
+  overflow-wrap: anywhere;
+}

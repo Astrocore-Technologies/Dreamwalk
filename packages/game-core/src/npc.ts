@@ -1,3 +1,4 @@
+import { recordLivingNpcEvents } from './living';
 import {
   npcPlanProposalSchema,
   type GameAction,
@@ -68,7 +69,13 @@ export function acceptNpcPlan(state: GameState, id: string, input: unknown): Gam
   )
     return { ...result(state), error: 'STALE_STATE' };
   for (const a of p.actions) {
-    if (!['move_to', 'wait', 'inspect', 'give'].includes(a.kind))
+    if (
+      !(
+        state.rulesetVersion === 'hybrid-v3'
+          ? ['move_to', 'wait', 'inspect', 'give', 'open', 'close', 'lock', 'unlock']
+          : ['move_to', 'wait', 'inspect', 'give']
+      ).includes(a.kind)
+    )
       return { ...result(state), error: 'INVALID_ACTION' };
     if (a.targetId) {
       const target = state.entities[a.targetId];
@@ -146,6 +153,8 @@ export function recordNpcEvents(
   events: GameEvent[],
   operationId: string,
 ): GameResult {
+  if (after.rulesetVersion === 'hybrid-v3')
+    return recordLivingNpcEvents(before, after, events, operationId);
   if (!after.npcBrains || !events.length) return result(after);
   const s = structuredClone(after);
   let changed = false;

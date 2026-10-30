@@ -8,6 +8,9 @@ import { api, errorMessage, useClient, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Field, Input, Loading, PageHeading } from '@/components/ui';
 import { GameCanvas } from './game-canvas';
+import { LivingAiPanel } from './living-ai-panel';
+import { LivingConversation } from './living-conversation';
+import { LivingNotices } from './living-notices';
 import { useGame, type CampaignSummary } from './use-game';
 import styles from './game.module.css';
 
@@ -20,6 +23,8 @@ const actionKeys: Record<GameAction['kind'], string> = {
   pick_up: 'Подобрать',
   give: 'Передать',
   unlock: 'Отпереть',
+  knock: 'Постучать',
+  lock: 'Запереть дверь',
   open: 'Открыть дверь',
   close: 'Закрыть дверь',
   transition: 'Перейти',
@@ -149,6 +154,8 @@ function CampaignLobby() {
       )}
       <p className={styles.footnote}>
         {t('Прототип работает бесплатно на тестовых решениях NPC.')}
+        <br />
+        {t('Это временные игровые изображения. Целевой стиль — рисованный 2D.')}
       </p>
     </div>
   );
@@ -459,7 +466,13 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             </header>
             {!nearby.length && <p className={styles.muted}>{t('Видимых объектов нет')}</p>}
             {nearby.map((entity) => (
-              <article key={entity.id} className={styles.object} data-entity-id={entity.id}>
+              <article
+                key={entity.id}
+                className={styles.object}
+                data-entity-id={entity.id}
+                data-x={entity.x}
+                data-y={entity.y}
+              >
                 <div>
                   <h3>{entity.label || t(entityKey(entity, p.actorId))}</h3>
                   <small>
@@ -512,6 +525,28 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                       )}
                     </Button>
                   )}
+                  {entity.kind === 'door' && p.rulesetVersion === 'hybrid-v3' && (
+                    <>
+                      <Button
+                        variant="secondary"
+                        disabled={!connected || locked || game.busy}
+                        onClick={() => act({ kind: 'knock', targetId: entity.id })}
+                      >
+                        {t('Постучать')}
+                      </Button>
+                      {!entity.locked && !entity.open && entity.keyId && (
+                        <Button
+                          variant="secondary"
+                          disabled={!connected || locked || game.busy}
+                          onClick={() =>
+                            act({ kind: 'lock', targetId: entity.id, itemId: entity.keyId })
+                          }
+                        >
+                          {t('Запереть дверь')}
+                        </Button>
+                      )}
+                    </>
+                  )}
                   {entity.kind === 'npc' && (
                     <>
                       <Button
@@ -519,20 +554,31 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                         disabled={!connected || locked || game.busy}
                         onClick={() => act({ kind: 'talk', targetId: entity.id })}
                       >
-                        {t('Поговорить')}
+                        {t(p.rulesetVersion === 'hybrid-v3' ? 'Попросить помощи' : 'Поговорить')}
                       </Button>
-                      <Button
-                        disabled={!connected || !!encounter}
-                        busy={game.busy}
-                        onClick={() =>
-                          void game.command({
-                            type: 'npc.request',
-                            action: { kind: 'talk', targetId: entity.id },
-                          })
-                        }
-                      >
-                        {t('Попросить NPC действовать')}
-                      </Button>
+                      {p.rulesetVersion === 'hybrid-v3' && (
+                        <Button
+                          variant="secondary"
+                          disabled={!connected || locked || game.busy}
+                          onClick={() => act({ kind: 'distract', targetId: entity.id })}
+                        >
+                          {t('Отвлечь')}
+                        </Button>
+                      )}
+                      {p.rulesetVersion !== 'hybrid-v3' && (
+                        <Button
+                          disabled={!connected || !!encounter}
+                          busy={game.busy}
+                          onClick={() =>
+                            void game.command({
+                              type: 'npc.request',
+                              action: { kind: 'talk', targetId: entity.id },
+                            })
+                          }
+                        >
+                          {t('Попросить NPC действовать')}
+                        </Button>
+                      )}
                     </>
                   )}
                 </div>
@@ -657,6 +703,17 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             )}
             {inviteMessage && <p role="status">{inviteMessage}</p>}
           </section>
+          <LivingConversation
+            projection={p}
+            disabled={!connected || game.busy || locked}
+            command={game.command}
+          />
+          <LivingNotices projection={p} />
+          <LivingAiPanel
+            campaignId={campaignId}
+            projection={p}
+            disabled={!connected || game.busy}
+          />
           <section>
             <h2>{t('Журнал событий')}</h2>
             <ol className={styles.journal} aria-live="polite" aria-relevant="additions">
@@ -677,6 +734,8 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           </section>
           <p className={styles.footnote}>
             {t('Прототип работает бесплатно на тестовых решениях NPC.')}
+            <br />
+            {t('Это временные игровые изображения. Целевой стиль — рисованный 2D.')}
           </p>
         </aside>
       </div>

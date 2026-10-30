@@ -4,6 +4,23 @@ import { GameService } from './game.service';
 @Controller('api/v1/game')
 export class GameController {
   constructor(@Inject(GameService) private game: GameService) {}
+  @Get('campaigns/:id/ai') aiStatus(@Req() req: Request, @Param('id') id: string) {
+    return this.game.aiStatus(req, id);
+  }
+  @Post('campaigns/:id/ai/quote') aiQuote(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.aiDecision(req, id, body, true);
+  }
+  @Post('campaigns/:id/ai/jobs') aiQueue(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.aiDecision(req, id, body);
+  }
   @Get('campaigns') list(@Req() req: Request) {
     return this.game.list(req);
   }

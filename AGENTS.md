@@ -13,3 +13,10 @@ Preserve the completed P0–P4 platform. The owner authorized local hybrid gamep
 - Do not commit .env, local database, upload files or test output.
 
 Commands and configuration: README.md. Contracts: docs/api-contract.md. Architecture: docs/architecture.md.
+
+The owner subsequently approved the full living-NPC architecture implementation. Read
+`docs/living-npc-architecture.ru.md` and `docs/npc-implementation-coverage.md`. Continue
+through the agreed domain, mock-tested runtime, provider/budget boundary and UI; do not
+stop at a first slice or claim unverified production/provider behavior. Drawn 2D only;
+pixel art is cancelled, existing placeholders remain temporary. Real provider calls,
+real payments, deployment and merge still require separate authorization.

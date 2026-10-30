@@ -1,3 +1,12 @@
+import { npcPersonalitySchema, npcNoticeSchema, npcUtteranceSchema } from './living';
+import type {
+  LivingNpcMemory,
+  NpcNotice,
+  PrivateNpcNotice,
+  NpcUtterance,
+  PrivateNpcUtterance,
+} from './living';
+export * from './living';
 import { z } from 'zod';
 export const bundledGameAssetManifest = {
   id: 'observatory-prototype-atlas-v1',
@@ -35,6 +44,8 @@ export const gameActionSchema = z
       'unlock',
       'open',
       'close',
+      'lock',
+      'knock',
       'transition',
       'defend',
       'flee',
@@ -59,7 +70,7 @@ export const gameActionSchema = z
         ctx.addIssue({ code: 'custom', message: 'Action requires an entity or exit target' });
       if (action.kind === 'give' && !action.itemId)
         ctx.addIssue({ code: 'custom', message: 'Give requires an item' });
-      if (!['give', 'unlock'].includes(action.kind) && action.itemId !== undefined)
+      if (!['give', 'unlock', 'lock'].includes(action.kind) && action.itemId !== undefined)
         ctx.addIssue({ code: 'custom', message: 'Action does not accept an item' });
     }
   });
@@ -154,9 +165,11 @@ export interface GameEncounter {
 export interface GameState {
   assetManifest?: typeof bundledGameAssetManifest;
   schemaVersion: 1;
-  rulesetVersion: 'observatory-v1' | 'hybrid-v2';
+  rulesetVersion: 'observatory-v1' | 'hybrid-v2' | 'hybrid-v3';
   startMapId?: string;
   npcBrains?: Record<string, NpcBrain>;
+  npcNotices?: PrivateNpcNotice[];
+  npcUtterances?: PrivateNpcUtterance[];
   roundPolicy?: { maxRounds: number; planningMs: number };
   seed: number;
   tick: number;
@@ -171,6 +184,7 @@ export interface GameEvent {
   targetId?: string;
   mapId?: string;
   code?: GameError;
+  itemId?: string;
 }
 export interface GameResult {
   state: GameState;
@@ -188,6 +202,15 @@ export interface GameProjection {
   entities: GameEntity[];
   inventory: GameEntity[];
   encounter?: GameEncounter;
+  npcNotices?: NpcNotice[];
+  npcUtterances?: NpcUtterance[];
+  npcObligations?: {
+    id: string;
+    npcId: string;
+    itemId: string;
+    status: 'accepted' | 'fulfilled' | 'broken' | 'cancelled';
+    remainingTicks: number;
+  }[];
   nearbyEncounters?: {
     id: string;
     mapId: string;
@@ -244,7 +267,7 @@ export const gameMapSchema = z
 export const playableVersionSchema = z
   .object({
     schemaVersion: z.literal(1),
-    rulesetVersion: z.enum(['observatory-v1', 'hybrid-v2']),
+    rulesetVersion: z.enum(['observatory-v1', 'hybrid-v2', 'hybrid-v3']),
     maps: z.array(gameMapSchema).min(1).max(16),
   })
   .strict()
@@ -321,7 +344,7 @@ export const gameProjectionSchema = z
   .object({
     assetManifest: gameAssetManifestSchema.optional(),
     schemaVersion: z.literal(1),
-    rulesetVersion: z.enum(['observatory-v1', 'hybrid-v2']),
+    rulesetVersion: z.enum(['observatory-v1', 'hybrid-v2', 'hybrid-v3']),
     tick: z.number().int().nonnegative().safe(),
     revision: z.number().int().nonnegative().safe(),
     actorId: gameIdSchema,
@@ -329,6 +352,22 @@ export const gameProjectionSchema = z
     entities: z.array(gamePublicEntitySchema).min(1).max(512),
     inventory: z.array(gamePublicEntitySchema).max(128),
     encounter: gamePublicEncounterSchema.optional(),
+    npcUtterances: z.array(npcUtteranceSchema).max(32).optional(),
+    npcNotices: z.array(npcNoticeSchema).max(32).optional(),
+    npcObligations: z
+      .array(
+        z
+          .object({
+            id: z.string().max(100),
+            npcId: gameIdSchema,
+            itemId: gameIdSchema,
+            status: z.enum(['accepted', 'fulfilled', 'broken', 'cancelled']),
+            remainingTicks: z.number().int().nonnegative(),
+          })
+          .strict(),
+      )
+      .max(128)
+      .optional(),
     nearbyEncounters: z
       .array(
         z
@@ -432,6 +471,7 @@ export const authoredGameDraftSchema = z
   .object({
     schemaVersion: z.literal(1),
     title: authoredLabel,
+    npcBehavior: z.literal('reactive-v1').optional(),
     startMapId: gameIdSchema,
     maps: z
       .array(
@@ -494,6 +534,18 @@ export const authoredGameDraftSchema = z
             y: z.number().int().min(0).max(31),
             visual: z.enum(['keeper', 'traveler']),
             goal: z.enum(['patrol', 'help']),
+            personality: npcPersonalitySchema.optional(),
+            initialKnowledge: z
+              .array(
+                z
+                  .object({
+                    entityId: gameIdSchema,
+                    revealCondition: z.enum(['never', 'asked', 'trusted']),
+                  })
+                  .strict(),
+              )
+              .max(16)
+              .optional(),
             patrolTarget: gamePointSchema.optional(),
           })
           .strict(),
@@ -515,6 +567,7 @@ export interface NpcMemoryFact {
   tick: number;
 }
 export interface NpcBrain {
+  living?: LivingNpcMemory;
   waitingForPath?: boolean;
   planMapId?: string;
   movementGeneration?: number;
@@ -530,7 +583,7 @@ export interface NpcBrain {
 export interface PlayablePackage {
   assetManifest: typeof bundledGameAssetManifest;
   schemaVersion: 1;
-  rulesetVersion: 'hybrid-v2';
+  rulesetVersion: 'hybrid-v2' | 'hybrid-v3';
   title: string;
   startMapId: string;
   maps: Record<string, GameMap>;

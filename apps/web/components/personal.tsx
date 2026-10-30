@@ -473,7 +473,7 @@ export function HeroesPage() {
 export function WalletPage() {
   const date = useDate();
   const { t: tr, locale } = useT();
-  const wallet = useResource<Wallet>('/wallet');
+  const wallet = useResource<Wallet & { available?: number; reserved?: number }>('/wallet');
   const packages =
     useResource<{ id: string; name: string; credits: number; available: boolean }[]>(
       '/store/packages',
@@ -495,10 +495,14 @@ export function WalletPage() {
           </div>
           <p>{tr('Доступно искр')}</p>
           <h2>
-            {wallet.loading ? '…' : (wallet.data?.balance || 0).toLocaleString(locale)}
+            {wallet.loading
+              ? '…'
+              : (wallet.data?.available ?? wallet.data?.balance ?? 0).toLocaleString(locale)}
             <span>✦</span>
           </h2>
           <small>
+            {tr('Зарезервировано искр')}: {(wallet.data?.reserved ?? 0).toLocaleString(locale)}
+            <br />
             {tr('Тестовые операции не имеют денежной стоимости.')}
             <br />
             {tr('Реальные покупки отключены.')}

@@ -8,6 +8,8 @@ import { randomUUID, createHash } from 'node:crypto';
 import { setTimeout as delay } from 'node:timers/promises';
 import pg from 'pg';
 import { startLocalPostgres } from '../scripts/postgres-local.mjs';
+import { forceMockNpcTestEnvironment } from '../scripts/mock-npc-test-env.mjs';
+forceMockNpcTestEnvironment();
 const hash = (value) => createHash('sha256').update(value).digest('hex');
 async function run(args) {
   const p = spawn(process.execPath, args, { env: process.env, stdio: 'ignore' });

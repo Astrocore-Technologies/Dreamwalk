@@ -6,6 +6,7 @@ import {
   gameActionSchema,
   gameIntentSchema,
   gameMoveSchema,
+  npcSpeechSchema,
   type GameState,
   type GameResult,
   type GameProjection,
@@ -28,9 +29,21 @@ import {
   createMockNpcPlan,
   acceptNpcPlan,
   stepNpcPlan,
+  stepLivingNpcs,
+  applyNpcSpeech,
+  projectGameEvents,
+  buildNpcDecisionContext,
+  createNpcMemorySummary,
+  acceptNpcMemorySummary,
+  buildNpcPublicSpeechContext,
+  commitNpcPublicUtterance,
+  canNpcHear,
+  npcContextFingerprint,
   recordNpcEvents,
 } from '@dreamwalk/game-core';
 import { Db } from '../db';
+import { NpcAiService } from '../ai/npc-ai.service';
+import { archiveNpcEpisodes, recallNpcEpisodes } from './npc-memory';
 import { Auth } from '../auth';
 import { fail } from '../errors';
 import { PlayableService, sourceAccessSql, sourceLiveSql } from './playable.service';
@@ -51,6 +64,7 @@ export const commandSchema = z
       'encounter.join',
       'encounter.end',
       'npc.request',
+      'npc.speech',
     ]),
     encounterId: z
       .string()
@@ -58,6 +72,7 @@ export const commandSchema = z
       .max(100)
       .optional(),
     action: gameActionSchema.optional(),
+    speech: npcSpeechSchema.optional(),
     intent: gameIntentSchema.optional(),
     expectedRevision: z.number().int().nonnegative().optional(),
   })
@@ -80,6 +95,7 @@ type Live = {
   epoch: number;
   actorEpochs: Record<string, number>;
   npcPending: boolean;
+  aiPending: boolean;
   paused: boolean;
   clock: RuntimeClock;
   presence: Map<string, number>;
@@ -123,6 +139,7 @@ export class GameService implements OnModuleDestroy {
     @Inject(Db) private db: Db,
     @Inject(Auth) private auth: Auth,
     @Inject(PlayableService) private playable: PlayableService,
+    @Inject(NpcAiService) private ai: NpcAiService,
   ) {
     this.timer = setInterval(() => {
       for (const id of this.live.keys()) {
@@ -223,6 +240,7 @@ export class GameService implements OnModuleDestroy {
       epoch: randomInt(1, 2147483647),
       actorEpochs: {},
       npcPending: pendingJobs.length > 0,
+      aiPending: await this.ai.pending(id),
       campaign: {
         title: row.game_title ?? null,
         playableVersionId: row.source_version_id ?? null,
@@ -236,7 +254,7 @@ export class GameService implements OnModuleDestroy {
     z.uuid().parse(id);
     const user = await this.auth.require(req);
     const rows = await this.db.query(
-      `SELECT m.actor_id,c.owner_id FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id WHERE m.campaign_id=$1 AND m.user_id=$2 AND m.status='accepted' AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL) AND ${sourceAccessSql('$2')}`,
+      `SELECT m.actor_id,c.owner_id,c.revision FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id WHERE m.campaign_id=$1 AND m.user_id=$2 AND m.status='accepted' AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL) AND ${sourceAccessSql('$2')}`,
       [id, user.id],
     );
     if (!rows[0]) {
@@ -247,7 +265,280 @@ export class GameService implements OnModuleDestroy {
       if (!stillActive.length) this.live.delete(id);
       fail(403, 'FORBIDDEN', 'FORBIDDEN');
     }
+    // Account erasure and administrative changes may commit outside this process's writer.
+    // Never project a cached pre-erasure checkpoint after observing a newer durable revision.
+    const cached = this.live.get(id);
+    if (cached && Number(rows[0].revision) > cached.dbRevision) this.live.delete(id);
     return { user, actorId: String(rows[0].actor_id), ownerId: String(rows[0].owner_id) };
+  }
+  /** Player-facing metadata only; decision contexts remain server-private. */
+  async aiStatus(req: Request, id: string) {
+    const a = await this.access(req, id);
+    return {
+      configuration: this.ai.configuration(),
+      jobs: await this.ai.status(id, a.user.id),
+      wallet: await this.ai.wallet(a.user.id),
+    };
+  }
+  async aiDecision(req: Request, id: string, body: unknown, quote = false) {
+    const input = z
+      .object({
+        npcId: z
+          .string()
+          .regex(/^[\w-]+$/)
+          .max(100),
+        purpose: z.enum(['plan', 'summary', 'speech']).default('plan'),
+        channel: z.enum(['say', 'whisper']).default('say'),
+        topicId: z
+          .string()
+          .regex(/^[\w-]+$/)
+          .max(100)
+          .optional(),
+        operationId: z.uuid().optional(),
+        quoteId: z.uuid().optional(),
+        consent: z.boolean().optional(),
+      })
+      .strict()
+      .parse(body);
+    return this.serial(id, async () => {
+      const a = await this.access(req, id),
+        live = await this.load(id);
+      if (live.state.rulesetVersion !== 'hybrid-v3' || !live.state.npcBrains?.[input.npcId]?.living)
+        fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      const scope = {
+        campaignId: id,
+        npcId: input.npcId,
+        origin: 'user' as const,
+        purpose: input.purpose,
+        requesterUserId: a.user.id,
+      };
+      const requestKey =
+        input.purpose === 'speech'
+          ? `${input.channel}:${a.actorId}:${input.topicId ?? ''}`
+          : input.purpose;
+      if (!quote && input.operationId) {
+        const previous = await this.ai.replay(
+          scope,
+          input.operationId,
+          input.quoteId,
+          input.consent,
+          requestKey,
+        );
+        if (previous) return previous;
+      }
+      // A player cannot schedule work for an NPC outside their current visible scene.
+      if (!projectState(live.state, a.actorId).entities.some((e) => e.id === input.npcId))
+        fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      const base =
+        input.purpose === 'speech'
+          ? this.speechContext(
+              live.state,
+              input.npcId,
+              a.actorId,
+              input.channel,
+              undefined,
+              input.topicId,
+            )
+          : await this.decisionContext(id, live.state, input.npcId, input.purpose);
+      const context = {
+        ...base,
+        mockProposal:
+          input.purpose === 'speech'
+            ? { code: 'acknowledged' as const }
+            : input.purpose === 'summary'
+              ? createNpcMemorySummary(live.state, input.npcId)
+              : createMockNpcPlan(live.state, input.npcId),
+      };
+      if (quote) return this.ai.quote(scope, context, a.user.id);
+      if (!input.operationId) fail(400, 'INVALID_ACTION', 'INVALID_ACTION');
+      const result = await this.ai.queue({
+        scope,
+        context,
+        operationId: input.operationId!,
+        requesterUserId: a.user.id,
+        quoteId: input.quoteId,
+        consent: input.consent,
+        requestKey,
+      });
+      live.aiPending = true;
+      this.dispatchAi(id);
+      return result;
+    });
+  }
+  private async decisionContext(id: string, state: GameState, npcId: string, purpose: string) {
+    const base = buildNpcDecisionContext(state, npcId);
+    if (purpose !== 'plan') return base;
+    const archivedEpisodes = await recallNpcEpisodes(this.db, id, state, npcId);
+    return { ...base, archivedEpisodes, contextHash: digest({ base, archivedEpisodes }) };
+  }
+  private speechContext(
+    state: GameState,
+    npcId: string,
+    recipientId: string,
+    channel: 'say' | 'whisper',
+    selected?: string[],
+    topicId?: string,
+  ) {
+    const npc = state.entities[npcId],
+      recipient = state.entities[recipientId];
+    if (
+      !npc ||
+      !recipient ||
+      npc.mapId !== recipient.mapId ||
+      Math.abs(npc.x - recipient.x) + Math.abs(npc.y - recipient.y) > 1 ||
+      npc.encounterId ||
+      recipient.encounterId
+    )
+      fail(409, 'OUT_OF_RANGE', 'OUT_OF_RANGE');
+    const audience =
+      channel === 'whisper'
+        ? [recipientId, npcId]
+        : Object.values(state.entities)
+            .filter((e) => ['npc', 'player'].includes(e.kind) && canNpcHear(state, e, npc))
+            .map((e) => e.id)
+            .sort();
+    if (topicId && !projectState(state, recipientId).entities.some((e) => e.id === topicId))
+      fail(404, 'NOT_FOUND', 'NOT_FOUND');
+    const memory = state.npcBrains![npcId].living!;
+    // Ask permissions derive from an authenticated visible topic, never proposed secret IDs.
+    const requestedFactIds = topicId
+      ? memory.observations
+          .filter(
+            (o) =>
+              o.targetId === topicId && o.kind === 'known_entity' && o.revealCondition === 'asked',
+          )
+          .map((o) => o.id)
+      : [];
+    const observations =
+      selected ??
+      [...new Set([...requestedFactIds, ...memory.observations.slice(-16).map((o) => o.id)])].slice(
+        0,
+        16,
+      );
+    const publicContext = buildNpcPublicSpeechContext(
+      state,
+      npcId,
+      audience,
+      observations,
+      requestedFactIds,
+    );
+    const observationIds = publicContext.claims.map((c) => c.observationId);
+    const safe = {
+      ...publicContext,
+      recipientId,
+      channel,
+      observationIds,
+      topicId,
+      requestedFactIds,
+      speechHash: npcContextFingerprint(publicContext),
+    };
+    return { ...safe, contextHash: digest(safe) };
+  }
+  private dispatchAi(id: string) {
+    // Network/provider work must never occupy the campaign writer or a DB transaction.
+    void this.ai
+      .runNext(id, async () => {
+        const live = this.live.get(id);
+        if (
+          !live ||
+          live.paused ||
+          ![...live.presence.values()].some((t) => Date.now() - t <= 5000)
+        )
+          return false;
+        return Boolean(
+          (
+            await this.db.query(
+              `SELECT c.id FROM game_campaigns c WHERE c.id=$1 AND c.status='active' AND ${sourceLiveSql()}`,
+              [id],
+            )
+          ).length,
+        );
+      })
+      .catch(() => {
+        /* Durable jobs expose failure/reconciliation through safe status DTO. */
+      });
+  }
+  private async processAi(id: string, live: Live) {
+    await this.ai.sweep(id);
+    for (const job of await this.ai.ready(id)) {
+      let next = live.state,
+        accepted = false;
+      const memory = live.state.npcBrains?.[job.npcId]?.living;
+      if (memory && job.purpose === 'speech') {
+        const request = z
+          .object({
+            recipientId: z.string(),
+            channel: z.enum(['say', 'whisper']),
+            observationIds: z.array(z.string()).max(16),
+            topicId: z.string().optional(),
+          })
+          .passthrough()
+          .safeParse(job.context);
+        const proposal = z
+          .union([
+            z.object({ text: z.string().trim().min(1).max(1000) }).strict(),
+            z.object({ code: z.literal('acknowledged') }).strict(),
+          ])
+          .safeParse(job.proposal);
+        if (request.success && proposal.success) {
+          let context: ReturnType<GameService['speechContext']> | undefined;
+          try {
+            context = this.speechContext(
+              live.state,
+              job.npcId,
+              request.data.recipientId,
+              request.data.channel,
+              request.data.observationIds,
+              request.data.topicId,
+            );
+          } catch {
+            /* No longer nearby/in same phase: stale, never broadcast. */
+          }
+          if (context?.contextHash === job.contextHash) {
+            const result = commitNpcPublicUtterance(live.state, job.npcId, {
+              ...proposal.data,
+              channel: context.channel,
+              recipientId: context.recipientId,
+              observationIds: context.observationIds,
+              requestedFactIds: context.requestedFactIds,
+              contextHash: context.speechHash,
+            });
+            if (!result.error) {
+              next = result.state;
+              accepted = true;
+            }
+          }
+        }
+      } else if (
+        memory &&
+        (await this.decisionContext(id, live.state, job.npcId, job.purpose)).contextHash ===
+          job.contextHash
+      ) {
+        if (job.purpose === 'plan') {
+          const result = acceptNpcPlan(live.state, job.npcId, job.proposal);
+          if (!result.error) {
+            next = recordNpcEvents(live.state, result.state, result.events, `ai-${job.id}`).state;
+            accepted = true;
+          }
+        } else if (job.purpose === 'summary') {
+          const result = acceptNpcMemorySummary(live.state, job.npcId, job.proposal);
+          if (!result.error) {
+            next = result.state;
+            accepted = true;
+          }
+        }
+      }
+      await this.persist(
+        id,
+        live,
+        next,
+        accepted ? 'npc.ai.accepted' : 'npc.ai.stale',
+        undefined,
+        (c) => this.ai.finalize(c, job.id, accepted ? 'committed' : 'stale'),
+      );
+    }
+    live.aiPending = await this.ai.pending(id);
+    if (live.aiPending) this.dispatchAi(id);
   }
   async list(req: Request) {
     const u = await this.auth.require(req);
@@ -630,7 +921,7 @@ export class GameService implements OnModuleDestroy {
         status: result.error ? 'rejected' : 'committed',
         code: result.error,
         operationId: command.operationId,
-        events: result.events,
+        events: projectGameEvents(next, a.actorId, result.events),
         ...(job ? { jobId: job.id } : {}),
         projection: this.project(next, a.actorId),
       };
@@ -658,7 +949,7 @@ export class GameService implements OnModuleDestroy {
       if (
         command.type === 'npc.request' &&
         !result.error &&
-        live.state.rulesetVersion !== 'hybrid-v2'
+        live.state.rulesetVersion === 'observatory-v1'
       )
         this.scheduleNpc(id);
       return response;
@@ -667,6 +958,8 @@ export class GameService implements OnModuleDestroy {
   private execute(state: GameState, actorId: string, command: Command): GameResult {
     if (command.type === 'action' && command.action)
       return applyAction(state, actorId, command.action);
+    if (command.type === 'npc.speech' && command.npcId && command.speech)
+      return applyNpcSpeech(state, actorId, command.npcId, command.speech);
     if (command.type === 'encounter.begin') return beginEncounter(state, actorId, Date.now());
     if (command.type === 'encounter.join' && command.encounterId)
       return requestEncounterJoin(state, actorId, command.encounterId);
@@ -674,6 +967,9 @@ export class GameService implements OnModuleDestroy {
     if (command.type === 'encounter.intent' && command.intent)
       return submitIntent(state, actorId, command.intent);
     if (command.type === 'npc.request') {
+      // Reactive NPCs choose their own bounded routines; a player cannot inject a manual job.
+      if (state.rulesetVersion === 'hybrid-v3')
+        return { state, events: [], error: 'INVALID_ACTION' };
       const npcId = command.npcId ?? command.action?.targetId ?? 'keeper';
       if (state.rulesetVersion !== 'hybrid-v2')
         return applyAction(state, actorId, { kind: 'talk', targetId: npcId });
@@ -740,6 +1036,7 @@ export class GameService implements OnModuleDestroy {
             JSON.stringify(operation.response),
           ],
         );
+      await archiveNpcEpisodes(c, id, state);
       if (extra) await extra(c);
       savedClock = live.paused
         ? { ...live.clock, paused: true }
@@ -812,6 +1109,43 @@ export class GameService implements OnModuleDestroy {
           ).state;
           if (step.events.length) await this.persist(id, live, next, 'npc.plan.step');
           else if (next !== beforeNpc) {
+            live.state = next;
+            live.dirty = true;
+          }
+        }
+      }
+    }
+    if (live.state.rulesetVersion === 'hybrid-v3') {
+      if (live.aiPending && live.state.tick % 4 === 0) await this.processAi(id, live);
+      const beforeNpc = live.state;
+      const routine = stepLivingNpcs(beforeNpc);
+      if (!routine.error) {
+        const next = recordNpcEvents(
+          beforeNpc,
+          routine.state,
+          routine.events,
+          `npc-routine-${routine.state.tick}`,
+        ).state;
+        // Routine decisions and their consequences use the same durable writer as players.
+        // No requester impersonation or external provider job is involved.
+        if (routine.events.length) await this.persist(id, live, next, 'npc.routine');
+        else if (next !== beforeNpc) {
+          live.state = next;
+          live.dirty = true;
+        }
+      }
+      for (const npcId of Object.keys(live.state.npcBrains ?? {})) {
+        const beforePlan = live.state,
+          plan = stepNpcPlan(beforePlan, npcId);
+        if (!plan.error) {
+          const next = recordNpcEvents(
+            beforePlan,
+            plan.state,
+            plan.events,
+            `living-plan-${npcId}-${plan.state.tick}`,
+          ).state;
+          if (plan.events.length) await this.persist(id, live, next, 'npc.living.plan.step');
+          else if (next !== beforePlan) {
             live.state = next;
             live.dirty = true;
           }

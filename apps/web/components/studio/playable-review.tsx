@@ -1,9 +1,11 @@
 'use client';
 import { useEffect, useState } from 'react';
-import type { GameMap } from '@dreamwalk/contracts';
+import type { GameMap, NpcPersonality } from '@dreamwalk/contracts';
 import { useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Field, Loading, Select } from '@/components/ui';
+import { publicStyleLabels } from './living-npc-profile';
+import { habitLabels, relationLabels } from './living-npc-examples';
 import styles from './playable-map-editor.module.css';
 
 type ReviewEntity = {
@@ -23,6 +25,14 @@ type ReviewResponse = {
   versionId: string | null;
   sourceRevision: number | null;
   compiled: null | {
+    npcPolicy?: 'reactive-v1' | null;
+    npcProfiles?: {
+      npcId: string;
+      personality: NpcPersonality | null;
+      initialGoal: string;
+      initialKnowledge?: { id: string; targetId?: string; revealCondition?: string }[];
+      patrolTarget: { x: number; y: number };
+    }[];
     schemaVersion: number;
     rulesetVersion: string;
     title: string;
@@ -92,12 +102,112 @@ export function PlayableReview({
       </Button>
       <p>{t('Это неизменяемая отправленная версия, а не текущий черновик автора.')}</p>
       <h4>{source.title}</h4>
+      {source.npcPolicy === 'reactive-v1' && (
+        <section aria-label={t('Поведение NPC на модерации')}>
+          <h4>{t('Поведение NPC на модерации')}</h4>
+          <p>
+            {t(
+              'Проверяются авторские определения этой версии, не личная память участников кампании.',
+            )}
+          </p>
+          {source.npcProfiles?.map((profile) => (
+            <article key={profile.npcId}>
+              <h4>{source.entities[profile.npcId]?.label || t('NPC')}</h4>
+              <p>
+                {t('Начальные знания')}:{' '}
+                {profile.initialKnowledge
+                  ?.map(
+                    (knowledge) => source.entities[knowledge.targetId || '']?.label || t('Предмет'),
+                  )
+                  .join(', ') || t('Не указаны')}
+              </p>
+              {profile.personality && (
+                <>
+                  <p>
+                    {t('Роль NPC')}:{' '}
+                    {t(
+                      profile.personality.role === 'guard'
+                        ? 'Смотритель'
+                        : profile.personality.role === 'helper'
+                          ? 'Помощник'
+                          : 'Патруль',
+                    )}
+                  </p>
+                  <p>
+                    {t('Привычки')}:{' '}
+                    {profile.personality.habits?.map((habit) => t(habitLabels[habit])).join(', ') ||
+                      t('Не указаны')}
+                  </p>
+                  <ul>
+                    {profile.personality.decisionExamples?.map((example, index) => (
+                      <li key={index}>
+                        {example.situation} — {example.response}
+                      </li>
+                    ))}
+                  </ul>
+                  <ul>
+                    {profile.personality.links?.map((link) => (
+                      <li key={link.npcId}>
+                        {source.entities[link.npcId]?.label || t('NPC')} ·{' '}
+                        {t(relationLabels[link.relation])}
+                      </li>
+                    ))}
+                  </ul>
+                  {profile.personality.biography && <p>{profile.personality.biography}</p>}
+                  <p>
+                    {t('Публичная манера речи')}:{' '}
+                    {t(publicStyleLabels[profile.personality.publicSpeechStyle || 'neutral'])}
+                  </p>
+                  {profile.personality.speechStyle && (
+                    <p>
+                      {t('Частные заметки о манере речи')}: {profile.personality.speechStyle}
+                    </p>
+                  )}
+                  <p>
+                    {t('Ценности')}:{' '}
+                    {profile.personality.values
+                      .map((value) =>
+                        t(
+                          {
+                            duty: 'Долг',
+                            kindness: 'Доброта',
+                            caution: 'Осторожность',
+                            honesty: 'Честность',
+                          }[value],
+                        ),
+                      )
+                      .join(', ')}
+                  </p>
+                  <p>
+                    {t('Границы поведения')}:{' '}
+                    {profile.personality.taboos
+                      .map((value) =>
+                        t(
+                          {
+                            steal: 'Не красть',
+                            harm: 'Не причинять вред',
+                            disclose_private: 'Не разглашать тайны',
+                          }[value],
+                        ),
+                      )
+                      .join(', ')}
+                  </p>
+                </>
+              )}
+            </article>
+          ))}
+        </section>
+      )}
       <p>
         {t('Игровая версия {version}', { version: review.data.sourceRevision || 0 })} ·{' '}
         <code>{review.data.versionId}</code>
       </p>
       <Field label={t('Карта для проверки')}>
-        <Select value={map.id} onChange={(event) => setMapId(event.target.value)}>
+        <Select
+          aria-label={t('Карта для проверки')}
+          value={map.id}
+          onChange={(event) => setMapId(event.target.value)}
+        >
           {maps.map((value) => (
             <option key={value.id} value={value.id}>
               {value.label || value.id}

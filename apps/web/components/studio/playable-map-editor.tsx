@@ -8,6 +8,8 @@ import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Field, Input, Loading, Select } from '@/components/ui';
 import { useDraftAutosave } from '@/lib/use-draft-autosave';
 import { AutosaveStatus } from './autosave-status';
+import { LivingNpcProfile } from './living-npc-profile';
+import { LivingNpcPreview } from './living-npc-preview';
 import styles from './playable-map-editor.module.css';
 
 type Tool = 'select' | 'wall' | 'spawn' | 'key' | 'token' | 'door' | 'npc' | 'exit';
@@ -116,7 +118,7 @@ export function PlayableMapEditor({
     setDirty(true);
     setSaved(false);
   }
-  function begin(template: 'observatory' | 'courtyard') {
+  function begin(template: 'observatory' | 'courtyard', reactive = false) {
     if (
       draft &&
       !window.confirm(t('Заменить карту шаблоном? Несохранённая игровая раскладка будет заменена.'))
@@ -124,6 +126,38 @@ export function PlayableMapEditor({
       return;
     const next = createAuthoredDraft(template);
     next.title = title || t('Новая история');
+    if (reactive) {
+      next.npcBehavior = 'reactive-v1';
+      next.npcs[0] = {
+        ...next.npcs[0],
+        goal: 'patrol',
+        patrolTarget: { x: 6, y: 4 },
+        personality: {
+          role: 'guard',
+          values: ['duty', 'caution'],
+          taboos: ['steal', 'disclose_private'],
+          speechStyle: '',
+        },
+      };
+      next.npcs.push({
+        id: 'helper',
+        label: t('Помощник'),
+        mapId: next.startMapId,
+        x: 7,
+        y: 6,
+        visual: 'traveler',
+        goal: 'help',
+        patrolTarget: { x: 7, y: 6 },
+        personality: {
+          role: 'helper',
+          values: ['kindness', 'honesty'],
+          taboos: ['steal', 'harm', 'disclose_private'],
+          speechStyle: '',
+        },
+      });
+      const token = next.objects.find((item) => item.id === 'token');
+      if (token) Object.assign(token, { ownerNpcId: 'helper', x: 7, y: 6 });
+    }
     const names: Record<string, string> = {
       Observatory: 'Обсерватория',
       Rooftop: 'Крыша',
@@ -339,6 +373,9 @@ export function PlayableMapEditor({
             <Button type="button" variant="secondary" onClick={() => begin('courtyard')}>
               {t('Шаблон: внутренний двор')}
             </Button>
+            <Button type="button" variant="secondary" onClick={() => begin('courtyard', true)}>
+              {t('Шаблон: смотритель и помощник')}
+            </Button>
           </div>
         ) : (
           <>
@@ -366,6 +403,32 @@ export function PlayableMapEditor({
                 </Select>
               </Field>
             </div>
+            <fieldset className={styles.livingPolicy} disabled={preview}>
+              <legend>{t('Самостоятельные NPC')}</legend>
+              <label>
+                <input
+                  type="checkbox"
+                  checked={draft.npcBehavior === 'reactive-v1'}
+                  onChange={(event) =>
+                    change({
+                      ...draft,
+                      npcBehavior: event.target.checked ? 'reactive-v1' : undefined,
+                    })
+                  }
+                />
+                {t('Включить личную память и самостоятельные реакции')}
+              </label>
+              <p>
+                {t(
+                  'Новая версия использует наблюдения, отношения и обещания. Уже запущенные кампании не меняются.',
+                )}
+              </p>
+              <p>
+                {t(
+                  'Решения работают на бесплатных тестовых правилах. Платный AI не включается этим переключателем.',
+                )}
+              </p>
+            </fieldset>
             <div className={styles.mapNav}>
               {draft.maps.map((value) => (
                 <button
@@ -669,6 +732,22 @@ export function PlayableMapEditor({
                             <option value="help">{t('Помощник')}</option>
                           </Select>
                         </Field>
+                        {draft.npcBehavior === 'reactive-v1' && (
+                          <LivingNpcProfile
+                            npc={npc}
+                            entities={[...draft.objects, ...draft.npcs]}
+                            npcs={draft.npcs}
+                            onKnowledge={(initialKnowledge) => patchSelected({ initialKnowledge })}
+                            onChange={(personality) => patchSelected({ personality })}
+                          />
+                        )}
+                        {draft.npcBehavior === 'reactive-v1' && (
+                          <LivingNpcPreview
+                            adventureId={adventureId}
+                            npcId={npc.id}
+                            flush={async () => (await autosave.flush()).revision}
+                          />
+                        )}
                         <div className={styles.coordinates}>
                           <Field label={t('Цель патруля X')}>
                             <Input

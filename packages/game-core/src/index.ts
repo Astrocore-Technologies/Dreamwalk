@@ -1,3 +1,4 @@
+import { chooseLivingNpcIntent } from './living';
 import {
   gameActionSchema,
   gameMoveSchema,
@@ -395,6 +396,8 @@ function actionInternal(
   const s = copy(state),
     actor = s.entities[id],
     t = s.entities[target.id];
+  if (['lock', 'knock'].includes(action.kind) && state.rulesetVersion !== 'hybrid-v3')
+    return fail(state, 'INVALID_ACTION');
   switch (action.kind) {
     case 'pick_up':
       if (t.kind !== 'item' || t.ownerId) return fail(state, 'TARGET_UNAVAILABLE');
@@ -411,6 +414,20 @@ function actionInternal(
       item.revision++;
       break;
     }
+    case 'lock':
+      if (
+        t.kind !== 'door' ||
+        t.open ||
+        !actor.inventory?.includes(t.keyId ?? '') ||
+        (action.itemId !== undefined && action.itemId !== t.keyId)
+      )
+        return fail(state, 'FORBIDDEN');
+      t.locked = true;
+      s.maps[a.mapId].revision++;
+      break;
+    case 'knock':
+      if (t.kind !== 'door') return fail(state, 'INVALID_ACTION');
+      break;
     case 'unlock':
       if (
         t.kind !== 'door' ||
@@ -452,7 +469,13 @@ function actionInternal(
   actor.revision++;
   s.revision++;
   return result(s, [
-    { kind: `action.${action.kind}`, actorId: id, targetId: t.id, mapId: a.mapId },
+    {
+      kind: `action.${action.kind}`,
+      actorId: id,
+      targetId: t.id,
+      mapId: a.mapId,
+      ...(action.itemId ? { itemId: action.itemId } : {}),
+    },
   ]);
 }
 export const applyAction = (state: GameState, id: string, action: GameAction): GameResult =>
@@ -555,16 +578,25 @@ export function resolveRound(state: GameState, encounterId: string, nowMs: numbe
     return fail(state, 'ROUND_LOCKED');
   let s = copy(state);
   const events: GameEvent[] = [];
+  if (s.rulesetVersion === 'hybrid-v3')
+    for (const id of encounter.participants)
+      if (s.entities[id]?.kind === 'npc')
+        s.encounters[encounterId].intents[id] = {
+          revision: 1,
+          ready: true,
+          action: chooseLivingNpcIntent(state, id),
+        };
+  const roundIntents = s.encounters[encounterId].intents;
   const phase = (a: GameAction) => (a.kind === 'distract' ? 0 : a.kind === 'move_to' ? 1 : 2);
   const ordered = [...encounter.participants].sort(
     (a, b) =>
-      phase(encounter.intents[a]?.action ?? { kind: 'wait' }) -
-        phase(encounter.intents[b]?.action ?? { kind: 'wait' }) ||
+      phase(roundIntents[a]?.action ?? { kind: 'wait' }) -
+        phase(roundIntents[b]?.action ?? { kind: 'wait' }) ||
       hash(s.seed + encounter.round, a) - hash(s.seed + encounter.round, b) ||
       a.localeCompare(b),
   );
   for (const id of ordered) {
-    const action = encounter.intents[id]?.action ?? { kind: 'wait' as const };
+    const action = roundIntents[id]?.action ?? { kind: 'wait' as const };
     const r = actionInternal(s, id, action, true);
     if (r.error)
       events.push({ kind: 'action.rejected', actorId: id, code: r.error, mapId: encounter.mapId });
@@ -710,7 +742,38 @@ export function projectState(s: GameState, id: string): GameProjection {
       .map(clean),
     inventory: (actor.inventory ?? []).map((i) => clean(s.entities[i])),
     encounter,
-    ...(s.rulesetVersion === 'hybrid-v2'
+    ...(s.rulesetVersion === 'hybrid-v3'
+      ? {
+          npcUtterances: (s.npcUtterances ?? [])
+            .filter((u) => u.mapId === actor.mapId && u.audienceIds.includes(id))
+            .slice(-32)
+            .map((u) => ({
+              id: u.id,
+              tick: u.tick,
+              ...(u.speakerKnownToIds.includes(id) ? { speakerId: u.speakerId } : {}),
+              ...(u.text ? { text: u.text } : {}),
+              ...(u.code ? { code: u.code } : {}),
+            })),
+          npcNotices: (s.npcNotices ?? [])
+            .filter((n) => n.mapId === actor.mapId && n.audienceIds.includes(id))
+            .slice(-32)
+            .map(({ id, npcId, kind, tick }) => ({ id, npcId, kind, tick })),
+          npcObligations: Object.entries(s.npcBrains ?? {})
+            .flatMap(([npcId, b]) =>
+              (b.living?.obligations ?? [])
+                .filter((o) => o.toActorId === id)
+                .map((o) => ({
+                  id: o.id,
+                  npcId,
+                  itemId: o.itemId,
+                  status: o.status,
+                  remainingTicks: Math.max(0, o.dueTick - s.tick),
+                })),
+            )
+            .slice(-128),
+        }
+      : {}),
+    ...(s.rulesetVersion !== 'observatory-v1'
       ? {
           nearbyEncounters: Object.values(s.encounters)
             .filter(
@@ -869,3 +932,5 @@ export function buildNpcContext(state: GameState, id: string) {
 export * from './authored';
 
 export * from './npc';
+
+export * from './living';
