@@ -1,4 +1,5 @@
 'use client';
+import { PinnedArtReview } from '../assets/pinned-art-review';
 import { useEffect, useState } from 'react';
 import type {
   GameMap,
@@ -33,6 +34,7 @@ type ReviewResponse = {
   versionId: string | null;
   sourceRevision: number | null;
   compiled: null | {
+    artBindings?: { slot: string; revisionId: string }[];
     npcPolicy?: 'reactive-v1' | null;
     npcProfiles?: {
       npcId: string;
@@ -64,6 +66,8 @@ export function PlayableReview({
 }) {
   const { t } = useT();
   const review = useResource<ReviewResponse>(`/admin/adventures/${adventureId}/playable-review`);
+  const [artReady, setArtReady] = useState(false);
+  const needsArt = !!review.data?.compiled?.artBindings?.length;
   const [mapId, setMapId] = useState(''),
     [checkedVersion, setCheckedVersion] = useState<string | null>(null);
   const checked = !!review.data?.versionId && review.data.versionId === checkedVersion;
@@ -72,10 +76,13 @@ export function PlayableReview({
   }, [review.loading]);
   useEffect(() => {
     onReviewed(
-      !!review.data && !review.loading && !review.error && (!review.data.compiled || checked),
+      !!review.data &&
+        !review.loading &&
+        !review.error &&
+        (!review.data.compiled || (checked && (!needsArt || artReady))),
       review.data?.versionId || null,
     );
-  }, [review.data, review.loading, review.error, checked, onReviewed]);
+  }, [review.data, review.loading, review.error, checked, onReviewed, needsArt, artReady]);
   if (review.loading) return <Loading />;
   if (review.error) return <ErrorBox message={review.error} retry={review.reload} />;
   if (!review.data?.compiled)
@@ -339,8 +346,16 @@ export function PlayableReview({
           <code>{source.assetManifest.sha256}</code>
         </p>
       </details>
+      {needsArt && review.data.versionId && (
+        <PinnedArtReview
+          key={review.data.versionId}
+          versionId={review.data.versionId}
+          onReady={setArtReady}
+        />
+      )}
       <label>
         <input
+          disabled={needsArt && !artReady}
           type="checkbox"
           checked={checked}
           onChange={(event) =>

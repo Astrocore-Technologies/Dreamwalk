@@ -14,6 +14,7 @@ import { Auth, userView } from './auth';
 import { adventureSelect, adventureView, Content, readableAdventureSql } from './content';
 import { fail } from './errors';
 import { NpcAiService } from './ai/npc-ai.service';
+import { AssetReuseService } from './assets/reuse.service';
 @Controller('api/v1')
 export class AdminController {
   constructor(
@@ -25,6 +26,7 @@ export class AdminController {
     private content: Content,
     @Inject(NpcAiService)
     private npcAi: NpcAiService,
+    @Inject(AssetReuseService) private art: AssetReuseService,
   ) {}
   @Get('admin/npc-ai/metrics')
   async npcAiMetrics(@Req() req: Request) {
@@ -249,6 +251,7 @@ export class AdminController {
         true,
       );
     await this.db.tx(async (c) => {
+      await this.art.lockAuthor(c, String(pre.owner_id));
       const row = (await c.query('SELECT * FROM adventures WHERE id=$1 FOR UPDATE', [id])).rows[0];
       if (row.visibility !== 'public')
         fail(409, 'STATE_CONFLICT', 'Приватное приключение не публикуется.');
@@ -260,6 +263,8 @@ export class AdminController {
           b.reviewedPlayableVersionId !== row.submitted_game_version_id
         )
           fail(409, 'STALE_REVIEW', 'Reload the submitted playable review before approval.');
+        if (row.submitted_game_version_id)
+          await this.art.assertPinsAvailable(c, row.submitted_game_version_id);
         await this.content.validateReferences(
           row.owner_id as string,
           adventureSchema.parse(row.data),

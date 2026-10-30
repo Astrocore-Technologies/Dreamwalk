@@ -1,4 +1,6 @@
 'use client';
+import { AssetLibrary } from './assets/asset-library';
+import { useAssetText } from './assets/messages';
 import { AutosaveStatus } from './studio/autosave-status';
 import { useDraftAutosave } from '@/lib/use-draft-autosave';
 import { PlayableMapEditor } from './studio/playable-map-editor';
@@ -176,19 +178,28 @@ function useDirtyWarning(dirty: boolean) {
   }, [dirty]);
 }
 export function StudioPage({ path }: { path: string }) {
+  if (path === '/studio/assets')
+    return (
+      <>
+        <StudioTabs assets />
+        <AssetLibrary />
+      </>
+    );
   if (path.startsWith('/studio/npcs/')) return <NpcEditor key={path} id={path.split('/')[3]} />;
   if (path === '/studio/npcs') return <NpcLibrary />;
   if (path.startsWith('/studio/adventures/'))
     return <AdventureEditor key={path} id={path.split('/')[3]} />;
   return <StudioHome />;
 }
-function StudioTabs({ npcs = false }: { npcs?: boolean }) {
+function StudioTabs({ npcs = false, assets = false }: { npcs?: boolean; assets?: boolean }) {
+  const a = useAssetText();
   const { t } = useT();
   return (
     <Tabs
       items={[
-        { href: '/studio', label: t('Приключения'), active: !npcs },
+        { href: '/studio', label: t('Приключения'), active: !npcs && !assets },
         { href: '/studio/npcs', label: t('Библиотека NPC'), active: npcs },
+        { href: '/studio/assets', label: a('title'), active: assets },
       ]}
     />
   );
@@ -1340,6 +1351,23 @@ function AdventureEditor({ id }: { id: string }) {
               locations={draft.content.locations}
               onDirty={setPlayableDirty}
               flushRef={playableFlush}
+              onArtSaved={() => {
+                void api<Adventure>(`/studio/adventures/${id}`)
+                  .then((fresh) => {
+                    resource.setData((current) => {
+                      if (!current || current.id !== fresh.id) return current;
+                      // Refresh only moderation state: never overwrite unsaved narrative input or CAS revision.
+                      const next = {
+                        ...current,
+                        status: fresh.status,
+                        playableVersionId: fresh.playableVersionId,
+                      };
+                      acknowledged.current = next;
+                      return next;
+                    });
+                  })
+                  .catch((err) => setError(errorMessage(err)));
+              }}
               preview={step === 6}
             />
           )}

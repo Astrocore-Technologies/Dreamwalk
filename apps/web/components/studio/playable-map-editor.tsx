@@ -1,7 +1,9 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
-import { compilePlayableDraft, createAuthoredDraft } from '@dreamwalk/game-core';
+import { StoryArtBindings } from '../assets/story-art-bindings';
+import { useAssetText } from '../assets/messages';
+import { enumerateArtSlots, compilePlayableDraft, createAuthoredDraft } from '@dreamwalk/game-core';
 import type { AuthoredGameDraft, Npc } from '@dreamwalk/contracts';
 import { api, ApiError, errorMessage, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
@@ -34,6 +36,7 @@ export function PlayableMapEditor({
   onDirty,
   preview = false,
   flushRef,
+  onArtSaved,
 }: {
   adventureId: string;
   title: string;
@@ -42,8 +45,14 @@ export function PlayableMapEditor({
   onDirty: (dirty: boolean) => void;
   preview?: boolean;
   flushRef?: { current: (() => Promise<void>) | null };
+  onArtSaved?: () => void;
 }) {
   const { t } = useT();
+  const artText = useAssetText();
+  const [artDirty, setArtDirty] = useState(false);
+  const artFlush = useRef<
+    (() => Promise<{ revision: number; bindings: { slot: string; revisionId: string }[] }>) | null
+  >(null);
   const router = useRouter();
   const resource = useResource<DraftResponse>(`/studio/adventures/${adventureId}/playable-draft`);
   const [draft, setDraft] = useState<AuthoredGameDraft | null>(null);
@@ -95,13 +104,14 @@ export function PlayableMapEditor({
     if (hydration > 0 && draft) setDirty(autosave.dirty);
   }, [autosave.dirty, hydration, !!draft]);
   useEffect(() => {
-    onDirty(dirty);
-  }, [dirty, onDirty]);
+    onDirty(dirty || artDirty);
+  }, [dirty, artDirty, onDirty]);
   useEffect(() => {
     if (!flushRef) return;
     flushRef.current = draft
       ? async () => {
           await autosave.flush();
+          await artFlush.current?.();
         }
       : null;
     return () => {
@@ -183,13 +193,20 @@ export function PlayableMapEditor({
     try {
       // Flush the same serialized autosave writer, including any newer in-flight edits.
       const result = await autosave.flush();
+      const artResult = await artFlush.current?.();
       setDirty(false);
       onDirty(false);
       setSaved(true);
       if (launch) {
         const version = await api<{ versionId: string }>(
           `/studio/adventures/${adventureId}/playable-versions`,
-          { method: 'POST', body: JSON.stringify({ expectedRevision: result.revision }) },
+          {
+            method: 'POST',
+            body: JSON.stringify({
+              expectedRevision: result.revision,
+              ...(artResult ? { expectedArtRevision: artResult.revision } : {}),
+            }),
+          },
         );
         const campaign = await api<{ campaignId: string }>('/game/campaigns', {
           method: 'POST',
@@ -911,6 +928,24 @@ export function PlayableMapEditor({
           </>
         )}
       </fieldset>
+      {draft && (
+        <fieldset disabled={busy} style={{ border: 0, padding: 0, minWidth: 0 }}>
+          <StoryArtBindings
+            key={adventureId}
+            adventureId={adventureId}
+            beforePersist={autosave.flush}
+            onDirty={setArtDirty}
+            onSaved={onArtSaved}
+            flushRef={artFlush}
+            slots={enumerateArtSlots(draft).map((entry) => ({
+              id: entry.slot,
+              kind: entry.kind,
+              camera: entry.camera,
+              label: `${draft.maps.find((map) => map.id === entry.mapId)?.label || entry.mapId} · ${entry.entityId ? draft.npcs.find((npc) => npc.id === entry.entityId)?.label || draft.objects.find((object) => object.id === entry.entityId)?.label || entry.entityId : artText('background')} · ${artText(entry.kind)}${entry.slot.endsWith(':open') ? ` (${t('Открыто')})` : entry.slot.endsWith(':closed') ? ` (${t('Закрыто')})` : ''}`,
+            }))}
+          />
+        </fieldset>
+      )}
     </section>
   );
 }

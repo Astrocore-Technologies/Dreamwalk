@@ -448,6 +448,7 @@ export function createStateFromPlayable(
 ): GameState {
   let state: GameState = {
     assetManifest: { ...playable.assetManifest },
+    ...(playable.artBindings ? { artBindings: structuredClone(playable.artBindings) } : {}),
     schemaVersion: 1,
     rulesetVersion: playable.rulesetVersion,
     seed,

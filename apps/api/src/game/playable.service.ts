@@ -21,12 +21,8 @@ import { Db } from '../db';
 import { Auth } from '../auth';
 import { fail } from '../errors';
 
-export function sourceAccessSql(user: string, campaign = 'c') {
-  return `(${campaign}.source_version_id IS NULL OR EXISTS(SELECT 1 FROM game_playable_versions v JOIN adventures a ON a.id=v.adventure_id JOIN users author ON author.id=a.owner_id WHERE v.id=${campaign}.source_version_id AND author.deleted_at IS NULL AND a.status<>'archived' AND ((v.audience='private' AND (a.owner_id=${user} OR (a.visibility='private' AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id AND i.recipient_id=${user} AND i.status='accepted')))) OR (v.audience='review' AND a.visibility='public' AND a.published_snapshot IS NOT NULL AND EXISTS(SELECT 1 FROM game_playable_approvals ap WHERE ap.playable_version_id=v.id)))))`;
-}
-export function sourceLiveSql(campaign = 'c') {
-  return `(${campaign}.source_version_id IS NULL OR EXISTS(SELECT 1 FROM game_playable_versions v JOIN adventures a ON a.id=v.adventure_id JOIN users author ON author.id=a.owner_id WHERE v.id=${campaign}.source_version_id AND author.deleted_at IS NULL AND a.status<>'archived' AND (v.audience='private' OR (a.visibility='public' AND a.published_snapshot IS NOT NULL AND EXISTS(SELECT 1 FROM game_playable_approvals ap WHERE ap.playable_version_id=v.id)))))`;
-}
+export { sourceAccessSql, sourceLiveSql } from './source-access';
+import { AssetReuseService } from '../assets/reuse.service';
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === 'object')
@@ -47,7 +43,11 @@ export class PlayableService {
   constructor(
     @Inject(Db) private db: Db,
     @Inject(Auth) private auth: Auth,
+    @Inject(AssetReuseService) private art: AssetReuseService,
   ) {}
+  async lockAuthor(c: PoolClient, userId: string) {
+    return this.art.lockAuthor(c, userId);
+  }
   async draft(req: Request, id: string) {
     const owner = await this.auth.require(req);
     if (
@@ -252,6 +252,7 @@ export class PlayableService {
     story: Record<string, unknown>,
     audience: 'private' | 'review',
     expectedRevision?: number,
+    expectedArtRevision?: number,
   ) {
     const row = (
       await c.query(
@@ -280,6 +281,15 @@ export class PlayableService {
         ).rows
       : [];
     const narrative = story.data as Record<string, unknown>;
+    const preparedArt = await this.art.prepareManifestTx(
+      c,
+      String(story.id),
+      String(story.owner_id),
+      compiled.playable!,
+    );
+    if (expectedArtRevision !== undefined && preparedArt.draftRevision !== expectedArtRevision)
+      fail(409, 'STALE_ART_REVISION', 'STALE_ART_REVISION');
+    if (preparedArt.bindings.length) compiled.playable!.artBindings = preparedArt.bindings;
     const payload = {
       schemaVersion: 1,
       compiled: compiled.playable,
@@ -298,7 +308,10 @@ export class PlayableService {
         [story.id, row.revision, audience, checksum],
       )
     ).rows[0];
-    if (previous) return String(previous.id);
+    if (previous) {
+      await this.art.pinPrepared(c, String(previous.id), preparedArt);
+      return String(previous.id);
+    }
     const count = (
       await c.query('SELECT count(*)::int AS n FROM game_playable_versions WHERE adventure_id=$1', [
         story.id,
@@ -310,15 +323,20 @@ export class PlayableService {
       'INSERT INTO game_playable_versions(id,adventure_id,source_revision,audience,package,checksum) VALUES($1,$2,$3,$4,$5,$6)',
       [versionId, story.id, row.revision, audience, JSON.stringify(payload), checksum],
     );
+    await this.art.pinPrepared(c, versionId, preparedArt);
     return versionId;
   }
   async compilePrivate(req: Request, id: string, body: unknown) {
-    const { expectedRevision } = z
-        .object({ expectedRevision: z.number().int().positive() })
+    const { expectedRevision, expectedArtRevision } = z
+        .object({
+          expectedRevision: z.number().int().positive(),
+          expectedArtRevision: z.number().int().nonnegative().optional(),
+        })
         .strict()
         .parse(body),
       user = await this.auth.require(req);
     const versionId = await this.db.tx(async (c) => {
+      await this.lockAuthor(c, user.id);
       const story = (
         await c.query(
           "SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 AND status<>'archived' FOR UPDATE",
@@ -326,7 +344,7 @@ export class PlayableService {
         )
       ).rows[0];
       if (!story) fail(404, 'NOT_FOUND', 'NOT_FOUND');
-      return this.freeze(c, story, 'private', expectedRevision);
+      return this.freeze(c, story, 'private', expectedRevision, expectedArtRevision);
     });
     return { versionId };
   }
@@ -414,6 +432,7 @@ export class PlayableService {
           patrolTarget: brain.patrolTarget,
         })),
         assetManifest: p.assetManifest,
+        artBindings: p.artBindings ?? [],
         entities: Object.fromEntries(
           Object.entries(p.entities).map(([key, e]) => [
             key,

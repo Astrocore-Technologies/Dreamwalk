@@ -1,3 +1,7 @@
+import {
+  eraseReusableAssets,
+  exportReusableAssets,
+} from '../apps/api/dist/assets/data-requests.js';
 /** Explicit operator action on ONE request. Never drains queues implicitly. */
 import pg from 'pg';
 import { exportGameData, exportPlayableData, purgeGameData } from './game-data-requests.mjs';
@@ -93,6 +97,7 @@ try {
         profile,
         game: await exportGameData(c, user.id),
         playable: await exportPlayableData(c, user.id),
+        reusableArt: await exportReusableAssets(c, user.id),
         heroes: await rows('SELECT id,data,created_at,updated_at FROM heroes WHERE owner_id=$1', [
           user.id,
         ]),
@@ -151,6 +156,7 @@ try {
         }
       await c.query("SET LOCAL dreamwalk.erasure='confirmed'");
       await purgeGameData(c, user.id);
+      await eraseReusableAssets(c, user.id);
       await c.query(
         `UPDATE adventure_versions v SET snapshot='{"erased":true}' WHERE EXISTS(SELECT 1 FROM adventures a WHERE a.id=v.adventure_id AND a.owner_id=$1)`,
         [user.id],

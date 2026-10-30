@@ -1,5 +1,10 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { TextureBudget, textureDimensions } from '../assets/texture-budget';
+import { decodeArt } from '../assets/decode-art';
+import { visibleSceneArt } from '../assets/art-visibility';
+import type { VisibleArtBinding } from '../assets/use-campaign-art';
+import { artPreviewUrl } from '../assets/types';
 import type { GamePoint, GameProjection } from '@dreamwalk/contracts';
 import { resolveGameAtlas } from '@/lib/game-assets';
 import { useT } from '@/lib/i18n';
@@ -8,6 +13,7 @@ import styles from './game.module.css';
 /** Rendering only: never advances a logical position or applies a game action. */
 export function GameCanvas({
   projection,
+  art = [],
   onMove,
   onStop,
   disabled,
@@ -15,6 +21,7 @@ export function GameCanvas({
   planning = false,
 }: {
   projection: GameProjection;
+  art?: VisibleArtBinding[];
   onMove: (point: GamePoint) => void;
   onStop: () => void;
   disabled: boolean;
@@ -23,7 +30,7 @@ export function GameCanvas({
 }) {
   const { t } = useT();
   const host = useRef<HTMLDivElement>(null);
-  const latest = useRef({ projection, onMove, disabled, reducedMotion });
+  const latest = useRef({ projection, art, onMove, disabled, reducedMotion });
   const [failed, setFailed] = useState(false);
   const [systemReducedMotion, setSystemReducedMotion] = useState(false);
   useEffect(() => {
@@ -38,11 +45,12 @@ export function GameCanvas({
   useEffect(() => {
     latest.current = {
       projection,
+      art,
       onMove,
       disabled,
       reducedMotion: reducedMotion || systemReducedMotion,
     };
-  }, [projection, onMove, disabled, reducedMotion, systemReducedMotion]);
+  }, [projection, art, onMove, disabled, reducedMotion, systemReducedMotion]);
   useEffect(() => {
     zoomRef.current = zoom;
   }, [zoom]);
@@ -87,12 +95,13 @@ export function GameCanvas({
           new Texture({ source: atlas.source, frame: new Rectangle(index * 64, 0, 64, 64) }),
       );
       const world = new Container();
+      const artBackground = new Container();
       const terrain = new Container();
       const objects = new Container();
       const boundary = new Graphics();
       const actors = new Container();
       const focus = new Graphics();
-      world.addChild(terrain, objects, boundary, actors, focus);
+      world.addChild(artBackground, terrain, objects, boundary, actors, focus);
       app.stage.addChild(world);
       const sprites = new Map<
         string,
@@ -106,6 +115,132 @@ export function GameCanvas({
           mapId: string;
         }
       >();
+      const textureBudget = new TextureBudget();
+      const artSurfaces = new Map<string, HTMLCanvasElement>();
+      const artTextures = new Map<string, InstanceType<typeof Texture>>();
+      const artRequests = new Map<string, AbortController>();
+      const retryArtAt = new Map<string, number>();
+      let artKey = '';
+      const oldCleanup = cleanup;
+      cleanup = () => {
+        for (const controller of artRequests.values()) controller.abort();
+        artRequests.clear();
+        textureBudget.close();
+        oldCleanup();
+        for (const texture of artTextures.values()) texture.destroy(true);
+        artTextures.clear();
+        for (const surface of artSurfaces.values()) {
+          surface.width = 0;
+          surface.height = 0;
+        }
+        artSurfaces.clear();
+      };
+      const synchronizeArt = () => {
+        const state = latest.current;
+        const visible = visibleSceneArt(state.projection, state.art);
+        const allowed = new Set(visible.map((entry) => entry.url));
+        for (const [url, controller] of artRequests)
+          if (!allowed.has(url)) {
+            controller.abort();
+            artRequests.delete(url);
+          }
+        for (const [url, texture] of artTextures)
+          if (!allowed.has(url)) {
+            artTextures.delete(url);
+            texture.destroy(true);
+            const surface = artSurfaces.get(url);
+            if (surface) {
+              surface.width = 0;
+              surface.height = 0;
+              artSurfaces.delete(url);
+            }
+            textureBudget.release(url);
+            lastRevision = -1;
+          }
+        for (const entry of [...visible].sort(
+          (left, right) =>
+            Number(right.slot.startsWith('map:')) - Number(left.slot.startsWith('map:')),
+        )) {
+          if (
+            !artPreviewUrl(entry.url) ||
+            artTextures.has(entry.url) ||
+            artRequests.has(entry.url) ||
+            (retryArtAt.get(entry.url) || 0) > Date.now()
+          )
+            continue;
+          const dimensions = textureDimensions(entry.slot, entry.width, entry.height);
+          if (!dimensions || !textureBudget.admit(entry.url, dimensions.width, dimensions.height))
+            continue;
+          const controller = new AbortController();
+          let kept = false;
+          artRequests.set(entry.url, controller);
+          void (async () => {
+            const response = await fetch(entry.url, {
+              credentials: 'same-origin',
+              cache: 'no-store',
+              signal: controller.signal,
+            });
+            if (!response.ok) throw new Error('ART_UNAVAILABLE');
+            const blob = await response.blob();
+            if (blob.size > 5 * 1024 * 1024) throw new Error('ART_TOO_LARGE');
+            const surface = await decodeArt(
+              blob,
+              dimensions.width,
+              dimensions.height,
+              controller.signal,
+            );
+            try {
+              if (
+                disposed ||
+                controller.signal.aborted ||
+                artRequests.get(entry.url) !== controller ||
+                !visibleSceneArt(latest.current.projection, latest.current.art).some(
+                  (candidate) =>
+                    candidate.url === entry.url && candidate.revisionId === entry.revisionId,
+                )
+              )
+                return;
+              artTextures.set(entry.url, Texture.from(surface));
+              artSurfaces.set(entry.url, surface);
+              kept = true;
+              lastRevision = -1;
+              artKey = '';
+            } finally {
+              if (!kept) {
+                surface.width = 0;
+                surface.height = 0;
+              }
+            }
+          })()
+            .catch(() => {
+              retryArtAt.set(entry.url, Date.now() + 5000);
+            })
+            .finally(() => {
+              textureBudget.complete(entry.url, kept);
+              if (artRequests.get(entry.url) === controller) artRequests.delete(entry.url);
+            });
+        }
+        const key = visible
+          .map((entry) => `${entry.slot}:${entry.revisionId}:${artTextures.has(entry.url)}`)
+          .join('|');
+        if (key !== artKey) {
+          artKey = key;
+          lastRevision = -1;
+          artBackground.removeChildren().forEach((child) => child.destroy());
+          const background = visible.find(
+            (entry) => entry.slot === `map:${state.projection.map.id}:background`,
+          );
+          const texture = background && artTextures.get(background.url);
+          terrain.alpha = texture ? 0.28 : 1;
+          if (texture) {
+            const sprite = new Sprite(texture);
+            sprite.width = state.projection.map.width * tile;
+            sprite.height = state.projection.map.height * tile;
+            artBackground.addChild(sprite);
+          }
+          element.dataset.artLoaded = String(artTextures.size);
+        }
+      };
       let mapKey = '';
       let lastRevision = -1;
       const tile = 48;
@@ -135,6 +270,7 @@ export function GameCanvas({
       const render = () => {
         const { projection: p, reducedMotion: reduced } = latest.current;
         app.ticker.maxFPS = reduced ? 30 : 60;
+        synchronizeArt();
         const key = `${p.map.id}:${p.map.revision}`;
         if (key !== mapKey) {
           mapKey = key;
@@ -189,7 +325,16 @@ export function GameCanvas({
               };
               sprites.set(entity.id, record);
             }
-            record.sprite.texture = frames[frame];
+            const suffix =
+              entity.kind === 'npc'
+                ? 'sprite'
+                : `object:${entity.kind === 'door' ? (entity.open ? 'open' : 'closed') : 'default'}`;
+            const binding =
+              latest.current.art.find((entry) => entry.slot === `entity:${entity.id}:${suffix}`) ||
+              latest.current.art.find(
+                (entry) => entry.slot === `entity:${entity.id}:object:default`,
+              );
+            record.sprite.texture = (binding && artTextures.get(binding.url)) || frames[frame];
             if (
               record.x !== entity.x * tile ||
               record.y !== entity.y * tile ||

@@ -174,7 +174,16 @@ export class AssetsController {
     res: Response,
   ) {
     const row = (await this.db.query('SELECT * FROM assets WHERE id=$1', [id]))[0];
-    if (!row) fail(404, 'NOT_FOUND', 'Изображение не найдено.');
+    if (
+      !row ||
+      (
+        await this.db.query(
+          'SELECT 1 FROM art_asset_revisions r JOIN art_asset_takedowns t ON t.revision_id=r.id WHERE r.upload_id=$1 LIMIT 1',
+          [id],
+        )
+      ).length
+    )
+      fail(404, 'NOT_FOUND', 'Изображение не найдено.');
     const u = await this.auth.current(req);
     let allowed = u?.id === row.owner_id;
     if (!allowed) {

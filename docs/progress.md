@@ -420,3 +420,37 @@ The reusable-image library has separate service tests and is deliberately exclud
 this NPC source snapshot. Its Studio, renderer, version-checksum and delivery integration
 continues separately; a library prototype is not advertised as an already playable
 custom-art pipeline.
+
+## 2026-10-30 — Reusable art integration and NPC CI closure
+
+Full NPC completion PR #7 passed both exact-head CI runs at
+`da9e4fe0697611f9724ac379de9f98853a0f7901`, including 115 real runtime checks and
+all 10 browser scenarios. The user subsequently merged it; asset work is based on
+main `4ec3d857f331ff36b509c8ad300b8f797ce705ef`. This closes the browser gate recorded
+above, not the separate live-provider quality/cost gate.
+
+The reusable drawn-art module now connects sanitized uploads, revisioned metadata,
+explicit cross-author reuse consent, search-before-generation proposals, Studio slot
+autosave, immutable playable-version pins, moderator review, authenticated delivery
+and the actual scene renderer. Public display does not grant library discovery or
+reuse permission. Revoking future reuse preserves explicitly consented existing pins;
+takedown and confirmed erasure withdraw delivery and live rendered art. Campaign state
+remains separate while approved image bytes are reused without a generation charge.
+
+Verification: production build passed; platform 62/62, SMTP 1/1, core 95/95,
+UI/autosave/privacy/art 48/48, contracts 9/9 and configuration/locales 18/18 passed.
+The asset HTTP/PostgreSQL suite passed 23/23 on final affected source, including
+publication/erasure races, grants, old-version pins, hidden-entity delivery denial,
+review invalidation, replay filtering and live withdrawal. The integrated gameplay
+suite passed 115/115 before the last isolated asset-query/erasure fixes; those fixes
+were rechecked by the final 23-test asset suite. Exact-head CI will repeat both.
+The new asset browser scenario is authored but not yet executed locally; CI must
+verify Studio-to-canvas rendering and its real canvas screenshot artifact.
+
+Rendering uses static rasters, not generated directional animation. Scene texture
+loading is bounded to four jobs and eight megapixels retained/reserved; catalogue
+and moderator thumbnails use browser lazy decoding. Library discovery is bounded,
+with localized limits. No image-generation provider call, paid request, deployment
+or restart of the user's stopped Windows application was performed. Live text/image
+budget preparation remains a separate, default-disabled workstream and is not part
+of this asset publication snapshot.

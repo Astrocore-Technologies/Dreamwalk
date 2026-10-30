@@ -1,3 +1,4 @@
+import { projectVisibleArtBindings } from './art';
 import { chooseLivingNpcIntent, publicNpcFactTopics, communicateNpcObservations } from './living';
 import { npcActionAllowed } from './living-policy';
 import {
@@ -735,6 +736,7 @@ export function projectState(s: GameState, id: string): GameProjection {
   return {
     schemaVersion: 1,
     ...(s.assetManifest ? { assetManifest: { ...s.assetManifest } } : {}),
+    ...(s.artBindings ? { artBindings: projectVisibleArtBindings(s, id) } : {}),
     rulesetVersion: s.rulesetVersion,
     tick: s.tick,
     revision: s.revision,
@@ -947,3 +949,5 @@ export * from './living';
 export * from './living-policy';
 
 export * from './living-reasoning';
+
+export * from './art';

@@ -1,0 +1,73 @@
+.root {
+  overflow-wrap: anywhere;
+  min-width: 0;
+  display: grid;
+  gap: 20px;
+}
+.root fieldset {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 16px;
+  display: grid;
+  gap: 10px;
+}
+.root select,
+.root input,
+.root textarea {
+  max-width: 100%;
+  min-width: 0;
+}
+.root label:has(input[type='checkbox']) {
+  display: flex;
+  gap: 10px;
+  align-items: flex-start;
+}
+.root input[type='checkbox'] {
+  width: auto;
+  flex: 0 0 auto;
+}
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(min(100%, 210px), 1fr));
+  gap: 14px;
+}
+.card {
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+  overflow-wrap: anywhere;
+  display: grid;
+  gap: 8px;
+  align-content: start;
+}
+.card img {
+  width: 100%;
+  height: 160px;
+  object-fit: contain;
+  background: var(--surface);
+  border-radius: 8px;
+}
+.fields {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 12px;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.notice {
+  color: var(--muted);
+  overflow-wrap: anywhere;
+}
+@media (max-width: 550px) {
+  .fields {
+    grid-template-columns: 1fr;
+  }
+  .root fieldset {
+    padding: 12px;
+  }
+}

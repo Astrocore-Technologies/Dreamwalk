@@ -8,6 +8,8 @@ import { Auth, AccountController } from './auth';
 import { Content, ContentController } from './content';
 import { AdminController } from './admin';
 import { AssetsController, AssetUploadGuard } from './assets';
+import { AssetReuseController } from './assets/reuse.controller';
+import { AssetReuseService } from './assets/reuse.service';
 import { InvitationsController } from './invitations';
 import { DataRequestsController } from './data-requests';
 import { Errors } from './errors';
@@ -37,12 +39,22 @@ class Health {
     ContentController,
     AdminController,
     AssetsController,
+    AssetReuseController,
     InvitationsController,
     DataRequestsController,
     GameController,
     PlayableController,
   ],
-  providers: [Db, Auth, Content, AssetUploadGuard, NpcAiService, GameService, PlayableService],
+  providers: [
+    Db,
+    Auth,
+    Content,
+    AssetUploadGuard,
+    AssetReuseService,
+    NpcAiService,
+    GameService,
+    PlayableService,
+  ],
 })
 class AppModule {}
 async function bootstrap() {
