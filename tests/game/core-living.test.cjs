@@ -479,11 +479,13 @@ test('authored ally links seed evidence-backed relationships and promise habit s
   let s = world();
   Object.assign(s.entities.alice, { x: 5, y: 5 });
   s.npcBrains.helper.living.personality.habits = ['keep_promises'];
+  s.entities.token2 = { ...s.entities.token, id: 'token2' };
+  s.entities.helper.inventory.push('token2');
   s.npcBrains.helper.living.obligations = [
     {
       id: 'later',
       toActorId: 'bob',
-      itemId: 'token',
+      itemId: 'token2',
       createdTick: 0,
       dueTick: 1000,
       status: 'accepted',

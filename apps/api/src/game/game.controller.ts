@@ -4,6 +4,51 @@ import { GameService } from './game.service';
 @Controller('api/v1/game')
 export class GameController {
   constructor(@Inject(GameService) private game: GameService) {}
+  @Get('campaigns/:id/intent-proposals') intents(@Req() req: Request, @Param('id') id: string) {
+    return this.game.intents(req, id);
+  }
+  @Post('campaigns/:id/intent-proposals') proposeIntent(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.intents(req, id, body);
+  }
+  @Post('campaigns/:id/intent-proposals/:proposalId/confirm') confirmIntent(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('proposalId') proposalId: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.confirmIntent(req, id, proposalId, body);
+  }
+  @Get('campaigns/:id/chat') chat(@Req() req: Request, @Param('id') id: string) {
+    return this.game.chat(req, id);
+  }
+  @Post('campaigns/:id/chat') sendChat(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.chat(req, id, body);
+  }
+  @Get('campaigns/:id/ai/sponsors') sponsors(@Req() req: Request, @Param('id') id: string) {
+    return this.game.sponsors(req, id);
+  }
+  @Post('campaigns/:id/ai/sponsors') grantSponsor(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.sponsors(req, id, body);
+  }
+  @Delete('campaigns/:id/ai/sponsors/:sponsorId') revokeSponsor(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('sponsorId') sponsorId: string,
+  ) {
+    return this.game.sponsors(req, id, undefined, sponsorId);
+  }
   @Get('campaigns/:id/ai') aiStatus(@Req() req: Request, @Param('id') id: string) {
     return this.game.aiStatus(req, id);
   }

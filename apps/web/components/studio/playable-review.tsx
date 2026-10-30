@@ -1,9 +1,17 @@
 'use client';
 import { useEffect, useState } from 'react';
-import type { GameMap, NpcPersonality } from '@dreamwalk/contracts';
+import type {
+  GameMap,
+  NpcPersonality,
+  NpcObservation,
+  NpcGoalDefinition,
+  NpcPromiseTemplate,
+} from '@dreamwalk/contracts';
 import { useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Field, Loading, Select } from '@/components/ui';
+import { LivingDefinitionReview } from './living-definition-review';
+import { ModeratorNpcPreview } from './moderator-npc-preview';
 import { publicStyleLabels } from './living-npc-profile';
 import { habitLabels, relationLabels } from './living-npc-examples';
 import styles from './playable-map-editor.module.css';
@@ -30,6 +38,9 @@ type ReviewResponse = {
       npcId: string;
       personality: NpcPersonality | null;
       initialGoal: string;
+      initialFacts?: NpcObservation[];
+      initialGoals?: NpcGoalDefinition[];
+      promiseTemplates?: NpcPromiseTemplate[];
       initialKnowledge?: { id: string; targetId?: string; revealCondition?: string }[];
       patrolTarget: { x: number; y: number };
     }[];
@@ -153,6 +164,10 @@ export function PlayableReview({
                       </li>
                     ))}
                   </ul>
+                  <p>
+                    {t('Профиль поведения')}:{' '}
+                    {profile.personality.behaviorProfile === 'cookie' ? 'Cookie' : 'Green Apple'}
+                  </p>
                   {profile.personality.biography && <p>{profile.personality.biography}</p>}
                   <p>
                     {t('Публичная манера речи')}:{' '}
@@ -187,12 +202,28 @@ export function PlayableReview({
                             steal: 'Не красть',
                             harm: 'Не причинять вред',
                             disclose_private: 'Не разглашать тайны',
+                            share_rumors: 'Не распространять слухи',
+                            give_valuables: 'Не отдавать ценности',
+                            lock_doors: 'Не запирать двери',
                           }[value],
                         ),
                       )
                       .join(', ')}
                   </p>
                 </>
+              )}
+              <LivingDefinitionReview
+                facts={profile.initialFacts || []}
+                goals={profile.initialGoals || []}
+                promises={profile.promiseTemplates || []}
+                names={source.entities}
+              />
+              {review.data?.versionId && (
+                <ModeratorNpcPreview
+                  adventureId={adventureId}
+                  versionId={review.data.versionId}
+                  npcId={profile.npcId}
+                />
               )}
             </article>
           ))}

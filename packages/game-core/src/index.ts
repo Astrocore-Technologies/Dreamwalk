@@ -1,4 +1,5 @@
-import { chooseLivingNpcIntent } from './living';
+import { chooseLivingNpcIntent, publicNpcFactTopics, communicateNpcObservations } from './living';
+import { npcActionAllowed } from './living-policy';
 import {
   gameActionSchema,
   gameMoveSchema,
@@ -300,8 +301,10 @@ function actionInternal(
 ): GameResult {
   const a = state.entities[id];
   if (!a) return fail(state, 'FORBIDDEN');
+  if (a.kind === 'npc' && !npcActionAllowed(state, id, action)) return fail(state, 'FORBIDDEN');
   if (a.encounterId && !inRound) return fail(state, 'WRONG_MODE');
   if (!gameActionSchema.safeParse(action).success) return fail(state, 'INVALID_ACTION');
+  if (action.kind === 'communicate') return communicateNpcObservations(state, id, action);
   if (action.kind === 'move_to') {
     if (!action.target) return fail(state, 'INVALID_ACTION');
     if (!inRound)
@@ -744,6 +747,9 @@ export function projectState(s: GameState, id: string): GameProjection {
     encounter,
     ...(s.rulesetVersion === 'hybrid-v3'
       ? {
+          npcFactTopics: Object.values(s.entities)
+            .filter((e) => e.kind === 'npc' && visible(s, actor, e))
+            .flatMap((e) => publicNpcFactTopics(s, e.id).map((t) => ({ npcId: e.id, ...t }))),
           npcUtterances: (s.npcUtterances ?? [])
             .filter((u) => u.mapId === actor.mapId && u.audienceIds.includes(id))
             .slice(-32)
@@ -765,7 +771,10 @@ export function projectState(s: GameState, id: string): GameProjection {
                 .map((o) => ({
                   id: o.id,
                   npcId,
-                  itemId: o.itemId,
+                  ...(o.itemId ? { itemId: o.itemId } : {}),
+                  ...(o.promisedAction
+                    ? { promisedAction: structuredClone(o.promisedAction) }
+                    : {}),
                   status: o.status,
                   remainingTicks: Math.max(0, o.dueTick - s.tick),
                 })),
@@ -934,3 +943,7 @@ export * from './authored';
 export * from './npc';
 
 export * from './living';
+
+export * from './living-policy';
+
+export * from './living-reasoning';

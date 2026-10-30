@@ -3,6 +3,7 @@
 Generated for this project on 2026-10-30 with the built-in image-generation tool (not a paid external CLI/API integration). No reference images, third-party characters, logos, trademarks or franchise settings were supplied. Final files are WebP in `apps/web/public/images/`; SHA-256 hashes and source records are in `manifest.json`.
 
 Creative prompts:
+
 - **observatory**: original ancient hilltop observatory in a misty pine valley at blue hour, brass astrolabe dome, amber arched windows, crescent moon, stone steps and bridge; painterly fantasy adventure, teal-indigo shadows, quieter left valley for HTML overlay.
 - **forest**: enchanted ancient forest, moss path, small arched door within colossal tree roots, turquoise fireflies, ferns, warm lanterns, still pool and luminous mist; tactile premium storybook painting, emerald/teal/gold.
 - **harbor**: coastal harbor at twilight, lavender storm clouds, brass lighthouse, old sailboats, stone houses and amber lantern on pier; wistful painterly adventure, indigo/dusky rose/gold.

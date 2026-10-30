@@ -3,11 +3,23 @@ import { z } from 'zod';
 export const npcPersonalitySchema = z
   .object({
     role: z.enum(['guard', 'helper', 'patrol']),
+    behaviorProfile: z.enum(['green-apple', 'cookie']).optional(),
     values: z
       .array(z.enum(['duty', 'kindness', 'caution', 'honesty']))
       .min(1)
       .max(4),
-    taboos: z.array(z.enum(['steal', 'harm', 'disclose_private'])).max(3),
+    taboos: z
+      .array(
+        z.enum([
+          'steal',
+          'harm',
+          'disclose_private',
+          'share_rumors',
+          'give_valuables',
+          'lock_doors',
+        ]),
+      )
+      .max(6),
     speechStyle: z.string().trim().max(200),
     publicSpeechStyle: z.enum(['neutral', 'warm', 'formal', 'terse', 'wry']).optional(),
     biography: z.string().trim().max(2000).optional(),
@@ -43,12 +55,15 @@ export type NpcPersonality = z.infer<typeof npcPersonalitySchema>;
 export type NpcObservationKind =
   | 'item_taken'
   | 'item_missing'
+  | 'actor_seen'
+  | 'actor_departed'
   | 'door_changed'
   | 'noise'
   | 'addressed'
   | 'helped'
   | 'claim'
   | 'known_entity'
+  | 'authored_fact'
   | 'said';
 export interface NpcObservation {
   id: string;
@@ -63,11 +78,16 @@ export interface NpcObservation {
   actorId?: string;
   targetId?: string;
   sourceNpcId?: string;
+  addressedNpcId?: string;
   depth: number;
   disclosure: 'public' | 'participants' | 'private';
   audienceIds: string[];
   revealCondition?: 'never' | 'asked' | 'trusted';
   text?: string;
+  factId?: string;
+  title?: string;
+  definitionText?: string;
+  publicQuestion?: string;
 }
 export interface NpcBelief {
   id: string;
@@ -78,6 +98,7 @@ export interface NpcBelief {
   evidenceIds: string[];
   status: 'active' | 'disputed';
   revision: number;
+  reason?: 'direct_evidence' | 'reported_claim' | 'contradiction';
 }
 export interface NpcRelationship {
   trust: number;
@@ -88,12 +109,20 @@ export interface NpcRelationship {
 export interface NpcObligation {
   id: string;
   toActorId: string;
-  itemId: string;
+  itemId?: string;
+  promisedAction?: NpcPromisedAction;
   createdTick: number;
   dueTick: number;
-  status: 'accepted' | 'fulfilled' | 'broken' | 'cancelled';
+  status: 'proposed' | 'accepted' | 'fulfilled' | 'broken' | 'cancelled';
+  conditions?: NpcCondition[];
+  acceptedTick?: number;
+  templateId?: string;
   evidenceIds: string[];
   resolutionEventId?: string;
+  sourceUtteranceId?: string;
+  sourceUtterance?: string;
+  alternativeGoalId?: string;
+  alternativeHandled?: boolean;
 }
 export interface NpcMemorySummary {
   policyVersion: 1;
@@ -103,6 +132,7 @@ export interface NpcMemorySummary {
   knowledgeRevision: number;
   inputFingerprint: string;
   observationIds: string[];
+  narrative?: string;
   claims: { observationId: string; kind: NpcObservationKind }[];
 }
 export interface LivingNpcMemory {
@@ -125,6 +155,12 @@ export interface LivingNpcMemory {
     targetId?: string;
   };
   summary?: NpcMemorySummary;
+  affect?: NpcAffect;
+  goalPolicy?: NpcGoalPolicy;
+  goalDefinitions?: NpcGoalDefinition[];
+  goalOutcomes?: Record<string, { status: 'succeeded' | 'cancelled' | 'blocked'; tick: number }>;
+  promiseTemplates?: NpcPromiseTemplate[];
+  offeredCauseIds?: string[];
 }
 export const npcNoticeSchema = z
   .object({
@@ -140,6 +176,9 @@ export const npcNoticeSchema = z
       'door_closed',
       'distracted',
       'heard',
+      'promise_offered',
+      'promise_cancelled',
+      'resting',
     ]),
     tick: z.number().int().nonnegative(),
   })
@@ -180,3 +219,114 @@ export interface PrivateNpcUtterance extends NpcUtterance {
   audienceIds: string[];
   speakerKnownToIds: string[];
 }
+
+const livingId = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/);
+export const npcConditionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('always') }).strict(),
+  z
+    .object({
+      kind: z.literal('observed'),
+      event: z.enum([
+        'item_taken',
+        'item_missing',
+        'noise',
+        'helped',
+        'addressed',
+        'said',
+        'actor_seen',
+        'actor_departed',
+      ]),
+      targetId: livingId.optional(),
+    })
+    .strict(),
+  z.object({ kind: z.literal('near_entity'), entityId: livingId }).strict(),
+  z.object({ kind: z.literal('owns_item'), itemId: livingId }).strict(),
+  z.object({ kind: z.literal('recipient_near') }).strict(),
+  z
+    .object({ kind: z.literal('trust_at_least'), minimum: z.number().int().min(-5).max(5) })
+    .strict(),
+  z.object({ kind: z.literal('elapsed'), ticks: z.number().int().min(0).max(12000) }).strict(),
+]);
+export type NpcCondition = z.infer<typeof npcConditionSchema>;
+export const npcAuthoredFactSchema = z
+  .object({
+    id: livingId,
+    title: z.string().trim().min(1).max(120),
+    text: z.string().trim().min(1).max(1000),
+    disclosure: z.enum(['never', 'asked', 'trusted', 'public']),
+    topicEntityId: livingId.optional(),
+    publicQuestion: z.string().trim().min(1).max(120).optional(),
+  })
+  .strict();
+export const npcGoalDefinitionSchema = z
+  .object({
+    id: livingId,
+    kind: z.enum(['patrol', 'guard', 'investigate', 'assist']),
+    itemId: livingId.optional(),
+    targetId: livingId.optional(),
+    priority: z.number().int().min(1).max(5),
+    motivation: z.enum(['duty', 'kindness', 'curiosity', 'routine']),
+    when: z.array(npcConditionSchema).max(4),
+    success: z.array(npcConditionSchema).max(4),
+    cancelWhen: z.array(npcConditionSchema).max(4),
+    holdTicks: z.number().int().min(0).max(200),
+    risk: z.enum(['cautious', 'balanced', 'bold']).optional(),
+    fallbackGoalId: livingId.optional(),
+  })
+  .strict();
+export type NpcGoalDefinition = z.infer<typeof npcGoalDefinitionSchema>;
+export const npcPromisedActionSchema = z
+  .object({ kind: z.enum(['open', 'inspect']), targetId: livingId })
+  .strict();
+export type NpcPromisedAction = z.infer<typeof npcPromisedActionSchema>;
+export const npcPromiseTemplateSchema = z
+  .object({
+    id: livingId,
+    itemId: livingId.optional(),
+    promisedAction: npcPromisedActionSchema.optional(),
+    offerOn: z.enum(['addressed', 'helped']),
+    conditions: z.array(npcConditionSchema).max(4),
+    dueTicks: z.number().int().min(1).max(12000),
+    requiresAcceptance: z.boolean(),
+    alternativeGoalId: livingId.optional(),
+  })
+  .strict()
+  .refine((v) => Boolean(v.itemId) !== Boolean(v.promisedAction), {
+    message: 'Choose one promised item or action',
+  });
+export type NpcPromiseTemplate = z.infer<typeof npcPromiseTemplateSchema>;
+export interface NpcAffect {
+  fatigue: number;
+  attention: number;
+  alertness: number;
+  mood: 'calm' | 'curious' | 'alarmed' | 'grateful';
+  lastUpdatedTick: number;
+}
+export interface NpcGoalPolicy {
+  motivation: 'duty' | 'kindness' | 'curiosity' | 'promise' | 'routine';
+  priority: number;
+  startedTick: number;
+  holdUntilTick: number;
+  success: NpcCondition[];
+  cancelWhen: NpcCondition[];
+  definitionId?: string;
+  risk?: 'cautious' | 'balanced' | 'bold';
+  replans?: number;
+  goalRevision?: number;
+  status: 'active' | 'succeeded' | 'cancelled' | 'blocked';
+}
+
+export const npcBeliefRevisionSchema = z
+  .object({
+    beliefId: z.string().min(1).max(160).optional(),
+    expectedRevision: z.number().int().nonnegative(),
+    predicate: z.enum(['item_missing', 'took_item', 'heard_noise', 'needs_help']),
+    subjectId: z.string().min(1).max(100).optional(),
+    targetId: z.string().min(1).max(100).optional(),
+    evidenceIds: z.array(z.string().min(1).max(200)).min(1).max(8),
+    confidence: z.enum(['certain', 'uncertain', 'reported']),
+    status: z.enum(['active', 'disputed']),
+    reason: z.enum(['direct_evidence', 'reported_claim', 'contradiction']),
+  })
+  .strict();
+export type NpcBeliefRevision = z.infer<typeof npcBeliefRevisionSchema>;

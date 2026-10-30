@@ -287,7 +287,7 @@ and the recipient's own obligations, not private evidence, beliefs or relationsh
 | `POST game/campaigns/:id/ai/jobs`        | Same intent plus `operationId`, optional `quoteId` and explicit `consent`; idempotent request identity includes the selected speech topic/channel.   |
 | `GET admin/npc-ai/metrics`               | Admin-only aggregate job/budget/latency/memory diagnostics, no actor IDs or raw content.                                                             |
 
-A speech topic is a visible entity, not a client-selected secret observation ID. The
+A speech topic is a visible entity or an opaque public-question token, never a client-selected secret observation ID. The
 server derives eligible asked-disclosures and validates the entire actual audience both
 before generation and before commit. Only permitted utterance text and a public style
 enum reach the renderer; private biography, examples, archive and planner memory do not.
@@ -300,3 +300,36 @@ The same database transaction accepts a valid result, checkpoints its effect and
 demo credits. Stale/invalid results release user holds without forgiving incurred or
 unknown provider cost. Summary application uses the canonical next-revision CAS validator.
 The default provider is network-free mock; live adapter verification requires approval.
+
+### Full living-NPC interaction channels
+
+Ordinary `npc.speech` commits its observation and durable decision request atomically.
+The default reply is produced through the network-free mock pipeline without a separate
+AI-panel action. Significant observed events schedule deduplicated system decisions before
+the deterministic director consumes their causes. Routine ticks remain free; an external
+provider is usable only with its explicit configuration and an active bounded sponsor.
+OOC messages never enter these contexts.
+
+| Route under `/api/v1`                                          | Contract                                                                                                                        |
+| -------------------------------------------------------------- | ------------------------------------------------------------------------------------------------------------------------------- |
+| `GET/POST game/campaigns/:id/chat`                             | Authorized party-only OOC history/send; bounded text, operation UUID, replay-safe identity. No NPC perception.                  |
+| `GET/POST game/campaigns/:id/intent-proposals`                 | Own proposals or bounded free text and operation UUID. Interpretation yields no game effect.                                    |
+| `POST game/campaigns/:id/intent-proposals/:proposalId/confirm` | Explicit confirmation UUID; membership, actor, expiry, readset and supported action validated again.                            |
+| `GET/POST game/campaigns/:id/ai/sponsors`                      | Owner-only grants; explicit consent, expiry, allowed purposes and total/per-operation credit/provider budgets.                  |
+| `DELETE game/campaigns/:id/ai/sponsors/:sponsorId`             | Owner revocation blocks new reservations; unknown/late usage remains accounted, not silently retried.                           |
+| `POST admin/adventures/:id/npc-preview`                        | Admin-only exact pending immutable submitted `versionId`, NPC and bounded ticks/actions; changed submission invalidates access. |
+
+`npc.promise` is an idempotent game command with `npcId`, `promiseId` and
+`decision: accept|decline`. Only its addressed player may accept. A promise may transfer
+an existing owned item or perform a registered open/inspect action; conditions, deadlines
+and authority remain mandatory. A matching committed event, not model text, fulfils it.
+
+The NPC plan catalog includes reference-only `communicate`: selected evidence, recipient
+and channel pass the same full-audience disclosure policy at admission and execution.
+A private planner cannot supply arbitrary public prose or disclose a never-reveal fact.
+
+Private memory retention protects all live obligations and pending-job evidence. Old
+cognition is compacted while retaining text-free causal IDs needed for erasure; every
+cached occurrence of expired speech is redacted in the same transaction. Outcomes and
+operation identities remain. Account export contains only the requester's OOC/intent
+text and safe job/sponsorship metadata, not another participant's context or NPC secrets.

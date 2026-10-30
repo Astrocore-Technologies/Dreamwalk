@@ -32,7 +32,11 @@ export type CommandBody = {
     | 'encounter.join'
     | 'encounter.end'
     | 'npc.request'
-    | 'npc.speech';
+    | 'npc.speech'
+    | 'npc.promise';
+  promiseId?: string;
+  decision?: 'accept' | 'decline';
+  topicId?: string;
   npcId?: string;
   speech?: { channel: 'say' | 'whisper'; text: string };
   encounterId?: string;

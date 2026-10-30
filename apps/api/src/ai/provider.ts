@@ -12,11 +12,17 @@ const resultSchema = z
   .object({
     proposal: z.unknown(),
     requestId: z.string().min(1).max(200),
+    failureCode: z
+      .string()
+      .regex(/^[A-Z_]+$/)
+      .max(80)
+      .optional(),
     usage: z
       .object({
         inputTokens: z.number().int().nonnegative().max(10000000),
         outputTokens: z.number().int().nonnegative().max(10000000),
         costMicros: z.number().int().nonnegative().safe(),
+        costEvidence: z.enum(['reported', 'configured_rates']).optional(),
       })
       .strict(),
   })
@@ -130,10 +136,11 @@ export class HttpJsonNpcProvider implements NpcProvider {
   async generate(request: ProviderRequest): Promise<ProviderResult> {
     if (!this.settings.enabled || !this.settings.apiKey || !this.settings.enforcesCostCeiling)
       throw new ProviderFailure('PROVIDER_DISABLED', false);
+    const { mockProposal: _mockProposal, ...providerContext } = request.context;
     const body = JSON.stringify({
       model: this.settings.model,
       purpose: request.purpose,
-      context: request.context,
+      context: providerContext,
       operationId: request.jobId,
       limits: {
         maxInputTokens: this.settings.maxInputTokens ?? 16000,

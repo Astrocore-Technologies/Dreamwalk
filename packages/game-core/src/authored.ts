@@ -204,6 +204,94 @@ export function compilePlayableDraft(input: unknown): {
   if (d.npcBehavior === 'reactive-v1')
     for (const n of d.npcs) {
       const memory = npcBrains[n.id].living!;
+      memory.goalDefinitions = structuredClone(n.initialGoals ?? []);
+      memory.promiseTemplates = structuredClone(n.promiseTemplates ?? []);
+      const validConditions = (conditions: NonNullable<typeof n.initialGoals>[number]['when']) =>
+        conditions.every((c) =>
+          c.kind === 'near_entity'
+            ? !!entities[c.entityId]
+            : c.kind === 'owns_item'
+              ? entities[c.itemId]?.kind === 'item'
+              : c.kind === 'observed' && c.targetId
+                ? !!entities[c.targetId]
+                : true,
+        );
+      const goalIds = new Set<string>();
+      for (const goal of n.initialGoals ?? []) {
+        if (goalIds.has(goal.id)) errors.push(`npc:${n.id}:goal-duplicate`);
+        goalIds.add(goal.id);
+        if (
+          (goal.kind !== 'patrol' && !goal.targetId) ||
+          (goal.targetId && !entities[goal.targetId])
+        )
+          errors.push(`npc:${n.id}:goal-target`);
+        if (goal.kind === 'guard' && entities[goal.targetId ?? '']?.kind !== 'door')
+          errors.push(`npc:${n.id}:goal-door`);
+        if (
+          goal.kind === 'assist' &&
+          (!goal.itemId ||
+            entities[goal.itemId]?.ownerId !== n.id ||
+            entities[goal.targetId ?? '']?.kind !== 'npc')
+        )
+          errors.push(`npc:${n.id}:goal-owned-item`);
+        if (!validConditions([...goal.when, ...goal.success, ...goal.cancelWhen]))
+          errors.push(`npc:${n.id}:goal-condition`);
+      }
+      for (const goal of n.initialGoals ?? []) {
+        const visited = new Set<string>();
+        let current: typeof goal | undefined = goal;
+        while (current?.fallbackGoalId) {
+          if (visited.has(current.id) || !goalIds.has(current.fallbackGoalId)) {
+            errors.push(`npc:${n.id}:goal-fallback`);
+            break;
+          }
+          visited.add(current.id);
+          current = n.initialGoals?.find((g) => g.id === current!.fallbackGoalId);
+        }
+      }
+      const promises = new Set<string>();
+      for (const t of n.promiseTemplates ?? []) {
+        if (
+          promises.has(t.id) ||
+          (t.itemId
+            ? entities[t.itemId]?.ownerId !== n.id
+            : !t.promisedAction ||
+              !entities[t.promisedAction.targetId] ||
+              (t.promisedAction.kind === 'open' &&
+                entities[t.promisedAction.targetId]?.kind !== 'door')) ||
+          !validConditions(t.conditions) ||
+          (t.alternativeGoalId && !goalIds.has(t.alternativeGoalId))
+        )
+          errors.push(`npc:${n.id}:promise-template`);
+        promises.add(t.id);
+      }
+      const facts = new Set<string>();
+      for (const fact of n.initialFacts ?? []) {
+        if (facts.has(fact.id) || (fact.topicEntityId && !entities[fact.topicEntityId]))
+          errors.push(`npc:${n.id}:fact-reference`);
+        facts.add(fact.id);
+        const evidenceId = `initial:${n.id}:fact:${fact.id}`;
+        memory.observations.push({
+          id: evidenceId,
+          eventId: evidenceId,
+          rootId: evidenceId,
+          kind: 'authored_fact',
+          tick: 0,
+          mapId: entities[n.id].mapId,
+          channel: 'direct',
+          confidence: 'witnessed',
+          targetId: fact.topicEntityId,
+          factId: fact.id,
+          title: fact.title,
+          definitionText: fact.text,
+          publicQuestion: fact.publicQuestion,
+          depth: 0,
+          disclosure: fact.disclosure === 'public' ? 'public' : 'private',
+          audienceIds: [],
+          ...(fact.disclosure === 'public' ? {} : { revealCondition: fact.disclosure }),
+        });
+      }
+
       const linked = new Set<string>();
       for (const link of n.personality?.links ?? []) {
         if (link.npcId === n.id || entities[link.npcId]?.kind !== 'npc' || linked.has(link.npcId))

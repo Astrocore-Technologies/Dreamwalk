@@ -140,10 +140,7 @@ test('the renderer only resolves the pinned bundled atlas and its immutable file
     prototypeAtlas.path,
   );
   assert.throws(() =>
-    resolveGameAtlas({
-      id: 'https://example.com/untrusted.svg',
-      sha256: prototypeAtlas.sha256,
-    }),
+    resolveGameAtlas({ id: 'https://example.com/untrusted.svg', sha256: prototypeAtlas.sha256 }),
   );
   assert.throws(() => resolveGameAtlas({ id: prototypeAtlas.id, sha256: 'modified' }));
   const bytes = await readFile(
@@ -258,6 +255,12 @@ test('living NPC author and player copy has complete locale entries', async () =
   const files = [
     'studio/living-npc-profile',
     'studio/living-npc-examples',
+    'studio/living-npc-authoring',
+    'studio/living-npc-conditions',
+    'studio/moderator-npc-preview',
+    'game/party-chat',
+    'game/intent-proposals',
+    'game/sponsor-budget',
     'studio/living-npc-preview',
     'game/living-notices',
     'game/living-conversation',
@@ -332,6 +335,38 @@ test('saved NPC textarea labels do not include their hydrated text content', asy
   );
   assert.match(profile, /aria-label=\{t\('Биография и мотивы'\)\}/);
   assert.match(profile, /aria-label=\{t\('Частные заметки о манере речи'\)\}/);
+});
+
+test('completed living flows preserve explicit actions and private author data', async () => {
+  const read = (path) =>
+    readFile(new URL('../../apps/web/components/' + path + '.tsx', import.meta.url), 'utf8');
+  const author = await read('studio/living-npc-authoring'),
+    conditions = await read('studio/living-npc-conditions'),
+    speech = await read('game/living-conversation'),
+    chat = await read('game/party-chat'),
+    intent = await read('game/intent-proposals'),
+    sponsor = await read('game/sponsor-budget'),
+    review = await read('studio/moderator-npc-preview');
+  assert.match(author, /initialFacts/);
+  assert.match(author, /initialGoals/);
+  assert.match(author, /promiseTemplates/);
+  assert.match(author, /ownerNpcId === npc.id/);
+  assert.match(conditions, /value.length >= 4/);
+  assert.match(speech, /projection.npcFactTopics/);
+  assert.doesNotMatch(speech, /initialFacts|definitionText|biography/);
+  assert.match(chat, /\/chat/);
+  assert.doesNotMatch(chat, /npc.speech|npcFactTopics/);
+  assert.match(chat, /operationId: crypto.randomUUID/);
+  assert.match(intent, /\/confirm/);
+  assert.match(intent, /confirmation.current/);
+  assert.match(intent, /proposal.status === 'cancelled'/);
+  assert.match(intent, /INTENT_EXPIRED/);
+  assert.doesNotMatch(intent, /Date.parse\(proposal.expiresAt\)/);
+  assert.match(sponsor, /consent: true/);
+  assert.match(sponsor, /method: 'DELETE'/);
+  assert.match(review, /\/admin\/adventures/);
+  assert.match(review, /versionId, npcId, ticks/);
+  assert.doesNotMatch(review, /\/game\/campaigns/);
 });
 
 test('NPC countdowns do not invalidate command revisions but outcomes and positions do', async () => {

@@ -4,6 +4,13 @@ import { PlayableService } from './playable.service';
 @Controller('api/v1')
 export class PlayableController {
   constructor(@Inject(PlayableService) private playable: PlayableService) {}
+  @Post('admin/adventures/:id/npc-preview') reviewNpc(
+    @Req() r: Request,
+    @Param('id') id: string,
+    @Body() b: unknown,
+  ) {
+    return this.playable.reviewNpc(r, id, b);
+  }
   @Get('admin/adventures/:id/playable-review')
   review(@Req() r: Request, @Param('id') id: string) {
     return this.playable.review(r, id);
