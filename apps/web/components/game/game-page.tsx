@@ -7,6 +7,10 @@ import type { GameAction, GameEntity, GamePoint } from '@dreamwalk/contracts';
 import { api, errorMessage, useClient, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Field, Input, Loading, PageHeading } from '@/components/ui';
+import { authorizedArt } from '../assets/art-visibility';
+import { useAssetText } from '../assets/messages';
+import { useCampaignArt } from '../assets/use-campaign-art';
+import { artPreviewUrl } from '../assets/types';
 import { GameCanvas } from './game-canvas';
 import { SponsorBudget } from './sponsor-budget';
 import { IntentProposals } from './intent-proposals';
@@ -173,6 +177,14 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
   }>(`/game/campaigns/${campaignId}/members`);
   const game = useGame(campaignId);
   const p = game.projection;
+  const fetchedArt = useCampaignArt(campaignId, p?.map.id || '');
+  const art = p ? authorizedArt(p, fetchedArt) : [];
+  const artText = useAssetText();
+  const artCredits = art.filter(
+    (entry) =>
+      entry.slot === `map:${p?.map.id}:background` ||
+      p?.entities.some((entity) => entry.slot.startsWith(`entity:${entity.id}:`)),
+  );
   const [username, setUsername] = useState(''),
     [inviteBusy, setInviteBusy] = useState(false),
     [inviteMessage, setInviteMessage] = useState('');
@@ -360,6 +372,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
         <div>
           <GameCanvas
             projection={p}
+            art={art}
             disabled={!connected || locked}
             planning={!!encounter}
             onStop={game.stop}
@@ -369,6 +382,20 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             }}
             reducedMotion={!!user?.settings.reducedMotion}
           />
+          {artCredits.length > 0 && (
+            <details>
+              <summary>{artText('credits')}</summary>
+              <ul>
+                {artCredits.map((entry) => (
+                  <li key={entry.slot}>
+                    {entry.attribution}
+                    {entry.attribution ? ' · ' : ''}
+                    {entry.licenseLabel}
+                  </li>
+                ))}
+              </ul>
+            </details>
+          )}
           {encounter && (
             <section className={styles.encounter} aria-label={t('Планирование раунда')}>
               <div>
@@ -478,6 +505,20 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                 data-y={entity.y}
               >
                 <div>
+                  {entity.kind === 'npc' &&
+                    art.find((entry) => entry.slot === `entity:${entity.id}:portrait`) && (
+                      <img
+                        className={styles.artPortrait}
+                        loading="lazy"
+                        decoding="async"
+                        width={72}
+                        height={88}
+                        src={artPreviewUrl(
+                          art.find((entry) => entry.slot === `entity:${entity.id}:portrait`)!.url,
+                        )}
+                        alt={entity.label || t('NPC')}
+                      />
+                    )}
                   <h3>{entity.label || t(entityKey(entity, p.actorId))}</h3>
                   <small>
                     {t('Координаты: {x}, {y}', { x: entity.x, y: entity.y })}

@@ -81,7 +81,9 @@ test('Studio authored layout persists and launches its own pinned campaign', asy
   );
   await editor.getByLabel('Персонаж из библиотеки', { exact: true }).selectOption(npcId);
   expect((await saved).ok()).toBeTruthy();
-  await expect(editor.locator('[data-autosave-status="saved"]')).toBeVisible();
+  await expect(
+    editor.locator('[data-autosave-scope="map"][data-autosave-status="saved"]'),
+  ).toBeVisible();
   await page.reload();
   await page.getByRole('button', { name: /Локации$/ }).click();
   await expect(editor.getByLabel('Название карты', { exact: true })).toHaveValue(mapName);
@@ -131,7 +133,9 @@ test('Studio authored layout persists and launches its own pinned campaign', asy
   );
   await editor.getByLabel('Название карты', { exact: true }).fill('Unpublished changed map');
   expect((await edited).ok()).toBeTruthy();
-  await expect(editor.locator('[data-autosave-status="saved"]')).toBeVisible();
+  await expect(
+    editor.locator('[data-autosave-scope="map"][data-autosave-status="saved"]'),
+  ).toBeVisible();
   await page.goto(campaignUrl);
   await expect(page.getByRole('heading', { name: mapName, exact: true, level: 1 })).toBeVisible();
   await page.reload();

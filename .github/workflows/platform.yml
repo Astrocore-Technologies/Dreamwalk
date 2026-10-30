@@ -55,6 +55,8 @@ jobs:
         run: npm run test:integration
       - name: Game runtime and isolated PostgreSQL integration
         run: npm run test:game:integration
+      - name: Reusable asset ACL and immutable publication integration
+        run: npm run test:assets:integration
       - name: Local SMTP capture integration
         run: npm run test:mail
       - name: Browser dependencies
@@ -76,3 +78,12 @@ jobs:
           path: |
             test-results/
             playwright-report/
+
+      - name: Save actual reusable-art canvas preview
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reusable-art-preview
+          path: test-results/**/custom-art-scene.png
+          if-no-files-found: ignore
+          retention-days: 7

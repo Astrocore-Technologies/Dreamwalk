@@ -1,3 +1,5 @@
+import { frozenArtBindingsSchema, type FrozenArtBinding } from './art';
+export * from './art';
 import {
   npcPersonalitySchema,
   npcNoticeSchema,
@@ -187,6 +189,7 @@ export interface GameEncounter {
   intents: Record<string, RoundIntent>;
 }
 export interface GameState {
+  artBindings?: FrozenArtBinding[];
   assetManifest?: typeof bundledGameAssetManifest;
   schemaVersion: 1;
   rulesetVersion: 'observatory-v1' | 'hybrid-v2' | 'hybrid-v3';
@@ -216,6 +219,7 @@ export interface GameResult {
   error?: GameError;
 }
 export interface GameProjection {
+  artBindings?: FrozenArtBinding[];
   assetManifest?: typeof bundledGameAssetManifest;
   schemaVersion: 1;
   rulesetVersion: string;
@@ -369,6 +373,7 @@ export const gamePublicEncounterSchema = z
 export const gameProjectionSchema = z
   .object({
     assetManifest: gameAssetManifestSchema.optional(),
+    artBindings: frozenArtBindingsSchema.optional(),
     schemaVersion: z.literal(1),
     rulesetVersion: z.enum(['observatory-v1', 'hybrid-v2', 'hybrid-v3']),
     tick: z.number().int().nonnegative().safe(),
@@ -619,6 +624,7 @@ export interface NpcBrain {
   generation: number;
 }
 export interface PlayablePackage {
+  artBindings?: FrozenArtBinding[];
   assetManifest: typeof bundledGameAssetManifest;
   schemaVersion: 1;
   rulesetVersion: 'hybrid-v2' | 'hybrid-v3';

@@ -872,6 +872,7 @@ export class ContentController {
   ) {
     const u = await this.auth.require(req);
     await this.db.tx(async (c) => {
+      await this.playable.lockAuthor(c, u.id);
       const row = (
         await c.query('SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 FOR UPDATE', [id, u.id])
       ).rows[0];

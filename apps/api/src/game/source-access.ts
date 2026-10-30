@@ -1,0 +1,6 @@
+export function sourceAccessSql(user: string, campaign = 'c') {
+  return `(${campaign}.source_version_id IS NULL OR EXISTS(SELECT 1 FROM game_playable_versions v JOIN adventures a ON a.id=v.adventure_id JOIN users author ON author.id=a.owner_id WHERE v.id=${campaign}.source_version_id AND author.deleted_at IS NULL AND a.status<>'archived' AND ((v.audience='private' AND (a.owner_id=${user} OR (a.visibility='private' AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id AND i.recipient_id=${user} AND i.status='accepted')))) OR (v.audience='review' AND a.visibility='public' AND a.published_snapshot IS NOT NULL AND EXISTS(SELECT 1 FROM game_playable_approvals ap WHERE ap.playable_version_id=v.id)))))`;
+}
+export function sourceLiveSql(campaign = 'c') {
+  return `(${campaign}.source_version_id IS NULL OR EXISTS(SELECT 1 FROM game_playable_versions v JOIN adventures a ON a.id=v.adventure_id JOIN users author ON author.id=a.owner_id WHERE v.id=${campaign}.source_version_id AND author.deleted_at IS NULL AND a.status<>'archived' AND (v.audience='private' OR (a.visibility='public' AND a.published_snapshot IS NOT NULL AND EXISTS(SELECT 1 FROM game_playable_approvals ap WHERE ap.playable_version_id=v.id)))))`;
+}

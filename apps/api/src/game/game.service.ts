@@ -1,3 +1,4 @@
+import { AssetReuseService } from '../assets/reuse.service';
 import { semanticGameProjection } from './projection-clock';
 import { pruneNpcMemory } from './npc-retention';
 import { recordNpcMetric } from './npc-telemetry';
@@ -156,6 +157,8 @@ export class GameService implements OnModuleDestroy {
   private npcCooldown = new Map<string, number>();
   private projections = new Map<string, { hash: string; revision: number }>();
   private timer: ReturnType<typeof setInterval>;
+  private unavailableArt = new Set<string>();
+  private artCheckedAt = new Map<string, number>();
   private stopping = false;
   private shutdownCallbacks = new Set<() => void>();
   onShutdown(fn: () => void) {
@@ -166,7 +169,9 @@ export class GameService implements OnModuleDestroy {
     @Inject(Auth) private auth: Auth,
     @Inject(PlayableService) private playable: PlayableService,
     @Inject(NpcAiService) private ai: NpcAiService,
+    @Inject(AssetReuseService) private art: AssetReuseService,
   ) {
+    this.art.attachRuntimeStateReader((id) => this.live.get(id)?.state);
     this.timer = setInterval(() => {
       for (const id of this.live.keys()) {
         if ((this.pending.get(id) ?? 0) > 0) continue;
@@ -1311,6 +1316,7 @@ export class GameService implements OnModuleDestroy {
   }
   private async pause(id: string, live: Live) {
     if (live.paused) return;
+    await this.refreshArt(id, live);
     const clock = await this.captureClock(live.state, id);
     const state = structuredClone(live.state);
     for (const entity of Object.values(state.entities))
@@ -1380,19 +1386,41 @@ export class GameService implements OnModuleDestroy {
       const a = await this.access(req, id);
       const live = await this.load(id);
       if (markPresence) await this.touch(id, live, a.actorId);
-      return this.envelope(id, live, a.actorId);
+      return this.envelope(id, live, a.actorId, markPresence);
     });
+  }
+  private async refreshArt(id: string, live: Live, force = false) {
+    if (!force && Date.now() - (this.artCheckedAt.get(id) ?? 0) < 1000) return;
+    const ids = [...new Set((live.state.artBindings ?? []).map((b) => b.revisionId))];
+    if (!ids.length) {
+      this.artCheckedAt.set(id, Date.now());
+      return;
+    }
+    const unavailable = await this.art.unavailableRevisions(ids);
+    let changed = false;
+    for (const revisionId of ids) {
+      if (this.unavailableArt.has(revisionId) !== unavailable.has(revisionId)) changed = true;
+      if (unavailable.has(revisionId)) this.unavailableArt.add(revisionId);
+      else this.unavailableArt.delete(revisionId);
+    }
+    this.artCheckedAt.set(id, Date.now());
+    if (changed) this.notify(id);
   }
   private project(state: GameState, actorId: string): GameProjection {
     const projection = projectState(state, actorId),
       key = actorId + ':' + state.seed;
+    if (projection.artBindings)
+      projection.artBindings = projection.artBindings.filter(
+        (b) => !this.unavailableArt.has(b.revisionId),
+      );
     const hash = digest(semanticGameProjection(projection));
     const prior = this.projections.get(key),
       revision = prior ? (prior.hash === hash ? prior.revision : prior.revision + 1) : 1;
     this.projections.set(key, { hash, revision });
     return { ...projection, revision };
   }
-  private envelope(id: string, live: Live, actorId: string) {
+  private async envelope(id: string, live: Live, actorId: string, forceArt = false) {
+    await this.refreshArt(id, live, forceArt);
     const projection = this.project(live.state, actorId);
     return {
       type: 'snapshot',
@@ -1461,7 +1489,22 @@ export class GameService implements OnModuleDestroy {
       if (existing[0]) {
         if (existing[0].request_hash !== hash)
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
-        return existing[0].result;
+        // Replay preserves the committed outcome, but must not resurrect withdrawn
+        // or no-longer-visible presentation resources from its cached projection.
+        await this.refreshArt(id, live, true);
+        const replay = structuredClone(existing[0].result);
+        if (replay.projection?.artBindings) {
+          const visible = new Set(
+            (projectState(live.state, a.actorId).artBindings ?? []).map(
+              (b) => `${b.slot}:${b.revisionId}`,
+            ),
+          );
+          replay.projection.artBindings = replay.projection.artBindings.filter(
+            (b: { slot: string; revisionId: string }) =>
+              visible.has(`${b.slot}:${b.revisionId}`) && !this.unavailableArt.has(b.revisionId),
+          );
+        }
+        return replay;
       }
       let result: GameResult;
       let confirmingIntent: string | undefined;
@@ -1717,12 +1760,14 @@ export class GameService implements OnModuleDestroy {
       // Keep the paused lease briefly so heartbeat grace can recover a stalled tab.
       if (Date.now() - live.lastAccess < 15000) return;
       this.live.delete(id);
+      this.artCheckedAt.delete(id);
       this.npcCooldown.delete(id);
       for (const actor of Object.keys(live.state.entities))
         this.projections.delete(actor + ':' + live.state.seed);
       return;
     }
     if (live.paused) return;
+    await this.refreshArt(id, live);
     // No catch-up based on user clocks or network packet volume: exactly one fixed simulation step.
     const before = live.state;
     const result = tick(before, 1);
