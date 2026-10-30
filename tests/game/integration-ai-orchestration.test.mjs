@@ -83,6 +83,15 @@ await test(
           const e = engine({ costMicros: 4 }),
             { job, input } = await queue(e);
           assert.deepEqual(await e.queue(input), job);
+          await db.query(
+            "UPDATE npc_ai_jobs SET request_hash='legacy-pre018',request_meta=request_meta-'sponsorId'-'runtimeRequestId' WHERE id=$1",
+            [job.id],
+          );
+          assert.deepEqual(await e.queue(input), job);
+          assert.equal(
+            (await e.replay(input.scope, input.operationId, input.quoteId, true)).id,
+            job.id,
+          );
           assert.equal((await e.wallet(a.user.id)).reserved, 3);
           await assert.rejects(
             () => e.queue({ ...input, operationId: randomUUID() }),
@@ -177,6 +186,7 @@ await test(
             { job } = await queue(e);
           await e.run(job.id, async () => true);
           assert.equal((await row(job.id)).status, 'reconciling');
+          assert.equal(await e.pending(campaignId), false);
           assert.equal((await e.wallet(a.user.id)).reserved, 0);
           assert.equal((await budget(e)).unknown_micros, '10');
           await assert.rejects(
@@ -374,6 +384,7 @@ await test(
           );
           const configured = readNpcAiConfiguration({
             NPC_AI_PROVIDER: 'http-json',
+            NPC_AI_MODEL: 'configured-test-model',
             NPC_AI_ENDPOINT: 'https://trusted.example.test/decision',
             NPC_AI_ALLOWED_ORIGINS: 'https://trusted.example.test',
           });
@@ -476,9 +487,36 @@ await test(
         },
       );
       await t.test(
+        'terminal context retention removes private data but preserves unknown financial exposure',
+        async () => {
+          const e = engine({ failure: 'uncertain' }),
+            { job } = await queue(e, context({ privateFact: 'OLD_PRIVATE_CONTEXT' }));
+          await e.run(job.id, async () => true);
+          await db.query(
+            "UPDATE npc_ai_jobs SET completed_at=now()-interval '8 days' WHERE id=$1",
+            [job.id],
+          );
+          const before = await budget(e),
+            result = await e.pruneContexts();
+          assert.ok(result.removedContexts >= 1);
+          assert.equal(result.retentionDays, 7);
+          const retained = await row(job.id);
+          assert.deepEqual(retained.context, {});
+          assert.equal(retained.proposal, null);
+          assert.equal(retained.status, 'reconciling');
+          assert.equal(retained.provider_budget_status, 'unknown');
+          assert.equal((await budget(e)).unknown_micros, before.unknown_micros);
+          await e.reconcile(job.id, randomUUID(), 0);
+        },
+      );
+      await t.test(
         'quote creation has a serialized per-user rate limit and no financial side effect',
         async () => {
           const e = engine();
+          await db.query(
+            "UPDATE npc_ai_quotes SET created_at=now()-interval '2 minutes' WHERE user_id=$1",
+            [a.user.id],
+          );
           for (let i = 0; i < 60; i++) await e.quote(scope, context(), a.user.id);
           await assert.rejects(() => e.quote(scope, context(), a.user.id), code('RATE_LIMITED'));
           assert.equal((await e.wallet(a.user.id)).reserved, 0);
@@ -505,6 +543,8 @@ await test(
           ])
             assert.equal(typeof report.memory[key], 'number');
           assert.equal(report.statementTimeoutMs, 2000);
+          assert.equal(report.npcTelemetry.scope, 'current-process');
+          assert.equal(typeof report.npcTelemetry.knowledgeRejected, 'number');
           assert.ok(!JSON.stringify(report).includes('PRIVATE_AI_MEMORY'));
           assert.ok(!JSON.stringify(report).includes(a.user.id));
         },

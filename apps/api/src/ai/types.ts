@@ -1,11 +1,12 @@
 import type { PoolClient } from 'pg';
 
 /** Server-only DTOs. Never return context/proposal/provider credentials through public job status. */
-export type AiPurpose = 'plan' | 'summary' | 'speech';
+export type AiPurpose = 'plan' | 'summary' | 'speech' | 'intent';
 export interface AiScope {
   campaignId: string;
   npcId: string;
   origin: 'user' | 'system';
+  subjectKind?: 'npc' | 'player';
   purpose?: AiPurpose;
   requesterUserId?: string;
 }
@@ -21,6 +22,8 @@ export interface QueueDecision {
   quoteId?: string;
   consent?: boolean;
   requestKey?: string;
+  sponsorId?: string;
+  runtimeRequestId?: string;
 }
 export type AiJobStatus =
   | 'queued'
@@ -38,6 +41,7 @@ export interface ReadyDecision {
   campaignId: string;
   npcId: string;
   origin: 'user' | 'system';
+  subjectKind?: 'npc' | 'player';
   requesterUserId: string | null;
   purpose: AiPurpose;
   contextHash: string;
@@ -55,13 +59,20 @@ export interface ProviderRequest {
 export interface ProviderResult {
   proposal: unknown;
   requestId: string;
-  usage: { inputTokens: number; outputTokens: number; costMicros: number };
+  failureCode?: string;
+  usage: {
+    inputTokens: number;
+    outputTokens: number;
+    costMicros: number;
+    costEvidence?: 'reported' | 'configured_rates';
+  };
 }
 export interface NpcProvider {
   readonly id: string;
   readonly version: string;
   readonly external: boolean;
   generate(request: ProviderRequest): Promise<ProviderResult>;
+  contextBudgetBytes?(maxCostMicros: number): number;
 }
 export interface AiPolicy {
   creditPrice: number;
@@ -88,6 +99,7 @@ export class ProviderFailure extends Error {
   constructor(
     public readonly code: string,
     public readonly uncertain: boolean,
+    public readonly requestId?: string,
   ) {
     super(code);
   }

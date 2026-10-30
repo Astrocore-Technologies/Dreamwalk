@@ -1,5 +1,5 @@
 'use client';
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import type { GameProjection } from '@dreamwalk/contracts';
 import { useT } from '@/lib/i18n';
 import { Button, Field, Select, Textarea } from '@/components/ui';
@@ -17,16 +17,24 @@ export function LivingConversation({
   const { t } = useT();
   const [npcId, setNpcId] = useState(''),
     [channel, setChannel] = useState<'say' | 'whisper'>('say'),
-    [text, setText] = useState('');
+    [text, setText] = useState(''),
+    [selectedTopic, setSelectedTopic] = useState('');
+  useEffect(() => {
+    setText('');
+    setNpcId('');
+    setSelectedTopic('');
+  }, [projection.actorId]);
   const npcs = projection.entities.filter((entity) => entity.kind === 'npc');
   const recipient = npcs.some((npc) => npc.id === npcId) ? npcId : npcs[0]?.id || '';
+  const topics = projection.npcFactTopics?.filter((topic) => topic.npcId === recipient) || [];
+  const topicId = topics.some((topic) => topic.id === selectedTopic) ? selectedTopic : undefined;
   if (projection.rulesetVersion !== 'hybrid-v3') return null;
   return (
     <section aria-label={t('Разговор с NPC')}>
       <h2>{t('Разговор с NPC')}</h2>
       <p className={styles.muted}>
         {t(
-          'Тестовый NPC подтверждает услышанное. Свободный AI-диалог пока не подключён; реплики не меняют правила мира.',
+          'Ответ NPC ставится в очередь автоматически. По умолчанию работает бесплатный тестовый провайдер; речь не меняет правила мира.',
         )}
       </p>
       <form
@@ -37,6 +45,7 @@ export function LivingConversation({
             await command({
               type: 'npc.speech',
               npcId: recipient,
+              topicId,
               speech: { channel, text: sent.trim() },
             })
           )
@@ -64,6 +73,24 @@ export function LivingConversation({
           >
             <option value="say">{t('Сказать вслух')}</option>
             <option value="whisper">{t('Шепнуть NPC')}</option>
+          </Select>
+        </Field>
+        <Field label={t('Вопрос персонажу')}>
+          <Select
+            aria-label={t('Вопрос персонажу')}
+            value={topicId || ''}
+            onChange={(event) => {
+              setSelectedTopic(event.target.value);
+              const topic = topics.find((entry) => entry.id === event.target.value);
+              if (topic) setText(topic.title);
+            }}
+          >
+            <option value="">{t('Без конкретной темы')}</option>
+            {topics.map((topic) => (
+              <option key={topic.id} value={topic.id}>
+                {topic.title}
+              </option>
+            ))}
           </Select>
         </Field>
         <Field label={t('Реплика')}>

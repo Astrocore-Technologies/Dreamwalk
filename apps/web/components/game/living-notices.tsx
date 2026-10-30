@@ -1,8 +1,11 @@
 'use client';
 import type { GameProjection } from '@dreamwalk/contracts';
+import { Button } from '@/components/ui';
+import type { CommandBody } from './use-game';
 import { useT } from '@/lib/i18n';
 import styles from './game.module.css';
 const promiseLabels = {
+  proposed: 'Предложено обещание',
   accepted: 'Обещание принято',
   fulfilled: 'Обещание выполнено',
   broken: 'Обещание не выполнено',
@@ -18,9 +21,20 @@ const noticeLabels = {
   door_closed: 'NPC закрыл дверь',
   distracted: 'NPC отвлёкся',
   heard: 'NPC услышал звук',
+  promise_offered: 'NPC предложил обещание',
+  promise_cancelled: 'NPC отменил обещание',
+  resting: 'NPC отдыхает',
 } as const;
 /** Only the server-projected audience receives these notices. Never reads private brain state. */
-export function LivingNotices({ projection }: { projection: GameProjection }) {
+export function LivingNotices({
+  projection,
+  command,
+  disabled,
+}: {
+  projection: GameProjection;
+  disabled: boolean;
+  command: (body: Omit<CommandBody, 'protocolVersion' | 'operationId'>) => Promise<boolean>;
+}) {
   const { t } = useT();
   if (projection.rulesetVersion !== 'hybrid-v3') return null;
   return (
@@ -58,9 +72,51 @@ export function LivingNotices({ projection }: { projection: GameProjection }) {
                 {projection.entities.find((entity) => entity.id === promise.npcId)?.label ||
                   t('NPC')}
                 {' · '}
-                {projection.entities.find((entity) => entity.id === promise.itemId)?.label ||
+                {promise.promisedAction ? (
+                  <>
+                    {t(promise.promisedAction.kind === 'open' ? 'Открыть дверь' : 'Осмотреть')} ·{' '}
+                    {projection.entities.find(
+                      (entity) => entity.id === promise.promisedAction!.targetId,
+                    )?.label || t('Предмет')}
+                  </>
+                ) : (
+                  projection.entities.find((entity) => entity.id === promise.itemId)?.label ||
                   projection.inventory.find((entity) => entity.id === promise.itemId)?.label ||
-                  t('Предмет')}
+                  t('Предмет')
+                )}
+                {promise.status === 'proposed' && (
+                  <div>
+                    <Button
+                      type="button"
+                      disabled={disabled}
+                      onClick={() =>
+                        void command({
+                          type: 'npc.promise',
+                          npcId: promise.npcId,
+                          promiseId: promise.id,
+                          decision: 'accept',
+                        })
+                      }
+                    >
+                      {t('Принять обещание')}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={disabled}
+                      onClick={() =>
+                        void command({
+                          type: 'npc.promise',
+                          npcId: promise.npcId,
+                          promiseId: promise.id,
+                          decision: 'decline',
+                        })
+                      }
+                    >
+                      {t('Отклонить обещание')}
+                    </Button>
+                  </div>
+                )}
               </li>
             ))
           ) : (

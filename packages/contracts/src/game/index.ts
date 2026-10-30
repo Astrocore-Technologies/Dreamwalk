@@ -1,4 +1,13 @@
-import { npcPersonalitySchema, npcNoticeSchema, npcUtteranceSchema } from './living';
+import {
+  npcPersonalitySchema,
+  npcNoticeSchema,
+  npcUtteranceSchema,
+  npcAuthoredFactSchema,
+  npcGoalDefinitionSchema,
+  npcPromiseTemplateSchema,
+  npcBeliefRevisionSchema,
+  npcPromisedActionSchema,
+} from './living';
 import type {
   LivingNpcMemory,
   NpcNotice,
@@ -46,6 +55,7 @@ export const gameActionSchema = z
       'close',
       'lock',
       'knock',
+      'communicate',
       'transition',
       'defend',
       'flee',
@@ -53,9 +63,23 @@ export const gameActionSchema = z
     targetId: gameIdSchema.optional(),
     itemId: gameIdSchema.optional(),
     target: gamePointSchema.optional(),
+    channel: z.enum(['say', 'whisper']).optional(),
+    observationIds: z.array(z.string().min(1).max(200)).min(1).max(4).optional(),
   })
   .strict()
   .superRefine((action, ctx) => {
+    if (action.kind === 'communicate') {
+      if (
+        !action.channel ||
+        !action.observationIds ||
+        new Set(action.observationIds).size !== action.observationIds.length
+      )
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Communication requires channel and unique observation references',
+        });
+    } else if (action.channel !== undefined || action.observationIds !== undefined)
+      ctx.addIssue({ code: 'custom', message: 'Only communicate accepts speech references' });
     const noTarget = ['wait', 'defend', 'flee'].includes(action.kind);
     if (
       noTarget &&
@@ -204,11 +228,13 @@ export interface GameProjection {
   encounter?: GameEncounter;
   npcNotices?: NpcNotice[];
   npcUtterances?: NpcUtterance[];
+  npcFactTopics?: { npcId: string; id: string; title: string }[];
   npcObligations?: {
     id: string;
     npcId: string;
-    itemId: string;
-    status: 'accepted' | 'fulfilled' | 'broken' | 'cancelled';
+    itemId?: string;
+    promisedAction?: import('./living').NpcPromisedAction;
+    status: 'proposed' | 'accepted' | 'fulfilled' | 'broken' | 'cancelled';
     remainingTicks: number;
   }[];
   nearbyEncounters?: {
@@ -353,6 +379,14 @@ export const gameProjectionSchema = z
     inventory: z.array(gamePublicEntitySchema).max(128),
     encounter: gamePublicEncounterSchema.optional(),
     npcUtterances: z.array(npcUtteranceSchema).max(32).optional(),
+    npcFactTopics: z
+      .array(
+        z
+          .object({ npcId: gameIdSchema, id: z.string().max(100), title: z.string().max(120) })
+          .strict(),
+      )
+      .max(128)
+      .optional(),
     npcNotices: z.array(npcNoticeSchema).max(32).optional(),
     npcObligations: z
       .array(
@@ -360,8 +394,9 @@ export const gameProjectionSchema = z
           .object({
             id: z.string().max(100),
             npcId: gameIdSchema,
-            itemId: gameIdSchema,
-            status: z.enum(['accepted', 'fulfilled', 'broken', 'cancelled']),
+            itemId: gameIdSchema.optional(),
+            promisedAction: npcPromisedActionSchema.optional(),
+            status: z.enum(['proposed', 'accepted', 'fulfilled', 'broken', 'cancelled']),
             remainingTicks: z.number().int().nonnegative(),
           })
           .strict(),
@@ -535,6 +570,9 @@ export const authoredGameDraftSchema = z
             visual: z.enum(['keeper', 'traveler']),
             goal: z.enum(['patrol', 'help']),
             personality: npcPersonalitySchema.optional(),
+            initialFacts: z.array(npcAuthoredFactSchema).max(16).optional(),
+            initialGoals: z.array(npcGoalDefinitionSchema).max(4).optional(),
+            promiseTemplates: z.array(npcPromiseTemplateSchema).max(4).optional(),
             initialKnowledge: z
               .array(
                 z
@@ -600,6 +638,8 @@ export const npcPlanProposalSchema = z
     brainGeneration: z.number().int().nonnegative(),
     deadlineTick: z.number().int().nonnegative(),
     actions: z.array(gameActionSchema).min(1).max(3),
+    knowledgeRevision: z.number().int().nonnegative().optional(),
+    beliefRevisions: z.array(npcBeliefRevisionSchema).max(4).optional(),
     targetRevisions: z
       .record(gameIdSchema, z.number().int().nonnegative())
       .refine((v) => Object.keys(v).length <= 3),

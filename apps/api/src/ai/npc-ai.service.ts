@@ -4,7 +4,9 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Db } from '../db';
 import { fail } from '../errors';
+import { npcTelemetrySnapshot } from '../game/npc-telemetry';
 import { sourceAccessSql, sourceLiveSql } from '../game/playable.service';
+import { NpcSponsorship, type SponsorGrant } from './sponsorship';
 import { readNpcAiConfiguration } from './config';
 import { cacheKey, digest, validateDecisionContext } from './context';
 import { MockNpcProvider, validateProviderResult } from './provider';
@@ -42,7 +44,9 @@ interface Job extends QueryResultRow {
   origin: 'user' | 'system';
   requester_user_id: string | null;
   payer_user_id: string | null;
-  purpose: 'plan' | 'summary' | 'speech';
+  purpose: 'plan' | 'summary' | 'speech' | 'intent';
+  sponsor_id: string | null;
+  subject_kind: 'npc' | 'player';
   context_hash: string;
   context: DecisionContext;
   proposal: unknown;
@@ -68,10 +72,21 @@ const scopeSchema = z
       .regex(/^[\w-]+$/)
       .max(100),
     origin: z.enum(['user', 'system']),
-    purpose: z.enum(['plan', 'summary', 'speech']).optional(),
+    subjectKind: z.enum(['npc', 'player']).optional(),
+    purpose: z.enum(['plan', 'summary', 'speech', 'intent']).optional(),
     requesterUserId: z.uuid().optional(),
   })
   .strict();
+function publicRequestMeta(value: unknown) {
+  const v = (value && typeof value === 'object' ? value : {}) as Record<string, unknown>;
+  return {
+    quoteId: v.quoteId ?? null,
+    consent: v.consent ?? false,
+    requestKey: v.requestKey ?? '',
+    sponsorId: v.sponsorId ?? null,
+    runtimeRequestId: v.runtimeRequestId ?? null,
+  };
+}
 export class NpcAiEngine {
   readonly policy: AiPolicy;
   private inFlight = new Set<string>();
@@ -95,6 +110,30 @@ export class NpcAiEngine {
     )
       throw new Error('INVALID_AI_LIMITS');
   }
+  private get sponsorship() {
+    return new NpcSponsorship(this.db, this.provider, this.policy, (c, scope) =>
+      this.authorize(c, scope),
+    );
+  }
+  grantSponsor(campaignId: string, payerUserId: string, input: SponsorGrant) {
+    return this.sponsorship.grant(campaignId, payerUserId, input);
+  }
+  revokeSponsor(campaignId: string, payerUserId: string, sponsorId: string) {
+    return this.sponsorship.revoke(campaignId, payerUserId, sponsorId);
+  }
+  sponsors(campaignId: string, payerUserId: string) {
+    return this.sponsorship.list(campaignId, payerUserId);
+  }
+  activeSponsor(campaignId: string, purpose: AiScope['purpose'] = 'plan') {
+    return this.sponsorship.active(campaignId, purpose);
+  }
+  contextBudgetBytes() {
+    return Math.min(
+      this.policy.maxContextBytes,
+      this.provider.contextBudgetBytes?.(this.policy.providerUpperMicros) ??
+        this.policy.maxContextBytes,
+    );
+  }
   public configuration() {
     return {
       provider: this.provider.external ? 'external' : 'mock',
@@ -103,6 +142,12 @@ export class NpcAiEngine {
         this.provider.external && this.policy.externalApproved && !this.policy.killSwitch,
       demo: true,
       creditPrice: this.policy.creditPrice,
+      providerUpperMicros: this.policy.providerUpperMicros,
+      sponsorLimits: {
+        maxOperations: 1000,
+        maxExpiryHours: 24,
+        purposes: ['plan', 'summary', 'speech', 'intent'],
+      },
       policyVersion: this.policy.version,
       timeoutMs: this.policy.timeoutMs,
     };
@@ -119,6 +164,19 @@ export class NpcAiEngine {
       s.origin === 'user' ? [s.campaignId, s.requesterUserId] : [s.campaignId],
     );
     if (!r.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+    if ((s.purpose === 'intent') !== (s.subjectKind === 'player'))
+      fail(403, 'INVALID_AI_SUBJECT', 'INVALID_AI_SUBJECT');
+    if (
+      s.subjectKind === 'player' &&
+      (s.origin !== 'user' ||
+        !(
+          await c.query(
+            "SELECT 1 FROM game_members WHERE campaign_id=$1 AND user_id=$2 AND actor_id=$3 AND status='accepted'",
+            [s.campaignId, s.requesterUserId, s.npcId],
+          )
+        ).rowCount)
+    )
+      fail(403, 'FORBIDDEN', 'FORBIDDEN');
   }
   async quote(scope: AiScope, input: DecisionContext, requesterUserId: string) {
     const context = validateDecisionContext(input, this.policy.maxContextBytes);
@@ -166,6 +224,7 @@ export class NpcAiEngine {
     return {
       id: job.id,
       npcId: job.npc_id,
+      subjectKind: job.subject_kind,
       purpose: job.purpose,
       status: job.status,
       credits: job.credits,
@@ -181,6 +240,8 @@ export class NpcAiEngine {
     quoteId?: string,
     consent = false,
     requestKey = '',
+    sponsorId?: string,
+    runtimeRequestId?: string,
   ) {
     z.uuid().parse(operationId);
     return this.db.tx(async (c) => {
@@ -195,9 +256,17 @@ export class NpcAiEngine {
       if (
         j.npc_id !== scope.npcId ||
         j.origin !== scope.origin ||
+        j.subject_kind !== (scope.subjectKind ?? 'npc') ||
         j.requester_user_id !== (scope.requesterUserId ?? null) ||
         j.purpose !== (scope.purpose ?? 'plan') ||
-        digest(j.request_meta) !== digest({ quoteId: quoteId ?? null, consent, requestKey })
+        digest(publicRequestMeta(j.request_meta)) !==
+          digest({
+            quoteId: quoteId ?? null,
+            consent,
+            requestKey,
+            sponsorId: sponsorId ?? null,
+            runtimeRequestId: runtimeRequestId ?? null,
+          })
       )
         fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
       return this.dto(j);
@@ -216,6 +285,8 @@ export class NpcAiEngine {
       quoteId: input.quoteId ?? null,
       consent: input.consent ?? false,
       requestKey: input.requestKey ?? '',
+      sponsorId: input.sponsorId ?? null,
+      runtimeRequestId: input.runtimeRequestId ?? null,
     });
     return this.db.tx(async (c) => {
       await c.query(
@@ -226,6 +297,16 @@ export class NpcAiEngine {
       await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
         `npc-ai:${scope.campaignId}`,
       ]);
+      // Serialize consent/access checks against member/source invitation revocations before the request claim.
+      await c.query(
+        'SELECT user_id FROM game_members WHERE campaign_id=$1 ORDER BY user_id FOR SHARE',
+        [scope.campaignId],
+      );
+      await c.query(
+        'SELECT i.id FROM adventure_invitations i JOIN game_playable_versions v ON v.adventure_id=i.adventure_id JOIN game_campaigns gc ON gc.source_version_id=v.id WHERE gc.id=$1 ORDER BY i.id FOR SHARE OF i',
+        [scope.campaignId],
+      );
+      await this.authorize(c, scope);
       const previous = (
         await c.query<Job>('SELECT * FROM npc_ai_jobs WHERE campaign_id=$1 AND operation_id=$2', [
           scope.campaignId,
@@ -233,7 +314,18 @@ export class NpcAiEngine {
         ])
       ).rows[0];
       if (previous) {
-        if (previous.request_hash !== requestHash)
+        if (
+          previous.request_hash !== requestHash &&
+          !(
+            previous.npc_id === scope.npcId &&
+            previous.origin === scope.origin &&
+            previous.subject_kind === (scope.subjectKind ?? 'npc') &&
+            previous.requester_user_id === (scope.requesterUserId ?? null) &&
+            previous.purpose === (scope.purpose ?? 'plan') &&
+            digest(previous.context) === digest(context) &&
+            digest(publicRequestMeta(previous.request_meta)) === digest(publicRequestMeta(input))
+          )
+        )
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
         return this.dto(previous);
       }
@@ -249,7 +341,7 @@ export class NpcAiEngine {
       );
       if (count >= this.policy.maxQueuedPerCampaign) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
       let payer: string | null = null;
-      if (this.policy.creditPrice > 0) {
+      if (this.policy.creditPrice > 0 && !input.sponsorId) {
         if (!input.consent || !input.quoteId || !scope.requesterUserId)
           fail(403, 'CONSENT_REQUIRED', 'CONSENT_REQUIRED');
         const q = (
@@ -280,6 +372,36 @@ export class NpcAiEngine {
         [scope.campaignId, scope.npcId],
       );
       if (live.rowCount) fail(409, 'NPC_AI_BUSY', 'NPC_AI_BUSY');
+      if (input.runtimeRequestId) {
+        const request = (
+          await c.query('SELECT * FROM game_npc_decision_requests WHERE id=$1 FOR UPDATE', [
+            input.runtimeRequestId,
+          ])
+        ).rows[0];
+        if (
+          !request ||
+          request.status !== 'queued' ||
+          request.campaign_id !== scope.campaignId ||
+          request.npc_id !== scope.npcId ||
+          request.purpose !== (scope.purpose ?? 'plan') ||
+          request.context.contextHash !== context.contextHash
+        )
+          fail(409, 'RUNTIME_REQUEST_STALE', 'RUNTIME_REQUEST_STALE');
+      }
+      if (input.sponsorId) {
+        if (!(
+          (scope.origin === 'system' && !scope.requesterUserId && scope.subjectKind !== 'player') ||
+          (scope.origin === 'user' && scope.subjectKind === 'player' && scope.purpose === 'intent')
+        ))
+          fail(403, 'INVALID_SPONSOR_ORIGIN', 'INVALID_SPONSOR_ORIGIN');
+        payer = await this.sponsorship.validate(
+          c,
+          input.sponsorId,
+          scope.campaignId,
+          scope.purpose ?? 'plan',
+          true,
+        );
+      }
       if (payer) {
         const wallet = (
           await c.query('SELECT balance FROM wallets WHERE user_id=$1 FOR UPDATE', [payer])
@@ -315,8 +437,8 @@ export class NpcAiEngine {
         fail(409, 'PROVIDER_BUDGET_EXCEEDED', 'PROVIDER_BUDGET_EXCEEDED');
       const id = randomUUID();
       const r = await c.query<Job>(
-        `INSERT INTO npc_ai_jobs(id,campaign_id,npc_id,operation_id,request_hash,origin,requester_user_id,payer_user_id,purpose,context_hash,context,provider_id,provider_version,policy_version,status,credits,reservation_status,reservation_expires_at,provider_upper_micros,provider_budget_status,quote_id,request_meta)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'reserved',$15,$16,$17,$18,'reserved',$19,$20) RETURNING *`,
+        `INSERT INTO npc_ai_jobs(id,campaign_id,npc_id,operation_id,request_hash,origin,requester_user_id,payer_user_id,purpose,context_hash,context,provider_id,provider_version,policy_version,status,credits,reservation_status,reservation_expires_at,provider_upper_micros,provider_budget_status,quote_id,request_meta,sponsor_id,subject_kind)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'reserved',$15,$16,$17,$18,'reserved',$19,$20,$21,$22) RETURNING *`,
         [
           id,
           scope.campaignId,
@@ -336,14 +458,23 @@ export class NpcAiEngine {
           payer ? 'held' : 'none',
           new Date(Date.now() + this.policy.reservationMs),
           this.policy.providerUpperMicros,
-          payer ? input.quoteId : null,
+          payer && !input.sponsorId ? input.quoteId : null,
           JSON.stringify({
             quoteId: input.quoteId ?? null,
             consent: input.consent ?? false,
             requestKey: input.requestKey ?? '',
+            sponsorId: input.sponsorId ?? null,
+            runtimeRequestId: input.runtimeRequestId ?? null,
           }),
+          input.sponsorId ?? null,
+          scope.subjectKind ?? 'npc',
         ],
       );
+      if (input.runtimeRequestId)
+        await c.query(
+          "UPDATE game_npc_decision_requests SET status='scheduled',job_id=$2 WHERE id=$1",
+          [input.runtimeRequestId, id],
+        );
       await c.query(
         'UPDATE npc_ai_provider_budgets SET reserved_micros=reserved_micros+$2 WHERE provider_id=$1',
         [this.provider.id, this.policy.providerUpperMicros],
@@ -355,7 +486,7 @@ export class NpcAiEngine {
     return Boolean(
       (
         await this.db.query(
-          "SELECT 1 FROM npc_ai_jobs WHERE campaign_id=$1 AND status IN ('reserved','running','result_received','validated','reconciling') LIMIT 1",
+          "SELECT 1 FROM npc_ai_jobs WHERE campaign_id=$1 AND status IN ('reserved','running','result_received','validated') LIMIT 1",
           [campaignId],
         )
       ).length,
@@ -422,10 +553,14 @@ export class NpcAiEngine {
         return null;
       }
       try {
+        if (j.sponsor_id)
+          await this.sponsorship.validate(c, j.sponsor_id, j.campaign_id, j.purpose, false);
         await this.authorize(c, {
           campaignId: j.campaign_id,
           npcId: j.npc_id,
           origin: j.origin,
+          subjectKind: j.subject_kind,
+          purpose: j.purpose,
           requesterUserId: j.requester_user_id ?? undefined,
         });
       } catch {
@@ -506,6 +641,10 @@ export class NpcAiEngine {
           (!['running', 'reconciling'].includes(j.status) && j.provider_budget_status !== 'unknown')
         )
           return;
+        await c.query('UPDATE npc_ai_jobs SET provider_cost_evidence=$2 WHERE id=$1', [
+          id,
+          result.usage.costEvidence ?? 'reported',
+        ]);
         if (result.usage.costMicros > Number(j.provider_upper_micros)) {
           await this.settleProvider(c, j, null, true);
           await c.query(
@@ -534,6 +673,18 @@ export class NpcAiEngine {
           ],
         );
         if (['cancelled', 'stale', 'failed', 'committed'].includes(j.status)) return;
+        if (result.failureCode) {
+          if (result.failureCode === 'PROVIDER_LIMIT_VIOLATION')
+            await c.query('UPDATE npc_ai_provider_budgets SET blocked=true WHERE provider_id=$1', [
+              j.provider_id,
+            ]);
+          await this.finalize(c, id, 'stale');
+          await c.query('UPDATE npc_ai_jobs SET result_code=$2 WHERE id=$1', [
+            id,
+            result.failureCode,
+          ]);
+          return;
+        }
         if (
           j.cancel_requested ||
           j.reservation_expires_at.getTime() <= Date.now() ||
@@ -553,6 +704,11 @@ export class NpcAiEngine {
         const j = (await c.query<Job>('SELECT * FROM npc_ai_jobs WHERE id=$1 FOR UPDATE', [id]))
           .rows[0];
         if (!j || !['running', 'reconciling'].includes(j.status)) return;
+        if (error instanceof ProviderFailure && error.requestId)
+          await c.query('UPDATE npc_ai_jobs SET provider_request_id=$2 WHERE id=$1', [
+            id,
+            error.requestId,
+          ]);
         await this.settleProvider(c, j, uncertain ? null : 0, uncertain);
         await c.query(
           "UPDATE npc_ai_jobs SET status=$2,result_code=$3,reservation_status=CASE WHEN reservation_status='held' THEN 'released' ELSE reservation_status END,completed_at=now() WHERE id=$1",
@@ -597,6 +753,7 @@ export class NpcAiEngine {
       campaignId: j.campaign_id,
       npcId: j.npc_id,
       origin: j.origin,
+      subjectKind: j.subject_kind,
       requesterUserId: j.requester_user_id,
       purpose: j.purpose,
       contextHash: j.context_hash,
@@ -606,6 +763,24 @@ export class NpcAiEngine {
     }));
   }
   async finalize(c: PoolClient, id: string, status: 'committed' | 'stale' | 'cancelled') {
+    if (status === 'committed') {
+      const lookup = (await c.query('SELECT campaign_id FROM npc_ai_jobs WHERE id=$1', [id]))
+        .rows[0];
+      if (lookup) {
+        await c.query(
+          'SELECT a.id FROM game_campaigns gc JOIN game_playable_versions v ON v.id=gc.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE gc.id=$1 FOR SHARE OF a',
+          [lookup.campaign_id],
+        );
+        await c.query(
+          'SELECT user_id FROM game_members WHERE campaign_id=$1 ORDER BY user_id FOR SHARE',
+          [lookup.campaign_id],
+        );
+        await c.query(
+          'SELECT i.id FROM adventure_invitations i JOIN game_playable_versions v ON v.adventure_id=i.adventure_id JOIN game_campaigns gc ON gc.source_version_id=v.id WHERE gc.id=$1 ORDER BY i.id FOR SHARE OF i',
+          [lookup.campaign_id],
+        );
+      }
+    }
     const j = (await c.query<Job>('SELECT * FROM npc_ai_jobs WHERE id=$1 FOR UPDATE', [id]))
       .rows[0];
     if (!j) return;
@@ -629,10 +804,14 @@ export class NpcAiEngine {
         (j.reservation_status === 'released' && j.credits > 0)
       )
         fail(409, 'STALE_AI_RESULT', 'STALE_AI_RESULT');
+      if (j.sponsor_id)
+        await this.sponsorship.validate(c, j.sponsor_id, j.campaign_id, j.purpose, false);
       await this.authorize(c, {
         campaignId: j.campaign_id,
         npcId: j.npc_id,
         origin: j.origin,
+        subjectKind: j.subject_kind,
+        purpose: j.purpose,
         requesterUserId: j.requester_user_id ?? undefined,
       });
       if (j.credits > 0) {
@@ -727,7 +906,23 @@ export class NpcAiEngine {
         latency,
         memory: { ...memory, ...archive, campaign_sample_limit: 1000 },
         statementTimeoutMs: 2000,
+        npcTelemetry: npcTelemetrySnapshot(),
       };
+    });
+  }
+  /** Fixed bounded terminal-context retention; financial evidence and unknown exposure are never deleted here. */
+  async pruneContexts() {
+    return this.db.tx(async (c) => {
+      await c.query("SET LOCAL statement_timeout='2000ms'");
+      const result = await c.query(`WITH expired AS (
+        SELECT id FROM npc_ai_jobs WHERE status IN ('committed','stale','cancelled','failed','reconciling')
+        AND COALESCE(completed_at,created_at)<now()-interval '7 days' AND (context<>'{}'::jsonb OR proposal IS NOT NULL)
+        ORDER BY COALESCE(completed_at,created_at),id FOR UPDATE SKIP LOCKED LIMIT 1000
+      ) UPDATE npc_ai_jobs j SET context='{}',proposal=NULL,context_hash='retention-expired' FROM expired e WHERE j.id=e.id`);
+      await c.query(
+        'DELETE FROM npc_ai_cache WHERE cache_key IN (SELECT cache_key FROM npc_ai_cache WHERE expires_at<=now() LIMIT 1000)',
+      );
+      return { removedContexts: result.rowCount ?? 0, retentionDays: 7 };
     });
   }
   async cancel(id: string) {
@@ -735,6 +930,10 @@ export class NpcAiEngine {
   }
   async sweep(campaignId: string) {
     await this.db.tx(async (c) => {
+      await c.query(
+        "UPDATE npc_ai_jobs j SET cancel_requested=true,result_code='SPONSOR_UNAVAILABLE' FROM npc_ai_sponsors s WHERE j.sponsor_id=s.id AND j.campaign_id=$1 AND (s.revoked_at IS NOT NULL OR s.expires_at<=now()) AND j.status NOT IN ('committed','stale','cancelled','failed')",
+        [campaignId],
+      );
       const jobs = (
         await c.query<Job>(
           "SELECT * FROM npc_ai_jobs WHERE campaign_id=$1 AND status IN ('reserved','running','result_received','validated') AND (cancel_requested OR reservation_expires_at<=now() OR (status='running' AND deadline_at<=now())) FOR UPDATE",
@@ -806,6 +1005,7 @@ export class NpcAiEngine {
 export class NpcAiService extends NpcAiEngine implements OnModuleInit, OnModuleDestroy {
   private maintenance?: ReturnType<typeof setInterval>;
   private maintaining = false;
+  private lastRetentionAt = 0;
   onModuleInit() {
     this.maintenance = setInterval(() => {
       void this.maintain();
@@ -823,9 +1023,13 @@ export class NpcAiService extends NpcAiEngine implements OnModuleInit, OnModuleD
         campaign_id: string;
       }>(`SELECT DISTINCT campaign_id FROM npc_ai_jobs
         WHERE status IN ('reserved','running','result_received','validated') AND
-        (cancel_requested OR reservation_expires_at<=now() OR (status='running' AND deadline_at<=now()))
+        (cancel_requested OR reservation_expires_at<=now() OR (status='running' AND deadline_at<=now()) OR sponsor_id IN (SELECT id FROM npc_ai_sponsors WHERE revoked_at IS NOT NULL OR expires_at<=now()))
         LIMIT 100`);
       for (const row of rows) await this.sweep(row.campaign_id);
+      if (Date.now() - this.lastRetentionAt >= 60000) {
+        await this.pruneContexts();
+        this.lastRetentionAt = Date.now();
+      }
       await this.db.query(`DELETE FROM npc_ai_quotes q WHERE id IN
         (SELECT id FROM npc_ai_quotes q2 WHERE expires_at<now()-interval '1 hour'
          AND NOT EXISTS (SELECT 1 FROM npc_ai_jobs j WHERE j.quote_id=q2.id) LIMIT 1000)`);

@@ -46,6 +46,8 @@ jobs:
       - run: npm run test:unit
       - name: Game rules, UI projection and autosave controller tests
         run: npm run test:game
+      - name: Deterministic NPC behavior rubric and bounded local benchmark
+        run: npm run test:npc:eval
       - run: npm run build
         env:
           NODE_ENV: production

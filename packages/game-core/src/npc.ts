@@ -1,4 +1,6 @@
-import { recordLivingNpcEvents } from './living';
+import { reviseNpcBelief } from './living-reasoning';
+import { npcActionAllowed } from './living-policy';
+import { recordLivingNpcEvents, communicateNpcObservations } from './living';
 import {
   npcPlanProposalSchema,
   type GameAction,
@@ -69,10 +71,15 @@ export function acceptNpcPlan(state: GameState, id: string, input: unknown): Gam
   )
     return { ...result(state), error: 'STALE_STATE' };
   for (const a of p.actions) {
+    if (a.kind === 'communicate') {
+      const checked = communicateNpcObservations(state, id, a);
+      if (checked.error) return { ...result(state), error: checked.error };
+    }
+    if (!npcActionAllowed(state, id, a)) return { ...result(state), error: 'FORBIDDEN' };
     if (
       !(
         state.rulesetVersion === 'hybrid-v3'
-          ? ['move_to', 'wait', 'inspect', 'give', 'open', 'close', 'lock', 'unlock']
+          ? ['move_to', 'wait', 'inspect', 'give', 'open', 'close', 'lock', 'unlock', 'communicate']
           : ['move_to', 'wait', 'inspect', 'give']
       ).includes(a.kind)
     )
@@ -87,7 +94,17 @@ export function acceptNpcPlan(state: GameState, id: string, input: unknown): Gam
     if (a.itemId && state.entities[a.itemId]?.ownerId !== id)
       return { ...result(state), error: 'FORBIDDEN' };
   }
-  const s = structuredClone(state),
+  let revised = state;
+  if (p.beliefRevisions?.length) {
+    if (p.knowledgeRevision !== brain.living?.knowledgeRevision)
+      return { ...result(state), error: 'STALE_STATE' };
+    for (const update of p.beliefRevisions) {
+      const r = reviseNpcBelief(revised, id, update);
+      if (r.error) return { ...result(state), error: r.error };
+      revised = r.state;
+    }
+  }
+  const s = structuredClone(revised),
     b = s.npcBrains![id];
   b.plan = structuredClone(p.actions);
   b.cursor = 0;
@@ -121,6 +138,7 @@ export function stepNpcPlan(state: GameState, id: string): GameResult {
   )
     return abort('STALE_STATE');
   const action = brain.plan[brain.cursor];
+  if (!npcActionAllowed(state, id, action)) return abort('STALE_STATE');
   if (brain.waitingForPath) {
     if (npc.path?.length) return result(state);
     if (

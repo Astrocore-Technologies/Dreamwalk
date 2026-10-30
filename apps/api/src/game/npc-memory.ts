@@ -1,6 +1,7 @@
 import type { PoolClient } from 'pg';
 import type { GameState, NpcObservation } from '@dreamwalk/contracts';
 import type { Db } from '../db';
+import { recordNpcMetric } from './npc-telemetry';
 /** Same transaction as the authoritative checkpoint. No global event reconstruction. */
 export async function archiveNpcEpisodes(c: PoolClient, campaignId: string, state: GameState) {
   const rows = Object.entries(state.npcBrains ?? {}).flatMap(([npcId, b]) =>
@@ -21,9 +22,14 @@ export async function recallNpcEpisodes(
   state: GameState,
   npcId: string,
 ): Promise<NpcObservation[]> {
+  const started = performance.now();
   const m = state.npcBrains?.[npcId]?.living;
   if (!m) return [];
+  const emotionalSubjects = Object.entries(m.relationships)
+    .filter(([, r]) => Math.abs(r.trust) + r.alertness + Math.abs(r.debt) >= 2)
+    .map(([id]) => id);
   const subjects = [
+    ...emotionalSubjects,
     m.goal.targetId,
     ...m.obligations.filter((o) => o.status === 'accepted').flatMap((o) => [o.toActorId, o.itemId]),
     ...m.observations.slice(-8).flatMap((o) => [o.actorId, o.targetId]),
@@ -38,8 +44,25 @@ export async function recallNpcEpisodes(
     WHERE campaign_id=$1 AND npc_id=$2 AND NOT(observation_id=ANY($3::text[]))
     AND (actor_id=ANY($4::text[]) OR target_id=ANY($4::text[])) ORDER BY observed_tick DESC,observation_id LIMIT 128),
     candidates AS (SELECT * FROM recent UNION SELECT * FROM relevant)
-    SELECT payload FROM candidates ORDER BY (actor_id=ANY($4::text[]) OR target_id=ANY($4::text[])) DESC NULLS LAST,observed_tick DESC,observation_id LIMIT 16`,
-    [campaignId, npcId, m.observations.map((o) => o.id), subjects],
+    SELECT payload,count(*) OVER() AS candidate_count FROM candidates ORDER BY
+    (CASE WHEN actor_id=ANY($4::text[]) OR target_id=ANY($4::text[]) THEN 4 ELSE 0 END
+    +CASE payload->>'kind' WHEN 'item_taken' THEN 3 WHEN 'item_missing' THEN 3 WHEN 'helped' THEN 3 WHEN 'authored_fact' THEN 2 WHEN 'claim' THEN 1 ELSE 0 END
+    +CASE WHEN actor_id=ANY($5::text[]) THEN 2 ELSE 0 END
+    +CASE WHEN $6='alarmed' AND payload->>'kind' IN ('item_taken','item_missing','noise') THEN 3 WHEN $6='grateful' AND payload->>'kind'='helped' THEN 3 ELSE 0 END
+    +CASE WHEN payload->>'confidence'='witnessed' THEN 1 ELSE 0 END) DESC,
+    observed_tick DESC,observation_id LIMIT 16`,
+    [
+      campaignId,
+      npcId,
+      m.observations.map((o) => o.id),
+      subjects,
+      emotionalSubjects,
+      m.affect?.mood ?? 'calm',
+    ],
   );
+  recordNpcMetric('retrievalCalls');
+  recordNpcMetric('retrievalSelected', rows.length);
+  recordNpcMetric('retrievalCandidates', Number(rows[0]?.candidate_count ?? 0));
+  recordNpcMetric('retrievalDurationMs', performance.now() - started);
   return rows.map((r) => r.payload as NpcObservation);
 }

@@ -220,3 +220,66 @@ test('retained operation replay removes erased speech even when speaker identity
     },
   );
 });
+
+test('erasure strips original promise speech but preserves another recipient commitment', () => {
+  const state = fixture();
+  const promise = state.npcBrains.keeper.living.obligations[1];
+  promise.sourceUtteranceId = 'u1';
+  promise.sourceUtterance = 'PERSONAL_REQUEST_WITHOUT_IDENTIFIER';
+  promise.evidenceIds = ['seen'];
+  const cleaned = purgeLivingNpcReferences(state, 'erased-player');
+  const retained = cleaned.npcBrains.keeper.living.obligations.find((p) => p.id === promise.id);
+  assert.equal(retained.status, 'accepted');
+  assert.equal(retained.toActorId, 'other');
+  assert.equal(retained.sourceUtterance, undefined);
+  assert.equal(retained.sourceUtteranceId, undefined);
+  assert.deepEqual(retained.evidenceIds, []);
+  assert.ok(!JSON.stringify(cleaned).includes('PERSONAL_REQUEST_WITHOUT_IDENTIFIER'));
+});
+
+test('text-free compacted provenance still erases derived reply roots', () => {
+  const state = {
+    npcProvenance: {
+      observations: [
+        { id: 'old-input', rootId: 'input-root', eventId: 'event-input', actorId: 'erased-player' },
+      ],
+      utterances: [{ id: 'old-reply', speakerId: 'keeper', sourceObservationIds: ['old-input'] }],
+    },
+    npcBrains: {
+      helper: {
+        living: {
+          observations: [
+            {
+              id: 'retelling',
+              rootId: 'old-reply',
+              eventId: 'later',
+              actorId: 'keeper',
+              audienceIds: ['other'],
+            },
+          ],
+          beliefs: [],
+          relationships: {},
+          obligations: [],
+          causes: [],
+          goal: { kind: 'patrol' },
+          knowledgeRevision: 1,
+        },
+        plan: [],
+      },
+    },
+    npcUtterances: [
+      {
+        id: 'next-reply',
+        speakerId: 'helper',
+        sourceObservationIds: ['retelling'],
+        text: 'paraphrase',
+        audienceIds: ['other'],
+      },
+    ],
+  };
+  const cleaned = purgeLivingNpcReferences(state, 'erased-player');
+  assert.deepEqual(cleaned.npcProvenance.observations, []);
+  assert.deepEqual(cleaned.npcProvenance.utterances, []);
+  assert.deepEqual(cleaned.npcBrains.helper.living.observations, []);
+  assert.deepEqual(cleaned.npcUtterances, []);
+});

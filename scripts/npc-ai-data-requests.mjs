@@ -8,6 +8,14 @@ export async function exportNpcAiData(client, userId) {
     )
   ).rows;
 }
+export async function exportNpcAiSponsors(client, userId) {
+  return (
+    await client.query(
+      'SELECT id,campaign_id,total_credits,per_operation_credits,max_operations,total_provider_micros,per_operation_provider_micros,purposes,expires_at,revoked_at,created_at FROM npc_ai_sponsors WHERE payer_user_id=$1 ORDER BY created_at',
+      [userId],
+    )
+  ).rows;
+}
 export async function purgeNpcAiData(client, userId, campaigns) {
   const ids = campaigns.map((c) => c.id);
   const jobs = (
@@ -38,6 +46,10 @@ export async function purgeNpcAiData(client, userId, campaigns) {
       [j.id, dispatched ? 'unknown' : 'released', userId],
     );
   }
+  await client.query(
+    "UPDATE npc_ai_sponsors SET revoked_at=COALESCE(revoked_at,now()),payer_user_id=CASE WHEN payer_user_id=$2 THEN NULL ELSE payer_user_id END,request_hash=CASE WHEN payer_user_id=$2 THEN 'erased' ELSE request_hash END WHERE campaign_id=ANY($1::uuid[]) OR payer_user_id=$2",
+    [affectedIds, userId],
+  );
   await client.query('DELETE FROM npc_ai_cache WHERE campaign_id=ANY($1::uuid[])', [affectedIds]);
   await client.query(
     'DELETE FROM npc_ai_quotes q WHERE (campaign_id=ANY($1::uuid[]) OR user_id=$2) AND NOT EXISTS (SELECT 1 FROM npc_ai_jobs j WHERE j.quote_id=q.id)',

@@ -83,7 +83,43 @@ export class PlayableService {
       fail(409, 'STALE_STATE', 'STALE_STATE');
     const compiled = compilePlayableDraft(row.draft);
     if (!compiled.playable) fail(400, 'INVALID_MAP', compiled.errors.join(';'));
-    let state = createStateFromPlayable(compiled.playable!, ['preview-player'], 1);
+    return { ...this.simulateNpc(compiled.playable!, input), sourceRevision: Number(row.revision) };
+  }
+  async reviewNpc(req: Request, id: string, body: unknown) {
+    const user = await this.auth.require(req);
+    if (user.role !== 'admin') fail(404, 'NOT_FOUND', 'NOT_FOUND');
+    const input = z
+      .object({
+        versionId: z.uuid(),
+        npcId: z
+          .string()
+          .regex(/^[\w-]+$/)
+          .max(100),
+        ticks: z.number().int().min(0).max(120).default(20),
+        actions: z.array(gameActionSchema).max(8).default([]),
+      })
+      .strict()
+      .parse(body);
+    const row = (
+      await this.db.query(
+        "SELECT v.* FROM adventures a JOIN game_playable_versions v ON v.id=a.submitted_game_version_id AND v.adventure_id=a.id WHERE a.id=$1 AND v.id=$2 AND a.status='pending_review' AND a.visibility='public' AND v.audience='review'",
+        [id, input.versionId],
+      )
+    )[0];
+    if (!row) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+    if (hash(row.package) !== row.checksum) fail(503, 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED');
+    return {
+      ...this.simulateNpc(row.package.compiled as PlayablePackage, input),
+      versionId: row.id,
+      sourceRevision: Number(row.source_revision),
+      review: true,
+    };
+  }
+  private simulateNpc(
+    playable: PlayablePackage,
+    input: { npcId: string; ticks: number; actions: z.infer<typeof gameActionSchema>[] },
+  ) {
+    let state = createStateFromPlayable(playable, ['preview-player'], 1);
     if (!state.npcBrains || !Object.hasOwn(state.npcBrains, input.npcId))
       fail(404, 'NOT_FOUND', 'NOT_FOUND');
     const outcomes: { status: string; code?: string }[] = [];
@@ -136,7 +172,6 @@ export class PlayableService {
     }
     return {
       sandbox: true,
-      sourceRevision: Number(row.revision),
       npcId: input.npcId,
       tick: state.tick,
       rulesetVersion: state.rulesetVersion,
@@ -372,6 +407,9 @@ export class PlayableService {
           npcId,
           personality: brain.living?.personality ?? null,
           initialKnowledge: brain.living?.observations.filter((o) => o.tick === 0) ?? [],
+          initialFacts: brain.living?.observations.filter((o) => o.kind === 'authored_fact') ?? [],
+          initialGoals: brain.living?.goalDefinitions ?? [],
+          promiseTemplates: brain.living?.promiseTemplates ?? [],
           initialGoal: brain.living?.goal.kind ?? brain.goal,
           patrolTarget: brain.patrolTarget,
         })),

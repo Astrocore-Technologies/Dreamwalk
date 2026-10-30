@@ -159,6 +159,16 @@ await test(
           const twice = await stored(id2);
           assert.equal(twice.npcUtterances.filter((u) => u.text === text).length, 1);
           assert.ok(!JSON.stringify(await snapshot(guest, id2)).includes('PRIVATE_SPEECH'));
+          // Ordinary dialogue now automatically schedules its reply. Manual rendering tests
+          // deliberately wait for that legitimate job rather than race the one-job-per-NPC guard.
+          await until(
+            () =>
+              db.query(
+                "SELECT count(*) FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id WHERE r.campaign_id=$1 AND (r.status='queued' OR j.status IN ('reserved','running','result_received','validated'))",
+                [id2],
+              ),
+            (r) => Number(r.rows[0].count) === 0,
+          );
           const privateReply = await owner.request(path(id2, 'ai/jobs'), {
             npcId: 'gardener',
             purpose: 'speech',
@@ -348,6 +358,17 @@ await test(
               speech: { channel: 'whisper', text: `COLD_EPISODE_${i}` },
             });
             assert.equal(response.status, 'committed');
+            // Each ordinary utterance now has a bounded automatic response request.
+            // Drain batches rather than bypass the real queue admission limit.
+            if (i % 8 === 7 || i === 139)
+              await until(
+                () =>
+                  db.query(
+                    "SELECT count(*) FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id WHERE r.campaign_id=$1 AND (r.status='queued' OR j.status IN ('reserved','running','result_received','validated'))",
+                    [cid],
+                  ),
+                (r) => Number(r.rows[0].count) === 0,
+              );
           }
           const state = await stored(cid),
             hot = state.npcBrains.gardener.living.observations;

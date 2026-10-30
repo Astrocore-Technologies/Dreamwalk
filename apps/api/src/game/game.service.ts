@@ -1,4 +1,6 @@
 import { semanticGameProjection } from './projection-clock';
+import { pruneNpcMemory } from './npc-retention';
+import { recordNpcMetric } from './npc-telemetry';
 import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import type { Request } from 'express';
@@ -35,15 +37,25 @@ import {
   projectGameEvents,
   buildNpcDecisionContext,
   createNpcMemorySummary,
+  createNpcMemorySummarySelection,
   acceptNpcMemorySummary,
   buildNpcPublicSpeechContext,
   commitNpcPublicUtterance,
   canNpcHear,
   npcContextFingerprint,
   recordNpcEvents,
+  respondNpcObligation,
+  resolveNpcFactTopic,
+  createMockNpcPublicResponse,
+  proposePlayerTextIntent,
+  proposePlayerActionIntent,
+  confirmPlayerTextIntent,
 } from '@dreamwalk/game-core';
 import { Db } from '../db';
 import { NpcAiService } from '../ai/npc-ai.service';
+import { packNpcContext } from './npc-context-budget';
+import type { ReadyDecision, AiPurpose } from '../ai/types';
+import { insertNpcRequest, type NpcDecisionRequest } from './npc-requests';
 import { archiveNpcEpisodes, recallNpcEpisodes } from './npc-memory';
 import { Auth } from '../auth';
 import { fail } from '../errors';
@@ -66,6 +78,8 @@ export const commandSchema = z
       'encounter.end',
       'npc.request',
       'npc.speech',
+      'npc.promise',
+      'intent.confirm',
     ]),
     encounterId: z
       .string()
@@ -74,6 +88,14 @@ export const commandSchema = z
       .optional(),
     action: gameActionSchema.optional(),
     speech: npcSpeechSchema.optional(),
+    topicId: z
+      .string()
+      .regex(/^[\w-]+$/)
+      .max(100)
+      .optional(),
+    proposalId: z.uuid().optional(),
+    promiseId: z.string().min(1).max(200).optional(),
+    decision: z.enum(['accept', 'decline']).optional(),
     intent: gameIntentSchema.optional(),
     expectedRevision: z.number().int().nonnegative().optional(),
   })
@@ -97,6 +119,9 @@ type Live = {
   actorEpochs: Record<string, number>;
   npcPending: boolean;
   aiPending: boolean;
+  decisionsPending: boolean;
+  deferredNpcIds: string[];
+  lastRetentionTick: number;
   paused: boolean;
   clock: RuntimeClock;
   presence: Map<string, number>;
@@ -242,6 +267,16 @@ export class GameService implements OnModuleDestroy {
       actorEpochs: {},
       npcPending: pendingJobs.length > 0,
       aiPending: await this.ai.pending(id),
+      deferredNpcIds: [],
+      lastRetentionTick: -100,
+      decisionsPending: Boolean(
+        (
+          await this.db.query(
+            "SELECT 1 FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' LIMIT 1",
+            [id],
+          )
+        ).length,
+      ),
       campaign: {
         title: row.game_title ?? null,
         playableVersionId: row.source_version_id ?? null,
@@ -270,10 +305,240 @@ export class GameService implements OnModuleDestroy {
     // Never project a cached pre-erasure checkpoint after observing a newer durable revision.
     const cached = this.live.get(id);
     if (cached && Number(rows[0].revision) > cached.dbRevision) this.live.delete(id);
+    return { user, actorId: String(rows[0].actor_id), ownerId: String(rows[0].owner_id) };
+  }
+  /** Out-of-character party communication is never copied into NPC state or provider contexts. */
+  async chat(req: Request, id: string, body?: unknown) {
+    const a = await this.access(req, id);
+    if (body !== undefined) {
+      const input = z
+        .object({ operationId: z.uuid(), text: z.string().trim().min(1).max(1000) })
+        .strict()
+        .parse(body);
+      await this.db.tx(async (c) => {
+        await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+          `party-chat:${id}:${a.user.id}`,
+        ]);
+        const allowed = await c.query(
+          `SELECT c.id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id WHERE c.id=$1 AND m.user_id=$2 AND m.status='accepted' AND c.status='active' AND ${sourceAccessSql('$2')}`,
+          [id, a.user.id],
+        );
+        if (!allowed.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+        const previous = (
+          await c.query(
+            'SELECT text FROM game_party_chat WHERE campaign_id=$1 AND sender_user_id=$2 AND operation_id=$3',
+            [id, a.user.id, input.operationId],
+          )
+        ).rows[0];
+        if (previous) {
+          if (previous.text !== input.text)
+            fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+          return;
+        }
+        const count = Number(
+          (
+            await c.query(
+              "SELECT count(*) FROM game_party_chat WHERE campaign_id=$1 AND sender_user_id=$2 AND created_at>now()-interval '1 minute'",
+              [id, a.user.id],
+            )
+          ).rows[0].count,
+        );
+        if (count >= 30) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+        await c.query(
+          'INSERT INTO game_party_chat(id,campaign_id,sender_user_id,sender_actor_id,operation_id,text) VALUES($1,$2,$3,$4,$5,$6)',
+          [randomUUID(), id, a.user.id, a.actorId, input.operationId, input.text],
+        );
+      });
+    }
+    const rows = await this.db.query(
+      'SELECT id,sender_actor_id AS "senderActorId",text,created_at AS "createdAt" FROM game_party_chat WHERE campaign_id=$1 ORDER BY created_at DESC,id DESC LIMIT 100',
+      [id],
+    );
+    return { channel: 'out-of-character', messages: rows.reverse() };
+  }
+  private intentContext(state: GameState, actorId: string, text: string, proposalId: string) {
+    const p = projectState(state, actorId),
+      actor = state.entities[actorId];
+    const context = {
+      intentProposalId: proposalId,
+      actorId,
+      text,
+      mapId: actor.mapId,
+      actorRevision: actor.revision,
+      visibleEntities: p.entities.map((e) => ({
+        id: e.id,
+        kind: e.kind,
+        label: e.label,
+        mapId: e.mapId,
+        x: e.x,
+        y: e.y,
+        revision: e.revision,
+      })),
+      ownInventory: (actor.inventory ?? []).map((id) => ({
+        id,
+        label: state.entities[id]?.label,
+        revision: state.entities[id]?.revision,
+      })),
+      allowedActions: ['open', 'close', 'inspect', 'pick_up', 'knock', 'wait', 'give'],
+    };
+    return packNpcContext(context, this.ai.contextBudgetBytes());
+  }
+  private intentDto(row: Record<string, unknown>, tick: number) {
+    const p = row.proposal as ReturnType<typeof proposePlayerTextIntent>;
     return {
-      user,
-      actorId: String(rows[0].actor_id),
-      ownerId: String(rows[0].owner_id),
+      id: row.id,
+      status: row.status,
+      action: p?.action,
+      code: row.result_code ?? undefined,
+      cost: 0,
+      generationCost:
+        row.generation_credits == null
+          ? row.decision_status === 'fallback'
+            ? 0
+            : null
+          : row.job_status === 'committed'
+            ? Number(row.generation_credits)
+            : ['stale', 'cancelled', 'failed'].includes(String(row.job_status))
+              ? 0
+              : null,
+      funding: row.sponsored
+        ? 'session-budget'
+        : row.generation_credits == null
+          ? row.decision_status === 'fallback'
+            ? 'free'
+            : null
+          : Number(row.generation_credits) === 0
+            ? 'free'
+            : 'personal',
+      expiresAt: new Date(
+        Date.now() + Math.max(0, Number(row.valid_until_tick) - tick) * 50,
+      ).toISOString(),
+    };
+  }
+  private async reconcileIntents(id: string, tick: number) {
+    await this.db.tx(async (c) => {
+      await c.query(
+        `UPDATE game_npc_decision_requests r SET status='cancelled',context='{}',result_code='INTENT_EXPIRED' FROM game_player_intent_proposals p WHERE p.decision_request_id=r.id AND p.campaign_id=$1 AND p.status IN ('pending','proposed') AND p.valid_until_tick<$2 AND r.status IN ('queued','scheduled')`,
+        [id, tick],
+      );
+      await c.query(
+        `UPDATE game_player_intent_proposals p SET status='cancelled',proposal=NULL,result_code=CASE WHEN p.valid_until_tick<$2 THEN 'INTENT_EXPIRED' ELSE 'DECISION_UNAVAILABLE' END FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id WHERE p.decision_request_id=r.id AND p.campaign_id=$1 AND p.status IN ('pending','proposed') AND (p.valid_until_tick<$2 OR r.status IN ('cancelled','failed') OR (p.status='pending' AND j.status IN ('stale','cancelled','failed')))`,
+        [id, tick],
+      );
+    });
+  }
+  async intents(req: Request, id: string, body?: unknown) {
+    return this.serial(id, async () => {
+      const a = await this.access(req, id),
+        live = await this.load(id);
+      await this.touch(id, live, a.actorId);
+      await this.reconcileIntents(id, live.state.tick);
+      if (body !== undefined) {
+        const input = z
+            .object({ operationId: z.uuid(), text: z.string().trim().min(1).max(1000) })
+            .strict()
+            .parse(body),
+          hash = digest(input);
+        const prior = (
+          await this.db.query(
+            'SELECT * FROM game_player_intent_proposals WHERE campaign_id=$1 AND requester_user_id=$2 AND operation_id=$3',
+            [id, a.user.id, input.operationId],
+          )
+        )[0];
+        if (prior) {
+          if (prior.request_hash !== hash)
+            fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+          return this.intentDto(prior, live.state.tick);
+        }
+        const count = Number(
+          (
+            await this.db.query(
+              "SELECT count(*) FROM game_player_intent_proposals WHERE campaign_id=$1 AND requester_user_id=$2 AND status='pending'",
+              [id, a.user.id],
+            )
+          )[0].count,
+        );
+        if (count >= 4) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+        const proposalId = randomUUID(),
+          requestId = randomUUID(),
+          context = this.intentContext(live.state, a.actorId, input.text, proposalId),
+          parsed = proposePlayerTextIntent(live.state, a.actorId, input.text);
+        const decision: NpcDecisionRequest = {
+          id: requestId,
+          npcId: a.actorId,
+          purpose: 'intent',
+          causeKey: `intent:${a.actorId}:${input.operationId}`,
+          requesterUserId: a.user.id,
+          recipientActorId: a.actorId,
+          context: {
+            ...context,
+            mockProposal: parsed
+              ? { kind: 'action', action: parsed.action }
+              : { kind: 'clarify', messageCode: 'AMBIGUOUS' },
+          },
+        };
+        const until = live.state.tick + 1200;
+        await this.persist(
+          id,
+          live,
+          live.state,
+          'player.intent.requested',
+          undefined,
+          async (c) => {
+            await insertNpcRequest(c, id, decision);
+            await c.query(
+              'INSERT INTO game_player_intent_proposals(id,campaign_id,actor_id,requester_user_id,operation_id,request_hash,text,decision_request_id,valid_until_tick) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+              [
+                proposalId,
+                id,
+                a.actorId,
+                a.user.id,
+                input.operationId,
+                hash,
+                input.text,
+                requestId,
+                until,
+              ],
+            );
+          },
+        );
+        live.decisionsPending = true;
+        return this.intentDto(
+          { id: proposalId, status: 'pending', valid_until_tick: until },
+          live.state.tick,
+        );
+      }
+      const rows = await this.db.query(
+        `SELECT p.*,r.status AS decision_status,j.credits AS generation_credits,j.status AS job_status,(j.sponsor_id IS NOT NULL) AS sponsored FROM game_player_intent_proposals p LEFT JOIN game_npc_decision_requests r ON r.id=p.decision_request_id LEFT JOIN npc_ai_jobs j ON j.id=r.job_id WHERE p.campaign_id=$1 AND p.requester_user_id=$2 ORDER BY p.created_at DESC LIMIT 20`,
+        [id, a.user.id],
+      );
+      return { proposals: rows.map((r) => this.intentDto(r, live.state.tick)) };
+    });
+  }
+  async confirmIntent(req: Request, id: string, proposalId: string, body: unknown) {
+    const b = z.object({ operationId: z.uuid() }).strict().parse(body);
+    z.uuid().parse(proposalId);
+    return this.command(req, id, {
+      protocolVersion: 1,
+      operationId: b.operationId,
+      type: 'intent.confirm',
+      proposalId,
+    });
+  }
+  async sponsors(req: Request, id: string, body?: unknown, sponsorId?: string) {
+    const a = await this.access(req, id);
+    if (sponsorId) {
+      z.uuid().parse(sponsorId);
+      await this.ai.revokeSponsor(id, a.user.id, sponsorId);
+    } else if (body !== undefined)
+      await this.ai.grantSponsor(
+        id,
+        a.user.id,
+        body as Parameters<NpcAiService['grantSponsor']>[2],
+      );
+    return {
+      sponsors: await this.ai.sponsors(id, a.user.id),
+      configuration: this.ai.configuration(),
     };
   }
   /** Player-facing metadata only; decision contexts remain server-private. */
@@ -349,11 +614,12 @@ export class GameService implements OnModuleDestroy {
         ...base,
         mockProposal:
           input.purpose === 'speech'
-            ? { code: 'acknowledged' as const }
+            ? createMockNpcPublicResponse(base as ReturnType<typeof buildNpcPublicSpeechContext>)
             : input.purpose === 'summary'
               ? createNpcMemorySummary(live.state, input.npcId)
               : createMockNpcPlan(live.state, input.npcId),
       };
+      if (context.budgetExceeded) fail(413, 'CONTEXT_BUDGET_EXCEEDED', 'CONTEXT_BUDGET_EXCEEDED');
       if (quote) return this.ai.quote(scope, context, a.user.id);
       if (!input.operationId) fail(400, 'INVALID_ACTION', 'INVALID_ACTION');
       const result = await this.ai.queue({
@@ -372,13 +638,9 @@ export class GameService implements OnModuleDestroy {
   }
   private async decisionContext(id: string, state: GameState, npcId: string, purpose: string) {
     const base = buildNpcDecisionContext(state, npcId);
-    if (purpose !== 'plan') return base;
+    if (purpose !== 'plan') return packNpcContext(base, this.ai.contextBudgetBytes());
     const archivedEpisodes = await recallNpcEpisodes(this.db, id, state, npcId);
-    return {
-      ...base,
-      archivedEpisodes,
-      contextHash: digest({ base, archivedEpisodes }),
-    };
+    return packNpcContext({ ...base, archivedEpisodes }, this.ai.contextBudgetBytes());
   }
   private speechContext(
     state: GameState,
@@ -406,18 +668,27 @@ export class GameService implements OnModuleDestroy {
             .filter((e) => ['npc', 'player'].includes(e.kind) && canNpcHear(state, e, npc))
             .map((e) => e.id)
             .sort();
-    if (topicId && !projectState(state, recipientId).entities.some((e) => e.id === topicId))
+    const namedTopic = topicId ? resolveNpcFactTopic(state, npcId, topicId) : [];
+    if (
+      topicId &&
+      !namedTopic.length &&
+      !projectState(state, recipientId).entities.some((e) => e.id === topicId)
+    )
       fail(404, 'NOT_FOUND', 'NOT_FOUND');
     const memory = state.npcBrains![npcId].living!;
     // Ask permissions derive from an authenticated visible topic, never proposed secret IDs.
-    const requestedFactIds = topicId
-      ? memory.observations
-          .filter(
-            (o) =>
-              o.targetId === topicId && o.kind === 'known_entity' && o.revealCondition === 'asked',
-          )
-          .map((o) => o.id)
-      : [];
+    const requestedFactIds = namedTopic.length
+      ? namedTopic
+      : topicId
+        ? memory.observations
+            .filter(
+              (o) =>
+                o.targetId === topicId &&
+                o.kind === 'known_entity' &&
+                o.revealCondition === 'asked',
+            )
+            .map((o) => o.id)
+        : [];
     const observations =
       selected ??
       [...new Set([...requestedFactIds, ...memory.observations.slice(-16).map((o) => o.id)])].slice(
@@ -441,7 +712,7 @@ export class GameService implements OnModuleDestroy {
       requestedFactIds,
       speechHash: npcContextFingerprint(publicContext),
     };
-    return { ...safe, contextHash: digest(safe) };
+    return packNpcContext(safe, this.ai.contextBudgetBytes());
   }
   private dispatchAi(id: string) {
     // Network/provider work must never occupy the campaign writer or a DB transaction.
@@ -467,83 +738,385 @@ export class GameService implements OnModuleDestroy {
         /* Durable jobs expose failure/reconciliation through safe status DTO. */
       });
   }
-  private async processAi(id: string, live: Live) {
-    await this.ai.sweep(id);
-    for (const job of await this.ai.ready(id)) {
-      let next = live.state,
-        accepted = false;
-      const memory = live.state.npcBrains?.[job.npcId]?.living;
-      if (memory && job.purpose === 'speech') {
-        const request = z
-          .object({
-            recipientId: z.string(),
-            channel: z.enum(['say', 'whisper']),
-            observationIds: z.array(z.string()).max(16),
-            topicId: z.string().optional(),
-          })
-          .passthrough()
-          .safeParse(job.context);
-        const proposal = z
-          .union([
-            z.object({ text: z.string().trim().min(1).max(1000) }).strict(),
-            z.object({ code: z.literal('acknowledged') }).strict(),
-          ])
-          .safeParse(job.proposal);
-        if (request.success && proposal.success) {
-          let context: ReturnType<GameService['speechContext']> | undefined;
-          try {
-            context = this.speechContext(
-              live.state,
-              job.npcId,
-              request.data.recipientId,
-              request.data.channel,
-              request.data.observationIds,
-              request.data.topicId,
-            );
-          } catch {
-            /* No longer nearby/in same phase: stale, never broadcast. */
-          }
-          if (context?.contextHash === job.contextHash) {
-            const result = commitNpcPublicUtterance(live.state, job.npcId, {
-              ...proposal.data,
-              channel: context.channel,
-              recipientId: context.recipientId,
-              observationIds: context.observationIds,
-              requestedFactIds: context.requestedFactIds,
-              contextHash: context.speechHash,
-            });
-            if (!result.error) {
-              next = result.state;
-              accepted = true;
-            }
-          }
+  private async evaluateDecision(
+    id: string,
+    state: GameState,
+    job: Pick<ReadyDecision, 'id' | 'npcId' | 'purpose' | 'context' | 'contextHash' | 'proposal'>,
+  ) {
+    let next = state,
+      accepted = false;
+    let intentOutcome:
+      | {
+          id: string;
+          status: 'proposed' | 'clarification';
+          proposal: ReturnType<typeof proposePlayerTextIntent>;
+          code?: string;
         }
-      } else if (
-        memory &&
-        (await this.decisionContext(id, live.state, job.npcId, job.purpose)).contextHash ===
-          job.contextHash
+      | undefined;
+    const memory = state.npcBrains?.[job.npcId]?.living;
+    if (job.purpose === 'intent') {
+      const context = z
+        .object({
+          intentProposalId: z.uuid(),
+          actorId: z.string(),
+          text: z.string().max(1000),
+          mapId: z.string(),
+          actorRevision: z.number(),
+          visibleEntities: z.array(
+            z.object({ id: z.string(), revision: z.number() }).passthrough(),
+          ),
+        })
+        .passthrough()
+        .safeParse(job.context);
+      const output = z
+        .discriminatedUnion('kind', [
+          z.object({ kind: z.literal('action'), action: gameActionSchema }).strict(),
+          z
+            .object({
+              kind: z.literal('clarify'),
+              messageCode: z.enum(['AMBIGUOUS', 'UNSUPPORTED']),
+            })
+            .strict(),
+        ])
+        .safeParse(job.proposal);
+      if (
+        context.success &&
+        output.success &&
+        context.data.actorId === job.npcId &&
+        state.entities[job.npcId]?.kind === 'player'
       ) {
-        if (job.purpose === 'plan') {
-          const result = acceptNpcPlan(live.state, job.npcId, job.proposal);
-          if (!result.error) {
-            next = recordNpcEvents(live.state, result.state, result.events, `ai-${job.id}`).state;
-            accepted = true;
-          }
-        } else if (job.purpose === 'summary') {
-          const result = acceptNpcMemorySummary(live.state, job.npcId, job.proposal);
+        let proposal: ReturnType<typeof proposePlayerTextIntent> = null;
+        if (
+          output.data.kind === 'action' &&
+          state.entities[job.npcId].revision === context.data.actorRevision &&
+          state.entities[job.npcId].mapId === context.data.mapId
+        ) {
+          const targetId = output.data.action.targetId;
+          const target = targetId
+            ? context.data.visibleEntities.find((e) => e.id === targetId)
+            : undefined;
+          if (!targetId || (target && state.entities[targetId]?.revision === target.revision))
+            proposal = proposePlayerActionIntent(
+              state,
+              job.npcId,
+              context.data.text,
+              output.data.action,
+            );
+        }
+        intentOutcome = {
+          id: context.data.intentProposalId,
+          status: proposal ? 'proposed' : 'clarification',
+          proposal,
+          code: proposal
+            ? undefined
+            : output.data.kind === 'clarify'
+              ? output.data.messageCode
+              : 'STALE_STATE',
+        };
+        accepted = true;
+      }
+    } else if (memory && job.purpose === 'speech') {
+      const request = z
+        .object({
+          recipientId: z.string(),
+          channel: z.enum(['say', 'whisper']),
+          observationIds: z.array(z.string()).max(16),
+          topicId: z.string().optional(),
+        })
+        .passthrough()
+        .safeParse(job.context);
+      const proposal = z
+        .union([
+          z.object({ text: z.string().trim().min(1).max(1000) }).strict(),
+          z.object({ code: z.literal('acknowledged') }).strict(),
+        ])
+        .safeParse(job.proposal);
+      if (request.success && proposal.success) {
+        let context: ReturnType<GameService['speechContext']> | undefined;
+        try {
+          context = this.speechContext(
+            state,
+            job.npcId,
+            request.data.recipientId,
+            request.data.channel,
+            request.data.observationIds,
+            request.data.topicId,
+          );
+        } catch {
+          /* No longer nearby/in same phase: stale, never broadcast. */
+        }
+        if (context?.contextHash === job.contextHash) {
+          const result = commitNpcPublicUtterance(state, job.npcId, {
+            ...proposal.data,
+            channel: context.channel,
+            recipientId: context.recipientId,
+            observationIds: context.observationIds,
+            requestedFactIds: context.requestedFactIds,
+            contextHash: context.speechHash,
+          });
           if (!result.error) {
             next = result.state;
             accepted = true;
           }
         }
       }
+    } else if (
+      memory &&
+      (await this.decisionContext(id, state, job.npcId, job.purpose)).contextHash ===
+        job.contextHash
+    ) {
+      if (job.purpose === 'plan') {
+        const result = acceptNpcPlan(state, job.npcId, job.proposal);
+        if (!result.error) {
+          next = recordNpcEvents(state, result.state, result.events, `ai-${job.id}`).state;
+          accepted = true;
+        }
+      } else if (job.purpose === 'summary') {
+        const selection = z
+          .object({ selectedObservationIds: z.array(z.string()).max(16) })
+          .strict()
+          .safeParse(job.proposal);
+        let proposal = job.proposal;
+        if (selection.success) {
+          const available = new Set(
+            (job.context.observations as { id: string }[] | undefined)?.map((o) => o.id),
+          );
+          if (selection.data.selectedObservationIds.every((id) => available.has(id)))
+            try {
+              proposal = createNpcMemorySummarySelection(
+                state,
+                job.npcId,
+                selection.data.selectedObservationIds,
+              );
+            } catch {
+              proposal = null;
+            }
+          else proposal = null;
+        }
+        const result = acceptNpcMemorySummary(state, job.npcId, proposal);
+        if (!result.error) {
+          next = result.state;
+          accepted = true;
+        }
+      }
+    }
+    if (!accepted)
+      recordNpcMetric(job.purpose === 'summary' ? 'summaryRejected' : 'knowledgeRejected');
+    return { next, accepted, intentOutcome };
+  }
+  private async saveIntentOutcome(
+    c: import('pg').PoolClient,
+    outcome: Awaited<ReturnType<GameService['evaluateDecision']>>['intentOutcome'],
+  ) {
+    if (!outcome) return;
+    const updated = await c.query(
+      "UPDATE game_player_intent_proposals SET status=$2,proposal=$3,result_code=$4 WHERE id=$1 AND status='pending' RETURNING id",
+      [outcome.id, outcome.status, JSON.stringify(outcome.proposal), outcome.code ?? null],
+    );
+    if (!updated.rowCount) fail(409, 'STALE_STATE', 'STALE_STATE');
+  }
+  private async scheduleAutonomousRequests(id: string, live: Live) {
+    if (
+      !Object.values(live.state.npcBrains ?? {}).some((b) =>
+        b.living?.causes.some((c) => c.priority >= 2 && c.notBeforeTick <= live.state.tick),
+      )
+    )
+      return;
+    const pending = Number(
+      (
+        await this.db.query(
+          "SELECT count(*) FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued'",
+          [id],
+        )
+      )[0].count,
+    );
+    if (pending >= 16) return;
+    const requests: NpcDecisionRequest[] = [];
+    for (const [npcId, b] of Object.entries(live.state.npcBrains ?? {})) {
+      const npc = live.state.entities[npcId];
+      if (!b.living || npc.encounterId || b.cursor < b.plan.length || npc.path?.length) continue;
+      const cause = b.living.causes
+        .filter(
+          (c) =>
+            c.priority >= 2 &&
+            c.notBeforeTick <= live.state.tick &&
+            ['item_taken', 'item_missing', 'claim', 'noise'].includes(
+              b.living!.observations.find((o) => o.id === c.observationId)?.kind ?? '',
+            ),
+        )
+        .sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id))[0];
+      if (!cause) continue;
+      recordNpcMetric('causeSamples');
+      recordNpcMetric('causeDelayTicks', Math.max(0, live.state.tick - cause.notBeforeTick));
+      const exists = await this.db.query(
+        'SELECT 1 FROM game_npc_decision_requests WHERE campaign_id=$1 AND npc_id=$2 AND cause_key=$3',
+        [id, npcId, `cause:${cause.id}`],
+      );
+      if (exists.length) continue;
+      const context = await this.decisionContext(id, live.state, npcId, 'plan');
+      requests.push({
+        id: randomUUID(),
+        npcId,
+        purpose: 'plan',
+        causeKey: `cause:${cause.id}`,
+        context: { ...context, mockProposal: createMockNpcPlan(live.state, npcId) },
+      });
+      if (requests.length >= Math.min(2, 16 - pending)) break;
+    }
+    if (requests.length) {
+      await this.persist(id, live, live.state, 'npc.decision.requested', undefined, async (c) => {
+        for (const r of requests) await insertNpcRequest(c, id, r);
+      });
+      live.decisionsPending = true;
+      live.deferredNpcIds = [...new Set([...live.deferredNpcIds, ...requests.map((r) => r.npcId)])];
+    }
+  }
+  private async processDecisionRequests(id: string, live: Live) {
+    await this.reconcileIntents(id, live.state.tick);
+    const requests = await this.db.query(
+      "SELECT * FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' ORDER BY created_at,id LIMIT 8",
+      [id],
+    );
+    for (const r of requests) {
+      const allowed = r.requester_user_id
+        ? await this.db.query(
+            `SELECT c.id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.user_id=$2 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('$2')}`,
+            [id, r.requester_user_id],
+          )
+        : [{ id }];
+      if (
+        !allowed.length ||
+        (r.purpose === 'intent'
+          ? live.state.entities[r.npc_id]?.kind !== 'player'
+          : !live.state.npcBrains?.[r.npc_id])
+      ) {
+        await this.db.query(
+          "UPDATE game_npc_decision_requests SET status='cancelled',context='{}',result_code='AUTHORIZATION_REVOKED' WHERE id=$1 AND status='queued'",
+          [r.id],
+        );
+        continue;
+      }
+      const busy = (
+        await this.db.query(
+          "SELECT status FROM npc_ai_jobs WHERE campaign_id=$1 AND npc_id=$2 AND status IN ('reserved','running','result_received','validated','reconciling')",
+          [id, r.npc_id],
+        )
+      )[0];
+      if (busy && busy.status !== 'reconciling') continue;
+      const configuration = this.ai.configuration(),
+        purpose = r.purpose as AiPurpose;
+      const sponsorId = await this.ai.activeSponsor(id, purpose);
+      const useProvider =
+        configuration.enabled &&
+        !busy &&
+        !r.context.budgetExceeded &&
+        ((configuration.provider === 'mock' && configuration.creditPrice === 0) ||
+          Boolean(sponsorId));
+      if (!useProvider) {
+        const decision = await this.evaluateDecision(id, live.state, {
+          id: r.id,
+          npcId: r.npc_id,
+          purpose,
+          context: r.context,
+          contextHash: r.context.contextHash,
+          proposal: r.context.mockProposal,
+        });
+        await this.persist(id, live, decision.next, 'npc.local.fallback', undefined, async (c) => {
+          const updated = await c.query(
+            "UPDATE game_npc_decision_requests SET status='fallback',result_code=$2 WHERE id=$1 AND status='queued' RETURNING id",
+            [r.id, decision.accepted ? 'LOCAL_MOCK' : 'STALE_STATE'],
+          );
+          if (!updated.rowCount) fail(409, 'STALE_STATE', 'STALE_STATE');
+          await this.saveIntentOutcome(c, decision.intentOutcome);
+        });
+        continue;
+      }
+      try {
+        const scope = {
+          campaignId: id,
+          npcId: String(r.npc_id),
+          purpose,
+          subjectKind: (purpose === 'intent' ? 'player' : 'npc') as 'player' | 'npc',
+          origin: (purpose === 'intent'
+            ? 'user'
+            : sponsorId || !r.requester_user_id
+              ? 'system'
+              : 'user') as 'system' | 'user',
+          ...((purpose === 'intent' || !sponsorId) && r.requester_user_id
+            ? { requesterUserId: String(r.requester_user_id) }
+            : {}),
+        };
+        const job = await this.ai.queue({
+          scope,
+          operationId: r.id,
+          context: r.context,
+          sponsorId,
+          requestKey: `runtime:${r.cause_key}`,
+          runtimeRequestId: r.id,
+        });
+        await this.db.query(
+          "UPDATE game_npc_decision_requests SET status='scheduled',job_id=$2 WHERE id=$1 AND status='queued'",
+          [r.id, job.id],
+        );
+        live.aiPending = true;
+        this.dispatchAi(id);
+      } catch (error) {
+        const message = error instanceof Error ? error.message : '';
+        if (message.includes('RATE_LIMITED') || message.includes('NPC_AI_BUSY')) continue;
+        const fallback = await this.evaluateDecision(id, live.state, {
+          id: r.id,
+          npcId: r.npc_id,
+          purpose,
+          context: r.context,
+          contextHash: r.context.contextHash,
+          proposal: r.context.mockProposal,
+        });
+        await this.persist(
+          id,
+          live,
+          fallback.next,
+          'npc.decision.fallback',
+          undefined,
+          async (c) => {
+            const changed = await c.query(
+              "UPDATE game_npc_decision_requests SET status='fallback',result_code=$2 WHERE id=$1 AND status='queued' RETURNING id",
+              [r.id, fallback.accepted ? 'LOCAL_MOCK' : 'STALE_STATE'],
+            );
+            if (!changed.rowCount) fail(409, 'STALE_STATE', 'STALE_STATE');
+            await this.saveIntentOutcome(c, fallback.intentOutcome);
+          },
+        );
+      }
+    }
+    live.decisionsPending = Boolean(
+      (
+        await this.db.query(
+          "SELECT 1 FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' LIMIT 1",
+          [id],
+        )
+      ).length,
+    );
+    live.deferredNpcIds = (
+      await this.db.query(
+        "SELECT npc_id FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' AND purpose='plan' UNION SELECT npc_id FROM npc_ai_jobs WHERE campaign_id=$1 AND purpose='plan' AND status IN ('reserved','running','result_received','validated')",
+        [id],
+      )
+    ).map((r) => String(r.npc_id));
+  }
+  private async processAi(id: string, live: Live) {
+    await this.ai.sweep(id);
+    for (const job of await this.ai.ready(id)) {
+      const { next, accepted, intentOutcome } = await this.evaluateDecision(id, live.state, job);
       await this.persist(
         id,
         live,
         next,
         accepted ? 'npc.ai.accepted' : 'npc.ai.stale',
         undefined,
-        (c) => this.ai.finalize(c, job.id, accepted ? 'committed' : 'stale'),
+        async (c) => {
+          await this.ai.finalize(c, job.id, accepted ? 'committed' : 'stale');
+          await this.saveIntentOutcome(c, intentOutcome);
+        },
       );
     }
     live.aiPending = await this.ai.pending(id);
@@ -891,7 +1464,21 @@ export class GameService implements OnModuleDestroy {
         return existing[0].result;
       }
       let result: GameResult;
-      if (
+      let confirmingIntent: string | undefined;
+      if (command.type === 'intent.confirm' && command.proposalId) {
+        const row = (
+          await this.db.query(
+            'SELECT * FROM game_player_intent_proposals WHERE id=$1 AND campaign_id=$2 AND requester_user_id=$3 AND actor_id=$4',
+            [command.proposalId, id, a.user.id, a.actorId],
+          )
+        )[0];
+        if (!row) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+        result =
+          row.status !== 'proposed' || Number(row.valid_until_tick) < live.state.tick
+            ? { state: live.state, events: [], error: 'STALE_STATE' }
+            : confirmPlayerTextIntent(live.state, a.actorId, row.proposal, true);
+        if (!result.error) confirmingIntent = String(row.id);
+      } else if (
         command.expectedRevision !== undefined &&
         command.expectedRevision !== this.project(live.state, a.actorId).revision
       )
@@ -921,16 +1508,48 @@ export class GameService implements OnModuleDestroy {
           (live.state.npcBrains?.[npcId]?.nextDecisionTick ?? 0) > live.state.tick
         )
           result = { state: live.state, events: [], error: 'RATE_LIMITED' };
-        else
-          job = {
-            id: randomUUID(),
-            proposal: createMockNpcPlan(result.state, npcId),
-          };
+        else job = { id: randomUUID(), proposal: createMockNpcPlan(result.state, npcId) };
       }
       const next = result.error
         ? live.state
         : recordNpcEvents(live.state, result.state, result.events, command.operationId).state;
+      let decisionRequest: NpcDecisionRequest | undefined;
+      if (
+        !result.error &&
+        command.type === 'npc.speech' &&
+        command.speech &&
+        command.npcId &&
+        next.rulesetVersion === 'hybrid-v3'
+      ) {
+        const queued = Number(
+          (
+            await this.db.query(
+              "SELECT count(*) FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued'",
+              [id],
+            )
+          )[0].count,
+        );
+        if (queued >= 16) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+        const context = this.speechContext(
+          next,
+          command.npcId,
+          a.actorId,
+          command.speech.channel,
+          undefined,
+          command.topicId,
+        );
+        decisionRequest = {
+          id: randomUUID(),
+          npcId: command.npcId,
+          purpose: 'speech',
+          causeKey: `dialogue:${a.actorId}:${command.operationId}`,
+          requesterUserId: a.user.id,
+          recipientActorId: a.actorId,
+          context: { ...context, mockProposal: createMockNpcPublicResponse(context) },
+        };
+      }
       const response = {
+        ...(decisionRequest ? { decisionRequestId: decisionRequest.id } : {}),
         status: result.error ? 'rejected' : 'committed',
         code: result.error,
         operationId: command.operationId,
@@ -949,15 +1568,23 @@ export class GameService implements OnModuleDestroy {
           hash,
           response,
         },
-        job
-          ? async (c) => {
-              await c.query(
-                "INSERT INTO game_npc_jobs(id,campaign_id,npc_id,requester_actor_id,proposal,due_at,deadline_at) VALUES($1,$2,$3,$4,$5,now()+interval '150 milliseconds',now()+interval '8 seconds')",
-                [job.id, id, npcId, a.actorId, JSON.stringify(job.proposal)],
-              );
-            }
-          : undefined,
+        async (c) => {
+          if (job)
+            await c.query(
+              "INSERT INTO game_npc_jobs(id,campaign_id,npc_id,requester_actor_id,proposal,due_at,deadline_at) VALUES($1,$2,$3,$4,$5,now()+interval '150 milliseconds',now()+interval '8 seconds')",
+              [job.id, id, npcId, a.actorId, JSON.stringify(job.proposal)],
+            );
+          if (decisionRequest) await insertNpcRequest(c, id, decisionRequest);
+          if (confirmingIntent) {
+            const changed = await c.query(
+              "UPDATE game_player_intent_proposals SET status='confirmed' WHERE id=$1 AND status='proposed' RETURNING id",
+              [confirmingIntent],
+            );
+            if (!changed.rowCount) fail(409, 'STALE_STATE', 'STALE_STATE');
+          }
+        },
       );
+      if (decisionRequest) live.decisionsPending = true;
       if (job) live.npcPending = true;
       if (
         command.type === 'npc.request' &&
@@ -972,7 +1599,15 @@ export class GameService implements OnModuleDestroy {
     if (command.type === 'action' && command.action)
       return applyAction(state, actorId, command.action);
     if (command.type === 'npc.speech' && command.npcId && command.speech)
-      return applyNpcSpeech(state, actorId, command.npcId, command.speech);
+      return applyNpcSpeech(state, actorId, command.npcId, command.speech, { suppressReply: true });
+    if (command.type === 'npc.promise' && command.npcId && command.promiseId && command.decision)
+      return respondNpcObligation(
+        state,
+        actorId,
+        command.npcId,
+        command.promiseId,
+        command.decision,
+      );
     if (command.type === 'encounter.begin') return beginEncounter(state, actorId, Date.now());
     if (command.type === 'encounter.join' && command.encounterId)
       return requestEncounterJoin(state, actorId, command.encounterId);
@@ -994,14 +1629,7 @@ export class GameService implements OnModuleDestroy {
         return { state, events: [], error: 'WRONG_MODE' };
       return {
         state,
-        events: [
-          {
-            kind: 'npc.requested',
-            actorId,
-            targetId: npcId,
-            mapId: visible.mapId,
-          },
-        ],
+        events: [{ kind: 'npc.requested', actorId, targetId: npcId, mapId: visible.mapId }],
       };
     }
     return { state, events: [], error: 'INVALID_ACTION' };
@@ -1011,15 +1639,14 @@ export class GameService implements OnModuleDestroy {
     live: Live,
     state: GameState,
     kind: string,
-    operation?: {
-      actorId: string;
-      command: Command;
-      hash: string;
-      response: unknown;
-    },
+    operation?: { actorId: string; command: Command; hash: string; response: unknown },
     extra?: (c: import('pg').PoolClient) => Promise<void>,
   ) {
     const seq = live.eventSeq + 1;
+    const retentionDue =
+      !live.paused &&
+      state.rulesetVersion === 'hybrid-v3' &&
+      state.tick - live.lastRetentionTick >= 100;
     let savedClock = live.clock;
     await this.db.tx(async (c) => {
       await c.query(
@@ -1063,6 +1690,7 @@ export class GameService implements OnModuleDestroy {
         );
       await archiveNpcEpisodes(c, id, state);
       if (extra) await extra(c);
+      if (retentionDue) await pruneNpcMemory(c, id, state, seq);
       savedClock = live.paused
         ? { ...live.clock, paused: true }
         : await this.captureClock(state, id, c);
@@ -1072,6 +1700,7 @@ export class GameService implements OnModuleDestroy {
       ]);
     });
     live.state = state;
+    if (retentionDue) live.lastRetentionTick = state.tick;
     live.clock = savedClock;
     live.dbRevision++;
     live.eventSeq = seq;
@@ -1141,9 +1770,14 @@ export class GameService implements OnModuleDestroy {
       }
     }
     if (live.state.rulesetVersion === 'hybrid-v3') {
-      if (live.aiPending && live.state.tick % 4 === 0) await this.processAi(id, live);
+      if (live.state.tick % 4 === 0) {
+        if (live.aiPending) await this.processAi(id, live);
+        await this.processDecisionRequests(id, live);
+      }
+      // Capture significant evidence before the deterministic director consumes its cause.
+      await this.scheduleAutonomousRequests(id, live);
       const beforeNpc = live.state;
-      const routine = stepLivingNpcs(beforeNpc);
+      const routine = stepLivingNpcs(beforeNpc, { deferredNpcIds: live.deferredNpcIds });
       if (!routine.error) {
         const next = recordNpcEvents(
           beforeNpc,

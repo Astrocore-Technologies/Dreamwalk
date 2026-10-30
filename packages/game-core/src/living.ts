@@ -11,9 +11,18 @@ import {
   type NpcMemorySummary,
   type NpcNotice,
   type NpcObligation,
+  type NpcCondition,
+  npcPromisedActionSchema,
+  npcConditionSchema,
 } from '@dreamwalk/contracts';
 import { findPath, visible, walkable } from './index';
 import { acceptNpcPlan } from './npc';
+import {
+  npcConditionsMet,
+  npcActionAllowed,
+  stepNpcAuthoredPolicy,
+  defaultNpcGoalPolicy,
+} from './living-policy';
 const clone = <T>(x: T): T => structuredClone(x);
 const result = (
   state: GameState,
@@ -55,6 +64,17 @@ export function createLivingMemory(personality?: NpcPersonality): LivingNpcMemor
       },
     ),
     knowledgeRevision: 0,
+    affect: { fatigue: 0, attention: 100, alertness: 0, mood: 'calm', lastUpdatedTick: 0 },
+    goalPolicy: {
+      goalRevision: 0,
+      motivation: 'routine',
+      priority: 1,
+      startedTick: 0,
+      holdUntilTick: 20,
+      success: [],
+      cancelWhen: [],
+      status: 'active',
+    },
     observations: [],
     beliefs: [],
     relationships: {},
@@ -143,11 +163,13 @@ function prune(memory: LivingNpcMemory) {
     ...memory.observations
       .filter(
         (o) =>
-          o.kind === 'known_entity' &&
+          ['known_entity', 'authored_fact'].includes(o.kind) &&
           (o.eventId.startsWith('initial:') || o.eventId.startsWith('initial-link:')),
       )
       .map((o) => o.id),
-    ...memory.obligations.filter((o) => o.status === 'accepted').flatMap((o) => o.evidenceIds),
+    ...memory.obligations
+      .filter((o) => ['accepted', 'proposed'].includes(o.status))
+      .flatMap((o) => o.evidenceIds),
     ...Object.values(memory.relationships).flatMap((r) => r.evidenceIds),
     ...memory.beliefs.flatMap((b) => b.evidenceIds),
     ...memory.causes.map((c) => c.observationId),
@@ -161,12 +183,12 @@ function prune(memory: LivingNpcMemory) {
   // Terminal promises may be archived in durable game_events; active promises are never trimmed.
   const terminal = new Set(
     memory.obligations
-      .filter((o) => o.status !== 'accepted')
+      .filter((o) => !['accepted', 'proposed'].includes(o.status))
       .slice(-64)
       .map((o) => o.id),
   );
   memory.obligations = memory.obligations.filter(
-    (o) => o.status === 'accepted' || terminal.has(o.id),
+    (o) => ['accepted', 'proposed'].includes(o.status) || terminal.has(o.id),
   );
 }
 function remember(memory: LivingNpcMemory, observation: NpcObservation): boolean {
@@ -180,6 +202,21 @@ function remember(memory: LivingNpcMemory, observation: NpcObservation): boolean
     return false;
   memory.observations.push(observation);
   memory.knowledgeRevision++;
+  memory.affect ??= {
+    fatigue: 0,
+    attention: 100,
+    alertness: 0,
+    mood: 'calm',
+    lastUpdatedTick: observation.tick,
+  };
+  if (['item_taken', 'item_missing', 'noise'].includes(observation.kind)) {
+    memory.affect.alertness = Math.min(100, memory.affect.alertness + 20);
+    memory.affect.mood = 'alarmed';
+  }
+  if (observation.kind === 'helped') {
+    memory.affect.mood = 'grateful';
+    memory.affect.alertness = Math.max(0, memory.affect.alertness - 10);
+  }
   const kind = observation.kind;
   if (['item_taken', 'item_missing', 'noise', 'addressed', 'claim'].includes(kind)) {
     const c = {
@@ -288,6 +325,49 @@ export function recordLivingNpcEvents(
         target = e.targetId ? before.entities[e.targetId] : undefined;
       const eventId = `${operationId}:${index}`,
         rootId = eventId;
+      if (
+        ['actor.moved', 'actor.transitioned'].includes(e.kind) &&
+        actor &&
+        m.distractedUntilTick <= before.tick &&
+        (m.affect?.attention ?? 100) >= 60
+      ) {
+        const afterNpc = after.entities[npcId];
+        const candidates =
+          e.actorId === npcId
+            ? Object.values(before.entities).filter(
+                (x) => x.id !== npcId && ['player', 'npc'].includes(x.kind),
+              )
+            : [actor];
+        for (const candidate of candidates) {
+          if (candidate.id === npcId) continue;
+          const afterActor = after.entities[candidate.id];
+          const saw = visible(before, npc, candidate),
+            sees = !!afterNpc && !!afterActor && visible(after, afterNpc, afterActor);
+          if (saw === sees) continue;
+          const kind = sees ? 'actor_seen' : 'actor_departed',
+            known = sees ? afterActor : candidate;
+          const observationId = `movement-${hash(`${operationId}:${npcId}:${candidate.id}:${kind}`)}`;
+          changed =
+            remember(m, {
+              id: `${npcId}:${observationId}`,
+              eventId,
+              rootId: observationId,
+              kind,
+              tick: after.tick,
+              mapId: sees ? afterNpc.mapId : npc.mapId,
+              point: { x: known.x, y: known.y },
+              channel: 'direct',
+              confidence: 'witnessed',
+              actorId: known.id,
+              targetId: known.id,
+              depth: 0,
+              disclosure: 'public',
+              audienceIds: [],
+            }) || changed;
+        }
+        continue;
+      }
+
       if (e.kind === 'action.distract' && e.targetId === npcId && actor && near(actor, npc)) {
         if (!m.processedCauses.includes(eventId)) {
           m.processedCauses.push(eventId);
@@ -301,6 +381,7 @@ export function recordLivingNpcEvents(
           if (
             o.status === 'accepted' &&
             o.toActorId === e.targetId &&
+            o.itemId &&
             s.entities[o.itemId]?.ownerId === o.toActorId
           ) {
             o.status = 'fulfilled';
@@ -309,6 +390,21 @@ export function recordLivingNpcEvents(
             changed = true;
           }
       }
+
+      if (e.actorId === npcId)
+        for (const o of m.obligations) {
+          if (
+            o.status === 'accepted' &&
+            o.promisedAction &&
+            e.kind === `action.${o.promisedAction.kind}` &&
+            e.targetId === o.promisedAction.targetId
+          ) {
+            o.status = 'fulfilled';
+            o.resolutionEventId = eventId;
+            notice(s, npcId, 'fulfilled', o.id, [o.toActorId, ...audience(s, s.entities[npcId])]);
+            changed = true;
+          }
+        }
       let kind: NpcObservation['kind'] | undefined;
       if (e.kind === 'action.pick_up') kind = 'item_taken';
       if (['action.open', 'action.close', 'action.unlock', 'action.lock'].includes(e.kind))
@@ -318,7 +414,9 @@ export function recordLivingNpcEvents(
       if (e.kind === 'action.give' && e.targetId === npcId) kind = 'helped';
       if (!kind || !actor) continue;
       const attentive =
-        m.distractedUntilTick <= before.tick || kind === 'addressed' || kind === 'helped';
+        (m.distractedUntilTick <= before.tick && (m.affect?.attention ?? 100) >= 60) ||
+        kind === 'addressed' ||
+        kind === 'helped';
       const seesActor = attentive && visible(before, npc, actor),
         seesTarget = target && attentive && visible(before, npc, target);
       const direct =
@@ -376,7 +474,12 @@ export function conveyNpcObservation(
     return result(state, [], 'TARGET_UNAVAILABLE');
   if (from.encounterId || to.encounterId || !near(from, to) || !visible(state, from, to))
     return result(state, [], 'OUT_OF_RANGE');
-  if (source.depth >= 3 || source.disclosure !== 'public') return result(state, [], 'FORBIDDEN');
+  if (
+    source.depth >= 3 ||
+    source.disclosure !== 'public' ||
+    state.npcBrains?.[fromId]?.living?.personality.taboos.includes('share_rumors')
+  )
+    return result(state, [], 'FORBIDDEN');
   const s = clone(state),
     m = s.npcBrains![toId].living!;
   const copied: NpcObservation = {
@@ -400,6 +503,7 @@ export function applyNpcSpeech(
   speakerId: string,
   npcId: string,
   input: unknown,
+  options: { suppressReply?: boolean } = {},
 ): GameResult {
   const p = npcSpeechSchema.safeParse(input),
     speaker = state.entities[speakerId],
@@ -448,6 +552,7 @@ export function applyNpcSpeech(
       actorId: claim?.actorId ?? (visible(s, s.entities[id], speaker) ? speakerId : undefined),
       targetId: claim?.targetId,
       sourceNpcId: undefined,
+      addressedNpcId: npcId,
       depth: 0,
       disclosure: p.data.channel === 'whisper' ? 'participants' : 'public',
       audienceIds: p.data.channel === 'whisper' ? [speakerId, npcId] : [],
@@ -477,17 +582,18 @@ export function applyNpcSpeech(
         : Object.values(s.entities)
             .filter((e) => ['player', 'npc'].includes(e.kind) && canNpcHear(s, e, npc))
             .map((e) => e.id);
-    s.npcUtterances.push({
-      id: `reply-${hash(root)}`,
-      speakerId: npcId,
-      tick: s.tick,
-      code: 'acknowledged',
-      mapId: npc.mapId,
-      audienceIds: replyListeners,
-      speakerKnownToIds: replyListeners.filter(
-        (id) => id === npcId || visible(s, s.entities[id], npc),
-      ),
-    });
+    if (!options.suppressReply)
+      s.npcUtterances.push({
+        id: `reply-${hash(root)}`,
+        speakerId: npcId,
+        tick: s.tick,
+        code: 'acknowledged',
+        mapId: npc.mapId,
+        audienceIds: replyListeners,
+        speakerKnownToIds: replyListeners.filter(
+          (id) => id === npcId || visible(s, s.entities[id], npc),
+        ),
+      });
     s.npcUtterances = s.npcUtterances.slice(-128);
   }
   s.revision++;
@@ -540,9 +646,11 @@ export function acceptNpcObligation(
     evidenceIds.some((id) => !m.observations.some((o) => o.id === id && o.actorId === toActorId))
   )
     return result(state, [], 'INVALID_ACTION');
-  if (m.obligations.some((o) => o.status === 'accepted' && o.itemId === itemId))
+  if (!npcActionAllowed(state, npcId, { kind: 'give', targetId: toActorId, itemId }))
+    return result(state, [], 'FORBIDDEN');
+  if (m.obligations.some((o) => ['accepted', 'proposed'].includes(o.status) && o.itemId === itemId))
     return result(state);
-  if (m.obligations.filter((o) => o.status === 'accepted').length >= 128)
+  if (m.obligations.filter((o) => ['accepted', 'proposed'].includes(o.status)).length >= 128)
     return result(state, [], 'RATE_LIMITED');
   const s = clone(state),
     next = s.npcBrains![npcId].living!,
@@ -556,6 +664,8 @@ export function acceptNpcObligation(
     dueTick: s.tick + dueTicks,
     status: 'accepted',
     evidenceIds: [...evidenceIds],
+    sourceUtteranceId: m.observations.find((o) => evidenceIds.includes(o.id) && o.text)?.eventId,
+    sourceUtterance: m.observations.find((o) => evidenceIds.includes(o.id) && o.text)?.text,
   });
   notice(s, npcId, 'promised', id, [toActorId]);
   s.revision++;
@@ -579,26 +689,41 @@ function plan(state: GameState, npcId: string, actions: GameAction[]): GameResul
   });
 }
 /** One bounded decision per eligible NPC. No I/O, wall clock, model call or execution of source text. */
-export function stepLivingNpcs(state: GameState): GameResult {
+export function stepLivingNpcs(
+  state: GameState,
+  options: { deferredNpcIds?: string[] } = {},
+): GameResult {
   if (state.rulesetVersion !== 'hybrid-v3') return result(state);
   const perception = refreshLivingPerception(state);
   let s = perception.state;
   const events: GameEvent[] = [...perception.events];
   for (const npcId of Object.keys(state.npcBrains ?? {}).sort()) {
+    const authored = stepNpcAuthoredPolicy(s, npcId, {
+      deferPlanning: options.deferredNpcIds?.includes(npcId),
+    });
+    s = authored.state;
+    events.push(...authored.events);
     let brain = s.npcBrains![npcId],
       m = brain.living,
       npc = s.entities[npcId];
     if (!m || !npc) continue;
     for (const obligation of m.obligations.filter(
-      (o) => o.status === 'accepted' && o.dueTick <= s.tick,
+      (o) =>
+        ['accepted', 'proposed'].includes(o.status) &&
+        (o.dueTick <= s.tick ||
+          (o.itemId
+            ? s.entities[o.itemId]?.ownerId !== npcId
+            : !o.promisedAction || !s.entities[o.promisedAction.targetId])),
     )) {
       if (s === state) s = clone(s);
       brain = s.npcBrains![npcId];
       m = brain.living!;
       const o = m.obligations.find((o) => o.id === obligation.id)!;
-      o.status = 'broken';
+      o.status = o.status === 'proposed' ? 'cancelled' : 'broken';
       o.resolutionEventId = `deadline:${o.id}`;
-      notice(s, npcId, 'promise_broken', o.id, [o.toActorId]);
+      notice(s, npcId, o.status === 'cancelled' ? 'promise_cancelled' : 'promise_broken', o.id, [
+        o.toActorId,
+      ]);
       s.revision++;
       events.push({ kind: 'npc.promise_broken', actorId: npcId, mapId: npc.mapId });
     }
@@ -606,6 +731,7 @@ export function stepLivingNpcs(state: GameState): GameResult {
     m = brain.living!;
     npc = s.entities[npcId];
     if (
+      options.deferredNpcIds?.includes(npcId) ||
       npc.encounterId ||
       brain.cursor < brain.plan.length ||
       s.tick < brain.nextDecisionTick ||
@@ -613,21 +739,29 @@ export function stepLivingNpcs(state: GameState): GameResult {
     )
       continue;
     const pending = m.obligations
-      .filter((o) => o.status === 'accepted')
+      .filter(
+        (o) =>
+          o.status === 'accepted' &&
+          npcConditionsMet(s, npcId, o.conditions ?? [], o.toActorId, o.createdTick),
+      )
       .sort((a, b) =>
         m!.personality.habits?.includes('keep_promises')
           ? a.dueTick - b.dueTick || a.createdTick - b.createdTick
           : a.createdTick - b.createdTick,
       )[0];
     if (pending) {
-      const recipient = s.entities[pending.toActorId];
+      const recipient = s.entities[pending.promisedAction?.targetId ?? pending.toActorId];
       if (recipient && recipient.mapId === npc.mapId && visible(s, npc, recipient)) {
         const actions: GameAction[] = [];
         if (!near(npc, recipient)) {
           const p = adjacentPath(s, npc, recipient);
           if (p) actions.push({ kind: 'move_to', target: p });
         }
-        actions.push({ kind: 'give', targetId: recipient.id, itemId: pending.itemId });
+        actions.push(
+          pending.promisedAction
+            ? pending.promisedAction
+            : { kind: 'give', targetId: recipient.id, itemId: pending.itemId },
+        );
         const r = plan(s, npcId, actions);
         if (!r.error) {
           s = r.state;
@@ -661,11 +795,17 @@ export function stepLivingNpcs(state: GameState): GameResult {
       if (!observation) continue;
       if (
         observation.kind === 'addressed' &&
-        (m.personality.role === 'helper' || m.personality.values.includes('kindness')) &&
+        !m.promiseTemplates?.length &&
+        (m.personality.role === 'helper' ||
+          m.personality.values.includes('kindness') ||
+          m.personality.behaviorProfile === 'cookie') &&
         observation.actorId
       ) {
         const owned = (npc.inventory ?? []).find(
-          (id) => !m!.obligations.some((o) => o.itemId === id && o.status === 'accepted'),
+          (id) =>
+            !m!.obligations.some(
+              (o) => o.itemId === id && ['accepted', 'proposed'].includes(o.status),
+            ),
         );
         if (owned) {
           const promised = acceptNpcObligation(s, npcId, observation.actorId, owned, [
@@ -675,12 +815,15 @@ export function stepLivingNpcs(state: GameState): GameResult {
             s = promised.state;
             events.push(...promised.events);
             s.npcBrains![npcId].living!.goal.kind = 'assist';
+            defaultNpcGoalPolicy(s, npcId);
             continue;
           }
         }
       }
       if (['item_taken', 'item_missing', 'noise', 'claim'].includes(observation.kind)) {
         m.goal.kind = 'investigate';
+        m.goal.targetId = observation.targetId;
+        defaultNpcGoalPolicy(s, npcId);
         notice(s, npcId, observation.kind === 'noise' ? 'heard' : 'investigating', cause.id);
         events.push({ kind: 'npc.investigating', actorId: npcId, mapId: npc.mapId });
         const helpers = Object.values(s.entities)
@@ -693,7 +836,9 @@ export function stepLivingNpcs(state: GameState): GameResult {
           .slice(0, m.personality.habits?.includes('share_warnings') ? 2 : 1);
         for (const helper of helpers)
           if (!(
-            m.personality.values.includes('honesty') && observation.confidence === 'reported'
+            (m.personality.values.includes('honesty') ||
+              m.personality.behaviorProfile === 'green-apple') &&
+            observation.confidence === 'reported'
           )) {
             const told = conveyNpcObservation(s, npcId, helper.id, observation.id);
             if (!told.error) {
@@ -708,6 +853,7 @@ export function stepLivingNpcs(state: GameState): GameResult {
           point &&
           !(
             (m.personality.values.includes('caution') ||
+              m.personality.behaviorProfile === 'green-apple' ||
               m.personality.habits?.includes('observe_before_acting')) &&
             observation.confidence !== 'witnessed'
           )
@@ -739,12 +885,20 @@ export function stepLivingNpcs(state: GameState): GameResult {
       prune(s.npcBrains![npcId].living!);
       continue;
     }
+    if (m.affect && m.affect.fatigue >= 80) {
+      if (s === state) s = clone(s);
+      s.npcBrains![npcId].nextDecisionTick = s.tick + 20;
+      notice(s, npcId, 'resting', String(s.tick));
+      s.revision++;
+      continue;
+    }
     if (s.tick >= m.nextRoutineTick) {
       if (s === state) s = clone(s);
       brain = s.npcBrains![npcId];
       m = brain.living!;
       m.nextRoutineTick = s.tick + 100;
       m.goal = { kind: 'patrol', revision: m.goal.revision + 1, evidenceIds: [] };
+      defaultNpcGoalPolicy(s, npcId);
       s.revision++;
       if (npc.x !== brain.patrolTarget.x || npc.y !== brain.patrolTarget.y) {
         const r = plan(s, npcId, [{ kind: 'move_to', target: brain.patrolTarget }]);
@@ -765,11 +919,21 @@ export function chooseLivingNpcIntent(state: GameState, npcId: string): GameActi
   const promise = m.obligations.find(
     (o) =>
       o.status === 'accepted' &&
-      state.entities[o.itemId]?.ownerId === npcId &&
-      state.entities[o.toActorId] &&
-      near(npc, state.entities[o.toActorId]),
+      npcConditionsMet(state, npcId, o.conditions ?? [], o.toActorId, o.createdTick) &&
+      (o.itemId
+        ? state.entities[o.itemId]?.ownerId === npcId
+        : !!o.promisedAction && !!state.entities[o.promisedAction.targetId]) &&
+      state.entities[o.promisedAction?.targetId ?? o.toActorId] &&
+      near(npc, state.entities[o.promisedAction?.targetId ?? o.toActorId]),
   );
-  if (promise) return { kind: 'give', targetId: promise.toActorId, itemId: promise.itemId };
+  if (promise)
+    return (
+      promise.promisedAction ?? {
+        kind: 'give',
+        targetId: promise.toActorId,
+        itemId: promise.itemId,
+      }
+    );
   const door = Object.values(state.entities).find(
     (e) => e.kind === 'door' && e.open && near(npc, e) && visible(state, npc, e),
   );
@@ -791,7 +955,7 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
   const ranked = [...m.observations]
     .sort(
       (a, b) =>
-        Number(m.goal.evidenceIds.includes(b.id)) - Number(m.goal.evidenceIds.includes(a.id)) ||
+        npcObservationImportance(m, b) - npcObservationImportance(m, a) ||
         b.tick - a.tick ||
         a.id.localeCompare(b.id),
     )
@@ -801,6 +965,11 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
     knowledgeRevision: m.knowledgeRevision,
     goalGeneration: m.goal.revision,
     personality: clone(m.personality),
+    affect: m.affect
+      ? clone(m.affect)
+      : { fatigue: 0, attention: 100, alertness: 0, mood: 'calm', lastUpdatedTick: state.tick },
+    goalPolicy: m.goalPolicy ? clone(m.goalPolicy) : null,
+    goalDefinitions: clone(m.goalDefinitions ?? []),
     goal: clone(m.goal),
     observations: clone(ranked),
     beliefs: clone(
@@ -809,7 +978,9 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
         .slice(-8),
     ),
     relationships: clone(m.relationships),
-    obligations: clone(m.obligations.filter((o) => o.status === 'accepted').slice(0, 3)),
+    obligations: clone(
+      m.obligations.filter((o) => ['accepted', 'proposed'].includes(o.status)).slice(0, 3),
+    ),
     summary:
       m.summary && validateNpcSummary(state, npcId, m.summary) ? clone(m.summary) : undefined,
     visibleEntities: Object.values(state.entities)
@@ -826,14 +997,37 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
       id,
       revision: state.entities[id]?.revision,
     })),
-    allowedActions: ['move_to', 'wait', 'inspect', 'give', 'open', 'close', 'lock', 'unlock'],
+    allowedActions: [
+      'move_to',
+      'wait',
+      'inspect',
+      'give',
+      'open',
+      'close',
+      'lock',
+      'unlock',
+      'communicate',
+    ],
   };
   return { ...context, contextHash: npcContextFingerprint(context) };
 }
-export function createNpcMemorySummary(state: GameState, npcId: string): NpcMemorySummary {
+export function createNpcMemorySummary(
+  state: GameState,
+  npcId: string,
+  selectedObservationIds?: string[],
+): NpcMemorySummary {
   const m = state.npcBrains?.[npcId]?.living;
   if (!m) throw new Error('TARGET_UNAVAILABLE');
-  const source = m.observations.slice(-16);
+  if (
+    selectedObservationIds &&
+    (selectedObservationIds.length > 16 ||
+      new Set(selectedObservationIds).size !== selectedObservationIds.length ||
+      selectedObservationIds.some((id) => !m.observations.some((o) => o.id === id)))
+  )
+    throw new Error('INVALID_SUMMARY_SELECTION');
+  const source = selectedObservationIds
+    ? selectedObservationIds.map((id) => m.observations.find((o) => o.id === id)!)
+    : m.observations.slice(-16);
   return {
     policyVersion: 1,
     modelVersion: 'grounded-summary-v1',
@@ -845,6 +1039,7 @@ export function createNpcMemorySummary(state: GameState, npcId: string): NpcMemo
     inputFingerprint: npcContextFingerprint(source),
     observationIds: source.map((o) => o.id),
     claims: source.map((o) => ({ observationId: o.id, kind: o.kind })),
+    narrative: groundedNpcNarrative(m, source),
   };
 }
 export function validateNpcSummary(state: GameState, npcId: string, input: unknown): boolean {
@@ -858,6 +1053,7 @@ export function validateNpcSummary(state: GameState, npcId: string, input: unkno
           'policyVersion',
           'modelVersion',
           'coveredEventRange',
+          'narrative',
           'revision',
           'knowledgeRevision',
           'inputFingerprint',
@@ -883,6 +1079,11 @@ export function validateNpcSummary(state: GameState, npcId: string, input: unkno
     ? { firstEventId: source[0]!.eventId, lastEventId: source[source.length - 1]!.eventId }
     : null;
   if (npcContextFingerprint(range) !== npcContextFingerprint(x.coveredEventRange)) return false;
+  if (
+    x.narrative !== undefined &&
+    x.narrative !== groundedNpcNarrative(m, source as NpcObservation[])
+  )
+    return false;
   return x.claims.every(
     (c, i) =>
       c &&
@@ -932,6 +1133,9 @@ export function buildNpcPublicSpeechContext(
           ...(o.actorId ? { actorId: o.actorId } : {}),
           ...(o.targetId ? { targetId: o.targetId } : {}),
           ...(o.text ? { untrustedUtterance: o.text } : {}),
+          ...(o.kind === 'authored_fact' && o.definitionText
+            ? { authoredFact: { title: o.title ?? '', text: o.definitionText } }
+            : {}),
         },
       ];
     }),
@@ -1005,7 +1209,8 @@ export function commitNpcPublicUtterance(
     state.rulesetVersion !== 'hybrid-v3' ||
     !npc ||
     npc.kind !== 'npc' ||
-    recipient?.kind !== 'player' ||
+    !recipient ||
+    !['player', 'npc'].includes(recipient.kind) ||
     !near(npc, recipient) ||
     npc.encounterId ||
     recipient.encounterId
@@ -1090,7 +1295,14 @@ export function refreshLivingPerception(state: GameState): GameResult {
   for (const [id, brain] of Object.entries(s.npcBrains ?? {})) {
     const m = brain.living,
       npc = s.entities[id];
-    if (!m || !npc || m.distractedUntilTick > s.tick || npc.encounterId) continue;
+    if (
+      !m ||
+      !npc ||
+      m.distractedUntilTick > s.tick ||
+      (m.affect?.attention ?? 100) < 60 ||
+      npc.encounterId
+    )
+      continue;
     const remembered = (m.rememberedItems ??= {});
     for (const [targetId, last] of Object.entries(remembered)) {
       if (!last.present || last.mapId !== npc.mapId) continue;
@@ -1143,4 +1355,292 @@ export function refreshLivingPerception(state: GameState): GameResult {
   }
   if (changed) s.revision++;
   return result(changed ? s : state, events);
+}
+
+export function proposeNpcObligation(
+  state: GameState,
+  npcId: string,
+  toActorId: string,
+  itemId: string,
+  evidenceIds: string[],
+  conditions: NpcCondition[] = [],
+  dueTicks = 200,
+): GameResult {
+  if (conditions.length > 4 || conditions.some((c) => !npcConditionSchema.safeParse(c).success))
+    return result(state, [], 'INVALID_ACTION');
+  if (!npcActionAllowed(state, npcId, { kind: 'give', targetId: toActorId, itemId }))
+    return result(state, [], 'FORBIDDEN');
+  const existing = state.npcBrains?.[npcId]?.living?.obligations.find(
+    (o) => o.itemId === itemId && ['proposed', 'accepted'].includes(o.status),
+  );
+  if (existing)
+    return existing.toActorId === toActorId ? result(state) : result(state, [], 'FORBIDDEN');
+  const accepted = acceptNpcObligation(state, npcId, toActorId, itemId, evidenceIds, dueTicks);
+  if (accepted.error || accepted.state === state) return accepted;
+  const o = accepted.state.npcBrains![npcId].living!.obligations.at(-1)!;
+  o.status = 'proposed';
+  o.conditions = clone(conditions);
+  accepted.state.npcNotices = accepted.state.npcNotices?.filter(
+    (n) => n.id !== `notice-${hash(`${npcId}:promised:${o.id}`)}`,
+  );
+  notice(accepted.state, npcId, 'promise_offered', o.id, [toActorId]);
+  return result(accepted.state, [
+    { kind: 'npc.promise_offered', actorId: npcId, mapId: state.entities[npcId].mapId },
+  ]);
+}
+export function respondNpcObligation(
+  state: GameState,
+  actorId: string,
+  npcId: string,
+  promiseId: string,
+  response: 'accept' | 'decline',
+): GameResult {
+  const o = state.npcBrains?.[npcId]?.living?.obligations.find((o) => o.id === promiseId),
+    actor = state.entities[actorId],
+    npc = state.entities[npcId];
+  if (
+    !o ||
+    o.toActorId !== actorId ||
+    actor?.kind !== 'player' ||
+    !npc ||
+    !near(actor, npc) ||
+    !visible(state, actor, npc)
+  )
+    return result(state, [], 'TARGET_UNAVAILABLE');
+  if (!['accept', 'decline'].includes(response)) return result(state, [], 'INVALID_ACTION');
+  if (o.status !== 'proposed')
+    return (response === 'accept' && o.status === 'accepted') ||
+      (response === 'decline' && o.status === 'cancelled')
+      ? result(state)
+      : result(state, [], 'STALE_STATE');
+  if (actor.encounterId || npc.encounterId) return result(state, [], 'WRONG_MODE');
+  if (
+    o.dueTick <= state.tick ||
+    (o.itemId
+      ? state.entities[o.itemId]?.ownerId !== npcId
+      : !o.promisedAction || !state.entities[o.promisedAction.targetId])
+  )
+    return result(state, [], 'STALE_STATE');
+  const s = clone(state),
+    next = s.npcBrains![npcId].living!.obligations.find((x) => x.id === promiseId)!;
+  next.status = response === 'accept' ? 'accepted' : 'cancelled';
+  if (response === 'accept') next.acceptedTick = s.tick;
+  notice(s, npcId, response === 'accept' ? 'promised' : 'promise_cancelled', o.id, [actorId]);
+  s.revision++;
+  return result(s, [
+    {
+      kind: response === 'accept' ? 'npc.promised' : 'npc.promise_cancelled',
+      actorId: npcId,
+      mapId: npc.mapId,
+    },
+  ]);
+}
+/** Only an author-designated question label is public; title/fact ID remain private. */
+export function publicNpcFactTopics(
+  state: GameState,
+  npcId: string,
+): { id: string; title: string }[] {
+  const m = state.npcBrains?.[npcId]?.living;
+  if (!m) return [];
+  return m.observations
+    .filter((o) => o.kind === 'authored_fact' && o.publicQuestion && o.revealCondition !== 'never')
+    .map((o, index) => ({ id: `topic-${hash(npcId)}-${index}`, title: o.publicQuestion! }));
+}
+export function resolveNpcFactTopic(state: GameState, npcId: string, topicId: string): string[] {
+  const m = state.npcBrains?.[npcId]?.living;
+  if (!m) return [];
+  return m.observations
+    .filter((o) => o.kind === 'authored_fact' && o.publicQuestion && o.revealCondition !== 'never')
+    .flatMap((o, index) => (`topic-${hash(npcId)}-${index}` === topicId ? [o.id] : []));
+}
+export function createMockNpcPublicResponse(
+  context: ReturnType<typeof buildNpcPublicSpeechContext>,
+): { text: string } | { code: 'acknowledged' } {
+  const fact = context.claims.find((c) => 'authoredFact' in c && c.authoredFact)?.authoredFact;
+  return fact ? { text: fact.text } : { code: 'acknowledged' };
+}
+
+function npcObservationImportance(m: LivingNpcMemory, o: NpcObservation): number {
+  let score = m.goal.evidenceIds.includes(o.id) ? 100 : 0;
+  if (
+    m.obligations.some(
+      (p) => ['accepted', 'proposed'].includes(p.status) && p.evidenceIds.includes(o.id),
+    )
+  )
+    score += 80;
+  if (o.actorId && m.relationships[o.actorId])
+    score += Math.abs(m.relationships[o.actorId].trust) * 3 + m.relationships[o.actorId].alertness;
+  if (['item_taken', 'item_missing', 'helped'].includes(o.kind)) score += 15;
+  if (m.affect?.mood === 'alarmed' && ['noise', 'item_taken', 'item_missing'].includes(o.kind))
+    score += 10;
+  return score;
+}
+function groundedNpcNarrative(m: LivingNpcMemory, source: NpcObservation[]): string {
+  const changes = source.map((o) => `${o.kind}:${o.id}`).join('; ');
+  const pending = m.obligations
+    .filter((o) => ['accepted', 'proposed'].includes(o.status))
+    .map((o) => o.id)
+    .join(', ');
+  return `Role: ${m.personality.role}. Current purpose: ${m.goal.kind}. Evidence: ${changes}. Unfinished commitments: ${pending}.`.slice(
+    0,
+    1200,
+  );
+}
+
+export const createNpcMemorySummarySelection = (state: GameState, npcId: string, ids: string[]) =>
+  createNpcMemorySummary(state, npcId, ids);
+
+export function proposeNpcActionObligation(
+  state: GameState,
+  npcId: string,
+  toActorId: string,
+  input: unknown,
+  evidenceIds: string[],
+  conditions: NpcCondition[] = [],
+  dueTicks = 200,
+): GameResult {
+  const parsed = npcPromisedActionSchema.safeParse(input),
+    npc = state.entities[npcId],
+    recipient = state.entities[toActorId],
+    m = state.npcBrains?.[npcId]?.living;
+  if (
+    !parsed.success ||
+    !m ||
+    npc?.kind !== 'npc' ||
+    recipient?.kind !== 'player' ||
+    !near(npc, recipient)
+  )
+    return result(state, [], 'FORBIDDEN');
+  const action = parsed.data,
+    target = state.entities[action.targetId];
+  if (
+    !target ||
+    !visible(state, npc, target) ||
+    !visible(state, recipient, target) ||
+    (action.kind === 'open' && (target.kind !== 'door' || target.locked))
+  )
+    return result(state, [], 'TARGET_UNAVAILABLE');
+  if (
+    !Number.isInteger(dueTicks) ||
+    dueTicks < 1 ||
+    dueTicks > 12000 ||
+    conditions.length > 4 ||
+    conditions.some((c) => !npcConditionSchema.safeParse(c).success) ||
+    !evidenceIds.length ||
+    evidenceIds.some((id) => !m.observations.some((o) => o.id === id && o.actorId === toActorId))
+  )
+    return result(state, [], 'INVALID_ACTION');
+  const existing = m.obligations.find(
+    (o) =>
+      o.promisedAction?.kind === action.kind &&
+      o.promisedAction.targetId === action.targetId &&
+      ['proposed', 'accepted'].includes(o.status),
+  );
+  if (existing)
+    return existing.toActorId === toActorId ? result(state) : result(state, [], 'FORBIDDEN');
+  if (m.obligations.filter((o) => ['proposed', 'accepted'].includes(o.status)).length >= 128)
+    return result(state, [], 'RATE_LIMITED');
+  if (!npcActionAllowed(state, npcId, action)) return result(state, [], 'FORBIDDEN');
+  const s = clone(state),
+    next = s.npcBrains![npcId].living!,
+    id = `promise-${hash(`${npcId}:${toActorId}:${JSON.stringify(action)}:${evidenceIds.join(',')}`)}`;
+  if (next.obligations.some((o) => o.id === id)) return result(state);
+  const source = m.observations.find((o) => evidenceIds.includes(o.id) && o.text);
+  next.obligations.push({
+    id,
+    toActorId,
+    promisedAction: clone(action),
+    createdTick: s.tick,
+    dueTick: s.tick + dueTicks,
+    status: 'proposed',
+    evidenceIds: [...evidenceIds],
+    conditions: clone(conditions),
+    sourceUtteranceId: source?.eventId,
+    sourceUtterance: source?.text,
+  });
+  notice(s, npcId, 'promise_offered', id, [toActorId]);
+  s.revision++;
+  return result(s, [{ kind: 'npc.promise_offered', actorId: npcId, mapId: npc.mapId }]);
+}
+
+/** A planner selects evidence, never a private prose string or its own disclosure permission. */
+export function communicateNpcObservations(
+  state: GameState,
+  npcId: string,
+  action: GameAction,
+): GameResult {
+  const npc = state.entities[npcId],
+    recipient = action.targetId ? state.entities[action.targetId] : undefined,
+    m = state.npcBrains?.[npcId]?.living;
+  if (
+    state.rulesetVersion !== 'hybrid-v3' ||
+    npc?.kind !== 'npc' ||
+    !m ||
+    !recipient ||
+    !['player', 'npc'].includes(recipient.kind) ||
+    !near(npc, recipient) ||
+    !visible(state, npc, recipient)
+  )
+    return result(state, [], 'TARGET_UNAVAILABLE');
+  if (npc.encounterId || recipient.encounterId) return result(state, [], 'WRONG_MODE');
+  if (
+    action.kind !== 'communicate' ||
+    !action.channel ||
+    !action.observationIds?.length ||
+    action.observationIds.length > 4 ||
+    new Set(action.observationIds).size !== action.observationIds.length
+  )
+    return result(state, [], 'INVALID_ACTION');
+  if (m.personality.taboos.includes('share_rumors')) return result(state, [], 'FORBIDDEN');
+  const audienceIds =
+    action.channel === 'whisper'
+      ? [npcId, recipient.id]
+      : Object.values(state.entities)
+          .filter((e) => ['npc', 'player'].includes(e.kind) && canNpcHear(state, e, npc))
+          .map((e) => e.id)
+          .sort();
+  const context = buildNpcPublicSpeechContext(state, npcId, audienceIds, action.observationIds, []);
+  if (context.claims.length !== action.observationIds.length) return result(state, [], 'FORBIDDEN');
+  const sources = action.observationIds.map((id) => m.observations.find((o) => o.id === id)!);
+  if (sources.some((o) => o.depth >= 3)) return result(state, [], 'FORBIDDEN');
+  const rendered = createMockNpcPublicResponse(context);
+  const committed = commitNpcPublicUtterance(state, npcId, {
+    ...rendered,
+    channel: action.channel,
+    recipientId: recipient.id,
+    observationIds: action.observationIds,
+    contextHash: npcContextFingerprint(context),
+  });
+  if (committed.error) return committed;
+  let s = committed.state;
+  let changed = false;
+  for (const listenerId of audienceIds) {
+    if (listenerId === npcId) continue;
+    const memory = s.npcBrains?.[listenerId]?.living;
+    if (!memory) continue;
+    if (s === state) s = clone(s);
+    const target = s.npcBrains![listenerId].living!;
+    for (const source of sources) {
+      const eventId = `communicated-${hash(`${npcId}:${listenerId}:${source.rootId}`)}`;
+      changed =
+        remember(target, {
+          ...clone(source),
+          id: `${listenerId}:${eventId}`,
+          eventId,
+          rootId: source.rootId,
+          channel: 'report',
+          confidence: 'reported',
+          sourceNpcId: npcId,
+          depth: source.depth + 1,
+          disclosure: source.disclosure === 'public' ? 'public' : 'participants',
+          audienceIds: source.disclosure === 'public' ? [] : audienceIds,
+          revealCondition: undefined,
+        }) || changed;
+    }
+  }
+  if (changed) s.revision++;
+  return result(s, [
+    ...committed.events,
+    { kind: 'npc.communicated', actorId: npcId, targetId: recipient.id, mapId: npc.mapId },
+  ]);
 }

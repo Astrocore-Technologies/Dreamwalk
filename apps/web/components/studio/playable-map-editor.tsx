@@ -8,6 +8,7 @@ import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Field, Input, Loading, Select } from '@/components/ui';
 import { useDraftAutosave } from '@/lib/use-draft-autosave';
 import { AutosaveStatus } from './autosave-status';
+import { LivingNpcAuthoring } from './living-npc-authoring';
 import { LivingNpcProfile } from './living-npc-profile';
 import { LivingNpcPreview } from './living-npc-preview';
 import styles from './playable-map-editor.module.css';
@@ -739,6 +740,14 @@ export function PlayableMapEditor({
                             npcs={draft.npcs}
                             onKnowledge={(initialKnowledge) => patchSelected({ initialKnowledge })}
                             onChange={(personality) => patchSelected({ personality })}
+                          />
+                        )}
+                        {draft.npcBehavior === 'reactive-v1' && (
+                          <LivingNpcAuthoring
+                            npc={npc}
+                            entities={draft.objects}
+                            npcs={draft.npcs}
+                            onChange={patchSelected}
                           />
                         )}
                         {draft.npcBehavior === 'reactive-v1' && (

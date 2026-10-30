@@ -24,6 +24,9 @@ const tabooLabels = {
   steal: 'Не красть',
   harm: 'Не причинять вред',
   disclose_private: 'Не разглашать тайны',
+  share_rumors: 'Не распространять слухи',
+  give_valuables: 'Не отдавать ценности',
+  lock_doors: 'Не запирать двери',
 };
 export function LivingNpcProfile({
   npc,
@@ -48,6 +51,21 @@ export function LivingNpcProfile({
   return (
     <fieldset className="living-npc-profile">
       <legend>{t('Характер и обязанности NPC')}</legend>
+      <Field label={t('Профиль поведения')}>
+        <Select
+          aria-label={t('Профиль поведения')}
+          value={profile.behaviorProfile || 'green-apple'}
+          onChange={(event) =>
+            onChange({
+              ...profile,
+              behaviorProfile: event.target.value as 'green-apple' | 'cookie',
+            })
+          }
+        >
+          <option value="green-apple">{t('Green Apple')}</option>
+          <option value="cookie">{t('Cookie')}</option>
+        </Select>
+      </Field>
       <Field label={t('Роль NPC')}>
         <Select
           aria-label={t('Роль NPC')}

@@ -8,6 +8,9 @@ import { api, errorMessage, useClient, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Field, Input, Loading, PageHeading } from '@/components/ui';
 import { GameCanvas } from './game-canvas';
+import { SponsorBudget } from './sponsor-budget';
+import { IntentProposals } from './intent-proposals';
+import { PartyChat } from './party-chat';
 import { LivingAiPanel } from './living-ai-panel';
 import { LivingConversation } from './living-conversation';
 import { LivingNotices } from './living-notices';
@@ -24,6 +27,7 @@ const actionKeys: Record<GameAction['kind'], string> = {
   give: 'Передать',
   unlock: 'Отпереть',
   knock: 'Постучать',
+  communicate: 'Сообщить наблюдение',
   lock: 'Запереть дверь',
   open: 'Открыть дверь',
   close: 'Закрыть дверь',
@@ -704,11 +708,27 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             {inviteMessage && <p role="status">{inviteMessage}</p>}
           </section>
           <LivingConversation
+            key={campaignId}
             projection={p}
             disabled={!connected || game.busy || locked}
             command={game.command}
           />
-          <LivingNotices projection={p} />
+          <IntentProposals
+            campaignId={campaignId}
+            projection={p}
+            disabled={!connected || game.busy || locked}
+          />
+          <PartyChat campaignId={campaignId} actorId={p.actorId} disabled={!connected} />
+          <LivingNotices
+            projection={p}
+            command={game.command}
+            disabled={!connected || game.busy || locked}
+          />
+          <SponsorBudget
+            campaignId={campaignId}
+            owner={members.data?.ownerId === user?.id}
+            disabled={!connected}
+          />
           <LivingAiPanel
             campaignId={campaignId}
             projection={p}

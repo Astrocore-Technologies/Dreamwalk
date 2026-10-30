@@ -18,7 +18,9 @@ const goalLabels = {
   assist: 'Помочь',
   warn: 'Предупредить',
 };
-const observationLabels = {
+export const observationLabels = {
+  actor_seen: 'Персонаж появился в поле зрения',
+  actor_departed: 'Персонаж покинул поле зрения',
   item_taken: 'Замечено перемещение предмета',
   item_missing: 'Замечено исчезновение предмета',
   door_changed: 'Замечено изменение двери',
@@ -27,6 +29,7 @@ const observationLabels = {
   helped: 'Оказана помощь',
   claim: 'Получено утверждение',
   known_entity: 'Исходное знание',
+  authored_fact: 'Авторский факт',
   said: 'Услышана реплика',
 };
 const channelLabels = { direct: 'Наблюдение', heard: 'Слух', report: 'Сообщение другого NPC' };
@@ -111,6 +114,15 @@ export function LivingNpcPreview({
                   count: result.brain.living.obligations.length,
                 })}
               </p>
+              {result.brain.living.affect && (
+                <p>
+                  {t('Усталость: {fatigue}; внимание: {attention}; настороженность: {alertness}', {
+                    fatigue: result.brain.living.affect.fatigue,
+                    attention: result.brain.living.affect.attention,
+                    alertness: result.brain.living.affect.alertness,
+                  })}
+                </p>
+              )}
               <ul>
                 {result.brain.living.observations.map((observation) => (
                   <li key={observation.id}>

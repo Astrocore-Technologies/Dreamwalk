@@ -371,3 +371,52 @@ Prepared for an owner-authorized separate pull request. The new two-context brow
 acceptance must run in its CI before browser completion can be claimed. No deployment,
 merge, real provider request, purchase or permanent preview/database reset occurred.
 The user's separately running Windows copy remains stable merged main, untouched.
+
+### Full-architecture completion pass — in progress after initial PR
+
+The owner correctly identified that the first PR did not close every agreed requirement.
+The tracker now names individual requirements instead of labeling whole sections complete.
+The intermediate PR #6 source at `96888cb2e3326b16a8922cede716a72aa2cff213` passed both CI
+runs: ten browser scenarios and the earlier 79 runtime checks. Its label-persistence and
+countdown-only projection race fixes remain in the completion source. These passes are
+not being reused as proof of the newer features below.
+
+Completion work adds ordinary dialogue orchestration, OOC isolation, confirmed natural
+language intents, authored facts/goals/conditional promises, real provider protocol fixtures,
+explicit shared sponsorship, immutable moderation sandbox, bounded needs and memory
+retention. Targeted tests are underway; aggregate final-source verification is still pending.
+A retention review found that deleting old reply provenance could impair later erasure;
+compaction now keeps text-free causal metadata and has an explicit derived-reply regression.
+The user's Windows instance was stopped on request and has not been restarted.
+
+The separately approved reusable-image library is being developed in isolated new files.
+It is not silently included as an accepted NPC feature or used to delay reporting failures.
+No paid provider or image-generation requests, deployment or merge have occurred.
+
+### Full living-NPC local acceptance — 20:13 UTC
+
+The corrected full completion source passed **115/115 PostgreSQL/API/WebSocket tests**
+in 252.45 seconds, including the ordinary conversation pipeline, significant-event
+routing, OOC isolation, confirmed intents, item and non-item promises, sponsor budgets,
+immutable moderator sandbox, cold-memory stress, compacted-provenance erasure, crash,
+revocation and all prior round/offline/movement behavior. A failed provider intent now
+reaches a terminal state instead of occupying a pending slot indefinitely.
+
+The final production build, whole-workspace types, ESLint and formatting passed. Existing
+platform regression passed **62/62** and local SMTP capture **1/1**. Core reached **91/91**;
+UI/autosave/privacy/context checks reached **38/38**. The deterministic behavioral rubric
+passed **7/7**; its small measured in-process benchmark is explicitly not production
+capacity or a real-model quality assessment. Exact final unit commands are recorded in
+the publication manifest, not combined into a misleading unique-test sum.
+
+Independent re-review found no further concrete local implementation gap after the
+reference-only communicate route and event-scheduling fixes. Extended browser acceptance
+still requires the exact updated PR CI; the earlier intermediate ten-browser pass is
+not presented as verification of these later UI flows. Live provider/model quality,
+actual billing and paid activation remain separately gated. No paid call, deployment,
+merge or restart of the user's stopped Windows instance occurred.
+
+The reusable-image library has separate service tests and is deliberately excluded from
+this NPC source snapshot. Its Studio, renderer, version-checksum and delivery integration
+continues separately; a library prototype is not advertised as an already playable
+custom-art pipeline.
