@@ -5,6 +5,8 @@ import { Button, ErrorBox, Field, Input, Select } from '@/components/ui';
 import type { ArtCamera, ArtKind, ArtResolution, ArtRevision, ArtSpec } from './types';
 import { artCameraMatches, artPreviewUrl } from './types';
 import { useAssetText } from './messages';
+import { ImageGeneration } from './image-generation';
+import { useImageText } from './image-messages';
 import { RegisterArt } from './register-art';
 import { AssetGrants } from './asset-grants';
 import styles from './assets.module.css';
@@ -12,11 +14,15 @@ export function AssetLibrary({
   onSelected,
   requiredKind,
   requiredCamera,
+  adventureId,
 }: {
   onSelected?: (revision: ArtRevision) => void;
   requiredKind?: ArtKind;
   requiredCamera?: ArtCamera;
+  adventureId?: string;
 }) {
+  const g = useImageText();
+  const [generationOpen, setGenerationOpen] = useState(false);
   const a = useAssetText(),
     catalog = useResource<ArtRevision[]>('/asset-library');
   const [kind, setKind] = useState<ArtKind>(requiredKind ?? 'background'),
@@ -270,6 +276,40 @@ export function AssetLibrary({
       </div>
       {!catalog.loading && !visible.length && <p>{a('empty')}</p>}
       {selected?.owned && <AssetGrants key={selected.id} revision={selected} onChanged={refresh} />}
+      {adventureId ? (
+        <>
+          <Button
+            type="button"
+            variant="secondary"
+            disabled={
+              !valid ||
+              !['background', 'sprite', 'portrait', 'object'].includes(kind) ||
+              !['top-down', 'portrait', 'unrestricted'].includes(camera)
+            }
+            onClick={() => setGenerationOpen((value) => !value)}
+          >
+            {g('title')}
+          </Button>
+          {generationOpen && (
+            <ImageGeneration
+              adventureId={adventureId}
+              spec={{
+                kind,
+                style: 'drawn2D',
+                camera,
+                tags: tagList,
+                minWidth,
+                minHeight,
+                ...(variant.trim() ? { variant: variant.trim() } : {}),
+              }}
+              onSelected={onSelected}
+              onAdmitted={() => catalog.reload()}
+            />
+          )}
+        </>
+      ) : (
+        <p>{g('source')}</p>
+      )}
       {register && (
         <RegisterArt
           key={base?.id || 'new'}

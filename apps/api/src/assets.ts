@@ -15,16 +15,14 @@ import {
 } from '@nestjs/common';
 import { FileInterceptor } from '@nestjs/platform-express';
 import type { Request, Response } from 'express';
-import sharp from 'sharp';
-import { mkdir, writeFile, readFile, unlink } from 'node:fs/promises';
+import { normalizeRaster, storeRasterTx } from './assets/raster';
+import { readFile, unlink } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { createHash, randomUUID } from 'node:crypto';
+import { randomUUID } from 'node:crypto';
 import { Db, camel } from './db';
 import { Auth } from './auth';
 import { config } from './config';
 import { fail } from './errors';
-const MAX_ASSETS_PER_USER = 200;
-const MAX_ASSET_BYTES_PER_USER = 100 * 1024 * 1024;
 
 @Injectable()
 export class AssetUploadGuard implements CanActivate {
@@ -66,98 +64,13 @@ export class AssetsController {
     req: Request,
   ) {
     const u = await this.auth.require(req);
-    if (!file || !['image/png', 'image/jpeg', 'image/webp'].includes(file.mimetype))
-      fail(400, 'VALIDATION_FAILED', 'Загрузите PNG, JPEG или WebP размером до 5 МБ.');
-    // Do not invoke an SVG/GIF/PDF decoder even if the multipart MIME is forged.
-    const header = file.buffer;
-    const png =
-      header.length >= 8 &&
-      header.subarray(0, 8).equals(Buffer.from([137, 80, 78, 71, 13, 10, 26, 10]));
-    const jpeg =
-      header.length >= 3 && header[0] === 0xff && header[1] === 0xd8 && header[2] === 0xff;
-    const webp =
-      header.length >= 12 &&
-      header.toString('ascii', 0, 4) === 'RIFF' &&
-      header.toString('ascii', 8, 12) === 'WEBP';
-    if (!png && !jpeg && !webp)
-      fail(400, 'VALIDATION_FAILED', 'Файл не является допустимым растровым изображением.');
-    const usage = (
-      await this.db.query(
-        'SELECT count(*)::int AS count, COALESCE(sum(bytes),0)::bigint AS bytes FROM assets WHERE owner_id=$1',
-        [u.id],
-      )
-    )[0];
-    if (
-      Number(usage.count) >= MAX_ASSETS_PER_USER ||
-      Number(usage.bytes) >= MAX_ASSET_BYTES_PER_USER
-    )
-      fail(413, 'ASSET_QUOTA_EXCEEDED', 'Достигнут лимит медиа: 200 изображений или 100 МиБ.');
-    let bytes: Buffer, width: number, height: number;
-    try {
-      const meta = await sharp(file.buffer, { limitInputPixels: 4096 * 4096 }).metadata();
-      if (
-        !['png', 'jpeg', 'webp'].includes(meta.format ?? '') ||
-        !meta.width ||
-        !meta.height ||
-        meta.width > 4096 ||
-        meta.height > 4096 ||
-        (meta.pages ?? 1) > 1
-      )
-        fail(
-          400,
-          'VALIDATION_FAILED',
-          'Изображение должно быть статичным и не больше 4096 × 4096.',
-        );
-      const result = await sharp(file.buffer, { limitInputPixels: 4096 * 4096 })
-        .rotate()
-        .webp({ quality: 88 })
-        .toBuffer({ resolveWithObject: true });
-      bytes = result.data;
-      width = result.info.width;
-      height = result.info.height;
-    } catch {
-      fail(400, 'VALIDATION_FAILED', 'Файл не является допустимым растровым изображением.');
-    }
+    if (!file) fail(400, 'VALIDATION_FAILED', 'VALIDATION_FAILED');
+    const raster = await normalizeRaster(file.buffer, file.mimetype);
     const id = randomUUID(),
-      filename = `${id}.webp`;
-    const filePath = resolve(config.ASSET_DIR, filename);
+      filePath = resolve(config.ASSET_DIR, `${id}.webp`);
     let row: Record<string, unknown>;
     try {
-      row = await this.db.tx(async (client) => {
-        // Lock the owner, not a derived count: concurrent uploads must share one quota.
-        const owner = await client.query(
-          'SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE',
-          [u.id],
-        );
-        if (!owner.rows.length) fail(401, 'UNAUTHORIZED', 'Войдите в аккаунт.');
-        const stored = (
-          await client.query(
-            'SELECT count(*)::int AS count, COALESCE(sum(bytes),0)::bigint AS bytes FROM assets WHERE owner_id=$1',
-            [u.id],
-          )
-        ).rows[0];
-        if (
-          Number(stored.count) >= MAX_ASSETS_PER_USER ||
-          Number(stored.bytes) + bytes!.length > MAX_ASSET_BYTES_PER_USER
-        )
-          fail(413, 'ASSET_QUOTA_EXCEEDED', 'Достигнут лимит медиа: 200 изображений или 100 МиБ.');
-        await mkdir(resolve(config.ASSET_DIR), { recursive: true });
-        await writeFile(filePath, bytes!, { flag: 'wx' });
-        return (
-          await client.query(
-            "INSERT INTO assets(id,owner_id,filename,mime,width,height,bytes,sha256) VALUES($1,$2,$3,'image/webp',$4,$5,$6,$7) RETURNING id,mime,width,height,created_at",
-            [
-              id,
-              u.id,
-              filename,
-              width!,
-              height!,
-              bytes!.length,
-              createHash('sha256').update(bytes!).digest('hex'),
-            ],
-          )
-        ).rows[0];
-      });
+      row = await this.db.tx((c) => storeRasterTx(c, u.id, id, raster));
     } catch (error) {
       await unlink(filePath).catch(() => undefined);
       throw error;

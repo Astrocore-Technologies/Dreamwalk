@@ -20,3 +20,14 @@ through the agreed domain, mock-tested runtime, provider/budget boundary and UI;
 stop at a first slice or claim unverified production/provider behavior. Drawn 2D only;
 pixel art is cancelled, existing placeholders remain temporary. Real provider calls,
 real payments, deployment and merge still require separate authorization.
+
+The owner also approved the reusable drawn-art library and preparation of image
+creation through search, quote, explicit consent and durable admission. Keep image
+jobs separate from NPC state and preserve immutable asset/version rights. A single
+synthetic live evaluation has a separately approved text ceiling of USD 1 and image
+ceiling of USD 1 (USD 2 combined), with no automatic retries/regeneration. This is not
+blanket production activation. Credentials must be supplied through an authorized
+secret-entry flow; never reuse earlier chat tokens. External image dispatch remains
+unavailable until a defensible request upper bound is verified under that approval.
+No deployment, merge or restart of the user's stopped application is authorized by
+this preparation alone.

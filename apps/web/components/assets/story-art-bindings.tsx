@@ -178,6 +178,7 @@ export function StoryArtBindings({
           {current && (
             <AssetLibrary
               key={`${adventureId}:${current.id}`}
+              adventureId={adventureId}
               onSelected={select}
               requiredKind={current.kind}
               requiredCamera={current.camera}
