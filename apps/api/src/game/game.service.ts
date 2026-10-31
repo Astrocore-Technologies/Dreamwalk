@@ -22,6 +22,7 @@ import {
 } from '@dreamwalk/contracts';
 import {
   createObservatoryState,
+  advanceObjectives,
   addPlayer,
   tick,
   moveInput,
@@ -1770,6 +1771,7 @@ export class GameService implements OnModuleDestroy {
       state.rulesetVersion === 'hybrid-v3' &&
       state.tick - live.lastRetentionTick >= 100;
     let savedClock = live.clock;
+    let objectiveEvents: GameResult['events'] = [];
     await this.db.tx(async (c) => {
       await c.query(
         'SELECT a.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1 FOR SHARE OF a',
@@ -1782,6 +1784,32 @@ export class GameService implements OnModuleDestroy {
         );
         if (!allowed.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
       }
+      // Completion is derived from committed world state and currently authorized party members.
+      // It shares the same transaction as the action result, checkpoint and idempotency receipt.
+      if (state.objectives?.length && !live.paused) {
+        const members = (
+          await c.query(
+            `SELECT m.actor_id FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('m.user_id')} FOR SHARE OF m,u`,
+            [id],
+          )
+        ).rows;
+        const completed = advanceObjectives(
+          state,
+          members.map((m) => String(m.actor_id)),
+        );
+        if (completed.events.length) {
+          state = completed.state;
+          objectiveEvents = completed.events;
+          if (operation) {
+            const response = operation.response as {
+              projection: GameProjection;
+              events: unknown[];
+            };
+            response.projection = this.project(state, operation.actorId);
+            response.events.push(...completed.events);
+          }
+        }
+      }
       const update = await c.query(
         `UPDATE game_campaigns SET state=$1,revision=revision+1,event_seq=$2,updated_at=now() WHERE id=$3 AND revision=$4 AND status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=game_campaigns.owner_id AND owner.deleted_at IS NULL) AND ${sourceLiveSql('game_campaigns')} RETURNING revision`,
         [JSON.stringify(state), seq, id, live.dbRevision],
@@ -1792,7 +1820,16 @@ export class GameService implements OnModuleDestroy {
       }
       await c.query(
         'INSERT INTO game_events(campaign_id,sequence,kind,payload) VALUES($1,$2,$3,$4)',
-        [id, seq, kind, JSON.stringify({ state, serverTick: state.tick })],
+        [
+          id,
+          seq,
+          kind,
+          JSON.stringify({
+            state,
+            serverTick: state.tick,
+            ...(objectiveEvents.length ? { objectiveEvents } : {}),
+          }),
+        ],
       );
       await c.query(
         'INSERT INTO game_snapshots(campaign_id,sequence,checksum,state) VALUES($1,$2,$3,$4) ON CONFLICT(campaign_id) DO UPDATE SET sequence=EXCLUDED.sequence,checksum=EXCLUDED.checksum,state=EXCLUDED.state',

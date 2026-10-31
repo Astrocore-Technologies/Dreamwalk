@@ -1,5 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { cameraAxis } from './camera-geometry';
+import { useObjectiveText } from './campaign-objectives';
+import { drawBundledScene, drawJournal } from './bundled-scene';
 import { TextureBudget, textureDimensions } from '../assets/texture-budget';
 import { decodeArt } from '../assets/decode-art';
 import { visibleSceneArt } from '../assets/art-visibility';
@@ -29,6 +32,7 @@ export function GameCanvas({
   planning?: boolean;
 }) {
   const { t } = useT();
+  const objectiveText = useObjectiveText();
   const host = useRef<HTMLDivElement>(null);
   const latest = useRef({ projection, art, onMove, disabled, reducedMotion });
   const [failed, setFailed] = useState(false);
@@ -97,11 +101,16 @@ export function GameCanvas({
       const world = new Container();
       const artBackground = new Container();
       const terrain = new Container();
+      const sceneDecoration = new Graphics();
+      const journalDrawing = new Graphics();
+      drawJournal(journalDrawing);
+      const journalTexture = app.renderer.generateTexture(journalDrawing);
+      journalDrawing.destroy();
       const objects = new Container();
       const boundary = new Graphics();
       const actors = new Container();
       const focus = new Graphics();
-      world.addChild(artBackground, terrain, objects, boundary, actors, focus);
+      world.addChild(artBackground, terrain, sceneDecoration, objects, boundary, actors, focus);
       app.stage.addChild(world);
       const sprites = new Map<
         string,
@@ -127,6 +136,7 @@ export function GameCanvas({
         artRequests.clear();
         textureBudget.close();
         oldCleanup();
+        journalTexture.destroy(true);
         for (const texture of artTextures.values()) texture.destroy(true);
         artTextures.clear();
         for (const surface of artSurfaces.values()) {
@@ -232,6 +242,7 @@ export function GameCanvas({
           );
           const texture = background && artTextures.get(background.url);
           terrain.alpha = texture ? 0.28 : 1;
+          sceneDecoration.visible = !texture;
           if (texture) {
             const sprite = new Sprite(texture);
             sprite.width = state.projection.map.width * tile;
@@ -271,11 +282,13 @@ export function GameCanvas({
         const { projection: p, reducedMotion: reduced } = latest.current;
         app.ticker.maxFPS = reduced ? 30 : 60;
         synchronizeArt();
-        const key = `${p.map.id}:${p.map.revision}`;
+        const key = `${p.map.id}:${p.map.revision}:${p.map.sceneProfile || ''}`;
         if (key !== mapKey) {
           mapKey = key;
           lastRevision = -1;
           terrain.removeChildren().forEach((child) => child.destroy());
+          drawBundledScene(sceneDecoration, p.map, tile);
+          element.dataset.sceneProfile = p.map.sceneProfile || 'none';
           const blocked = new Set(p.map.blocked.map((point) => `${point.x},${point.y}`));
           for (let y = 0; y < p.map.height; y++)
             for (let x = 0; x < p.map.width; x++) {
@@ -334,7 +347,9 @@ export function GameCanvas({
               latest.current.art.find(
                 (entry) => entry.slot === `entity:${entity.id}:object:default`,
               );
-            record.sprite.texture = (binding && artTextures.get(binding.url)) || frames[frame];
+            record.sprite.texture =
+              (binding && artTextures.get(binding.url)) ||
+              (entity.visual === 'journal' ? journalTexture : frames[frame]);
             if (
               record.x !== entity.x * tile ||
               record.y !== entity.y * tile ||
@@ -381,8 +396,8 @@ export function GameCanvas({
           const scale = zoomRef.current;
           world.scale.set(scale);
           world.position.set(
-            app.screen.width / 2 - (own.sprite.x + tile / 2) * scale,
-            app.screen.height / 2 - (own.sprite.y + tile / 2) * scale,
+            cameraAxis(app.screen.width, p.map.width * tile, own.sprite.x + tile / 2, scale),
+            cameraAxis(app.screen.height, p.map.height * tile, own.sprite.y + tile / 2, scale),
           );
           focus
             .clear()
@@ -502,6 +517,7 @@ export function GameCanvas({
           </button>
         </div>
       </div>
+      {projection.map.sceneProfile && <small>{objectiveText.art}</small>}
       <div className={styles.controls}>
         <p id="game-controls-help">
           {t('Коснись клетки или используй стрелки / WASD. Действия доступны и под картой.')}

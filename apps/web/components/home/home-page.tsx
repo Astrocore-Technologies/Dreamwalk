@@ -352,7 +352,12 @@ export function HomePage() {
                   <HeroSelection selection={heroSelection} disabled={busy} />
                 )}
                 <div className={styles.featureActions}>
-                  <Button busy={busy} disabled={!heroSelection.ready} onClick={() => void start()}>
+                  <Button
+                    data-testid="home-start-adventure"
+                    busy={busy}
+                    disabled={!heroSelection.ready}
+                    onClick={() => void start()}
+                  >
                     <Play size={16} fill="currentColor" />
                     {h(startVersion ? 'start' : 'open')}
                   </Button>

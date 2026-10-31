@@ -1,3 +1,4 @@
+import { seedCompleteObservatory } from './game/seed-observatory';
 import { Pool } from 'pg';
 import { isDeepStrictEqual } from 'node:util';
 import { settingsSchema, adventureSchema, npcSchema } from '@dreamwalk/contracts';
@@ -469,6 +470,7 @@ async function main() {
         ],
       );
     }
+    await seedCompleteObservatory(db, owner, stories[0]);
     console.log(
       'Seed ready: original stories, model profiles and disabled external runtimes. No login passwords created.',
     );
