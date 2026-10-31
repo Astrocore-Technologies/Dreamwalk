@@ -1,6 +1,13 @@
 /** Default is a read-only plan. Paid execution requires separate operator approval and fresh key. */
 import { LIMITS } from './live-story/guard.mjs';
 import { consumeFreshKey, stripBootstrapSecrets } from './live-story/key-entry.mjs';
+import {
+  qualityAssessment,
+  newAuthorizedJob,
+  speechQualityTurn,
+  narrativeQualityTurn,
+  linkQualityReceipts,
+} from './live-story/quality-report.mjs';
 const plan = {
   model: LIMITS.model,
   maximumRequests: 4,
@@ -128,6 +135,7 @@ async function execute(key, fixture = false) {
     status: 'not_started',
     mechanical: [],
     quality: [],
+    semanticAssessment: qualityAssessment(fixture),
     receipts: [],
   };
   async function child(file) {
@@ -196,6 +204,7 @@ async function execute(key, fixture = false) {
       'scripts/live-story/preload.mjs',
       'scripts/live-story/pg-guard.mjs',
       'scripts/live-story/key-entry.mjs',
+      'scripts/live-story/quality-report.mjs',
     ]) {
       report.codeHashes[file] = createHash('sha256')
         .update(await readFile(resolve(root, file)))
@@ -260,6 +269,7 @@ async function execute(key, fixture = false) {
       purposes: ['speech'],
     });
     async function narrative(text, revision) {
+      const beforeJobs = (await host.request(path('ai'))).jobs;
       const q = await host.request(path('narrative/quote'), {
         text,
         expectedCanonRevision: revision,
@@ -277,12 +287,14 @@ async function execute(key, fixture = false) {
       );
       const result = finished.turns.find((t) => t.id === turn.id);
       if (result.status !== 'committed') throw Error('DIRECTOR_NOT_COMMITTED_NO_REGENERATION');
-      report.quality.push({
-        kind: 'narrative',
-        text: result.narration ?? null,
-        turnId: result.id,
-        rubric: 'Intent, premise consistency, causal continuity; human review required',
-      });
+      const afterJobs = (await host.request(path('ai'))).jobs;
+      report.quality.push(
+        narrativeQualityTurn({
+          input: text,
+          result,
+          job: newAuthorizedJob(beforeJobs, afterJobs, 'narrative'),
+        }),
+      );
       return result;
     }
     async function move(u, target, range = 0) {
@@ -341,9 +353,11 @@ async function execute(key, fixture = false) {
       );
       if (tile) await move(host, tile);
       const before = (await snapshot(host)).projection.npcUtterances ?? [];
+      const beforeJobs = (await host.request(path('ai'))).jobs;
+      const operationId = randomUUID();
       const result = await host.request(path('commands'), {
         protocolVersion: 1,
-        operationId: randomUUID(),
+        operationId,
         type: 'npc.speech',
         npcId: first.npcId,
         speech: { channel: 'say', text },
@@ -356,15 +370,18 @@ async function execute(key, fixture = false) {
             (u) => u.speakerId === first.npcId && !before.some((old) => old.id === u.id),
           ),
       );
-      report.quality.push({
-        kind: 'npc',
-        name: npc.label,
-        role: npc.supportingNpc?.roleLabel,
-        utterances: answered.projection.npcUtterances
-          ?.filter((u) => u.speakerId === first.npcId)
-          .map((u) => u.text),
-        rubric: 'Identity, relevance and public episodic recall; human review required',
-      });
+      const afterJobs = (await host.request(path('ai'))).jobs;
+      report.quality.push(
+        speechQualityTurn({
+          input: text,
+          npc,
+          before,
+          after: answered.projection.npcUtterances ?? [],
+          decisionRequestId: result.decisionRequestId,
+          operationId,
+          job: newAuthorizedJob(beforeJobs, afterJobs, 'speech'),
+        }),
+      );
     }
     await talk(
       'Как тебя зовут и чем ты занимаешься здесь? Мы назовём найденный сигнал «Серебряный маяк».',
@@ -496,6 +513,7 @@ async function execute(key, fixture = false) {
     } catch {
       report.receipts = [];
     }
+    report.quality = linkQualityReceipts(report.quality, report.receipts);
     await pg.stop();
     if (
       report.status === 'mechanical_pass_quality_review_required' &&

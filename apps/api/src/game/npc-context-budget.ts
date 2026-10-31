@@ -34,7 +34,11 @@ export function packNpcContext<T extends object>(
   }
   const claims = array('claims'),
     asked = new Set((value.requestedFactIds as string[] | undefined) ?? []);
-  const question = claims.filter((c) => typeof c.untrustedUtterance === 'string').at(-1);
+  if (typeof value.replyToObservationId === 'string') asked.add(value.replyToObservationId);
+  const question =
+    typeof value.replyToObservationId === 'string'
+      ? claims.find((c) => c.observationId === value.replyToObservationId)
+      : claims.filter((c) => typeof c.untrustedUtterance === 'string').at(-1);
   if (question) asked.add(String(question.observationId));
   for (let i = 0; i < claims.length && size() > maxBytes;) {
     if (!asked.has(String(claims[i].observationId))) claims.splice(i, 1);

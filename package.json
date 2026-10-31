@@ -28,7 +28,7 @@
     "data:process": "node scripts/env-run.mjs node scripts/process-data-request.mjs",
     "test:restore": "node scripts/backup-restore-drill.mjs",
     "test:mail": "npm run build -w @dreamwalk/contracts && npm run build -w @dreamwalk/game-core && npm run build -w @dreamwalk/api && node --test tests/mail-integration.test.mjs",
-    "test:game": "npm run build -w @dreamwalk/contracts && npm run test -w @dreamwalk/game-core && node --import tsx --test tests/game/ui.test.mjs tests/game/autosave.test.mjs tests/game/privacy-living.test.mjs tests/game/context-budget.test.mjs tests/game/assets-ui.test.mjs tests/game/image-generation-ui.test.mjs tests/game/home-ui.test.mjs tests/game/hero-ui.test.mjs tests/game/scene-ui.test.mjs tests/game/narrative-ui.test.mjs tests/game/media-grounding.test.mjs tests/game/encounter-retry-ui.test.mjs tests/game/story-return.test.mjs tests/live-story-guard.test.mjs",
+    "test:game": "npm run build -w @dreamwalk/contracts && npm run test -w @dreamwalk/game-core && node --import tsx --test tests/game/ui.test.mjs tests/game/autosave.test.mjs tests/game/privacy-living.test.mjs tests/game/context-budget.test.mjs tests/game/assets-ui.test.mjs tests/game/image-generation-ui.test.mjs tests/game/home-ui.test.mjs tests/game/hero-ui.test.mjs tests/game/scene-ui.test.mjs tests/game/narrative-ui.test.mjs tests/game/media-grounding.test.mjs tests/game/encounter-retry-ui.test.mjs tests/game/story-return.test.mjs tests/live-story-guard.test.mjs tests/live-story-quality-report.test.mjs",
     "test:game:integration": "node scripts/test-game.mjs",
     "test:npc:eval": "node scripts/evaluate-npc.mjs",
     "test:assets:integration": "node tests/assets/run.mjs",

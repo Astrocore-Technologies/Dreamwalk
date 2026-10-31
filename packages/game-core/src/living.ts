@@ -497,6 +497,57 @@ export function conveyNpcObservation(
   s.revision++;
   return result(s, [{ kind: 'npc.warned', actorId: fromId, mapId: from.mapId }]);
 }
+const speechRoot = (speakerId: string, tick: number, input: unknown) => {
+  const parsed = npcSpeechSchema.safeParse(input);
+  return parsed.success
+    ? `speech-${hash(`${speakerId}:${tick}:${JSON.stringify(parsed.data)}`)}`
+    : undefined;
+};
+/** Resolve only an original admitted speech observation, never a report or arbitrary evidence ID. */
+export function npcReplyObservation(
+  state: GameState,
+  speakerId: string,
+  npcId: string,
+  observationId: string,
+): NpcObservation | undefined {
+  const o = state.npcBrains?.[npcId]?.living?.observations.find(
+    (item) => item.id === observationId,
+  );
+  if (
+    !o ||
+    o.addressedNpcId !== npcId ||
+    o.depth !== 0 ||
+    o.sourceNpcId ||
+    o.channel !== 'report' ||
+    !['said', 'claim', 'addressed'].includes(o.kind) ||
+    !['public', 'participants'].includes(o.disclosure)
+  )
+    return undefined;
+  // Claim.actorId names the accused, not the speaker. Reconstruct the typed
+  // admission root using the authenticated speaker rather than trusting actorId.
+  const input = {
+    channel: o.disclosure === 'participants' ? 'whisper' : 'say',
+    ...(o.text ? { text: o.text } : {}),
+    ...(o.kind === 'claim'
+      ? { claim: { kind: 'item_taken', actorId: o.actorId, targetId: o.targetId } }
+      : {}),
+  };
+  const root = speechRoot(speakerId, o.tick, input);
+  if (!root || o.id !== `${npcId}:${root}` || o.eventId !== root || o.rootId !== root)
+    return undefined;
+  return o;
+}
+/** Called only after successful applyNpcSpeech, using that exact admitted input. */
+export function admittedNpcSpeechObservationId(
+  state: GameState,
+  speakerId: string,
+  npcId: string,
+  input: unknown,
+): string | undefined {
+  const root = speechRoot(speakerId, state.tick, input);
+  const id = root ? `${npcId}:${root}` : undefined;
+  return id && npcReplyObservation(state, speakerId, npcId, id) ? id : undefined;
+}
 /** Structured fictional allegations are reports, not authoritative mutations. */
 export function applyNpcSpeech(
   state: GameState,
@@ -530,7 +581,7 @@ export function applyNpcSpeech(
   )
     return result(state, [], 'TARGET_UNAVAILABLE');
   const s = clone(state),
-    root = `speech-${hash(`${speakerId}:${s.tick}:${JSON.stringify(p.data)}`)}`;
+    root = speechRoot(speakerId, s.tick, p.data)!;
   const recipients =
     p.data.channel === 'whisper'
       ? [npcId]

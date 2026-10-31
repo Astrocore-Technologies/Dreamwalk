@@ -52,6 +52,8 @@ import {
   createNpcMemorySummarySelection,
   acceptNpcMemorySummary,
   buildNpcPublicSpeechContext,
+  admittedNpcSpeechObservationId,
+  npcReplyObservation,
   commitNpcPublicUtterance,
   canNpcHear,
   npcContextFingerprint,
@@ -966,6 +968,7 @@ export class GameService implements OnModuleDestroy {
     channel: 'say' | 'whisper',
     selected?: string[],
     topicId?: string,
+    replyToObservationId?: string,
   ) {
     const npc = state.entities[npcId],
       recipient = state.entities[recipientId];
@@ -993,6 +996,11 @@ export class GameService implements OnModuleDestroy {
     )
       fail(404, 'NOT_FOUND', 'NOT_FOUND');
     const memory = state.npcBrains![npcId].living!;
+    if (
+      replyToObservationId &&
+      !npcReplyObservation(state, recipientId, npcId, replyToObservationId)
+    )
+      fail(409, 'STALE_STATE', 'STALE_STATE');
     // Ask permissions derive from an authenticated visible topic, never proposed secret IDs.
     const requestedFactIds = namedTopic.length
       ? namedTopic
@@ -1008,10 +1016,13 @@ export class GameService implements OnModuleDestroy {
         : [];
     const observations =
       selected ??
-      [...new Set([...requestedFactIds, ...memory.observations.slice(-16).map((o) => o.id)])].slice(
-        0,
-        16,
-      );
+      [
+        ...new Set([
+          ...(replyToObservationId ? [replyToObservationId] : []),
+          ...requestedFactIds,
+          ...memory.observations.slice(-16).map((o) => o.id),
+        ]),
+      ].slice(0, 16);
     const publicContext = buildNpcPublicSpeechContext(
       state,
       npcId,
@@ -1019,9 +1030,14 @@ export class GameService implements OnModuleDestroy {
       observations,
       requestedFactIds,
     );
+    const currentUtterance = replyToObservationId
+      ? publicContext.claims.find((c) => c.observationId === replyToObservationId)
+      : undefined;
+    if (replyToObservationId && !currentUtterance) fail(409, 'STALE_STATE', 'STALE_STATE');
     const observationIds = publicContext.claims.map((c) => c.observationId);
     const safe = {
       ...publicContext,
+      ...(replyToObservationId ? { replyToObservationId, currentUtterance } : {}),
       recipientId,
       channel,
       observationIds,
@@ -1182,6 +1198,7 @@ export class GameService implements OnModuleDestroy {
           channel: z.enum(['say', 'whisper']),
           observationIds: z.array(z.string()).max(16),
           topicId: z.string().optional(),
+          replyToObservationId: z.string().max(200).optional(),
         })
         .passthrough()
         .safeParse(job.context);
@@ -1201,6 +1218,7 @@ export class GameService implements OnModuleDestroy {
             request.data.channel,
             request.data.observationIds,
             request.data.topicId,
+            request.data.replyToObservationId,
           );
         } catch {
           /* No longer nearby/in same phase: stale, never broadcast. */
@@ -2147,6 +2165,13 @@ export class GameService implements OnModuleDestroy {
           )[0].count,
         );
         if (queued >= 16) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+        const replyToObservationId = admittedNpcSpeechObservationId(
+          next,
+          a.actorId,
+          command.npcId,
+          command.speech,
+        );
+        if (!replyToObservationId) fail(409, 'STALE_STATE', 'STALE_STATE');
         const context = this.speechContext(
           next,
           command.npcId,
@@ -2154,6 +2179,7 @@ export class GameService implements OnModuleDestroy {
           command.speech.channel,
           undefined,
           command.topicId,
+          replyToObservationId,
         );
         decisionRequest = {
           id: randomUUID(),
