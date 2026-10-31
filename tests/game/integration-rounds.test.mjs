@@ -77,7 +77,33 @@ await test(
       await t.test(
         'join is queued, outside players do not act early, another map keeps moving',
         async () => {
-          assert.equal((await command(a, id, cmd('encounter.begin'))).status, 'committed');
+          // A visible-world revision can advance between a click and admission.
+          // Rejection must have no round effect; a fresh explicit operation may then commit once.
+          const rejected = await command(a, id, cmd('encounter.begin', { expectedRevision: 0 }));
+          assert.equal(rejected.status, 'rejected');
+          assert.equal(rejected.code, 'STALE_STATE');
+          assert.deepEqual(rejected.events, []);
+          assert.equal(rejected.projection.encounter, undefined);
+          const refreshed = await snapshot(a, id);
+          const begin = cmd('encounter.begin', {
+            expectedRevision: refreshed.projection.revision,
+          });
+          const committed = await command(a, id, begin);
+          assert.equal(committed.status, 'committed');
+          const replayed = await command(a, id, begin);
+          assert.equal(replayed.status, 'committed');
+          assert.equal(replayed.projection.encounter.id, committed.projection.encounter.id);
+          assert.equal(
+            Number(
+              (
+                await db.query(
+                  'SELECT count(*) FROM game_operations WHERE campaign_id=$1 AND operation_id=$2',
+                  [id, begin.operationId],
+                )
+              ).rows[0].count,
+            ),
+            1,
+          );
           round1 = (await snapshot(a, id)).projection.encounter;
           assert.equal(round1.round, 1);
           const waiting = await snapshot(b, id);

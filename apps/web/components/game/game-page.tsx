@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Compass, KeyRound, Moon, Radio, UsersRound } from 'lucide-react';
@@ -239,6 +239,21 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
       : undefined;
   const locked = !!(p && encounter?.intents[p.actorId]?.ready);
   const connected = game.connection === 'connected';
+  const membersLoading = useRef(members.loading);
+  membersLoading.current = members.loading;
+  useEffect(() => {
+    if (!connected) return;
+    const reloadIfVisible = () => {
+      if (document.visibilityState === 'visible' && !membersLoading.current) members.reload();
+    };
+    const timer = setInterval(reloadIfVisible, 5000);
+    document.addEventListener('visibilitychange', reloadIfVisible);
+    reloadIfVisible();
+    return () => {
+      clearInterval(timer);
+      document.removeEventListener('visibilitychange', reloadIfVisible);
+    };
+  }, [connected, members.reload]);
   const nearby = useMemo(() => p?.entities.filter((entity) => entity.id !== p.actorId) || [], [p]);
   useEffect(() => {
     setSelected((p && encounter?.intents[p.actorId]?.action) || { kind: 'wait' });
@@ -741,7 +756,11 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             </h2>
             <ul className={styles.members}>
               {members.data?.members.map((member) => (
-                <li key={member.userId}>
+                <li
+                  key={member.userId}
+                  data-member-handle={member.username}
+                  data-member-status={member.status}
+                >
                   <span>
                     {member.username}
                     <small>

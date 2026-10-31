@@ -93,6 +93,14 @@ test('two players coauthor committed evolving scenes, travel and retain shared c
       .click();
     await expect(guest).toHaveURL(new RegExp(`/game/${id}$`));
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
+    await expect(owner.locator(`[data-member-handle="${guestHandle}"]`)).toHaveAttribute(
+      'data-member-status',
+      'accepted',
+      { timeout: 15000 },
+    );
+    await expect(
+      owner.locator(`[data-member-handle="${guestHandle}"]`).getByText('Принято', { exact: true }),
+    ).toBeVisible();
     await expect(owner.getByTestId('game-advanced')).not.toHaveAttribute('open', '');
     const originalMap = (await snapshot(owner, id)).map.id;
     await prepare(owner, 'Я ищу новый путь расследования за стенами обсерватории.');
