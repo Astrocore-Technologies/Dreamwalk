@@ -161,6 +161,8 @@ function canonical(value: unknown): unknown {
 export class GameService implements OnModuleDestroy {
   private live = new Map<string, Live>();
   private queues = new Map<string, Promise<unknown>>();
+  // COMMIT visibility precedes the continuation that publishes its in-memory checkpoint.
+  private publications = new Map<string, Promise<void>>();
   private pending = new Map<string, number>();
   private listeners = new Set<(campaignId: string) => void>();
   private npcJobs = new Set<string>();
@@ -328,10 +330,23 @@ export class GameService implements OnModuleDestroy {
   async access(req: Request, id: string) {
     z.uuid().parse(id);
     const user = await this.auth.require(req);
-    const rows = await this.db.query(
-      `SELECT m.actor_id,c.owner_id,c.revision FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id WHERE m.campaign_id=$1 AND m.user_id=$2 AND m.status='accepted' AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL) AND ${sourceAccessSql('$2')}`,
-      [id, user.id],
-    );
+    const readAccess = () =>
+      this.db.query(
+        `SELECT m.actor_id,c.owner_id,c.revision FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id WHERE m.campaign_id=$1 AND m.user_id=$2 AND m.status='accepted' AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL) AND ${sourceAccessSql('$2')}`,
+        [id, user.id],
+      );
+    let rows = await readAccess();
+    let cached = this.live.get(id);
+    while (rows[0] && cached && Number(rows[0].revision) > cached.dbRevision) {
+      const publication = this.publications.get(id);
+      if (!publication) break;
+      // Do not await the writer queue: callers may already be inside that writer.
+      // Only a locally committing checkpoint has this short publication barrier.
+      await publication;
+      await this.auth.require(req);
+      rows = await readAccess();
+      cached = this.live.get(id);
+    }
     if (!rows[0]) {
       const stillActive = await this.db.query(
         `SELECT c.id FROM game_campaigns c WHERE c.id=$1 AND c.status='active' AND ${sourceLiveSql()}`,
@@ -342,7 +357,7 @@ export class GameService implements OnModuleDestroy {
     }
     // Account erasure and administrative changes may commit outside this process's writer.
     // Never project a cached pre-erasure checkpoint after observing a newer durable revision.
-    const cached = this.live.get(id);
+    cached = this.live.get(id);
     if (cached && Number(rows[0].revision) > cached.dbRevision) this.live.delete(id);
     return { user, actorId: String(rows[0].actor_id), ownerId: String(rows[0].owner_id) };
   }
@@ -2257,101 +2272,111 @@ export class GameService implements OnModuleDestroy {
       state.tick - live.lastRetentionTick >= 100;
     let savedClock = live.clock;
     let objectiveEvents: GameResult['events'] = [];
-    await this.db.tx(async (c) => {
-      await c.query(
-        'SELECT a.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1 FOR SHARE OF a',
-        [id],
-      );
-      if (operation) {
-        const allowed = await c.query(
-          `SELECT c.id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id WHERE c.id=$1 AND m.actor_id=$2 AND m.status='accepted' AND ${sourceAccessSql('m.user_id')}`,
-          [id, operation.actorId],
+    let releasePublication!: () => void;
+    const publication = new Promise<void>((resolve) => {
+      releasePublication = resolve;
+    });
+    this.publications.set(id, publication);
+    try {
+      await this.db.tx(async (c) => {
+        await c.query(
+          'SELECT a.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1 FOR SHARE OF a',
+          [id],
         );
-        if (!allowed.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
-      }
-      if (prepare) state = await prepare(c, state);
-      // Completion is derived from committed world state and currently authorized party members.
-      // It shares the same transaction as the action result, checkpoint and idempotency receipt.
-      if (state.objectives?.length && !live.paused) {
-        const members = (
-          await c.query(
-            `SELECT m.actor_id FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('m.user_id')} FOR SHARE OF m,u`,
-            [id],
-          )
-        ).rows;
-        const completed = advanceObjectives(
-          state,
-          members.map((m) => String(m.actor_id)),
-        );
-        if (completed.events.length) {
-          state = completed.state;
-          objectiveEvents = completed.events;
-          if (operation) {
-            const response = operation.response as {
-              projection: GameProjection;
-              events: unknown[];
-            };
-            response.projection = this.project(state, operation.actorId);
-            response.events.push(...completed.events);
+        if (operation) {
+          const allowed = await c.query(
+            `SELECT c.id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id WHERE c.id=$1 AND m.actor_id=$2 AND m.status='accepted' AND ${sourceAccessSql('m.user_id')}`,
+            [id, operation.actorId],
+          );
+          if (!allowed.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+        }
+        if (prepare) state = await prepare(c, state);
+        // Completion is derived from committed world state and currently authorized party members.
+        // It shares the same transaction as the action result, checkpoint and idempotency receipt.
+        if (state.objectives?.length && !live.paused) {
+          const members = (
+            await c.query(
+              `SELECT m.actor_id FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('m.user_id')} FOR SHARE OF m,u`,
+              [id],
+            )
+          ).rows;
+          const completed = advanceObjectives(
+            state,
+            members.map((m) => String(m.actor_id)),
+          );
+          if (completed.events.length) {
+            state = completed.state;
+            objectiveEvents = completed.events;
+            if (operation) {
+              const response = operation.response as {
+                projection: GameProjection;
+                events: unknown[];
+              };
+              response.projection = this.project(state, operation.actorId);
+              response.events.push(...completed.events);
+            }
           }
         }
-      }
-      const update = await c.query(
-        `UPDATE game_campaigns SET state=$1,revision=revision+1,event_seq=$2,updated_at=now() WHERE id=$3 AND revision=$4 AND status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=game_campaigns.owner_id AND owner.deleted_at IS NULL) AND ${sourceLiveSql('game_campaigns')} RETURNING revision`,
-        [JSON.stringify(state), seq, id, live.dbRevision],
-      );
-      if (!update.rowCount) {
-        this.live.delete(id);
-        fail(409, 'STALE_STATE', 'STALE_STATE');
-      }
-      await c.query(
-        'INSERT INTO game_events(campaign_id,sequence,kind,payload) VALUES($1,$2,$3,$4)',
-        [
-          id,
-          seq,
-          kind,
-          JSON.stringify({
-            state,
-            serverTick: state.tick,
-            ...(objectiveEvents.length ? { objectiveEvents } : {}),
-          }),
-        ],
-      );
-      await c.query(
-        'INSERT INTO game_snapshots(campaign_id,sequence,checksum,state) VALUES($1,$2,$3,$4) ON CONFLICT(campaign_id) DO UPDATE SET sequence=EXCLUDED.sequence,checksum=EXCLUDED.checksum,state=EXCLUDED.state',
-        [id, seq, digest(state), JSON.stringify(state)],
-      );
-      await c.query('INSERT INTO game_outbox(campaign_id,sequence) VALUES($1,$2)', [id, seq]);
-      if (operation)
+        const update = await c.query(
+          `UPDATE game_campaigns SET state=$1,revision=revision+1,event_seq=$2,updated_at=now() WHERE id=$3 AND revision=$4 AND status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=game_campaigns.owner_id AND owner.deleted_at IS NULL) AND ${sourceLiveSql('game_campaigns')} RETURNING revision`,
+          [JSON.stringify(state), seq, id, live.dbRevision],
+        );
+        if (!update.rowCount) {
+          this.live.delete(id);
+          fail(409, 'STALE_STATE', 'STALE_STATE');
+        }
         await c.query(
-          'INSERT INTO game_operations(campaign_id,actor_id,operation_id,request_hash,result) VALUES($1,$2,$3,$4,$5)',
+          'INSERT INTO game_events(campaign_id,sequence,kind,payload) VALUES($1,$2,$3,$4)',
           [
             id,
-            operation.actorId,
-            operation.command.operationId,
-            operation.hash,
-            JSON.stringify(operation.response),
+            seq,
+            kind,
+            JSON.stringify({
+              state,
+              serverTick: state.tick,
+              ...(objectiveEvents.length ? { objectiveEvents } : {}),
+            }),
           ],
         );
-      await archiveNpcEpisodes(c, id, state);
-      if (extra) await extra(c);
-      if (retentionDue) await pruneNpcMemory(c, id, state, seq);
-      savedClock = live.paused
-        ? { ...live.clock, paused: true }
-        : await this.captureClock(state, id, c);
-      await c.query('UPDATE game_campaigns SET runtime_clock=$2 WHERE id=$1', [
-        id,
-        JSON.stringify(savedClock),
-      ]);
-    });
-    live.state = state;
-    if (retentionDue) live.lastRetentionTick = state.tick;
-    live.clock = savedClock;
-    live.dbRevision++;
-    live.eventSeq = seq;
-    live.dirty = false;
-    live.lastCheckpoint = Date.now();
-    this.notify(id);
+        await c.query(
+          'INSERT INTO game_snapshots(campaign_id,sequence,checksum,state) VALUES($1,$2,$3,$4) ON CONFLICT(campaign_id) DO UPDATE SET sequence=EXCLUDED.sequence,checksum=EXCLUDED.checksum,state=EXCLUDED.state',
+          [id, seq, digest(state), JSON.stringify(state)],
+        );
+        await c.query('INSERT INTO game_outbox(campaign_id,sequence) VALUES($1,$2)', [id, seq]);
+        if (operation)
+          await c.query(
+            'INSERT INTO game_operations(campaign_id,actor_id,operation_id,request_hash,result) VALUES($1,$2,$3,$4,$5)',
+            [
+              id,
+              operation.actorId,
+              operation.command.operationId,
+              operation.hash,
+              JSON.stringify(operation.response),
+            ],
+          );
+        await archiveNpcEpisodes(c, id, state);
+        if (extra) await extra(c);
+        if (retentionDue) await pruneNpcMemory(c, id, state, seq);
+        savedClock = live.paused
+          ? { ...live.clock, paused: true }
+          : await this.captureClock(state, id, c);
+        await c.query('UPDATE game_campaigns SET runtime_clock=$2 WHERE id=$1', [
+          id,
+          JSON.stringify(savedClock),
+        ]);
+      });
+      live.state = state;
+      if (retentionDue) live.lastRetentionTick = state.tick;
+      live.clock = savedClock;
+      live.dbRevision++;
+      live.eventSeq = seq;
+      live.dirty = false;
+      live.lastCheckpoint = Date.now();
+      this.notify(id);
+    } finally {
+      if (this.publications.get(id) === publication) this.publications.delete(id);
+      releasePublication();
+    }
   }
   private async advance(id: string) {
     const live = this.live.get(id);
