@@ -40,7 +40,8 @@ jobs:
       - run: npm ci
       - run: npm run build -w @dreamwalk/contracts
       - run: npm run db:migrate
-      - run: npm run db:seed
+      - name: Seed with compiled workspace dependencies
+        run: npm run db:seed
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:unit

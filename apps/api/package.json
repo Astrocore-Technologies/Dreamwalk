@@ -8,7 +8,8 @@
     "dev": "tsc -p tsconfig.json && node dist/main.js",
     "start": "node dist/main.js",
     "db:migrate": "node --import tsx src/migrate.ts",
-    "db:seed": "node --import tsx src/seed.ts"
+    "db:seed": "node --import tsx src/seed.ts",
+    "predb:seed": "npm run build -w @dreamwalk/contracts && npm run build -w @dreamwalk/game-core"
   },
   "dependencies": {
     "@dreamwalk/contracts": "0.1.0",
