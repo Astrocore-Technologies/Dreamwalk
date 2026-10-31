@@ -22,6 +22,9 @@ export interface OpenAiNpcConfig {
   maxInputBytes: number;
   maxOutputTokens: number;
   maxResponseBytes: number;
+  /** Optional operator pinning for bounded live evaluations. */
+  serviceTier?: 'default';
+  reasoningEffort?: 'none';
   /** Operator-verified current rate, integer USD micro-units per million tokens. No guessed prices. */
   inputMicrosPerMillion: number;
   outputMicrosPerMillion: number;
@@ -232,6 +235,10 @@ export class OpenAiNpcProvider implements NpcProvider {
       model: this.config.model,
       store: false,
       stream: false,
+      ...(this.config.serviceTier ? { service_tier: this.config.serviceTier } : {}),
+      ...(this.config.reasoningEffort
+        ? { reasoning: { effort: this.config.reasoningEffort } }
+        : {}),
       instructions,
       input: JSON.stringify({ purpose: purpose, context }),
       max_output_tokens: this.config.maxOutputTokens,
@@ -313,6 +320,20 @@ export class OpenAiNpcProvider implements NpcProvider {
       raw = JSON.parse(Buffer.concat(chunks).toString('utf8'));
     } catch {
       throw new ProviderFailure('PROVIDER_INVALID_RESULT', true);
+    }
+    if (
+      this.config.serviceTier &&
+      (!raw ||
+        typeof raw !== 'object' ||
+        Array.isArray(raw) ||
+        (raw as Record<string, unknown>).service_tier !== this.config.serviceTier)
+    ) {
+      const receipt = z.object({ id: z.string().min(1).max(200) }).safeParse(raw);
+      throw new ProviderFailure(
+        'PROVIDER_TIER_UNVERIFIED',
+        true,
+        receipt.success ? receipt.data.id : undefined,
+      );
     }
     const envelope = z
       .object({

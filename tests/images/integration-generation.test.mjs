@@ -6,7 +6,7 @@ import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import { mkdir, rm, writeFile, access } from 'node:fs/promises';
-import { resolve } from 'node:path';
+import { resolve, sep } from 'node:path';
 import { db, startApi, stopApi, client, until } from '../game/support-runtime.mjs';
 import { createStory, fixturePng, uploadFixture } from './support.mjs';
 const require = createRequire(import.meta.url);
@@ -548,6 +548,7 @@ await test(
           assert.ok(job);
           const filename = `${job.id}.image-quarantine`;
           const path = resolve(process.env.ASSET_DIR, filename);
+          assert.ok(path.startsWith(resolve(process.env.ASSET_DIR) + sep));
           await rm(path, { force: true });
           await mkdir(path);
           await db.query('UPDATE image_generation_jobs SET quarantine_filename=$2 WHERE id=$1', [
@@ -574,7 +575,12 @@ await test(
               ],
               { env: process.env, timeout: 30000 },
             );
-          await assert.rejects(run, /EISDIR|illegal operation on a directory/);
+          await assert.rejects(
+            run,
+            process.platform === 'win32'
+              ? /EPERM|EISDIR|illegal operation on a directory/
+              : /EISDIR|illegal operation on a directory/,
+          );
           assert.equal((await row(job.id)).quarantine_filename, filename);
           assert.notDeepEqual((await row(job.id)).input, {});
           assert.equal(

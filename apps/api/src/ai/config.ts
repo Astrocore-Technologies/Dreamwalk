@@ -30,6 +30,9 @@ export function readNpcAiConfiguration(env: NodeJS.ProcessEnv = process.env): {
       NPC_AI_CAP_MICROS: z.coerce.number().int().min(0).max(1000000000000).default(0),
       NPC_AI_TIMEOUT_MS: z.coerce.number().int().min(100).max(60000).default(8000),
       NPC_AI_MAX_INPUT_TOKENS: z.coerce.number().int().min(1).max(100000).default(16000),
+      NPC_AI_MAX_INPUT_BYTES: z.coerce.number().int().min(1024).max(64000).default(64000),
+      NPC_AI_SERVICE_TIER: z.literal('default').optional(),
+      NPC_AI_REASONING_EFFORT: z.literal('none').optional(),
       NPC_AI_MAX_OUTPUT_TOKENS: z.coerce.number().int().min(1).max(32000).default(1024),
     })
     .parse(env);
@@ -71,7 +74,9 @@ export function readNpcAiConfiguration(env: NodeJS.ProcessEnv = process.env): {
           apiKey: c.NPC_AI_API_KEY,
           model: c.NPC_AI_MODEL,
           version: c.NPC_AI_VERSION,
-          maxInputBytes: 64000,
+          maxInputBytes: c.NPC_AI_MAX_INPUT_BYTES,
+          serviceTier: c.NPC_AI_SERVICE_TIER,
+          reasoningEffort: c.NPC_AI_REASONING_EFFORT,
           maxResponseBytes: 128000,
           maxOutputTokens: c.NPC_AI_MAX_OUTPUT_TOKENS,
           inputMicrosPerMillion: c.NPC_AI_INPUT_MICROS_PER_MILLION!,
