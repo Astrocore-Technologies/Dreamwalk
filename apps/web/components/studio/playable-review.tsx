@@ -1,8 +1,10 @@
 'use client';
+import { ObjectiveReview } from './objective-review';
 import { PinnedArtReview } from '../assets/pinned-art-review';
 import { useEffect, useState } from 'react';
 import type {
   GameMap,
+  ObjectiveDefinition,
   NpcPersonality,
   NpcObservation,
   NpcGoalDefinition,
@@ -34,6 +36,7 @@ type ReviewResponse = {
   versionId: string | null;
   sourceRevision: number | null;
   compiled: null | {
+    objectives?: ObjectiveDefinition[];
     artBindings?: { slot: string; revisionId: string }[];
     npcPolicy?: 'reactive-v1' | null;
     npcProfiles?: {
@@ -120,6 +123,10 @@ export function PlayableReview({
       </Button>
       <p>{t('Это неизменяемая отправленная версия, а не текущий черновик автора.')}</p>
       <h4>{source.title}</h4>
+      <ObjectiveReview
+        objectives={source.objectives}
+        name={(id) => source.entities[id]?.label || source.maps[id]?.label || id}
+      />
       {source.npcPolicy === 'reactive-v1' && (
         <section aria-label={t('Поведение NPC на модерации')}>
           <h4>{t('Поведение NPC на модерации')}</h4>

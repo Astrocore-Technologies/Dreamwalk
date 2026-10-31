@@ -558,3 +558,46 @@ The new 18th browser scenario and a single uninterrupted full pipeline still req
 exact-head CI. Follow-on scope is only the complete player flow, working NPC behavior,
 generation/drawn scene and one small complete adventure. Translation, Discord, payments
 and broad public release are deferred by the owner's latest clarification.
+
+PR #13 subsequently passed both exact-head CI runs at `31e099d946a59c3b03bcb22405a8c30a3468bafa`: the full **129 runtime checks** ran uninterrupted and all **18 browser scenarios** passed without a retry marker.
+
+## 2026-10-31 — One complete Observatory adventure (browser acceptance pending)
+
+A separate authored template now has two lawful routes to the roof journal: the
+ordinary brass key/main stairway or a keeper-owned token received through an explicitly
+accepted promise/side stairway. The old prototype and existing saves are not migrated.
+A delayed-acceptance test found the sample keeper wandering out of interaction range;
+his authored patrol post was corrected, without weakening generic movement/range rules.
+
+The server derives a once-only shared achievement from currently authorized party
+members, inside the same action/checkpoint transaction. The epilogue is hidden in all
+locales until completion. The completion event is retained in the existing event payload;
+replay/restart does not duplicate it. Exploration remains available after the ending.
+The guarded first-party seed uses the normal immutable playable-version/public launch
+route and skips edited content instead of overwriting it.
+
+Core **105/105** and focused real PostgreSQL/API **10/10** passed, including four members,
+both routes, one journal owner/shared ending, hard restart/replay, revoked actors and
+version pinning. Scene dressing and the journal icon are original code-native drawn
+layers, not paid-generated images. Objective UI and moderator review are separate
+public/private projections. Four-independent-context browser acceptance and actual
+room/ending/mobile screenshot outputs are being prepared for exact-head CI; they have
+not yet been executed locally. No translation, Discord, payment or deployment work was
+added to this narrowed stage. Live-provider quality and external image-cost approval
+remain separate gates, described in `docs/sample-adventure-live-evaluation.md`.
+
+The complete-adventure local aggregate passed: production build, workspace types,
+ESLint/formatting, contracts **9/9**, config/locales **18/18**, core **105/105**,
+UI/privacy **60/60**, semantic adapter **2/2**, uninterrupted runtime **139/139**,
+platform **62/62**, assets **23/23**, image preparation **20/20**, discovery **4/4**
+and SMTP **1/1**. The expanded adventure checks additionally verify moderator-only
+objective review and repeated seed preservation of an edited draft. The final epilogue
+copy explains the original new-star/clock mystery rather than merely announcing item
+recovery; this copy-only refinement passed core **105/105** and focused real PostgreSQL/API
+**10/10** again. The full aggregate above preceded only that text refinement.
+
+Curated map/entity/exit names follow the viewer's Ukrainian, English or Russian locale;
+source renaming invalidates stale curated variants. This is not automatic user-content
+translation. The nineteenth browser scenario and actual drawn-scene screenshots still
+require exact-head CI and pixel inspection. No real-provider quality or generated-art
+acceptance is implied by deterministic tests.

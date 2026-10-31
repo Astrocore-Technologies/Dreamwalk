@@ -40,7 +40,8 @@ jobs:
       - run: npm ci
       - run: npm run build -w @dreamwalk/contracts
       - run: npm run db:migrate
-      - run: npm run db:seed
+      - name: Seed with compiled workspace dependencies
+        run: npm run db:seed
       - run: npm run typecheck
       - run: npm run lint
       - run: npm run test:unit
@@ -100,5 +101,14 @@ jobs:
         with:
           name: homepage-preview
           path: test-results/**/home-*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+      - name: Save actual complete-adventure scene previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: complete-adventure-preview
+          path: test-results/**/sample-adventure-*.png
           if-no-files-found: ignore
           retention-days: 7
