@@ -16,6 +16,8 @@ import { useLaunchGate } from './use-launch-gate';
 import { localizedProjection } from './localized-projection';
 import { CampaignObjectives } from './campaign-objectives';
 import { GameCanvas } from './game-canvas';
+import { NarrativeDirector } from './narrative-director';
+import { useAdvancedPlayLabel } from './play-messages';
 import { SponsorBudget } from './sponsor-budget';
 import { IntentProposals } from './intent-proposals';
 import { PartyChat } from './party-chat';
@@ -204,6 +206,7 @@ function CampaignLobby() {
   );
 }
 function CampaignRoom({ campaignId }: { campaignId: string }) {
+  const advancedPlayLabel = useAdvancedPlayLabel();
   const { t, locale } = useT();
   const { user } = useClient();
   const members = useResource<{
@@ -418,6 +421,16 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             reducedMotion={!!user?.settings.reducedMotion}
           />
           <CampaignObjectives objectives={p.objectives} />
+          {p.rulesetVersion === 'hybrid-v3' && (
+            <NarrativeDirector
+              key={campaignId}
+              campaignId={campaignId}
+              sceneId={p.map.id}
+              projection={p}
+              onWorldRefresh={() => void game.refresh()}
+              disabled={!connected || game.busy || locked}
+            />
+          )}
           {artCredits.length > 0 && (
             <details>
               <summary>{artText('credits')}</summary>
@@ -802,16 +815,19 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             command={game.command}
             disabled={!connected || game.busy || locked}
           />
-          <SponsorBudget
-            campaignId={campaignId}
-            owner={members.data?.ownerId === user?.id}
-            disabled={!connected}
-          />
-          <LivingAiPanel
-            campaignId={campaignId}
-            projection={p}
-            disabled={!connected || game.busy}
-          />
+          <details data-testid="game-advanced">
+            <summary>{advancedPlayLabel}</summary>
+            <SponsorBudget
+              campaignId={campaignId}
+              owner={members.data?.ownerId === user?.id}
+              disabled={!connected}
+            />
+            <LivingAiPanel
+              campaignId={campaignId}
+              projection={p}
+              disabled={!connected || game.busy}
+            />
+          </details>
           <section>
             <h2>{t('Журнал событий')}</h2>
             <ol className={styles.journal} aria-live="polite" aria-relevant="additions">

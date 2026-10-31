@@ -1,5 +1,6 @@
 /** Game extension of the explicit account export/purge transaction. No external calls. */
 import { createHash, randomUUID } from 'node:crypto';
+import { redactNarrativeContent } from './narrative-data-requests.mjs';
 import { exportNpcAiData, exportNpcAiSponsors, purgeNpcAiData } from './npc-ai-data-requests.mjs';
 
 function canonical(value) {
@@ -258,11 +259,18 @@ export async function exportGameData(client, userId) {
       [userId],
     )
   ).rows;
+  const narrativeTurns = (
+    await client.query(
+      'SELECT id,campaign_id,input_text,status,result,result_code,created_at,committed_at FROM game_narrative_turns WHERE requester_user_id=$1 ORDER BY created_at',
+      [userId],
+    )
+  ).rows;
   // Account export is not permission to read other players' inventories or secret world state.
   return rows.map(({ state, actor_id, ...metadata }) => {
     const actor = state.entities?.[actor_id];
     return {
       ...metadata,
+      ownNarrativeTurns: narrativeTurns.filter((turn) => turn.campaign_id === metadata.id),
       ownHero: heroes.find((hero) => hero.campaign_id === metadata.id) ?? null,
       npcRequests: jobs.filter((job) => job.campaign_id === metadata.id),
       npcDecisionRequests: decisions.filter((job) => job.campaign_id === metadata.id),
@@ -304,6 +312,12 @@ export async function purgeGameData(client, userId) {
   ).rows;
   await purgeNpcAiData(client, userId, campaigns);
   for (const campaign of campaigns) {
+    const hasNarrative = Boolean(campaign.state?.narrativeCanon?.turns?.length);
+    if (hasNarrative) {
+      // Generated retellings may contain paraphrased personal input. Preserve
+      // topology and items, conservatively remove all derived narrative text.
+      await client.query('DELETE FROM game_npc_episodes WHERE campaign_id=$1', [campaign.id]);
+    }
     // A queued automatic decision can contain another member's erased evidence.
     // Cancel this private work rather than retaining or replaying stale context.
     await client.query('DELETE FROM game_npc_decision_requests WHERE campaign_id=$1', [
@@ -370,6 +384,7 @@ export async function purgeGameData(client, userId) {
       for (const root of roots) deletedReplyRoots.add(root);
     };
     const cleanPrivateState = (original) => {
+      if (hasNarrative) redactNarrativeContent(original);
       const observations = [
         ...Object.values(original?.npcBrains ?? {}).flatMap((b) => b.living?.observations ?? []),
         ...(original?.npcProvenance?.observations ?? []),
@@ -475,6 +490,7 @@ export async function purgeGameData(client, userId) {
     ).rows;
     for (const event of events) {
       const original = structuredClone(event.payload);
+      if (hasNarrative) redactNarrativeContent(original);
       if (original?.state) original.state = cleanPrivateState(original.state);
       await eraseDerivedArchive();
       const payload = replaceActor(original, actorId, replacement);
@@ -507,7 +523,11 @@ export async function purgeGameData(client, userId) {
           operation.operation_id,
           replaceActor(
             redactGameHeroIdentity(
-              redactGameOperationSpeech(operation.result, actorId, erasedUtteranceIds),
+              redactGameOperationSpeech(
+                hasNarrative ? redactNarrativeContent(operation.result) : operation.result,
+                actorId,
+                erasedUtteranceIds,
+              ),
               actorId,
             ),
             actorId,

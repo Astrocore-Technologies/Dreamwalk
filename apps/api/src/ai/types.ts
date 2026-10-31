@@ -1,7 +1,7 @@
 import type { PoolClient } from 'pg';
 
 /** Server-only DTOs. Never return context/proposal/provider credentials through public job status. */
-export type AiPurpose = 'plan' | 'summary' | 'speech' | 'intent';
+export type AiPurpose = 'plan' | 'summary' | 'speech' | 'intent' | 'supporting_npc' | 'narrative';
 export interface AiScope {
   campaignId: string;
   npcId: string;

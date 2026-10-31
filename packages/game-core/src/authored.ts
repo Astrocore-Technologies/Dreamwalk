@@ -56,6 +56,7 @@ export function createAuthoredDraft(
   const mapId = maps[0].id;
   return {
     schemaVersion: 1,
+    npcBehavior: 'reactive-v1',
     title: template === 'observatory' ? 'The Observatory' : 'The Courtyard',
     startMapId: mapId,
     maps,
@@ -353,7 +354,23 @@ export function compilePlayableDraft(input: unknown): {
         });
       }
     }
+  for (const role of d.supportingNpcPolicy?.roles ?? [])
+    for (const mapId of role.mapIds)
+      if (!maps[mapId]) errors.push(`supportingRole:${role.id}:missing-map`);
+  for (const role of d.supportingNpcPolicy?.roles ?? [])
+    if (
+      role.needObjectiveId &&
+      !d.objectives?.some((objective) => objective.id === role.needObjectiveId)
+    )
+      errors.push(`supportingRole:${role.id}:missing-objective`);
   const playable: PlayablePackage = {
+    narrativePremise: { title: d.title, summary: '' },
+    ...(d.narrativeConstraints
+      ? { narrativeConstraints: structuredClone(d.narrativeConstraints) }
+      : {}),
+    ...(d.supportingNpcPolicy
+      ? { supportingNpcPolicy: structuredClone(d.supportingNpcPolicy) }
+      : {}),
     ...(d.objectives ? { objectives: structuredClone(d.objectives) } : {}),
     assetManifest: { ...bundledGameAssetManifest },
     schemaVersion: 1,
@@ -486,6 +503,18 @@ export function createStateFromPlayable(
   seed = 1,
 ): GameState {
   let state: GameState = {
+    ...(playable.narrativePremise
+      ? { narrativePremise: structuredClone(playable.narrativePremise) }
+      : {}),
+    ...(playable.narrativeConstraints
+      ? { narrativeConstraints: structuredClone(playable.narrativeConstraints) }
+      : {}),
+    ...(playable.supportingNpcPolicy
+      ? {
+          supportingNpcPolicy: structuredClone(playable.supportingNpcPolicy),
+          supportingNpcAdmissions: {},
+        }
+      : {}),
     ...(playable.objectives
       ? { objectives: structuredClone(playable.objectives), objectiveProgress: {} }
       : {}),

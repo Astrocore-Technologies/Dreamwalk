@@ -160,8 +160,9 @@ try {
           if (error.code !== 'ENOENT') throw error;
         }
       await c.query("SET LOCAL dreamwalk.erasure='confirmed'");
-      await purgeGameData(c, user.id);
+      // Resolve contextual image provenance before membership/source records are purged.
       const imageCleanup = await eraseImageGeneration(c, user.id);
+      await purgeGameData(c, user.id);
       // The deleted account cannot resume admission. Keep DB pointers on rollback so
       // a failed unlink remains retryable, exactly like original asset cleanup above.
       for (const filename of imageCleanup.quarantineFilenames) {
@@ -169,6 +170,13 @@ try {
           throw new Error('Unsafe stored quarantine filename');
         try {
           await unlink(resolve(process.env.ASSET_DIR || '.local/assets', filename));
+        } catch (error) {
+          if (error.code !== 'ENOENT') throw error;
+        }
+      }
+      for (const filename of imageCleanup.derivedRasterFilenames ?? []) {
+        try {
+          await unlink(assetPath(filename));
         } catch (error) {
           if (error.code !== 'ENOENT') throw error;
         }

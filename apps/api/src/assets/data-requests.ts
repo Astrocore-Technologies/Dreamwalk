@@ -21,6 +21,14 @@ export async function eraseReusableAssets(c: PoolClient, userId: string) {
     [userId],
   );
   await c.query(
+    `UPDATE art_campaign_pins p SET rights_snapshot='{"erased":true}' FROM art_asset_revisions r,art_asset_families f WHERE p.revision_id=r.id AND r.family_id=f.id AND f.owner_id=$1`,
+    [userId],
+  );
+  await c.query(
+    `UPDATE art_campaign_pins p SET slot='erased:'||encode(digest(p.slot,'sha256'),'hex'),rights_snapshot='{"erased":true}' FROM game_campaigns c,game_playable_versions v,adventures a WHERE p.campaign_id=c.id AND c.source_version_id=v.id AND v.adventure_id=a.id AND a.owner_id=$1 AND p.slot NOT LIKE 'erased:%'`,
+    [userId],
+  );
+  await c.query(
     'DELETE FROM art_story_asset_drafts d USING adventures a WHERE d.adventure_id=a.id AND a.owner_id=$1',
     [userId],
   );

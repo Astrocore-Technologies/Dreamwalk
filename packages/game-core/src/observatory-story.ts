@@ -6,6 +6,24 @@ export function createCompleteObservatoryDraft(): AuthoredGameDraft {
   const draft = createAuthoredDraft('observatory');
   draft.title = 'The Observatory: Lost Observations';
   draft.npcBehavior = 'reactive-v1';
+  draft.supportingNpcPolicy = {
+    version: 1,
+    maxSpawned: 4,
+    roles: [
+      {
+        id: 'maintenance-assistant',
+        needObjectiveId: 'recover-journal',
+        label: 'Observatory maintenance assistant',
+        description:
+          'A secondary worker helping keep the observatory paths clear. Not the keeper, owner, or an authority on the missing observations.',
+        mapIds: ['observatory', 'roof'],
+        operationalRole: 'helper',
+        allowedValues: ['kindness', 'caution'],
+        allowedGoals: ['help', 'patrol'],
+        allowedSpeechStyles: ['warm', 'neutral', 'terse'],
+      },
+    ],
+  };
   const interior = draft.maps.find((map) => map.id === 'observatory')!;
   const roof = draft.maps.find((map) => map.id === 'roof')!;
   interior.labelTranslations = { en: 'Observatory', ru: 'Обсерватория', uk: 'Обсерваторія' };

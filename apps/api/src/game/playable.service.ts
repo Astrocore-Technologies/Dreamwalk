@@ -281,6 +281,13 @@ export class PlayableService {
         ).rows
       : [];
     const narrative = story.data as Record<string, unknown>;
+    compiled.playable!.narrativePremise = {
+      title: String(story.title),
+      summary: String(story.synopsis ?? ''),
+      world: String((narrative.content as { world?: unknown } | undefined)?.world ?? ''),
+      genre: String(story.genre ?? ''),
+    };
+
     const preparedArt = await this.art.prepareManifestTx(
       c,
       String(story.id),
@@ -492,6 +499,22 @@ export class PlayableService {
         fail(403, 'FORBIDDEN', 'FORBIDDEN');
     }
     if (hash(row.package) !== row.checksum) fail(503, 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED');
-    return createStateFromPlayable(row.package.compiled, [actorId], seed);
+    const state = createStateFromPlayable(row.package.compiled, [actorId], seed);
+    state.narrativeSource = { versionId: row.id, checksum: row.checksum };
+    if (!state.narrativePremise) {
+      const published = (
+        await c.query(
+          'SELECT av.snapshot FROM game_playable_approvals ap JOIN adventure_versions av ON av.id=ap.adventure_version_id WHERE ap.playable_version_id=$1',
+          [row.id],
+        )
+      ).rows[0]?.snapshot;
+      state.narrativePremise = {
+        title: String(row.package.source?.title ?? row.package.compiled.title ?? ''),
+        summary: String(published?.synopsis ?? ''),
+        world: String(row.package.source?.content?.world ?? ''),
+        genre: String(published?.genre ?? ''),
+      };
+    }
+    return state;
   }
 }

@@ -34,7 +34,9 @@ export function parseArtSlot(slot: string): ParsedArtSlot | null {
     return { scope: 'entity', id: p[1], variant: p[3] };
   return null;
 }
-export function enumerateArtSlots(source: AuthoredGameDraft | PlayablePackage): ArtSlotSpec[] {
+export function enumerateArtSlots(
+  source: AuthoredGameDraft | PlayablePackage | GameState,
+): ArtSlotSpec[] {
   const maps = Object.values(source.maps);
   const entities =
     'entities' in source
@@ -67,7 +69,7 @@ export function enumerateArtSlots(source: AuthoredGameDraft | PlayablePackage): 
   return out.sort((a, b) => a.slot.localeCompare(b.slot));
 }
 export function validateArtBindingSlot(
-  source: AuthoredGameDraft | PlayablePackage,
+  source: AuthoredGameDraft | PlayablePackage | GameState,
   slot: string,
   metadata: { kind: string; style: string; camera: string },
 ): boolean {
