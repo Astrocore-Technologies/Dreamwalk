@@ -1,11 +1,12 @@
 # Dreamwalk
 
-A platform-first fantasy adventure application: discover stories, prepare a hero, create adventures and NPCs, manage drafts and moderation. Private adventures use explicit invitations; public adventures require moderator approval. **The game runtime comes later.** This is a local platform candidate, not a publicly deployed service.
+A cooperative visual-story application: discover an adventure, choose an owned hero, play in a shared persistent scene, and continue the story through the narrative director. Author tools define the opening world, NPCs and constraints; validated story turns can extend that world. Private adventures use explicit invitations; public adventures require moderator approval. This is a local development candidate, not a publicly deployed or production-validated service.
 
 - Next.js 16 / React 19 frontend; NestJS 12 backend; strict TypeScript; PostgreSQL 17.
 - Ukrainian, English and Russian interface (`uk`, `en`, `ru`). Authors write once. Titles/synopses use available approved locale variants with original fallback; full story/NPC text stays original. Automatic translation is not connected.
 - Real account/content persistence, opaque cookie sessions, ownership and admin checks.
-- Demo-only Sparks wallet with append-only ledger and idempotency. No actual purchases or AI calls.
+- Authoritative movement, items, local rounds, NPC memory, campaign checkpoints and shared narrative/scene updates; the default provider is a deterministic mock.
+- Demo-only Sparks wallet with append-only ledger and idempotency. External AI, paid image generation and actual purchases are disabled by default; enabling a provider is not approval to spend.
 - Original bundled fantasy covers; provenance: `assets/demo/manifest.json`.
 
 ## Start locally

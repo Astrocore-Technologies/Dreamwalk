@@ -201,6 +201,7 @@ await test(
             const b = JSON.parse(init.body);
             assert.equal(b.model, config.model);
             assert.equal(b.store, false);
+            assert.equal(b.service_tier, 'default');
             assert.equal(b.stream, false);
             assert.equal(b.max_output_tokens, 100);
             assert.equal(b.text.format.strict, true);
@@ -211,6 +212,7 @@ await test(
               JSON.stringify({
                 id: 'resp_synthetic',
                 status: 'completed',
+                service_tier: 'default',
                 usage: { input_tokens: 20, output_tokens: 7 },
                 output: [
                   {
@@ -296,6 +298,7 @@ await test(
                   JSON.stringify({
                     id: 'resp_test',
                     status,
+                    service_tier: 'default',
                     usage: { input_tokens: 10, output_tokens: 5 },
                     output: [{ type: 'message', content: [content] }],
                   }),
@@ -309,7 +312,14 @@ await test(
           const bad = new OpenAiNpcProvider(
             config,
             async () =>
-              new Response(JSON.stringify({ id: 'resp_test', status: 'completed', output: [] })),
+              new Response(
+                JSON.stringify({
+                  id: 'resp_test',
+                  status: 'completed',
+                  service_tier: 'default',
+                  output: [],
+                }),
+              ),
           );
           await assert.rejects(
             () => bad.generate(req),
@@ -341,6 +351,7 @@ await test(
               JSON.stringify({
                 id: 'resp_unicode',
                 status: 'completed',
+                service_tier: 'default',
                 usage: { input_tokens: 100, output_tokens: 10 },
                 output: [
                   { type: 'message', content: [{ type: 'output_text', text: '{"text":"Да."}' }] },
@@ -392,6 +403,7 @@ await test(
                 JSON.stringify({
                   id: 'resp_plan',
                   status: 'completed',
+                  service_tier: 'default',
                   usage: { input_tokens: 10, output_tokens: 10 },
                   output: [
                     {
@@ -537,6 +549,7 @@ await test(
                 JSON.stringify({
                   id: 'resp_refusal',
                   status: 'completed',
+                  service_tier: 'default',
                   usage: { input_tokens: 10, output_tokens: 10 },
                   output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'No' }] }],
                 }),
@@ -705,6 +718,7 @@ await test(
                 JSON.stringify({
                   id: 'resp_intent',
                   status: 'completed',
+                  service_tier: 'default',
                   usage: { input_tokens: 10, output_tokens: 10 },
                   output: [
                     {

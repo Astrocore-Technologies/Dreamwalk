@@ -1,4 +1,6 @@
 'use client';
+import { readStoryReturn, storyWithHero } from './story-return';
+import { StoryReturnLink } from './story-return-link';
 import { useHeroText } from './game/hero-selection';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
@@ -258,6 +260,7 @@ export function LibraryPage() {
   );
 }
 export function HeroesPage() {
+  const returnTo = readStoryReturn(useSearchParams());
   const heroText = useHeroText();
   const { t: tr } = useT();
   const { toast } = useClient();
@@ -286,6 +289,7 @@ export function HeroesPage() {
           </Button>
         }
       />
+      <StoryReturnLink intent={returnTo} />
       <ErrorBox message={resource.error} retry={resource.reload} />
       {resource.loading ? (
         <Loading />
@@ -302,7 +306,11 @@ export function HeroesPage() {
                 <span className="portrait-star">✧</span>
               </div>
               <h2>{hero.name}</h2>
-              <ButtonLink href={`/game?heroId=${encodeURIComponent(hero.id)}`}>
+              <ButtonLink
+                href={
+                  storyWithHero(returnTo, hero.id) || `/game?heroId=${encodeURIComponent(hero.id)}`
+                }
+              >
                 {heroText('play')}
               </ButtonLink>
               <p>{hero.backstory || tr('История этого героя ещё не рассказана.')}</p>
