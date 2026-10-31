@@ -95,25 +95,25 @@ export interface PlayerTextIntent {
   requiresConfirmation: true;
 }
 /** Narrow multilingual intent grammar; unknown prose is dialogue, never executable code. */
-export function proposePlayerTextIntent(
+export function parsePlayerTextAction(
   state: GameState,
   actorId: string,
   text: string,
-): PlayerTextIntent | null {
+): GameAction | null {
   const actor = state.entities[actorId];
   if (actor?.kind !== 'player' || typeof text !== 'string' || !text.trim() || text.length > 1000)
     return null;
   const normalized = text.trim().toLowerCase(),
     patterns: [RegExp, GameAction['kind']][] = [
-      [/^(open|открой|відкрий)\s+(.+)$/u, 'open'],
-      [/^(close|закрой|закрий)\s+(.+)$/u, 'close'],
-      [/^(inspect|осмотри|оглянь)\s+(.+)$/u, 'inspect'],
-      [/^(take|возьми|візьми)\s+(.+)$/u, 'pick_up'],
+      [/^(open|открой|открываю|відкрий|відкриваю)\s+(.+)$/u, 'open'],
+      [/^(close|закрой|закрываю|закрий|закриваю)\s+(.+)$/u, 'close'],
+      [/^(inspect|осмотри|осматриваю|оглянь|оглядаю)\s+(.+)$/u, 'inspect'],
+      [/^(take|pick up|возьми|беру|поднимаю|візьми|піднімаю)\s+(.+)$/u, 'pick_up'],
       [/^(knock|постучи|постукай)\s+(.+)$/u, 'knock'],
     ];
   const unique = <T>(values: T[]): T | undefined => (values.length === 1 ? values[0] : undefined);
   let action: GameAction | undefined;
-  if (/^(wait|жди|чекай)$/u.test(normalized)) action = { kind: 'wait' };
+  if (/^(wait|жди|жду|чекай|чекаю)$/u.test(normalized)) action = { kind: 'wait' };
   for (const [pattern, kind] of patterns) {
     const match = normalized.match(pattern);
     if (!match) continue;
@@ -143,7 +143,15 @@ export function proposePlayerTextIntent(
     if (item && target) action = { kind: 'give', targetId: target.id, itemId: item.id };
   }
   if (!action) return null;
-  return proposePlayerActionIntent(state, actorId, text, action);
+  return action;
+}
+export function proposePlayerTextIntent(
+  state: GameState,
+  actorId: string,
+  text: string,
+): PlayerTextIntent | null {
+  const action = parsePlayerTextAction(state, actorId, text);
+  return action ? proposePlayerActionIntent(state, actorId, text, action) : null;
 }
 
 export function confirmPlayerTextIntent(

@@ -72,27 +72,21 @@ test('original runtime sprite atlas matches recorded source integrity and contai
   assert.doesNotMatch(source.toString(), /<script|foreignObject|onload\s*=|href\s*=/i);
 });
 
-test('direction releases preserve a bounded tap; explicit stop and blur stop on the server', async () => {
+test('mouse-only map movement keeps stop, focus and explicit accessible controls without keyboard stepping', async () => {
   const source = await readFile(
     new URL('../../apps/web/components/game/game-canvas.tsx', import.meta.url),
     'utf8',
   );
-  // Source-level wiring guard, not a claim of a browser timing test.
-  assert.match(source, /onPointerUp=\{releaseRepeat\}/);
-  assert.match(source, /onLostPointerCapture=\{releaseRepeat\}/);
-  assert.match(source, /onPointerCancel=\{explicitStop\}/);
+  assert.match(source, /sceneClick\(state.projection, x, y\)/);
+  assert.match(source, /state.onSelectNpc\(interaction.npcId\)/);
+  assert.match(source, /else if \(interaction\?\.kind === 'move'\)/);
   assert.match(source, /onBlur=\{explicitStop\}/);
   assert.match(source, /onClick=\{explicitStop\}/);
-  const keyup = source.slice(source.indexOf('onKeyUp='), source.indexOf('onKeyDown='));
-  assert.match(keyup, /releaseRepeat\(\)/);
-  assert.doesNotMatch(keyup, /explicitStop|onStop/);
-  const release = source.slice(
-    source.indexOf('const releaseRepeat'),
-    source.indexOf('const explicitStop'),
+  assert.match(source, /tabIndex=\{0\}/);
+  assert.doesNotMatch(
+    source,
+    /onKeyDown|onKeyUp|releaseRepeat|directions.map|setInterval\(\(\) => step/,
   );
-  assert.match(release, /clearInterval/);
-  assert.doesNotMatch(release, /onStop|onMove/);
-  assert.match(source, /setInterval\(\(\) => step\(direction.dx, direction.dy\), 150\)/);
 });
 
 test('Studio map tools and localized template labels have complete dictionary coverage', async () => {

@@ -25,9 +25,13 @@ test('living author version saves personality and reacts without manual NPC requ
   page,
   browser,
 }) => {
-  test.setTimeout(120000);
+  test.setTimeout(180000);
+  page.setDefaultTimeout(15000);
+  page.setDefaultNavigationTimeout(30000);
   const guestContext = await browser.newContext({ baseURL: test.info().project.use.baseURL });
   const guest = await guestContext.newPage();
+  guest.setDefaultTimeout(15000);
+  guest.setDefaultNavigationTimeout(30000);
   try {
     await page.setViewportSize({ width: 390, height: 844 });
     const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
@@ -184,27 +188,36 @@ test('living author version saves personality and reacts without manual NPC requ
     await expect(page.locator('[data-inventory-id="token"]')).toBeVisible();
     await expect(guest.locator('[data-inventory-id="token"]')).toHaveCount(0);
     await expect(guest.locator('[data-npc-obligation]')).toHaveCount(0);
-    await expect(guest.locator('[data-npc-notice="fulfilled"]')).toBeVisible();
-    const speech = page.getByRole('region', { name: 'Разговор с NPC', exact: true });
+    await expect(guest.locator('[data-story-code="fulfilled"]')).toBeVisible();
+    const speech = page.getByTestId('unified-story');
     await approachHelper(page);
-    await speech.getByLabel('Собеседник', { exact: true }).selectOption('helper');
-    await expect(speech.getByLabel('Вопрос персонажу', { exact: true })).toContainText(
-      'Who built the fountain?',
-    );
+    await page.locator('[data-select-npc="helper"]').click();
     await expect(page.getByText('PRIVATE_AUTHOR_FACT_TITLE', { exact: true })).toHaveCount(0);
-    await speech.getByLabel('Канал разговора', { exact: true }).selectOption('whisper');
-    await speech.getByLabel('Реплика', { exact: true }).fill('Thank you, helper.');
-    await speech.getByRole('button', { name: 'Произнести', exact: true }).click();
-    await expect(speech.locator('[data-npc-utterance="acknowledged"]')).toBeVisible();
-    await expect(guest.getByText(/Thank you, helper/)).toHaveCount(0);
-    await speech
-      .getByLabel('Вопрос персонажу', { exact: true })
-      .selectOption({ label: 'Who built the fountain?' });
-    await speech.getByRole('button', { name: 'Произнести', exact: true }).click();
-    await expect(speech).toContainText('The fountain was built by an astronomer.');
+    await speech.getByRole('button', { name: 'Шёпот', exact: true }).click();
+    async function say(text: string) {
+      await speech.getByLabel('Твой ход', { exact: true }).fill(text);
+      await speech.getByRole('button', { name: 'Отправить', exact: true }).click();
+      await expect(speech.getByTestId('story-quote')).toBeVisible();
+      const response = page.waitForResponse(
+        (r) => /\/turns$/.test(new URL(r.url()).pathname) && r.request().method() === 'POST',
+      );
+      await speech.getByRole('button', { name: 'Подтвердить ход', exact: true }).click();
+      const receipt = await (await response).json();
+      await expect(speech.getByLabel('Твой ход', { exact: true })).toHaveValue('', {
+        timeout: 30000,
+      });
+      return receipt.id as string;
+    }
+    const firstSpokenTurn = await say('Thank you, helper.');
     await expect(
-      guest.getByRole('region', { name: 'Разговор с NPC', exact: true }),
-    ).not.toContainText('The fountain was built by an astronomer.');
+      speech.locator(`[data-story-turn="${firstSpokenTurn}"][data-story-kind="npc_reply"]`),
+    ).toBeVisible();
+    await expect(guest.getByText(/Thank you, helper/)).toHaveCount(0);
+    await say('Who built the fountain?');
+    await expect(speech).toContainText('The fountain was built by an astronomer.');
+    await expect(guest.getByTestId('story-feed')).not.toContainText(
+      'The fountain was built by an astronomer.',
+    );
 
     await Promise.all([page.reload(), guest.reload()]);
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
@@ -212,30 +225,38 @@ test('living author version saves personality and reacts without manual NPC requ
     await expect(page.locator('[data-inventory-id="token"]')).toBeVisible();
     await expect(guest.locator('[data-inventory-id="token"]')).toHaveCount(0);
     await expect(guest.locator('[data-npc-obligation]')).toHaveCount(0);
-    await expect(guest.locator('[data-npc-notice="fulfilled"]')).toBeVisible();
+    await expect(guest.locator('[data-story-code="fulfilled"]')).toBeVisible();
     await expect(page.locator('[data-npc-obligation="fulfilled"]')).toBeVisible();
     await expect(speech.getByText(/Thank you, helper/)).toBeVisible();
+    await speech.getByRole('tab', { name: 'Вне игры', exact: true }).click();
+    await guest
+      .getByTestId('unified-story')
+      .getByRole('tab', { name: 'Вне игры', exact: true })
+      .click();
     const chat = page.getByRole('region', { name: 'Внеигровой чат группы', exact: true });
     await chat.getByLabel('Сообщение группе', { exact: true }).fill('OOC_ONLY_PLAN_742');
     await chat.getByRole('button', { name: 'Отправить группе', exact: true }).click();
     await expect(
       guest.getByRole('region', { name: 'Внеигровой чат группы', exact: true }),
     ).toContainText('OOC_ONLY_PLAN_742');
-    await expect(speech.getByText(/OOC_ONLY_PLAN_742/)).toHaveCount(0);
-    const intent = page.getByRole('region', { name: 'Действие своими словами', exact: true });
-    await intent.getByLabel('Что сделать', { exact: true }).fill('wait');
-    await intent.getByRole('button', { name: 'Предложить действие', exact: true }).click();
-    await expect(
-      intent.getByRole('button', { name: 'Подтвердить это действие', exact: true }),
-    ).toBeVisible();
+    await expect(page.getByTestId('story-feed')).not.toContainText('OOC_ONLY_PLAN_742');
+    await speech.getByRole('tab', { name: 'История', exact: true }).click();
+    await guest
+      .getByTestId('unified-story')
+      .getByRole('tab', { name: 'История', exact: true })
+      .click();
+    // Reload cleared recipient/channel. A typed attempt is previewed inline and never executed merely by typing.
+    await speech.getByLabel('Твой ход', { exact: true }).fill('*wait*');
+    await speech.getByRole('button', { name: 'Отправить', exact: true }).click();
+    await expect(speech.getByTestId('story-quote')).toContainText('Ждать');
     const confirmed = page.waitForResponse(
-      (r) =>
-        r.url().includes('/intent-proposals/') &&
-        r.url().endsWith('/confirm') &&
-        r.request().method() === 'POST',
+      (r) => /\/turns$/.test(new URL(r.url()).pathname) && r.request().method() === 'POST',
     );
-    await intent.getByRole('button', { name: 'Подтвердить это действие', exact: true }).click();
+    await speech.getByRole('button', { name: 'Подтвердить ход', exact: true }).click();
     expect((await confirmed).ok()).toBeTruthy();
+    await expect(speech.getByLabel('Твой ход', { exact: true })).toHaveValue('', {
+      timeout: 30000,
+    });
     await page.getByTestId('game-advanced').locator('summary').click();
     await guest.getByTestId('game-advanced').locator('summary').click();
     const sponsor = page.getByRole('region', { name: 'Бюджет организатора', exact: true });

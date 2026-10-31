@@ -22,6 +22,31 @@ export class GameController {
   ) {
     return this.game.confirmIntent(req, id, proposalId, body);
   }
+  @Get('campaigns/:id/turns/feed') storyFeed(@Req() req: Request, @Param('id') id: string) {
+    return this.game.storyFeed(req, id);
+  }
+  @Post('campaigns/:id/turns/quote') storyQuote(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.storyQuote(req, id, body);
+  }
+  @Post('campaigns/:id/turns') storySubmit(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.storySubmit(req, id, body);
+  }
+  @Post('campaigns/:id/turns/:turnId/confirm') storyConfirm(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('turnId') turnId: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.storyConfirm(req, id, turnId, body);
+  }
   @Get('campaigns/:id/chat') chat(@Req() req: Request, @Param('id') id: string) {
     return this.game.chat(req, id);
   }

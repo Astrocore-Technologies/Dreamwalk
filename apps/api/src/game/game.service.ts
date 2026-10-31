@@ -1,3 +1,4 @@
+import { StoryTurnRuntime } from './story-turn-runtime';
 import { mediaPreparationSchema, prepareSceneMedia } from './media-preparation';
 import { readOwnedHero, pinHero } from './hero-selection';
 import { readFile } from 'node:fs/promises';
@@ -162,6 +163,7 @@ function canonical(value: unknown): unknown {
 @Injectable()
 export class GameService implements OnModuleDestroy {
   private live = new Map<string, Live>();
+  private story: StoryTurnRuntime;
   private queues = new Map<string, Promise<unknown>>();
   // COMMIT visibility precedes the continuation that publishes its in-memory checkpoint.
   private publications = new Map<string, Promise<void>>();
@@ -187,6 +189,15 @@ export class GameService implements OnModuleDestroy {
     @Inject(AssetReuseService) private art: AssetReuseService,
     @Optional() @Inject(ImageGenerationService) images?: ImageGenerationService,
   ) {
+    this.story = new StoryTurnRuntime(this.db, this.ai, {
+      serial: <T>(id: string, work: () => Promise<T>) => this.serial(id, work),
+      access: (req, id) => this.access(req, id),
+      load: (id) => this.load(id),
+      touch: (id, live, actorId) => this.touch(id, live as Live, actorId),
+      persist: (id, live, state, kind, extra, preflight) =>
+        this.persist(id, live as Live, state, kind, undefined, extra, undefined, preflight),
+      dispatch: (id) => this.dispatchAi(id),
+    });
     this.art.attachRuntimeStateReader((id) => this.live.get(id)?.state);
     images?.attachRuntimeStateReader((id) => {
       const cached = this.live.get(id);
@@ -328,6 +339,18 @@ export class GameService implements OnModuleDestroy {
     };
     this.live.set(id, live);
     return live;
+  }
+  storyFeed(req: Request, id: string) {
+    return this.story.feed(req, id);
+  }
+  storyQuote(req: Request, id: string, body: unknown) {
+    return this.story.quote(req, id, body);
+  }
+  storySubmit(req: Request, id: string, body: unknown) {
+    return this.story.submit(req, id, body);
+  }
+  storyConfirm(req: Request, id: string, turnId: string, body: unknown) {
+    return this.story.confirm(req, id, turnId, body);
   }
   async access(req: Request, id: string) {
     z.uuid().parse(id);
@@ -1370,14 +1393,20 @@ export class GameService implements OnModuleDestroy {
       const npc = live.state.entities[npcId];
       if (!b.living || npc.encounterId || b.cursor < b.plan.length || npc.path?.length) continue;
       const cause = b.living.causes
-        .filter(
-          (c) =>
+        .filter((c) => {
+          const observation = b.living!.observations.find((o) => o.id === c.observationId);
+          // A unified turn already pays for one combined decision. Its mechanical
+          // evidence still drives deterministic goals, but never an extra AI job.
+          const sameTurn =
+            /^turn:[0-9a-f-]{36}:[0-5]:\d+$/i.test(observation?.eventId ?? '') ||
+            /^turn:[0-9a-f-]{36}:[0-5]:\d+$/i.test(observation?.rootId ?? '');
+          return (
             c.priority >= 2 &&
             c.notBeforeTick <= live.state.tick &&
-            ['item_taken', 'item_missing', 'claim', 'noise'].includes(
-              b.living!.observations.find((o) => o.id === c.observationId)?.kind ?? '',
-            ),
-        )
+            !sameTurn &&
+            ['item_taken', 'item_missing', 'claim', 'noise'].includes(observation?.kind ?? '')
+          );
+        })
         .sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id))[0];
       if (!cause) continue;
       recordNpcMetric('causeSamples');
@@ -1420,7 +1449,7 @@ export class GameService implements OnModuleDestroy {
         : [{ id }];
       if (
         !allowed.length ||
-        (r.purpose === 'intent' || r.purpose === 'narrative'
+        (r.purpose === 'intent' || r.purpose === 'narrative' || r.purpose === 'story_turn'
           ? live.state.entities[r.npc_id]?.kind !== 'player'
           : !live.state.npcBrains?.[r.npc_id])
       ) {
@@ -1428,6 +1457,10 @@ export class GameService implements OnModuleDestroy {
           "UPDATE game_npc_decision_requests SET status='cancelled',context='{}',result_code='AUTHORIZATION_REVOKED' WHERE id=$1 AND status='queued'",
           [r.id],
         );
+        continue;
+      }
+      if (r.purpose === 'story_turn') {
+        await this.story.schedule(id, live, r);
         continue;
       }
       if (r.purpose === 'narrative') {
@@ -1624,6 +1657,10 @@ export class GameService implements OnModuleDestroy {
   private async processAi(id: string, live: Live) {
     await this.ai.sweep(id);
     for (const job of await this.ai.ready(id)) {
+      if (job.purpose === 'story_turn') {
+        await this.story.complete(id, live, job);
+        continue;
+      }
       const { next, accepted, intentOutcome, narrativeOutcome } = await this.evaluateDecision(
         id,
         live.state,
@@ -2290,6 +2327,7 @@ export class GameService implements OnModuleDestroy {
     },
     extra?: (c: import('pg').PoolClient) => Promise<void>,
     prepare?: (c: import('pg').PoolClient, state: GameState) => Promise<GameState>,
+    preflight?: (c: import('pg').PoolClient) => Promise<void>,
   ) {
     const seq = live.eventSeq + 1;
     const retentionDue =
@@ -2305,6 +2343,7 @@ export class GameService implements OnModuleDestroy {
     this.publications.set(id, publication);
     try {
       await this.db.tx(async (c) => {
+        if (preflight) await preflight(c);
         await c.query(
           'SELECT a.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1 FOR SHARE OF a',
           [id],

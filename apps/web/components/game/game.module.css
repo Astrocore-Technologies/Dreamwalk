@@ -477,3 +477,21 @@
   object-fit: contain;
   border-radius: 8px;
 }
+
+/* Main play stays scene + one story panel; tools are secondary below. */
+.playGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr);
+  gap: 20px;
+  align-items: start;
+  margin-bottom: 28px;
+}
+.playGrid > *,
+.sceneColumn {
+  min-width: 0;
+}
+@media (max-width: 1150px) {
+  .playGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

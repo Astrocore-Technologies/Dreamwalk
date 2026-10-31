@@ -44,7 +44,7 @@ interface Job extends QueryResultRow {
   origin: 'user' | 'system';
   requester_user_id: string | null;
   payer_user_id: string | null;
-  purpose: 'plan' | 'summary' | 'speech' | 'intent' | 'supporting_npc' | 'narrative';
+  purpose: 'plan' | 'summary' | 'speech' | 'intent' | 'supporting_npc' | 'narrative' | 'story_turn';
   sponsor_id: string | null;
   subject_kind: 'npc' | 'player';
   context_hash: string;
@@ -74,7 +74,7 @@ const scopeSchema = z
     origin: z.enum(['user', 'system']),
     subjectKind: z.enum(['npc', 'player']).optional(),
     purpose: z
-      .enum(['plan', 'summary', 'speech', 'intent', 'supporting_npc', 'narrative'])
+      .enum(['plan', 'summary', 'speech', 'intent', 'supporting_npc', 'narrative', 'story_turn'])
       .optional(),
     requesterUserId: z.uuid().optional(),
   })
@@ -148,7 +148,15 @@ export class NpcAiEngine {
       sponsorLimits: {
         maxOperations: 1000,
         maxExpiryHours: 24,
-        purposes: ['plan', 'summary', 'speech', 'intent', 'supporting_npc', 'narrative'],
+        purposes: [
+          'plan',
+          'summary',
+          'speech',
+          'intent',
+          'supporting_npc',
+          'narrative',
+          'story_turn',
+        ],
       },
       policyVersion: this.policy.version,
       timeoutMs: this.policy.timeoutMs,
@@ -167,7 +175,10 @@ export class NpcAiEngine {
     );
     if (!r.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
     if (
-      (s.purpose === 'intent' || s.purpose === 'supporting_npc' || s.purpose === 'narrative') !==
+      (s.purpose === 'intent' ||
+        s.purpose === 'supporting_npc' ||
+        s.purpose === 'narrative' ||
+        s.purpose === 'story_turn') !==
       (s.subjectKind === 'player')
     )
       fail(403, 'INVALID_AI_SUBJECT', 'INVALID_AI_SUBJECT');
@@ -193,9 +204,14 @@ export class NpcAiEngine {
     )
       fail(403, 'FORBIDDEN', 'FORBIDDEN');
   }
-  async quote(scope: AiScope, input: DecisionContext, requesterUserId: string) {
+  async quote(
+    scope: AiScope,
+    input: DecisionContext,
+    requesterUserId: string,
+    client?: PoolClient,
+  ) {
     const context = validateDecisionContext(input, this.policy.maxContextBytes);
-    return this.db.tx(async (c) => {
+    const run = async (c: PoolClient) => {
       await this.authorize(c, { ...scope, origin: 'user', requesterUserId });
       await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
         `npc-ai-quote:${requesterUserId}`,
@@ -210,7 +226,7 @@ export class NpcAiEngine {
       const id = randomUUID(),
         expires = new Date(Date.now() + this.policy.quoteMs);
       await c.query(
-        `INSERT INTO npc_ai_quotes(id,campaign_id,npc_id,user_id,context_hash,purpose,provider_id,policy_version,credits,upper_micros,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        `INSERT INTO npc_ai_quotes(id,campaign_id,npc_id,user_id,context_hash,purpose,provider_id,policy_version,credits,upper_micros,expires_at,provider_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [
           id,
           scope.campaignId,
@@ -223,6 +239,7 @@ export class NpcAiEngine {
           this.policy.creditPrice,
           this.policy.providerUpperMicros,
           expires,
+          this.provider.version,
         ],
       );
       return {
@@ -236,7 +253,8 @@ export class NpcAiEngine {
         external: this.provider.external,
         policyVersion: this.policy.version,
       };
-    });
+    };
+    return client ? run(client) : this.db.tx(run);
   }
   private dto(job: Job) {
     return {
@@ -361,7 +379,8 @@ export class NpcAiEngine {
       let payer: string | null = null;
       if (
         (this.policy.creditPrice > 0 ||
-          (this.provider.external && scope.purpose === 'narrative')) &&
+          (this.provider.external && scope.purpose === 'narrative') ||
+          scope.purpose === 'story_turn') &&
         !input.sponsorId
       ) {
         if (!input.consent || !input.quoteId || !scope.requesterUserId)
@@ -377,6 +396,7 @@ export class NpcAiEngine {
           q.context_hash !== context.contextHash ||
           q.purpose !== (scope.purpose ?? 'plan') ||
           q.provider_id !== this.provider.id ||
+          q.provider_version !== this.provider.version ||
           q.policy_version !== this.policy.version ||
           q.credits !== this.policy.creditPrice ||
           Number(q.upper_micros) !== this.policy.providerUpperMicros ||
@@ -417,7 +437,8 @@ export class NpcAiEngine {
             scope.subjectKind === 'player' &&
             (scope.purpose === 'intent' ||
               scope.purpose === 'supporting_npc' ||
-              scope.purpose === 'narrative'))
+              scope.purpose === 'narrative' ||
+              scope.purpose === 'story_turn'))
         ))
           fail(403, 'INVALID_SPONSOR_ORIGIN', 'INVALID_SPONSOR_ORIGIN');
         payer = await this.sponsorship.validate(
