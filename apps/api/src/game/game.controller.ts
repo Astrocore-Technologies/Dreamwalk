@@ -1,5 +1,5 @@
-import { Body, Controller, Delete, Get, Inject, Param, Post, Req } from '@nestjs/common';
-import type { Request } from 'express';
+import { Body, Controller, Delete, Get, Inject, Param, Post, Req, Res } from '@nestjs/common';
+import type { Request, Response } from 'express';
 import { GameService } from './game.service';
 @Controller('api/v1/game')
 export class GameController {
@@ -66,6 +66,21 @@ export class GameController {
   ) {
     return this.game.aiDecision(req, id, body);
   }
+  @Get('campaigns/:id/hero') hero(@Req() req: Request, @Param('id') id: string) {
+    return this.game.selectedHero(req, id);
+  }
+  @Get('campaigns/:id/actors/:actorId/portrait') async portrait(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('actorId') actorId: string,
+    @Res() res: Response,
+  ) {
+    const bytes = await this.game.heroPortrait(req, id, actorId);
+    res.setHeader('Content-Type', 'image/webp');
+    res.setHeader('Cache-Control', 'no-store');
+    res.setHeader('X-Content-Type-Options', 'nosniff');
+    res.send(bytes);
+  }
   @Get('campaigns') list(@Req() req: Request) {
     return this.game.list(req);
   }
@@ -86,8 +101,12 @@ export class GameController {
   ) {
     return this.game.invite(req, id, body);
   }
-  @Post('campaigns/:id/accept') accept(@Req() req: Request, @Param('id') id: string) {
-    return this.game.accept(req, id);
+  @Post('campaigns/:id/accept') accept(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.accept(req, id, body);
   }
   @Delete('campaigns/:id/members/:userId') revoke(
     @Req() req: Request,

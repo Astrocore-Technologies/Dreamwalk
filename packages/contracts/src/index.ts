@@ -170,6 +170,14 @@ export type Hero = z.infer<typeof heroSchema> & {
   createdAt: string;
   updatedAt: string;
 };
+/** Selection is owned and pinned once per campaign membership. */
+export const gameHeroSelectionSchema = z.object({ heroId: idSchema.optional() }).strict();
+export type CampaignHero = Omit<Hero, 'id' | 'createdAt' | 'updatedAt' | 'portraitAssetId'> & {
+  heroId: string;
+  portraitUrl: string | null;
+  selectedAt: string;
+};
+export type CampaignHeroResponse = { hero: CampaignHero | null };
 export const npcTextFields = [
   'name',
   'description',

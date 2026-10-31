@@ -205,6 +205,17 @@ export function redactGameOperationSpeech(value, actorId, erasedUtteranceIds) {
     ]),
   );
 }
+/** Remove an erased player's public hero identity from retained projections/history. */
+export function redactGameHeroIdentity(value, actorId) {
+  if (!value || typeof value !== 'object') return value;
+  if (value.id === actorId && value.kind === 'player') {
+    delete value.label;
+    delete value.portraitUrl;
+    delete value.portraitAssetId;
+  }
+  for (const child of Object.values(value)) redactGameHeroIdentity(child, actorId);
+  return value;
+}
 export async function exportGameData(client, userId) {
   const rows = (
     await client.query(
@@ -218,6 +229,12 @@ export async function exportGameData(client, userId) {
       `SELECT j.id,j.campaign_id,j.npc_id,j.status,j.result_code,j.created_at,j.completed_at
      FROM game_npc_jobs j JOIN game_members m ON m.campaign_id=j.campaign_id AND m.actor_id=j.requester_actor_id
      WHERE m.user_id=$1`,
+      [userId],
+    )
+  ).rows;
+  const heroes = (
+    await client.query(
+      'SELECT campaign_id,hero_id,snapshot,selected_at FROM game_member_heroes WHERE user_id=$1',
       [userId],
     )
   ).rows;
@@ -246,6 +263,7 @@ export async function exportGameData(client, userId) {
     const actor = state.entities?.[actor_id];
     return {
       ...metadata,
+      ownHero: heroes.find((hero) => hero.campaign_id === metadata.id) ?? null,
       npcRequests: jobs.filter((job) => job.campaign_id === metadata.id),
       npcDecisionRequests: decisions.filter((job) => job.campaign_id === metadata.id),
       aiSponsors: sponsors.filter((grant) => grant.campaign_id === metadata.id),
@@ -360,7 +378,12 @@ export async function purgeGameData(client, userId) {
         ...(original?.npcUtterances ?? []),
         ...(original?.npcProvenance?.utterances ?? []),
       ].map((u) => u.id);
-      const cleaned = purgeLivingNpcReferences(original, actorId, archivedRoots, archivedIds);
+      const cleaned = purgeLivingNpcReferences(
+        redactGameHeroIdentity(original, actorId),
+        actorId,
+        archivedRoots,
+        archivedIds,
+      );
       const retainedEvidence = new Set(
         [
           ...Object.values(cleaned?.npcBrains ?? {}).flatMap((b) => b.living?.observations ?? []),
@@ -452,7 +475,7 @@ export async function purgeGameData(client, userId) {
     ).rows;
     for (const event of events) {
       const original = structuredClone(event.payload);
-      if (original?.state) cleanPrivateState(original.state);
+      if (original?.state) original.state = cleanPrivateState(original.state);
       await eraseDerivedArchive();
       const payload = replaceActor(original, actorId, replacement);
       await client.query('UPDATE game_events SET payload=$3 WHERE campaign_id=$1 AND sequence=$2', [
@@ -483,7 +506,10 @@ export async function purgeGameData(client, userId) {
           operation.actor_id,
           operation.operation_id,
           replaceActor(
-            redactGameOperationSpeech(operation.result, actorId, erasedUtteranceIds),
+            redactGameHeroIdentity(
+              redactGameOperationSpeech(operation.result, actorId, erasedUtteranceIds),
+              actorId,
+            ),
             actorId,
             replacement,
           ),
@@ -502,6 +528,7 @@ export async function purgeGameData(client, userId) {
       checksum,
     ]);
   }
+  await client.query('DELETE FROM game_member_heroes WHERE user_id=$1', [userId]);
   await client.query('DELETE FROM game_members WHERE user_id=$1', [userId]);
   await client.query(
     'DELETE FROM adventure_game_drafts d USING adventures a WHERE a.id=d.adventure_id AND a.owner_id=$1',

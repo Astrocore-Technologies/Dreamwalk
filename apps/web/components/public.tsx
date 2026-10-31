@@ -66,9 +66,13 @@ export function AdventureCard({
   discovery?: boolean;
 }) {
   const { t: tr, locale, taxonomy } = useT();
+  const heroId = useSearchParams().get('heroId');
   const text = selectAdventureText(adventure, locale);
   return (
-    <Link href={`/adventures/${adventure.slug}`} className="adventure-card">
+    <Link
+      href={`/adventures/${adventure.slug}${heroId ? `?heroId=${encodeURIComponent(heroId)}` : ''}`}
+      className="adventure-card"
+    >
       <div
         className={`card-art art-${adventure.cover}`}
         style={{

@@ -19,10 +19,19 @@ import { api, assetUrl, coverUrl, errorMessage, useClient, useResource } from '@
 import { useT } from '@/lib/i18n';
 import { Button, Empty, ErrorBox, Loading } from '@/components/ui';
 import type { CampaignSummary } from '@/components/game/use-game';
+import { HeroSelection, useHeroSelection } from '../game/hero-selection';
 import { LaunchGate } from './launch-gate';
 import { useHomeText } from './messages';
 import styles from './home.module.css';
-function Rail({ kind, adventures }: { kind: 'mystery' | 'wonder'; adventures: Adventure[] }) {
+function Rail({
+  kind,
+  adventures,
+  heroId,
+}: {
+  kind: 'mystery' | 'wonder';
+  adventures: Adventure[];
+  heroId: string;
+}) {
   const h = useHomeText(),
     { locale, taxonomy } = useT(),
     scroller = useRef<HTMLDivElement>(null);
@@ -43,7 +52,7 @@ function Rail({ kind, adventures }: { kind: 'mystery' | 'wonder'; adventures: Ad
           </p>
         </div>
         <div className={styles.railControls}>
-          <Link href="/explore">
+          <Link href={`/explore${heroId ? `?heroId=${encodeURIComponent(heroId)}` : ''}`}>
             {h('browse')}
             <ArrowUpRight size={16} />
           </Link>
@@ -63,7 +72,7 @@ function Rail({ kind, adventures }: { kind: 'mystery' | 'wonder'; adventures: Ad
               className={styles.railCard}
               data-adventure-id={adventure.id}
               key={adventure.id}
-              href={`/adventures/${adventure.slug}`}
+              href={`/adventures/${adventure.slug}${heroId ? `?heroId=${encodeURIComponent(heroId)}` : ''}`}
             >
               <div className={styles.railArt}>
                 <img
@@ -94,6 +103,7 @@ function Rail({ kind, adventures }: { kind: 'mystery' | 'wonder'; adventures: Ad
   );
 }
 export function HomePage() {
+  const heroSelection = useHeroSelection();
   const h = useHomeText(),
     { locale, taxonomy } = useT(),
     { user } = useClient(),
@@ -127,7 +137,7 @@ export function HomePage() {
   const gesture = useRef<{ x: number; y: number } | null>(null),
     swiped = useRef(false);
   const launchGate = useRef(new LaunchGate());
-  launchGate.current.select(active?.id || '');
+  launchGate.current.select(`${user?.id || ''}:${active?.id || ''}:${heroSelection.heroId}`);
   useEffect(() => {
     const gate = launchGate.current;
     gate.activate();
@@ -141,9 +151,11 @@ export function HomePage() {
       setIndex((value) => (value + direction + adventures.length) % adventures.length);
   };
   async function start() {
-    if (!active || launchGate.current.busy) return;
+    if (!active || launchGate.current.busy || !heroSelection.ready) return;
     if (!startVersion) {
-      router.push(`/adventures/${active.slug}`);
+      router.push(
+        `/adventures/${active.slug}${heroSelection.heroId ? `?heroId=${encodeURIComponent(heroSelection.heroId)}` : ''}`,
+      );
       return;
     }
     if (!user) {
@@ -158,7 +170,7 @@ export function HomePage() {
     try {
       const result = await api<{ campaignId: string }>('/game/campaigns', {
         method: 'POST',
-        body: JSON.stringify({ playableVersionId: startVersion }),
+        body: JSON.stringify({ playableVersionId: startVersion, ...heroSelection.body }),
       });
       if (launchGate.current.accepts(lease)) {
         router.push(`/game/${result.campaignId}`);
@@ -336,12 +348,17 @@ export function HomePage() {
                     </div>
                   </div>
                 )}
+                {(startVersion || heroSelection.heroId) && (
+                  <HeroSelection selection={heroSelection} disabled={busy} />
+                )}
                 <div className={styles.featureActions}>
-                  <Button busy={busy} onClick={() => void start()}>
+                  <Button busy={busy} disabled={!heroSelection.ready} onClick={() => void start()}>
                     <Play size={16} fill="currentColor" />
                     {h(startVersion ? 'start' : 'open')}
                   </Button>
-                  <Link href={`/adventures/${active.slug}`}>
+                  <Link
+                    href={`/adventures/${active.slug}${heroSelection.heroId ? `?heroId=${encodeURIComponent(heroSelection.heroId)}` : ''}`}
+                  >
                     {h('details')}
                     <ArrowRight size={16} />
                   </Link>
@@ -416,8 +433,8 @@ export function HomePage() {
         </Link>
       </section>
       {user && campaigns.error && <ErrorBox message={campaigns.error} retry={campaigns.reload} />}
-      <Rail kind="mystery" adventures={mystery} />
-      <Rail kind="wonder" adventures={wonder.length ? wonder : []} />
+      <Rail kind="mystery" adventures={mystery} heroId={heroSelection.heroId} />
+      <Rail kind="wonder" adventures={wonder.length ? wonder : []} heroId={heroSelection.heroId} />
     </div>
   );
 }

@@ -1,4 +1,5 @@
 'use client';
+import { useHeroText } from './game/hero-selection';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
@@ -257,6 +258,7 @@ export function LibraryPage() {
   );
 }
 export function HeroesPage() {
+  const heroText = useHeroText();
   const { t: tr } = useT();
   const { toast } = useClient();
   const resource = useResource<Hero[]>('/heroes');
@@ -300,6 +302,9 @@ export function HeroesPage() {
                 <span className="portrait-star">✧</span>
               </div>
               <h2>{hero.name}</h2>
+              <ButtonLink href={`/game?heroId=${encodeURIComponent(hero.id)}`}>
+                {heroText('play')}
+              </ButtonLink>
               <p>{hero.backstory || tr('История этого героя ещё не рассказана.')}</p>
               <div className="filter-chips">
                 {hero.traits.map((t) => (

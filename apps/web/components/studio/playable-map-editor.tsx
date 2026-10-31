@@ -1,6 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { HeroSelection, useHeroSelection } from '../game/hero-selection';
+import { useLaunchGate } from '../game/use-launch-gate';
 import { StoryArtBindings } from '../assets/story-art-bindings';
 import { useAssetText } from '../assets/messages';
 import { enumerateArtSlots, compilePlayableDraft, createAuthoredDraft } from '@dreamwalk/game-core';
@@ -49,6 +51,8 @@ export function PlayableMapEditor({
 }) {
   const { t } = useT();
   const artText = useAssetText();
+  const heroSelection = useHeroSelection();
+  const launchGate = useLaunchGate(`${adventureId}:${heroSelection.heroId}`);
   const [artDirty, setArtDirty] = useState(false);
   const artFlush = useRef<
     (() => Promise<{ revision: number; bindings: { slot: string; revisionId: string }[] }>) | null
@@ -186,7 +190,10 @@ export function PlayableMapEditor({
     setSelection('');
   }
   async function save(launch = false) {
-    if (!draft || busy) return;
+    if (!draft || busy || (launch && !heroSelection.ready)) return;
+    const lease = launchGate.begin();
+    if (!lease) return;
+    let navigating = false;
     setBusy(true);
     setError('');
     setSaved(false);
@@ -197,7 +204,7 @@ export function PlayableMapEditor({
       setDirty(false);
       onDirty(false);
       setSaved(true);
-      if (launch) {
+      if (launch && launchGate.accepts(lease)) {
         const version = await api<{ versionId: string }>(
           `/studio/adventures/${adventureId}/playable-versions`,
           {
@@ -210,9 +217,12 @@ export function PlayableMapEditor({
         );
         const campaign = await api<{ campaignId: string }>('/game/campaigns', {
           method: 'POST',
-          body: JSON.stringify({ playableVersionId: version.versionId }),
+          body: JSON.stringify({ playableVersionId: version.versionId, ...heroSelection.body }),
         });
-        router.push(`/game/${campaign.campaignId}`);
+        if (launchGate.accepts(lease)) {
+          router.push(`/game/${campaign.campaignId}`);
+          navigating = true;
+        }
       }
     } catch (err) {
       setError(
@@ -225,7 +235,7 @@ export function PlayableMapEditor({
             : errorMessage(err),
       );
     } finally {
-      setBusy(false);
+      if (!navigating && launchGate.finish(lease)) setBusy(false);
     }
   }
   if (resource.loading) return <Loading />;
@@ -916,7 +926,14 @@ export function PlayableMapEditor({
               <Button type="button" busy={busy} onClick={() => void save(false)}>
                 {t('Сохранить игровую карту')}
               </Button>
-              <Button type="button" busy={busy} variant="secondary" onClick={() => void save(true)}>
+              <HeroSelection selection={heroSelection} disabled={busy} />
+              <Button
+                type="button"
+                busy={busy}
+                disabled={!heroSelection.ready}
+                variant="secondary"
+                onClick={() => void save(true)}
+              >
                 {t('Сохранить и проверить в игре')}
               </Button>
             </div>

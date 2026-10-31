@@ -1,3 +1,7 @@
+import { readOwnedHero, pinHero } from './hero-selection';
+import { readFile } from 'node:fs/promises';
+import { basename, resolve } from 'node:path';
+import { config } from '../config';
 import { AssetReuseService } from '../assets/reuse.service';
 import { semanticGameProjection } from './projection-clock';
 import { pruneNpcMemory } from './npc-retention';
@@ -8,6 +12,7 @@ import type { Request } from 'express';
 import { z } from 'zod';
 import {
   gameActionSchema,
+  gameHeroSelectionSchema,
   gameIntentSchema,
   gameMoveSchema,
   npcSpeechSchema,
@@ -1166,8 +1171,8 @@ export class GameService implements OnModuleDestroy {
   async create(req: Request, body: unknown) {
     const input = z
       .union([
-        z.object({ template: z.literal('observatory-v1') }).strict(),
-        z.object({ playableVersionId: z.uuid() }).strict(),
+        z.object({ template: z.literal('observatory-v1'), heroId: z.uuid().optional() }).strict(),
+        z.object({ playableVersionId: z.uuid(), heroId: z.uuid().optional() }).strict(),
       ])
       .parse(body);
     const u = await this.auth.require(req);
@@ -1182,10 +1187,12 @@ export class GameService implements OnModuleDestroy {
         [u.id],
       );
       if (campaigns.rows[0].n >= 20) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+      const selectedHero = await readOwnedHero(c, u.id, input.heroId);
       const sourceVersion = 'playableVersionId' in input ? input.playableVersionId : null;
       const state = sourceVersion
         ? await this.playable.resolveForStart(c, u.id, sourceVersion, actorId, seed)
         : createObservatoryState([actorId], seed);
+      if (selectedHero) state.entities[actorId].label = selectedHero.name;
       await c.query(
         'INSERT INTO game_campaigns(id,owner_id,playable_version,state,source_version_id) VALUES($1,$2,$3,$4,$5)',
         [id, u.id, sourceVersion ?? 'observatory-v1', JSON.stringify(state), sourceVersion],
@@ -1194,6 +1201,7 @@ export class GameService implements OnModuleDestroy {
         "INSERT INTO game_members(campaign_id,user_id,actor_id,status) VALUES($1,$2,$3,'accepted')",
         [id, u.id, actorId],
       );
+      await pinHero(c, id, u.id, input.heroId, selectedHero);
       await c.query(
         'INSERT INTO game_snapshots(campaign_id,sequence,checksum,state) VALUES($1,0,$2,$3)',
         [id, digest(state), JSON.stringify(state)],
@@ -1236,7 +1244,8 @@ export class GameService implements OnModuleDestroy {
     );
     return { ok: true };
   }
-  async accept(req: Request, id: string) {
+  async accept(req: Request, id: string, body: unknown = {}) {
+    const input = gameHeroSelectionSchema.parse(body ?? {});
     const u = await this.auth.require(req);
     z.uuid().parse(id);
     return this.serial(id, async () => {
@@ -1247,16 +1256,86 @@ export class GameService implements OnModuleDestroy {
         [id, u.id],
       );
       if (!rows[0]) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+      const pinned = (
+        await this.db.query(
+          'SELECT hero_id,snapshot FROM game_member_heroes WHERE campaign_id=$1 AND user_id=$2',
+          [id, u.id],
+        )
+      )[0];
+      if (
+        input.heroId &&
+        ((pinned && pinned.hero_id !== input.heroId) || (!pinned && rows[0].status === 'accepted'))
+      )
+        fail(409, 'HERO_SELECTION_LOCKED', 'HERO_SELECTION_LOCKED');
       if (rows[0].status === 'accepted') return { ok: true };
-      const result = addPlayer(live.state, String(rows[0].actor_id));
+      const selectedHero = pinned
+        ? pinned.snapshot
+        : await this.db.tx((c) => readOwnedHero(c, u.id, input.heroId));
+      const result = addPlayer(structuredClone(live.state), String(rows[0].actor_id));
       if (result.error) fail(409, result.error, result.error);
+      if (selectedHero) result.state.entities[String(rows[0].actor_id)].label = selectedHero.name;
       await this.persist(id, live, result.state, 'member.accepted', undefined, async (c) => {
+        const allowed = await c.query(
+          `SELECT m.user_id FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id JOIN users u ON u.id=m.user_id WHERE m.campaign_id=$1 AND m.user_id=$2 AND m.status='pending' AND u.deleted_at IS NULL AND ${sourceAccessSql('$2')}`,
+          [id, u.id],
+        );
+        if (!allowed.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+        if (!pinned) {
+          const current = await readOwnedHero(c, u.id, input.heroId);
+          if (digest(current) !== digest(selectedHero)) fail(409, 'HERO_CHANGED', 'HERO_CHANGED');
+          await pinHero(c, id, u.id, input.heroId, current);
+        }
         await c.query(
           "UPDATE game_members SET status='accepted' WHERE campaign_id=$1 AND user_id=$2 AND status='pending'",
           [id, u.id],
         );
       });
       return { ok: true };
+    });
+  }
+  async selectedHero(req: Request, id: string) {
+    const access = await this.access(req, id);
+    const row = (
+      await this.db.query(
+        'SELECT hero_id,snapshot,selected_at FROM game_member_heroes WHERE campaign_id=$1 AND user_id=$2',
+        [id, access.user.id],
+      )
+    )[0];
+    if (!row?.snapshot) return { hero: null };
+    const { portraitAssetId: _portrait, sourceUpdatedAt: _source, ...data } = row.snapshot;
+    void _source;
+    return {
+      hero: {
+        ...data,
+        heroId: row.hero_id,
+        portraitUrl: _portrait
+          ? `/api/v1/game/campaigns/${id}/actors/${access.actorId}/portrait`
+          : null,
+        selectedAt: row.selected_at.toISOString(),
+      },
+    };
+  }
+  async heroPortrait(req: Request, id: string, actorId: string) {
+    z.string()
+      .regex(/^player-[a-f0-9-]{36}$/)
+      .parse(actorId);
+    return this.serial(id, async () => {
+      const access = await this.access(req, id),
+        live = await this.load(id);
+      if (!projectState(live.state, access.actorId).entities.some((e) => e.id === actorId))
+        fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      const row = (
+        await this.db.query(
+          `SELECT a.filename FROM game_member_heroes h JOIN game_members m ON m.campaign_id=h.campaign_id AND m.user_id=h.user_id JOIN users u ON u.id=h.user_id JOIN game_campaigns c ON c.id=h.campaign_id JOIN assets a ON a.id::text=h.snapshot->>'portraitAssetId' AND a.owner_id=h.user_id WHERE h.campaign_id=$1 AND m.actor_id=$2 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('h.user_id')} AND NOT EXISTS(SELECT 1 FROM art_asset_revisions r JOIN art_asset_takedowns t ON t.revision_id=r.id WHERE r.upload_id=a.id)`,
+          [id, actorId],
+        )
+      )[0];
+      if (!row || basename(row.filename) !== row.filename) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      try {
+        return await readFile(resolve(config.ASSET_DIR, row.filename));
+      } catch {
+        return fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      }
     });
   }
   async revoke(req: Request, id: string, userId: string) {

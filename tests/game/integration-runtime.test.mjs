@@ -493,6 +493,7 @@ await test(
             assert.ok(!JSON.stringify(own).includes(actorA));
             assert.ok(!JSON.stringify(own).includes('keeper'));
             assert.ok(!JSON.stringify(own).includes('knownIds'));
+            await c.query("SELECT set_config('dreamwalk.erasure','confirmed',true)");
             await purgeGameData(c, memberId);
             const retained = (
               await c.query('SELECT state,status,runtime_clock FROM game_campaigns WHERE id=$1', [

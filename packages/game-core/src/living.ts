@@ -965,9 +965,22 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
     knowledgeRevision: m.knowledgeRevision,
     goalGeneration: m.goal.revision,
     personality: clone(m.personality),
-    affect: m.affect
-      ? clone(m.affect)
-      : { fatigue: 0, attention: 100, alertness: 0, mood: 'calm', lastUpdatedTick: state.tick },
+    // The scheduler timestamp is not a semantic read dependency. Keep every actual
+    // affect value: changing mood, attention, fatigue or alertness still stales a plan.
+    affect: {
+      fatigue: m.affect?.fatigue ?? 0,
+      attention: m.affect?.attention ?? 100,
+      alertness: m.affect?.alertness ?? 0,
+      mood: m.affect?.mood ?? 'calm',
+    },
+    communicationPolicy: {
+      publicAudienceIds: Object.values(state.entities)
+        .filter((e) => ['npc', 'player'].includes(e.kind) && canNpcHear(state, e, npc))
+        .map((e) => e.id)
+        .sort(),
+      privateEvidenceRequiresOriginalAudience: true,
+      plannerCannotGrantDisclosure: true,
+    },
     goalPolicy: m.goalPolicy ? clone(m.goalPolicy) : null,
     goalDefinitions: clone(m.goalDefinitions ?? []),
     goal: clone(m.goal),

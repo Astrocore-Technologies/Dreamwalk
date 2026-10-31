@@ -513,3 +513,48 @@ were tested anonymously as accessible, while an unpublished replacement remained
 Five new browser scenarios and desktop/light/mobile screenshot outputs are prepared but
 not yet executed locally. Exact-head CI and inspection of its actual screenshots remain
 required before the visual handoff; no generated mockup is substituted for those renders.
+
+## 2026-10-30 — Live-evaluation repair and owned campaign heroes
+
+The owner separately ran a bounded real-model evaluation on their computer. That
+exercise exposed a false stale decision caused solely by affect scheduler bookkeeping;
+it is not treated as a complete live-quality acceptance. This cloud repair makes no
+paid request and does not restart the owner's application.
+
+Decision fingerprints now omit only `affect.lastUpdatedTick`. Real affect values,
+knowledge, positions, object state and full audible public audience still invalidate
+stale work. Reference-only planner communication is explicitly explained to the
+provider; server disclosure validation remains unchanged. Independent real PostgreSQL,
+authenticated controller and gated-provider regression passed **7/7**: bookkeeping-only
+advance commits exactly once; mood/knowledge/audience/position changes reject; private
+whisper evidence cannot become public speech. Core **95/95** and focused adapter/context
+**2/2** passed. No live model was called to obtain those results.
+
+Owned saved heroes can now be selected on launch or invitation acceptance. The campaign
+pins a separate immutable personal snapshot; default traveler and legacy saves remain
+compatible. My Heroes has a direct play entry, and all launch paths preserve ownership
+checks, duplicate-click guards and three locales. Only the player's own snapshot is
+returned; the group receives public name and visibility-scoped portrait, not notes or
+backstory. Later source edits/deletion do not change that save. Confirmed account erasure
+cleans snapshots and identifying labels in retained projections/history.
+
+Focused hero PostgreSQL/API acceptance passed **7/7**, including actual raster delivery,
+revocation/reinvite, SIGKILL/restart, scoped export and confirmed erasure. A two-account
+browser scenario is supplied but not yet executed locally. Aggregate checks and exact-head
+CI are required before calling this repair ready. See `docs/campaign-heroes.md`.
+
+Final repair verification (31 October UTC): production build, whole-workspace typecheck,
+ESLint/formatting, contracts **9/9**, core **95/95**, config/locales **18/18**, UI/privacy
+**55/55**, semantic adapter **2/2**, platform **62/62** and SMTP **1/1** passed. Runtime
+coverage comprises **129 distinct passed checks across split runs**: 116 completed checks
+before an execution interruption, plus the unfinished legacy file rerun to **13/13**.
+The interrupted file's seven partial passes were excluded from that count. This is not
+reported as a single uninterrupted 129-pass run. A legacy sponsorship fixture required
+an explicit confirmed-erasure transaction when deleting membership; its corrected
+**15/15** test preserved the production immutability guard. The game test runner now
+uses an isolated temporary raster directory rather than the preview asset store.
+
+The new 18th browser scenario and a single uninterrupted full pipeline still require
+exact-head CI. Follow-on scope is only the complete player flow, working NPC behavior,
+generation/drawn scene and one small complete adventure. Translation, Discord, payments
+and broad public release are deferred by the owner's latest clarification.

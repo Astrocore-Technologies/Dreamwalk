@@ -51,6 +51,8 @@ jobs:
       - run: npm run build
         env:
           NODE_ENV: production
+      - name: Semantic NPC context and disclosure regression
+        run: node --test tests/game/npc-semantic-context.test.cjs
       - name: Live API integration tests
         run: npm run test:integration
       - name: Game runtime and isolated PostgreSQL integration
