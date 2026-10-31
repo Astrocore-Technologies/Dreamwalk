@@ -1,6 +1,7 @@
 /** Game extension of the explicit account export/purge transaction. No external calls. */
 import { createHash, randomUUID } from 'node:crypto';
 import { redactNarrativeContent } from './narrative-data-requests.mjs';
+import { exportStoryTurnData, purgeStoryTurnData } from './story-turn-data-requests.mjs';
 import { exportNpcAiData, exportNpcAiSponsors, purgeNpcAiData } from './npc-ai-data-requests.mjs';
 
 function canonical(value) {
@@ -259,6 +260,7 @@ export async function exportGameData(client, userId) {
       [userId],
     )
   ).rows;
+  const storyTurns = await exportStoryTurnData(client, userId);
   const narrativeTurns = (
     await client.query(
       'SELECT id,campaign_id,input_text,status,result,result_code,created_at,committed_at FROM game_narrative_turns WHERE requester_user_id=$1 ORDER BY created_at',
@@ -271,6 +273,7 @@ export async function exportGameData(client, userId) {
     return {
       ...metadata,
       ownNarrativeTurns: narrativeTurns.filter((turn) => turn.campaign_id === metadata.id),
+      ownStoryTurns: storyTurns.filter((turn) => turn.campaign_id === metadata.id),
       ownHero: heroes.find((hero) => hero.campaign_id === metadata.id) ?? null,
       npcRequests: jobs.filter((job) => job.campaign_id === metadata.id),
       npcDecisionRequests: decisions.filter((job) => job.campaign_id === metadata.id),
@@ -312,7 +315,8 @@ export async function purgeGameData(client, userId) {
   ).rows;
   await purgeNpcAiData(client, userId, campaigns);
   for (const campaign of campaigns) {
-    const hasNarrative = Boolean(campaign.state?.narrativeCanon?.turns?.length);
+    const hasStoryTurns = await purgeStoryTurnData(client, campaign.id, userId);
+    const hasNarrative = hasStoryTurns || Boolean(campaign.state?.narrativeCanon?.turns?.length);
     if (hasNarrative) {
       // Generated retellings may contain paraphrased personal input. Preserve
       // topology and items, conservatively remove all derived narrative text.

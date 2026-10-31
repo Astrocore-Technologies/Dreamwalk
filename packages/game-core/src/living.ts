@@ -497,10 +497,15 @@ export function conveyNpcObservation(
   s.revision++;
   return result(s, [{ kind: 'npc.warned', actorId: fromId, mapId: from.mapId }]);
 }
-const speechRoot = (speakerId: string, tick: number, input: unknown) => {
+const speechRoot = (
+  speakerId: string,
+  tick: number,
+  input: unknown,
+  identity?: { turnId: string; segmentIndex: number },
+) => {
   const parsed = npcSpeechSchema.safeParse(input);
   return parsed.success
-    ? `speech-${hash(`${speakerId}:${tick}:${JSON.stringify(parsed.data)}`)}`
+    ? `speech-${hash(`${speakerId}:${identity ? `turn:${identity.turnId}:${identity.segmentIndex}` : tick}:${JSON.stringify(parsed.data)}`)}`
     : undefined;
 };
 /** Resolve only an original admitted speech observation, never a report or arbitrary evidence ID. */
@@ -532,7 +537,7 @@ export function npcReplyObservation(
       ? { claim: { kind: 'item_taken', actorId: o.actorId, targetId: o.targetId } }
       : {}),
   };
-  const root = speechRoot(speakerId, o.tick, input);
+  const root = speechRoot(speakerId, o.tick, input, o.speechIdentity);
   if (!root || o.id !== `${npcId}:${root}` || o.eventId !== root || o.rootId !== root)
     return undefined;
   return o;
@@ -543,8 +548,9 @@ export function admittedNpcSpeechObservationId(
   speakerId: string,
   npcId: string,
   input: unknown,
+  identity?: { turnId: string; segmentIndex: number },
 ): string | undefined {
-  const root = speechRoot(speakerId, state.tick, input);
+  const root = speechRoot(speakerId, state.tick, input, identity);
   const id = root ? `${npcId}:${root}` : undefined;
   return id && npcReplyObservation(state, speakerId, npcId, id) ? id : undefined;
 }
@@ -554,7 +560,7 @@ export function applyNpcSpeech(
   speakerId: string,
   npcId: string,
   input: unknown,
-  options: { suppressReply?: boolean } = {},
+  options: { suppressReply?: boolean; identity?: { turnId: string; segmentIndex: number } } = {},
 ): GameResult {
   const p = npcSpeechSchema.safeParse(input),
     speaker = state.entities[speakerId],
@@ -571,6 +577,14 @@ export function applyNpcSpeech(
   if (!near(speaker, npc) || !visible(state, speaker, npc))
     return result(state, [], 'OUT_OF_RANGE');
   if (speaker.encounterId || npc.encounterId) return result(state, [], 'WRONG_MODE');
+  if (
+    options.identity &&
+    (!/^[0-9a-f-]{36}$/i.test(options.identity.turnId) ||
+      !Number.isInteger(options.identity.segmentIndex) ||
+      options.identity.segmentIndex < 0 ||
+      options.identity.segmentIndex > 5)
+  )
+    return result(state, [], 'INVALID_ACTION');
   const claim = p.data.claim;
   if (
     claim &&
@@ -581,7 +595,7 @@ export function applyNpcSpeech(
   )
     return result(state, [], 'TARGET_UNAVAILABLE');
   const s = clone(state),
-    root = speechRoot(speakerId, s.tick, p.data)!;
+    root = speechRoot(speakerId, s.tick, p.data, options.identity)!;
   const recipients =
     p.data.channel === 'whisper'
       ? [npcId]
@@ -604,6 +618,7 @@ export function applyNpcSpeech(
       targetId: claim?.targetId,
       sourceNpcId: undefined,
       addressedNpcId: npcId,
+      ...(options.identity ? { speechIdentity: clone(options.identity) } : {}),
       depth: 0,
       disclosure: p.data.channel === 'whisper' ? 'participants' : 'public',
       audienceIds: p.data.channel === 'whisper' ? [speakerId, npcId] : [],

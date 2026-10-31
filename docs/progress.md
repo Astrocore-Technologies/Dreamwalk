@@ -761,3 +761,25 @@ and formatting passed; contracts 9/9, core 121/121, configuration/locales/shutdo
 22/22, UI/privacy/guard/report suite 96/96, and the full real PostgreSQL game suite
 173/173 passed in one uninterrupted run. Browser acceptance for this exact repair
 still belongs to its publication CI, not to these local results.
+
+## 2026-10-31 — unified player story input
+
+The normal game screen now uses one chronological feed and one composer for ordered
+`*attempts*` and speech. Click an NPC to select a recipient; click the floor to move.
+Directional keyboard movement is removed without disabling text editing or accessible
+buttons. Whisper remains audience-scoped; Group chat is separate and never AI input.
+Inline quotes and stored confirmations preserve one provider job per turn.
+
+Migration 029 adds durable turns/feed and binds quotes to the exact provider contract
+version. Actual database acceptance covers consent/replay, ordered effects, private
+receipts, legacy history, restart/offline pause, authorization revocation, erasure,
+and rollback of world/job/feed together. Failed inferred actions cannot commit their
+dependent success prose. See `unified-story-turns.md` for the boundaries.
+
+Local full regression passed: 191 game/PostgreSQL checks, 62 platform checks and 34
+image checks, plus typechecking, production build, lint, formatting and unit/UI checks.
+The final escaped-star presentation correction passed the affected UI rebuild and
+103 UI/privacy/guard checks; the SMTP integration also passed.
+Actual browser execution and screenshot inspection are still pending for this tranche;
+these local results do not establish live model quality or successful image generation.
+No additional paid calls or changes to the user's running local preview were made.

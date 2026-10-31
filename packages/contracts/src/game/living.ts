@@ -79,6 +79,8 @@ export interface NpcObservation {
   targetId?: string;
   sourceNpcId?: string;
   addressedNpcId?: string;
+  /** Server-created durable story turn provenance; never accepted from speech input. */
+  speechIdentity?: { turnId: string; segmentIndex: number };
   depth: number;
   disclosure: 'public' | 'participants' | 'private';
   audienceIds: string[];

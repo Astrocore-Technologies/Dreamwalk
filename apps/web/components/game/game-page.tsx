@@ -16,13 +16,11 @@ import { useLaunchGate } from './use-launch-gate';
 import { localizedProjection } from './localized-projection';
 import { CampaignObjectives } from './campaign-objectives';
 import { GameCanvas } from './game-canvas';
-import { NarrativeDirector } from './narrative-director';
+import { UnifiedStory, type StoryRecipient } from './unified-story';
+import { useStoryText } from './story-messages';
 import { useAdvancedPlayLabel } from './play-messages';
 import { SponsorBudget } from './sponsor-budget';
-import { IntentProposals } from './intent-proposals';
-import { PartyChat } from './party-chat';
 import { LivingAiPanel } from './living-ai-panel';
-import { LivingConversation } from './living-conversation';
 import { LivingNotices } from './living-notices';
 import { useGame, type CampaignSummary } from './use-game';
 import styles from './game.module.css';
@@ -207,6 +205,9 @@ function CampaignLobby() {
 }
 function CampaignRoom({ campaignId }: { campaignId: string }) {
   const advancedPlayLabel = useAdvancedPlayLabel();
+  const storyText = useStoryText();
+  const [recipient, setRecipient] = useState<StoryRecipient>(null);
+  useEffect(() => setRecipient(null), [campaignId]);
   const { t, locale } = useT();
   const { user } = useClient();
   const members = useResource<{
@@ -421,14 +422,18 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           )}
         </p>
       )}
-      <div className={styles.roomGrid}>
-        <div>
+      <div className={styles.playGrid}>
+        <div className={styles.sceneColumn}>
           <GameCanvas
             projection={p}
             art={art}
             disabled={!connected || locked}
             planning={!!encounter}
             onStop={game.stop}
+            onSelectNpc={(npcId) => {
+              const npc = p.entities.find((entity) => entity.id === npcId && entity.kind === 'npc');
+              if (npc) setRecipient({ id: npc.id, label: npc.label || t('NPC') });
+            }}
             onMove={(target) => {
               if (encounter) setSelected({ kind: 'move_to', target });
               else game.move(target);
@@ -436,16 +441,19 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             reducedMotion={!!user?.settings.reducedMotion}
           />
           <CampaignObjectives objectives={p.objectives} />
-          {p.rulesetVersion === 'hybrid-v3' && (
-            <NarrativeDirector
-              key={campaignId}
-              campaignId={campaignId}
-              sceneId={p.map.id}
-              projection={p}
-              onWorldRefresh={() => void game.refresh()}
-              disabled={!connected || game.busy || locked}
-            />
-          )}
+        </div>
+        <UnifiedStory
+          key={campaignId}
+          campaignId={campaignId}
+          projection={p}
+          recipient={recipient}
+          onClearRecipient={() => setRecipient(null)}
+          onWorldRefresh={() => void game.refresh()}
+          disabled={!connected || game.busy || locked}
+        />
+      </div>
+      <div className={styles.roomGrid}>
+        <div>
           {artCredits.length > 0 && (
             <details>
               <summary>{artText('credits')}</summary>
@@ -592,6 +600,19 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                   </small>
                 </div>
                 <div className={styles.actions}>
+                  {entity.kind === 'npc' && (
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={!connected}
+                      data-select-npc={entity.id}
+                      onClick={() =>
+                        setRecipient({ id: entity.id, label: entity.label || t('NPC') })
+                      }
+                    >
+                      {storyText('choose')}
+                    </Button>
+                  )}
                   <Button
                     variant="ghost"
                     disabled={!connected || locked || game.busy}
@@ -817,19 +838,8 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             )}
             {inviteMessage && <p role="status">{inviteMessage}</p>}
           </section>
-          <LivingConversation
-            key={campaignId}
-            projection={p}
-            disabled={!connected || game.busy || locked}
-            command={game.command}
-          />
-          <IntentProposals
-            campaignId={campaignId}
-            projection={p}
-            disabled={!connected || game.busy || locked}
-          />
-          <PartyChat campaignId={campaignId} actorId={p.actorId} disabled={!connected} />
           <LivingNotices
+            showJournal={false}
             projection={p}
             command={game.command}
             disabled={!connected || game.busy || locked}
@@ -846,25 +856,25 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
               projection={p}
               disabled={!connected || game.busy}
             />
+            <section>
+              <h2>{t('Журнал событий')}</h2>
+              <ol className={styles.journal} aria-live="polite" aria-relevant="additions">
+                {game.events.length ? (
+                  game.events.map((event) => (
+                    <li key={event.id}>
+                      {t(
+                        event.code
+                          ? errorKeys[event.code] || 'Действие отклонено'
+                          : eventKeys[event.kind] || 'Действие подтверждено',
+                      )}
+                    </li>
+                  ))
+                ) : (
+                  <li className={styles.muted}>{t('Новых событий пока нет')}</li>
+                )}
+              </ol>
+            </section>
           </details>
-          <section>
-            <h2>{t('Журнал событий')}</h2>
-            <ol className={styles.journal} aria-live="polite" aria-relevant="additions">
-              {game.events.length ? (
-                game.events.map((event) => (
-                  <li key={event.id}>
-                    {t(
-                      event.code
-                        ? errorKeys[event.code] || 'Действие отклонено'
-                        : eventKeys[event.kind] || 'Действие подтверждено',
-                    )}
-                  </li>
-                ))
-              ) : (
-                <li className={styles.muted}>{t('Новых событий пока нет')}</li>
-              )}
-            </ol>
-          </section>
           <p className={styles.footnote}>
             {t('Прототип работает бесплатно на тестовых решениях NPC.')}
             <br />

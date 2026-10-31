@@ -1,4 +1,5 @@
 'use client';
+import { sceneClick } from './scene-input';
 import { useEffect, useRef, useState } from 'react';
 import { cameraAxis } from './camera-geometry';
 import { useObjectiveText } from './campaign-objectives';
@@ -18,6 +19,7 @@ export function GameCanvas({
   projection,
   art = [],
   onMove,
+  onSelectNpc,
   onStop,
   disabled,
   reducedMotion,
@@ -26,6 +28,7 @@ export function GameCanvas({
   projection: GameProjection;
   art?: VisibleArtBinding[];
   onMove: (point: GamePoint) => void;
+  onSelectNpc: (npcId: string) => void;
   onStop: () => void;
   disabled: boolean;
   reducedMotion: boolean;
@@ -34,7 +37,7 @@ export function GameCanvas({
   const { t } = useT();
   const objectiveText = useObjectiveText();
   const host = useRef<HTMLDivElement>(null);
-  const latest = useRef({ projection, art, onMove, disabled, reducedMotion });
+  const latest = useRef({ projection, art, onMove, onSelectNpc, disabled, reducedMotion });
   const [failed, setFailed] = useState(false);
   const [systemReducedMotion, setSystemReducedMotion] = useState(false);
   useEffect(() => {
@@ -51,10 +54,11 @@ export function GameCanvas({
       projection,
       art,
       onMove,
+      onSelectNpc,
       disabled,
       reducedMotion: reducedMotion || systemReducedMotion,
     };
-  }, [projection, art, onMove, disabled, reducedMotion, systemReducedMotion]);
+  }, [projection, art, onMove, onSelectNpc, disabled, reducedMotion, systemReducedMotion]);
   useEffect(() => {
     zoomRef.current = zoom;
   }, [zoom]);
@@ -275,8 +279,9 @@ export function GameCanvas({
         const local = world.toLocal(event.global);
         const x = Math.floor(local.x / tile),
           y = Math.floor(local.y / tile);
-        if (x >= 0 && y >= 0 && x < state.projection.map.width && y < state.projection.map.height)
-          state.onMove({ x, y });
+        const interaction = sceneClick(state.projection, x, y);
+        if (interaction?.kind === 'npc') state.onSelectNpc(interaction.npcId);
+        else if (interaction?.kind === 'move') state.onMove(interaction.target);
       });
       const render = () => {
         const { projection: p, reducedMotion: reduced } = latest.current;
@@ -399,6 +404,14 @@ export function GameCanvas({
             cameraAxis(app.screen.width, p.map.width * tile, own.sprite.x + tile / 2, scale),
             cameraAxis(app.screen.height, p.map.height * tile, own.sprite.y + tile / 2, scale),
           );
+          for (const [key, value] of Object.entries({
+            cameraX: world.x,
+            cameraY: world.y,
+            cameraScale: scale,
+          })) {
+            const text = value.toFixed(3);
+            if (element.dataset[key] !== text) element.dataset[key] = text;
+          }
           focus
             .clear()
             .ellipse(own.sprite.x + tile / 2, own.sprite.y + tile * 0.85, tile * 0.37, tile * 0.15)
@@ -420,37 +433,9 @@ export function GameCanvas({
       cleanup();
     };
   }, []);
-  const pressed = useRef<ReturnType<typeof setInterval> | null>(null);
-  // Direction input sets a bounded one-tile goal. Releasing a quick tap must
-  // not cancel it before the next server tick; at most that tile may complete.
-  const releaseRepeat = () => {
-    if (pressed.current) clearInterval(pressed.current);
-    pressed.current = null;
-  };
   const explicitStop = () => {
-    releaseRepeat();
     if (!latest.current.disabled && !planning) onStop();
   };
-  useEffect(
-    () => () => {
-      if (pressed.current) clearInterval(pressed.current);
-    },
-    [],
-  );
-  const step = (dx: number, dy: number) => {
-    const p = latest.current.projection,
-      self = p.entities.find((entity) => entity.id === p.actorId);
-    if (!self || latest.current.disabled) return;
-    const target = { x: self.x + dx, y: self.y + dy };
-    if (target.x >= 0 && target.y >= 0 && target.x < p.map.width && target.y < p.map.height)
-      latest.current.onMove(target);
-  };
-  const directions = [
-    { key: 'ArrowUp', dx: 0, dy: -1, label: t('Вверх'), symbol: '↑' },
-    { key: 'ArrowLeft', dx: -1, dy: 0, label: t('Влево'), symbol: '←' },
-    { key: 'ArrowDown', dx: 0, dy: 1, label: t('Вниз'), symbol: '↓' },
-    { key: 'ArrowRight', dx: 1, dy: 0, label: t('Вправо'), symbol: '→' },
-  ];
   return (
     <section className={styles.mapSection}>
       <div
@@ -460,36 +445,6 @@ export function GameCanvas({
         aria-label={t('Карта приключения')}
         aria-describedby="game-controls-help"
         onBlur={explicitStop}
-        onKeyUp={(event) => {
-          if (
-            ['ArrowUp', 'ArrowDown', 'ArrowLeft', 'ArrowRight', 'w', 'a', 's', 'd'].includes(
-              event.key,
-            )
-          ) {
-            event.preventDefault();
-            releaseRepeat();
-          }
-        }}
-        onKeyDown={(event) => {
-          if (event.ctrlKey || event.metaKey || event.altKey) return;
-          const keys: Record<string, string> = {
-            w: 'ArrowUp',
-            a: 'ArrowLeft',
-            s: 'ArrowDown',
-            d: 'ArrowRight',
-          };
-          const direction = directions.find(
-            (value) => value.key === (keys[event.key.toLowerCase()] || event.key),
-          );
-          if (direction) {
-            event.preventDefault();
-            if (event.repeat) return;
-            releaseRepeat();
-            step(direction.dx, direction.dy);
-            if (!planning)
-              pressed.current = setInterval(() => step(direction.dx, direction.dy), 150);
-          }
-        }}
       >
         <div ref={host} className={styles.canvas} />
         {failed && (
@@ -520,32 +475,11 @@ export function GameCanvas({
       {projection.map.sceneProfile && <small>{objectiveText.art}</small>}
       <div className={styles.controls}>
         <p id="game-controls-help">
-          {t('Коснись клетки или используй стрелки / WASD. Действия доступны и под картой.')}
+          {t(
+            'Нажми на свободную клетку, чтобы подойти. Нажми на NPC, чтобы выбрать собеседника. Кнопки объектов доступны с клавиатуры.',
+          )}
         </p>
         <div className={styles.dpad}>
-          {directions.map((direction) => (
-            <button
-              key={direction.key}
-              type="button"
-              disabled={disabled}
-              aria-label={direction.label}
-              onPointerDown={(event) => {
-                event.preventDefault();
-                event.currentTarget.setPointerCapture(event.pointerId);
-                releaseRepeat();
-                step(direction.dx, direction.dy);
-                pressed.current = setInterval(() => step(direction.dx, direction.dy), 150);
-              }}
-              onPointerUp={releaseRepeat}
-              onPointerCancel={explicitStop}
-              onLostPointerCapture={releaseRepeat}
-              onClick={(event) => {
-                if (event.detail === 0) step(direction.dx, direction.dy);
-              }}
-            >
-              {direction.symbol}
-            </button>
-          ))}
           <button
             type="button"
             disabled={disabled}

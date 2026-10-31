@@ -33,9 +33,7 @@ test('normal narrative shows committed shared results only and uses explicit con
     new URL('../../apps/web/components/game/game-page.tsx', import.meta.url),
     'utf8',
   );
-  assert.ok(
-    page.indexOf('<NarrativeDirector') < page.indexOf('<details data-testid="game-advanced">'),
-  );
+  assert.ok(page.indexOf('<UnifiedStory') < page.indexOf('<details data-testid="game-advanced">'));
   assert.match(page, /<details data-testid="game-advanced">/);
 });
 

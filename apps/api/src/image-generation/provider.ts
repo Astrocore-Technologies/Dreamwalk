@@ -1,4 +1,5 @@
 import sharp from 'sharp';
+import { ImageProviderFailure, safeImageErrorDiagnostic } from './error-diagnostics';
 import { createHash } from 'node:crypto';
 import { generationRequestSchema, type GenerationRequest } from './contracts';
 export interface ImageReference {
@@ -160,7 +161,8 @@ export class OpenAiImageProvider implements ImageProvider {
         signal: AbortSignal.timeout(o.timeoutMs ?? 60000),
       },
     );
-    if (!response.ok || !response.body) throw new Error('PROVIDER_RESULT_UNKNOWN');
+    if (!response.ok) throw new ImageProviderFailure(await safeImageErrorDiagnostic(response));
+    if (!response.body) throw new Error('PROVIDER_RESULT_UNKNOWN');
     const chunks: Uint8Array[] = [];
     let size = 0;
     const reader = response.body.getReader();
