@@ -11,7 +11,7 @@ const promiseLabels = {
   broken: 'Обещание не выполнено',
   cancelled: 'Обещание отменено',
 };
-const noticeLabels = {
+export const noticeLabels = {
   investigating: 'NPC проверяет замеченное событие',
   warned: 'NPC передал предупреждение',
   promised: 'NPC дал обещание',
@@ -30,35 +30,39 @@ export function LivingNotices({
   projection,
   command,
   disabled,
+  showJournal = true,
 }: {
   projection: GameProjection;
   disabled: boolean;
+  showJournal?: boolean;
   command: (body: Omit<CommandBody, 'protocolVersion' | 'operationId'>) => Promise<boolean>;
 }) {
   const { t } = useT();
   if (projection.rulesetVersion !== 'hybrid-v3') return null;
   return (
     <>
-      <section aria-label={t('События рядом')}>
-        <h2>{t('События рядом')}</h2>
-        <p className={styles.muted}>
-          {t('Скрытые мысли и чужие разговоры не показываются в журнале.')}
-        </p>
-        <ol className={styles.journal} aria-live="polite" aria-relevant="additions">
-          {projection.npcNotices?.length ? (
-            projection.npcNotices.map((notice) => (
-              <li key={notice.id} data-npc-notice={notice.kind}>
-                {t(noticeLabels[notice.kind])}
-                {projection.entities.find((entity) => entity.id === notice.npcId)?.label
-                  ? ` · ${projection.entities.find((entity) => entity.id === notice.npcId)!.label}`
-                  : ''}
-              </li>
-            ))
-          ) : (
-            <li className={styles.muted}>{t('Новых событий пока нет')}</li>
-          )}
-        </ol>
-      </section>
+      {showJournal && (
+        <section aria-label={t('События рядом')}>
+          <h2>{t('События рядом')}</h2>
+          <p className={styles.muted}>
+            {t('Скрытые мысли и чужие разговоры не показываются в журнале.')}
+          </p>
+          <ol className={styles.journal} aria-live="polite" aria-relevant="additions">
+            {projection.npcNotices?.length ? (
+              projection.npcNotices.map((notice) => (
+                <li key={notice.id} data-npc-notice={notice.kind}>
+                  {t(noticeLabels[notice.kind])}
+                  {projection.entities.find((entity) => entity.id === notice.npcId)?.label
+                    ? ` · ${projection.entities.find((entity) => entity.id === notice.npcId)!.label}`
+                    : ''}
+                </li>
+              ))
+            ) : (
+              <li className={styles.muted}>{t('Новых событий пока нет')}</li>
+            )}
+          </ol>
+        </section>
+      )}
       <section aria-label={t('Обещания тебе')}>
         <h2>{t('Обещания тебе')}</h2>
         <p className={styles.muted}>

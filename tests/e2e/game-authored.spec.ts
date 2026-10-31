@@ -1,5 +1,91 @@
-import { test, expect } from '@playwright/test';
+import { test, expect, type Page, type Response } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+
+/** Each retry is a new visible user decision, not a broader production/network retry. */
+async function beginCoordinationWithVisibleReconfirmation(page: Page, campaignId: string) {
+  const start = page.getByRole('button', { name: 'Начать координацию', exact: true });
+  const round = page
+    .getByRole('region', { name: 'Планирование раунда', exact: true })
+    .getByRole('heading', { name: 'Раунд 1', exact: true });
+  const stale = page.getByRole('alert').filter({ hasText: 'Мир изменился. Состояние обновлено.' });
+  const seenOperations = new Set<string>();
+  const matches = (response: Response) => {
+    const request = response.request();
+    return (
+      new URL(response.url()).pathname === `/api/v1/game/campaigns/${campaignId}/commands` &&
+      request.method() === 'POST' &&
+      request.postDataJSON()?.type === 'encounter.begin'
+    );
+  };
+  for (let userAttempt = 0; userAttempt < 3; userAttempt++) {
+    const responses: Promise<{ operationId: string; status: string; code?: string }>[] = [];
+    const capture = (response: Response) => {
+      if (!matches(response)) return;
+      responses.push(
+        (async () => {
+          expect(response.ok(), 'Unknown or HTTP error outcomes must not be retried').toBeTruthy();
+          const request = response.request().postDataJSON();
+          expect(typeof request.operationId).toBe('string');
+          expect(
+            seenOperations.has(request.operationId),
+            'Every explicit/internal retry needs a fresh operation',
+          ).toBe(false);
+          seenOperations.add(request.operationId);
+          return { ...(await response.json()), operationId: request.operationId };
+        })(),
+      );
+      // Attach a handler immediately; Promise.all below still surfaces the exact
+      // assertion/parse error, without an unrelated unhandled rejection during UI settling.
+      void responses.at(-1)!.catch(() => undefined);
+    };
+    page.on('response', capture);
+    try {
+      await expect(start).toBeEnabled({ timeout: 15000 });
+      const first = page.waitForResponse(matches, { timeout: 15000 });
+      await start.click();
+      await first;
+      // Error is published only after the internal single recovery ends. Reenabled
+      // button additionally proves its refresh/finally completed before another click.
+      let outcome = 'pending';
+      await expect
+        .poll(
+          async () => {
+            outcome = (await round.isVisible())
+              ? 'started'
+              : (await stale.isVisible()) && (await start.isEnabled())
+                ? 'stale'
+                : 'pending';
+            return outcome;
+          },
+          { timeout: 15000 },
+        )
+        .not.toBe('pending');
+      const results = await Promise.all(responses);
+      expect(results.length).toBeGreaterThanOrEqual(1);
+      expect(results.length).toBeLessThanOrEqual(2); // Production permits one internal recovery only.
+      for (const result of results.slice(0, -1)) {
+        expect(result.status).toBe('rejected');
+        expect(result.code).toBe('STALE_STATE');
+      }
+      const last = results.at(-1)!;
+      if (outcome === 'started') {
+        expect(last.status).toBe('committed');
+        return;
+      }
+      await expect(stale).toBeVisible({ timeout: 15000 });
+      await expect(start).toBeEnabled({ timeout: 15000 });
+      expect(last.status).toBe('rejected');
+      expect(last.code).toBe('STALE_STATE');
+      expect(
+        userAttempt,
+        'Three explicit user attempts exhausted without starting coordination',
+      ).toBeLessThan(2);
+    } finally {
+      page.off('response', capture);
+      await Promise.all(responses);
+    }
+  }
+}
 
 test('Studio authored layout persists and launches its own pinned campaign', async ({ page }) => {
   test.setTimeout(90000);
@@ -107,7 +193,7 @@ test('Studio authored layout persists and launches its own pinned campaign', asy
   expect([actor.x, actor.y]).toEqual([4, 2]);
   expect(initial.projection.map.blocked).toContainEqual({ x: 1, y: 1 });
   expect(JSON.stringify(initial)).not.toContain('BROWSER_PRIVATE_NPC_SECRET');
-  await page.getByRole('button', { name: 'Начать координацию', exact: true }).click();
+  await beginCoordinationWithVisibleReconfirmation(page, campaignId);
   const planning = page.getByRole('region', { name: 'Планирование раунда', exact: true });
   await expect(planning.getByRole('heading', { name: 'Раунд 1', exact: true })).toBeVisible();
   await planning.getByRole('button', { name: 'Ждать', exact: true }).click();

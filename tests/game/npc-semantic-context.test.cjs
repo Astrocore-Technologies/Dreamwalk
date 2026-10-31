@@ -387,3 +387,148 @@ test('provider version binds actual request contracts, not credentials or config
   }
   assert.equal(new OpenAiNpcProvider(config).version, original.version);
 });
+
+test('story provider preserves inherited recall/director guidance and binds trusted server metadata', async () => {
+  const { randomUUID } = require('node:crypto');
+  for (const mode of ['npc', 'director']) {
+    const d = g.createCompleteObservatoryDraft();
+    delete d.supportingNpcPolicy;
+    const s = g.createStateFromPlayable(g.compilePlayableDraft(d).playable, ['alice', 'bob']);
+    Object.assign(s.entities.alice, { x: 5, y: 4 });
+    const input = {
+      operationId: randomUUID(),
+      text: 'Hello',
+      channel: 'say',
+      expectedCanonRevision: 0,
+      ...(mode === 'npc' ? { targetNpcId: 'keeper' } : {}),
+    };
+    const turnId = randomUUID(),
+      context = g.buildStoryTurnContext(s, 'alice', input, turnId);
+    let response = {
+      status: 'ready',
+      code: null,
+      steps: [
+        {
+          segmentIndex: 0,
+          action: null,
+          reply: mode === 'npc' ? { code: 'acknowledged', text: null } : null,
+        },
+      ],
+      narrative:
+        mode === 'npc'
+          ? null
+          : {
+              narration: 'Consider the visible keeper next.',
+              newScene: null,
+              newNpc: null,
+              evidenceIds: [],
+            },
+    };
+    let calls = 0;
+    const provider = new OpenAiNpcProvider(
+      {
+        enabled: true,
+        apiKey: 'synthetic',
+        model: 'fixture',
+        version: 'fixture',
+        maxInputBytes: 64000,
+        maxOutputTokens: 100,
+        maxResponseBytes: 64000,
+        inputMicrosPerMillion: 1,
+        outputMicrosPerMillion: 1,
+      },
+      async (_url, init) => {
+        calls++;
+        const body = JSON.parse(init.body);
+        assert.match(body.instructions, /exactly one ordered user turn/);
+        assert.match(body.instructions, /failed attempt remains failed/);
+        if (mode === 'npc') {
+          assert.match(body.instructions, /Answer currentUtterance first/);
+          assert.match(body.instructions, /not a chronological transcript/);
+          assert.match(body.instructions, /Attribute remembered names/);
+          assert.match(body.instructions, /do not invent speaker attribution/);
+        } else {
+          assert.match(body.instructions, /specific useful next step, not atmosphere alone/);
+          assert.match(body.instructions, /Ground that step in an existing visible entity\/exit/);
+          assert.match(body.instructions, /Do not enumerate private inventory/);
+        }
+        assert.equal(JSON.parse(body.input).context.mode, mode);
+        const schema = body.text.format.schema;
+        assert.ok(!('turnId' in schema.properties));
+        assert.ok(!('contextHash' in schema.properties));
+        assert.equal(schema.properties.steps.maxItems, 6);
+        return new Response(
+          JSON.stringify({
+            id: 'fixture-response',
+            status: 'completed',
+            service_tier: 'default',
+            usage: { input_tokens: 20, output_tokens: 10 },
+            output: [
+              {
+                type: 'message',
+                content: [{ type: 'output_text', text: JSON.stringify(response) }],
+              },
+            ],
+          }),
+        );
+      },
+    );
+    const request = {
+      jobId: 'fixture',
+      purpose: 'story_turn',
+      context,
+      signal: new AbortController().signal,
+      maxCostMicros: 1000,
+    };
+    let result = await provider.generate(request);
+    assert.equal(result.failureCode, undefined);
+    assert.equal(result.proposal.turnId, turnId);
+    assert.equal(result.proposal.contextHash, context.contextHash);
+    if (mode === 'npc') {
+      response = {
+        ...response,
+        narrative: {
+          narration: 'forbidden director knowledge',
+          newScene: null,
+          newNpc: null,
+          evidenceIds: [],
+        },
+      };
+      result = await provider.generate(request);
+      assert.equal(result.failureCode, 'PROVIDER_INVALID_RESULT');
+    }
+    response = { ...response, turnId: randomUUID(), contextHash: 'forged' };
+    result = await provider.generate(request);
+    assert.equal(result.failureCode, 'PROVIDER_INVALID_RESULT');
+    assert.equal(calls, mode === 'npc' ? 3 : 2);
+  }
+});
+test('provider version fingerprints both story modes independently', () => {
+  const config = {
+    enabled: true,
+    apiKey: 'synthetic',
+    model: 'fixture',
+    version: 'fixture',
+    maxInputBytes: 64000,
+    maxOutputTokens: 100,
+    maxResponseBytes: 64000,
+    inputMicrosPerMillion: 1,
+    outputMicrosPerMillion: 1,
+  };
+  const original = new OpenAiNpcProvider(config).version,
+    body = OpenAiNpcProvider.prototype.body;
+  for (const mode of ['npc', 'director']) {
+    try {
+      OpenAiNpcProvider.prototype.body = function (purpose, context) {
+        const value = JSON.parse(body.call(this, purpose, context));
+        if (purpose === 'story_turn' && context.mode === mode)
+          value.instructions += ' Fixture mode-specific revision.';
+        return JSON.stringify(value);
+      };
+      assert.notEqual(new OpenAiNpcProvider(config).version, original, mode);
+    } finally {
+      OpenAiNpcProvider.prototype.body = body;
+    }
+  }
+  assert.equal(new OpenAiNpcProvider(config).version, original);
+});

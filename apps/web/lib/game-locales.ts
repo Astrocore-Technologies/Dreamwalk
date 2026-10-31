@@ -2,6 +2,12 @@ import { livingMessages } from './living-locales';
 /** Game UI and curated prototype names; never used to translate author content. */
 export const gameMessages = {
   ...livingMessages,
+  'Нажми на свободную клетку, чтобы подойти. Нажми на NPC, чтобы выбрать собеседника. Кнопки объектов доступны с клавиатуры.':
+    {
+      ru: 'Нажми на свободную клетку, чтобы подойти. Нажми на NPC, чтобы выбрать собеседника. Кнопки объектов доступны с клавиатуры.',
+      en: 'Click a free floor tile to move. Click an NPC to select a recipient. Object buttons remain keyboard accessible.',
+      uk: 'Натисни на вільну клітинку, щоб підійти. Натисни на NPC, щоб обрати співрозмовника. Кнопки об’єктів доступні з клавіатури.',
+    },
   Автосохранено: { ru: 'Автосохранено', en: 'Autosaved', uk: 'Автоматично збережено' },
   'Ожидание автосохранения': {
     ru: 'Ожидание автосохранения',

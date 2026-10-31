@@ -970,3 +970,4 @@ export * from './observatory-story';
 export * from './supporting';
 
 export * from './narrative';
+export * from './story-turn';
