@@ -107,3 +107,16 @@ test('author source rename clears stale curated variants while movement preserve
   assert.equal(labelEditPatch(source.label, unchanged), unchanged);
   assert.deepEqual(source.labelTranslations, { ru: 'Журнал' });
 });
+
+test('game scene precedes expanded objective text while private hero stays in the HUD', async () => {
+  const source = await readFile(
+    new URL('../../apps/web/components/game/game-page.tsx', import.meta.url),
+    'utf8',
+  );
+  const canvas = source.indexOf('<GameCanvas');
+  const objective = source.indexOf('<CampaignObjectives');
+  const sidebar = source.indexOf('<aside className={styles.hud}>');
+  const hero = source.indexOf('<CampaignHero');
+  assert.ok(canvas > 0 && objective > canvas);
+  assert.ok(sidebar > objective && hero > sidebar);
+});

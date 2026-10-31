@@ -80,14 +80,25 @@ test('four independent players start the public Observatory with owned heroes an
       await expect(guest).toHaveURL(new RegExp(`/game/${id}$`));
       await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
     }
-    for (const page of pages) {
+    for (const [index, page] of pages.entries()) {
       await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
         'data-objective-status',
         'active',
       );
       await expect(page.getByTestId('objective-epilogue')).toHaveCount(0);
-      for (let i = 1; i <= 4; i++)
-        await expect(page.getByText(`PRIVATE_HERO_${i}`, { exact: true })).toHaveCount(0);
+      for (let i = 1; i <= 4; i++) {
+        if (i !== index + 1)
+          await expect(page.getByText(`PRIVATE_HERO_${i}`, { exact: true })).toHaveCount(0);
+      }
+      const privateDetails = page.getByTestId('campaign-hero').locator('details');
+      const ownNote = privateDetails.getByText(`PRIVATE_HERO_${index + 1}`, { exact: true });
+      await expect(ownNote).toHaveCount(1);
+      await expect(privateDetails).not.toHaveAttribute('open', '');
+      await expect(ownNote).not.toBeVisible();
+      await privateDetails.locator('summary').click();
+      await expect(ownNote).toBeVisible();
+      await privateDetails.locator('summary').click();
+      await expect(ownNote).not.toBeVisible();
     }
     await expect(owner.locator('[data-scene-profile="observatory-interior-v1"]')).toBeVisible();
     await capture(owner, 'sample-adventure-room-desktop.png');

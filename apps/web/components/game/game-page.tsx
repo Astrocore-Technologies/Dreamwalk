@@ -332,8 +332,6 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
   const selectedTarget = p.entities.find((entity) => entity.id === selected.targetId);
   return (
     <div className={styles.root}>
-      <CampaignHero campaignId={campaignId} />
-      <CampaignObjectives objectives={p.objectives} />
       <div className={styles.roomHeader}>
         <div>
           <Link href="/game" className={styles.back}>
@@ -419,6 +417,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             }}
             reducedMotion={!!user?.settings.reducedMotion}
           />
+          <CampaignObjectives objectives={p.objectives} />
           {artCredits.length > 0 && (
             <details>
               <summary>{artText('credits')}</summary>
@@ -702,6 +701,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           </section>
         </div>
         <aside className={styles.hud}>
+          <CampaignHero campaignId={campaignId} />
           <section>
             <h2>
               <KeyRound size={18} />
