@@ -102,3 +102,12 @@ jobs:
           path: test-results/**/home-*.png
           if-no-files-found: ignore
           retention-days: 7
+
+      - name: Save actual complete-adventure scene previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: complete-adventure-preview
+          path: test-results/**/sample-adventure-*.png
+          if-no-files-found: ignore
+          retention-days: 7

@@ -131,11 +131,20 @@ export type GameError =
   | 'ROUND_LOCKED'
   | 'RATE_LIMITED'
   | 'INVALID_ACTION';
+export const gameLabelTranslationsSchema = z
+  .object({
+    uk: z.string().trim().min(1).max(120).optional(),
+    en: z.string().trim().min(1).max(120).optional(),
+    ru: z.string().trim().min(1).max(120).optional(),
+  })
+  .strict();
+export type GameLabelTranslations = z.infer<typeof gameLabelTranslationsSchema>;
 export interface GameEntity extends GamePoint {
   id: string;
   kind: 'player' | 'npc' | 'item' | 'door';
   label?: string;
-  visual?: 'key' | 'token' | 'door' | 'keeper' | 'traveler';
+  labelTranslations?: GameLabelTranslations;
+  visual?: 'key' | 'token' | 'journal' | 'door' | 'keeper' | 'traveler';
   mapId: string;
   revision: number;
   ownerId?: string;
@@ -151,8 +160,10 @@ export interface GameEntity extends GamePoint {
   knownIds?: string[];
 }
 export interface GameMap {
+  sceneProfile?: 'observatory-interior-v1' | 'observatory-roof-v1';
   id: string;
   label?: string;
+  labelTranslations?: GameLabelTranslations;
   width: number;
   height: number;
   blocked: GamePoint[];
@@ -162,6 +173,7 @@ export interface GameMap {
     x: number;
     y: number;
     label?: string;
+    labelTranslations?: GameLabelTranslations;
     destinationMapId: string;
     destination: GamePoint;
     doorId?: string;
@@ -188,7 +200,80 @@ export interface GameEncounter {
   deadlineMs: number;
   intents: Record<string, RoundIntent>;
 }
+export const objectiveConditionSchema = z.discriminatedUnion('kind', [
+  z.object({ kind: z.literal('party_owns_item'), itemId: gameIdSchema }).strict(),
+  z.object({ kind: z.literal('door_open'), doorId: gameIdSchema }).strict(),
+  z.object({ kind: z.literal('door_unlocked'), doorId: gameIdSchema }).strict(),
+  z.object({ kind: z.literal('party_reaches_map'), mapId: gameIdSchema }).strict(),
+]);
+export type ObjectiveCondition = z.infer<typeof objectiveConditionSchema>;
+const objectiveCopySchema = z
+  .object({
+    title: z.string().trim().min(1).max(120),
+    description: z.string().trim().min(1).max(1000),
+    epilogue: z.string().trim().min(1).max(2000),
+  })
+  .strict();
+const objectiveLocalesSchema = z
+  .object({
+    uk: objectiveCopySchema.optional(),
+    en: objectiveCopySchema.optional(),
+    ru: objectiveCopySchema.optional(),
+  })
+  .strict();
+export const objectiveDefinitionSchema = objectiveCopySchema
+  .extend({
+    id: gameIdSchema,
+    translations: objectiveLocalesSchema.optional(),
+    completion: z
+      .object({
+        mode: z.enum(['all', 'any']),
+        conditions: z.array(objectiveConditionSchema).min(1).max(8),
+      })
+      .strict(),
+  })
+  .strict();
+export const objectiveDefinitionsSchema = z
+  .array(objectiveDefinitionSchema)
+  .max(8)
+  .refine(
+    (items) => new Set(items.map((item) => item.id)).size === items.length,
+    'Duplicate objective ID',
+  );
+export type ObjectiveDefinition = z.infer<typeof objectiveDefinitionSchema>;
+const publicObjectiveCopySchema = objectiveCopySchema
+  .omit({ epilogue: true })
+  .extend({ epilogue: z.string().max(2000).optional() })
+  .strict();
+export const objectiveProjectionSchema = publicObjectiveCopySchema
+  .extend({
+    id: gameIdSchema,
+    status: z.enum(['active', 'achieved']),
+    achievedTick: z.number().int().nonnegative().safe().optional(),
+    translations: z
+      .object({
+        uk: publicObjectiveCopySchema.optional(),
+        en: publicObjectiveCopySchema.optional(),
+        ru: publicObjectiveCopySchema.optional(),
+      })
+      .strict()
+      .optional(),
+  })
+  .strict()
+  .refine(
+    (value) =>
+      value.status === 'achieved'
+        ? value.achievedTick !== undefined && value.epilogue !== undefined
+        : value.achievedTick === undefined &&
+          value.epilogue === undefined &&
+          Object.values(value.translations ?? {}).every((copy) => copy.epilogue === undefined),
+    'Invalid objective progress projection',
+  );
+export type ObjectiveProjection = z.infer<typeof objectiveProjectionSchema>;
+
 export interface GameState {
+  objectives?: ObjectiveDefinition[];
+  objectiveProgress?: Record<string, { achievedTick: number }>;
   artBindings?: FrozenArtBinding[];
   assetManifest?: typeof bundledGameAssetManifest;
   schemaVersion: 1;
@@ -219,6 +304,7 @@ export interface GameResult {
   error?: GameError;
 }
 export interface GameProjection {
+  objectives?: ObjectiveProjection[];
   artBindings?: FrozenArtBinding[];
   assetManifest?: typeof bundledGameAssetManifest;
   schemaVersion: 1;
@@ -267,6 +353,8 @@ export const gameMapSchema = z
   .object({
     id: gameIdSchema,
     label: z.string().trim().min(1).max(120).optional(),
+    labelTranslations: gameLabelTranslationsSchema.optional(),
+    sceneProfile: z.enum(['observatory-interior-v1', 'observatory-roof-v1']).optional(),
     width: z.number().int().min(1).max(64),
     height: z.number().int().min(1).max(64),
     blocked: z.array(gamePointSchema).max(4096),
@@ -279,6 +367,7 @@ export const gameMapSchema = z
             x: z.number().int().min(0).max(63),
             y: z.number().int().min(0).max(63),
             label: z.string().trim().min(1).max(120).optional(),
+            labelTranslations: gameLabelTranslationsSchema.optional(),
             destinationMapId: gameIdSchema,
             destination: gamePointSchema,
             doorId: gameIdSchema.optional(),
@@ -315,7 +404,8 @@ export const gamePublicEntitySchema = z
     id: gameIdSchema,
     kind: z.enum(['player', 'npc', 'item', 'door']),
     label: z.string().trim().min(1).max(120).optional(),
-    visual: z.enum(['key', 'token', 'door', 'keeper', 'traveler']).optional(),
+    labelTranslations: gameLabelTranslationsSchema.optional(),
+    visual: z.enum(['key', 'token', 'journal', 'door', 'keeper', 'traveler']).optional(),
     mapId: gameIdSchema,
     x: z.number().int().min(0).max(63),
     y: z.number().int().min(0).max(63),
@@ -372,6 +462,7 @@ export const gamePublicEncounterSchema = z
   .strict();
 export const gameProjectionSchema = z
   .object({
+    objectives: z.array(objectiveProjectionSchema).max(8).optional(),
     assetManifest: gameAssetManifestSchema.optional(),
     artBindings: frozenArtBindingsSchema.optional(),
     schemaVersion: z.literal(1),
@@ -505,10 +596,11 @@ export const gameEnvelopeSchema = z
       ctx.addIssue({ code: 'custom', message: 'Delta requires a base revision' });
   });
 export type GameEnvelope = z.infer<typeof gameEnvelopeSchema>;
-export const gameVisualSchema = z.enum(['key', 'token', 'door', 'keeper', 'traveler']);
+export const gameVisualSchema = z.enum(['key', 'token', 'journal', 'door', 'keeper', 'traveler']);
 const authoredLabel = z.string().trim().min(1).max(120);
 export const authoredGameDraftSchema = z
   .object({
+    objectives: objectiveDefinitionsSchema.optional(),
     schemaVersion: z.literal(1),
     title: authoredLabel,
     npcBehavior: z.literal('reactive-v1').optional(),
@@ -519,6 +611,8 @@ export const authoredGameDraftSchema = z
           .object({
             id: gameIdSchema,
             label: authoredLabel,
+            labelTranslations: gameLabelTranslationsSchema.optional(),
+            sceneProfile: z.enum(['observatory-interior-v1', 'observatory-roof-v1']).optional(),
             sourceLocationId: z.string().min(1).max(80).optional(),
             width: z.number().int().min(5).max(32),
             height: z.number().int().min(5).max(32),
@@ -529,6 +623,8 @@ export const authoredGameDraftSchema = z
                 z
                   .object({
                     id: gameIdSchema,
+                    label: authoredLabel.optional(),
+                    labelTranslations: gameLabelTranslationsSchema.optional(),
                     x: z.number().int().min(0).max(31),
                     y: z.number().int().min(0).max(31),
                     destinationMapId: gameIdSchema,
@@ -550,10 +646,11 @@ export const authoredGameDraftSchema = z
             id: gameIdSchema,
             kind: z.enum(['item', 'door']),
             label: authoredLabel,
+            labelTranslations: gameLabelTranslationsSchema.optional(),
             mapId: gameIdSchema,
             x: z.number().int().min(0).max(31),
             y: z.number().int().min(0).max(31),
-            visual: z.enum(['key', 'token', 'door']),
+            visual: z.enum(['key', 'token', 'journal', 'door']),
             locked: z.boolean().optional(),
             open: z.boolean().optional(),
             keyId: gameIdSchema.optional(),
@@ -569,6 +666,7 @@ export const authoredGameDraftSchema = z
             id: gameIdSchema,
             sourceNpcId: z.string().uuid().optional(),
             label: authoredLabel,
+            labelTranslations: gameLabelTranslationsSchema.optional(),
             mapId: gameIdSchema,
             x: z.number().int().min(0).max(31),
             y: z.number().int().min(0).max(31),
@@ -624,6 +722,7 @@ export interface NpcBrain {
   generation: number;
 }
 export interface PlayablePackage {
+  objectives?: ObjectiveDefinition[];
   artBindings?: FrozenArtBinding[];
   assetManifest: typeof bundledGameAssetManifest;
   schemaVersion: 1;

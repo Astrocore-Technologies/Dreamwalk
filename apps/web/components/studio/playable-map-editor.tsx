@@ -1,11 +1,18 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
+import { useObjectiveText } from '../game/campaign-objectives';
 import { HeroSelection, useHeroSelection } from '../game/hero-selection';
 import { useLaunchGate } from '../game/use-launch-gate';
+import { labelEditPatch } from './label-edit';
 import { StoryArtBindings } from '../assets/story-art-bindings';
 import { useAssetText } from '../assets/messages';
-import { enumerateArtSlots, compilePlayableDraft, createAuthoredDraft } from '@dreamwalk/game-core';
+import {
+  enumerateArtSlots,
+  compilePlayableDraft,
+  createAuthoredDraft,
+  createCompleteObservatoryDraft,
+} from '@dreamwalk/game-core';
 import type { AuthoredGameDraft, Npc } from '@dreamwalk/contracts';
 import { api, ApiError, errorMessage, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
@@ -51,6 +58,7 @@ export function PlayableMapEditor({
 }) {
   const { t } = useT();
   const artText = useAssetText();
+  const objectiveText = useObjectiveText();
   const heroSelection = useHeroSelection();
   const launchGate = useLaunchGate(`${adventureId}:${heroSelection.heroId}`);
   const [artDirty, setArtDirty] = useState(false);
@@ -133,13 +141,16 @@ export function PlayableMapEditor({
     setDirty(true);
     setSaved(false);
   }
-  function begin(template: 'observatory' | 'courtyard', reactive = false) {
+  function begin(template: 'observatory' | 'courtyard' | 'complete-observatory', reactive = false) {
     if (
       draft &&
       !window.confirm(t('Заменить карту шаблоном? Несохранённая игровая раскладка будет заменена.'))
     )
       return;
-    const next = createAuthoredDraft(template);
+    const next =
+      template === 'complete-observatory'
+        ? createCompleteObservatoryDraft()
+        : createAuthoredDraft(template);
     next.title = title || t('Новая история');
     if (reactive) {
       next.npcBehavior = 'reactive-v1';
@@ -249,7 +260,9 @@ export function PlayableMapEditor({
     if (draft && map)
       change({
         ...draft,
-        maps: draft.maps.map((value) => (value.id === map.id ? { ...value, ...patch } : value)),
+        maps: draft.maps.map((value) =>
+          value.id === map.id ? { ...value, ...labelEditPatch(value.label, patch) } : value,
+        ),
       });
   }
   function place(x: number, y: number) {
@@ -341,6 +354,7 @@ export function PlayableMapEditor({
   }
   function patchSelected(patch: Record<string, unknown>) {
     if (!draft || !map) return;
+    patch = labelEditPatch(selected?.label, patch);
     if (object)
       change({
         ...draft,
@@ -396,6 +410,9 @@ export function PlayableMapEditor({
         {!draft || !map ? (
           <div className={styles.templates}>
             <p>{t('Игровая карта ещё не добавлена. Выбери начальный шаблон.')}</p>
+            <Button type="button" onClick={() => begin('complete-observatory')}>
+              {objectiveText.sample}
+            </Button>
             <Button type="button" onClick={() => begin('observatory')}>
               {t('Шаблон: обсерватория')}
             </Button>

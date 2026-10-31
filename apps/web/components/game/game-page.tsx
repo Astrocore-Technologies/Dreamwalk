@@ -13,6 +13,8 @@ import { useCampaignArt } from '../assets/use-campaign-art';
 import { artPreviewUrl } from '../assets/types';
 import { HeroSelection, useHeroSelection, useHeroText, CampaignHero } from './hero-selection';
 import { useLaunchGate } from './use-launch-gate';
+import { localizedProjection } from './localized-projection';
+import { CampaignObjectives } from './campaign-objectives';
 import { GameCanvas } from './game-canvas';
 import { SponsorBudget } from './sponsor-budget';
 import { IntentProposals } from './intent-proposals';
@@ -202,14 +204,14 @@ function CampaignLobby() {
   );
 }
 function CampaignRoom({ campaignId }: { campaignId: string }) {
-  const { t } = useT();
+  const { t, locale } = useT();
   const { user } = useClient();
   const members = useResource<{
     ownerId: string;
     members: { userId: string; actorId: string; username: string; status: string }[];
   }>(`/game/campaigns/${campaignId}/members`);
   const game = useGame(campaignId);
-  const p = game.projection;
+  const p = useMemo(() => localizedProjection(game.projection, locale), [game.projection, locale]);
   const fetchedArt = useCampaignArt(campaignId, p?.map.id || '');
   const art = p ? authorizedArt(p, fetchedArt) : [];
   const artText = useAssetText();
@@ -331,6 +333,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
   return (
     <div className={styles.root}>
       <CampaignHero campaignId={campaignId} />
+      <CampaignObjectives objectives={p.objectives} />
       <div className={styles.roomHeader}>
         <div>
           <Link href="/game" className={styles.back}>

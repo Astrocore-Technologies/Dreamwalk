@@ -420,6 +420,7 @@ export class PlayableService {
         startMapId: p.startMapId,
         maps: p.maps,
         roundPolicy: p.roundPolicy,
+        objectives: p.objectives ?? [],
         npcPolicy: p.rulesetVersion === 'hybrid-v3' ? 'reactive-v1' : null,
         npcProfiles: Object.entries(p.npcBrains ?? {}).map(([npcId, brain]) => ({
           npcId,
@@ -440,6 +441,7 @@ export class PlayableService {
               id: e.id,
               kind: e.kind,
               label: e.label,
+              labelTranslations: e.labelTranslations,
               visual: e.visual,
               mapId: e.mapId,
               x: e.x,

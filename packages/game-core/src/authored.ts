@@ -126,7 +126,11 @@ export function compilePlayableDraft(input: unknown): {
     ids.add(o.id);
   }
   for (const m of Object.values(maps))
-    for (const e of m.exits) e.label = maps[e.destinationMapId]?.label;
+    for (const e of m.exits) {
+      e.label ??= maps[e.destinationMapId]?.label;
+      if (!e.labelTranslations && maps[e.destinationMapId]?.labelTranslations)
+        e.labelTranslations = structuredClone(maps[e.destinationMapId].labelTranslations);
+    }
   for (const o of d.objects) {
     if (
       o.kind === 'item' &&
@@ -142,6 +146,7 @@ export function compilePlayableDraft(input: unknown): {
       id: o.id,
       kind: o.kind,
       label: o.label,
+      ...(o.labelTranslations ? { labelTranslations: structuredClone(o.labelTranslations) } : {}),
       visual: o.visual,
       mapId: o.mapId,
       x: o.x,
@@ -157,6 +162,7 @@ export function compilePlayableDraft(input: unknown): {
       id: n.id,
       kind: 'npc',
       label: n.label,
+      ...(n.labelTranslations ? { labelTranslations: structuredClone(n.labelTranslations) } : {}),
       visual: n.visual,
       mapId: n.mapId,
       x: n.x,
@@ -348,6 +354,7 @@ export function compilePlayableDraft(input: unknown): {
       }
     }
   const playable: PlayablePackage = {
+    ...(d.objectives ? { objectives: structuredClone(d.objectives) } : {}),
     assetManifest: { ...bundledGameAssetManifest },
     schemaVersion: 1,
     rulesetVersion: d.npcBehavior === 'reactive-v1' ? 'hybrid-v3' : 'hybrid-v2',
@@ -439,6 +446,38 @@ export function compilePlayableDraft(input: unknown): {
       if (!(entrances.get(m.id) ?? []).some((sp) => findPath(open, m.id, sp, exit) !== null))
         errors.push(`exit:${exit.id}:unreachable`);
 
+  // Objective dependencies are private, author-validated data, not model-generated victory.
+  const objectiveReachable = (mapId: string, point: { x: number; y: number }) =>
+    (entrances.get(mapId) ?? []).some((spawn) => findPath(open, mapId, spawn, point) !== null);
+  for (const objective of d.objectives ?? [])
+    for (const condition of objective.completion.conditions) {
+      const prefix = `objective:${objective.id}`;
+      if (condition.kind === 'party_reaches_map') {
+        if (!maps[condition.mapId] || !entrances.has(condition.mapId))
+          errors.push(`${prefix}:unreachable-map`);
+        continue;
+      }
+      const id = condition.kind === 'party_owns_item' ? condition.itemId : condition.doorId;
+      const entity = entities[id];
+      if (!entity || entity.kind !== (condition.kind === 'party_owns_item' ? 'item' : 'door')) {
+        errors.push(`${prefix}:invalid-entity`);
+        continue;
+      }
+      const location = entity.ownerId ? entities[entity.ownerId] : entity;
+      if (!location || !objectiveReachable(location.mapId, location))
+        errors.push(`${prefix}:unreachable-entity`);
+      if (entity.ownerId) {
+        const owner = d.npcs.find((npc) => npc.id === entity.ownerId);
+        if (
+          !owner ||
+          !(
+            owner.promiseTemplates?.some((promise) => promise.itemId === entity.id) ||
+            (d.npcBehavior !== 'reactive-v1' && owner.goal === 'help')
+          )
+        )
+          errors.push(`${prefix}:item-not-obtainable`);
+      }
+    }
   return errors.length ? { errors: [...new Set(errors)].slice(0, 32) } : { playable, errors: [] };
 }
 export function createStateFromPlayable(
@@ -447,6 +486,9 @@ export function createStateFromPlayable(
   seed = 1,
 ): GameState {
   let state: GameState = {
+    ...(playable.objectives
+      ? { objectives: structuredClone(playable.objectives), objectiveProgress: {} }
+      : {}),
     assetManifest: { ...playable.assetManifest },
     ...(playable.artBindings ? { artBindings: structuredClone(playable.artBindings) } : {}),
     schemaVersion: 1,
