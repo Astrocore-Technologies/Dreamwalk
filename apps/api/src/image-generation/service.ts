@@ -10,6 +10,7 @@ import { prepareSceneMedia } from '../game/media-preparation';
 import { sourceAccessSql } from '../game/source-access';
 import { config } from '../config';
 import { fail } from '../errors';
+import { ImageProviderFailure, normalizeSafeImageDiagnostic } from './error-diagnostics';
 import { AssetReuseService } from '../assets/reuse.service';
 import { normalizeRaster, lockRasterQuota, MAX_RASTER_BYTES } from '../assets/raster';
 import { admitGeneratedRaster } from '../assets/generated-admission';
@@ -71,6 +72,7 @@ interface Job extends QueryResultRow {
   quarantine_mime: string | null;
   provider_request_id: string | null;
   error_code: string | null;
+  safe_diagnostic: unknown;
   created_at: Date;
 }
 export class ImageGenerationEngine {
@@ -292,6 +294,7 @@ export class ImageGenerationEngine {
       mode: j.mode,
       revisionId: j.admitted_revision_id ?? undefined,
       errorCode: j.error_code ?? undefined,
+      diagnostic: normalizeSafeImageDiagnostic(j.safe_diagnostic),
       heldMicros:
         j.actual_micros === null &&
         !['cancelled', 'expired', 'rejected', 'admitted'].includes(j.status)
@@ -582,11 +585,31 @@ export class ImageGenerationEngine {
       );
       await this.recordResult(claimed.job.id, result);
       await this.admit(claimed.job.id);
-    } catch {
-      await this.db.query(
-        "UPDATE image_generation_jobs SET status='unknown',error_code='DISPATCH_UNCERTAIN',updated_at=now() WHERE id=$1 AND status='dispatched'",
-        [claimed.job.id],
-      );
+    } catch (error) {
+      const diagnostic =
+        error instanceof ImageProviderFailure
+          ? normalizeSafeImageDiagnostic(error.diagnostic)
+          : undefined;
+      await this.db.tx(async (c) => {
+        const current = (
+          await c.query(
+            'SELECT status,error_code FROM image_generation_jobs WHERE id=$1 FOR UPDATE',
+            [claimed.job.id],
+          )
+        ).rows[0];
+        // Erasure/revocation may have completed while the provider was in flight.
+        // Never reattach diagnostics or identifiers to erased personal data.
+        if (!current || current.status !== 'dispatched' || current.error_code === 'ERASED') return;
+        await c.query(
+          "UPDATE image_generation_jobs SET status='unknown',error_code='DISPATCH_UNCERTAIN',safe_diagnostic=$2,provider_request_id=COALESCE($3,provider_request_id),updated_at=now() WHERE id=$1",
+          [claimed.job.id, diagnostic ?? null, diagnostic?.requestId ?? null],
+        );
+        if (diagnostic?.requestId)
+          await c.query(
+            'UPDATE image_generation_attempts SET provider_request_id=$3 WHERE job_id=$1 AND dispatch_id=$2',
+            [claimed.job.id, claimed.dispatchId, diagnostic.requestId],
+          );
+      });
     }
   }
   private async rejectUndispatched(id: string, errorCode: string) {

@@ -54,6 +54,8 @@ jobs:
           NODE_ENV: production
       - name: Semantic NPC context and disclosure regression
         run: node --test tests/game/npc-semantic-context.test.cjs tests/game/npc-reply-binding.test.cjs
+      - name: Safe image provider error diagnostics
+        run: node --test tests/images/provider-error-diagnostics.test.mjs
       - name: Durable isolated evaluation ledger and crash recovery
         run: node scripts/test-live-story-pg.mjs
       - name: Zero-network story evaluation rehearsal

@@ -62,6 +62,7 @@ try {
   await run(process.execPath, ['apps/api/dist/seed.js']);
   let files = [
     'integration-budget.test.mjs',
+    'integration-diagnostics.test.mjs',
     'integration-generation.test.mjs',
     'integration-campaign.test.mjs',
   ];
