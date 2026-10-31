@@ -35,11 +35,14 @@ async function travel(page: Page, id: string, destination: string) {
       async () => {
         const p = await snapshot(page, id),
           actor = p.entities.find((value) => value.id === p.actorId)!;
-        return [actor.x, actor.y];
+        // Approach stops beside the exit; the authoritative transition permits distance <= 1.
+        return (
+          p.map.id === before.map.id && Math.abs(actor.x - exit.x) + Math.abs(actor.y - exit.y) <= 1
+        );
       },
       { timeout: 30000 },
     )
-    .toEqual([exit.x, exit.y]);
+    .toBe(true);
   await card.getByRole('button', { name: 'Перейти', exact: true }).click();
   await expect(page.getByTestId('game-position')).toHaveAttribute('data-map-id', destination);
 }
