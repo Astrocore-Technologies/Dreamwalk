@@ -666,7 +666,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
               </article>
             ))}
             {p.map.exits.map((exit) => (
-              <article key={exit.id} className={styles.object}>
+              <article data-exit-id={exit.id} key={exit.id} className={styles.object}>
                 <div>
                   <h3>
                     {exit.label ||

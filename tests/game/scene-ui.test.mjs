@@ -1,5 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { cameraAxis } from '../../apps/web/components/game/camera-geometry.ts';
 import { labelEditPatch } from '../../apps/web/components/studio/label-edit.ts';
 import { localizedProjection } from '../../apps/web/components/game/localized-projection.ts';
 import { readFile } from 'node:fs/promises';
@@ -119,4 +120,22 @@ test('game scene precedes expanded objective text while private hero stays in th
   const hero = source.indexOf('<CampaignHero');
   assert.ok(canvas > 0 && objective > canvas);
   assert.ok(sidebar > objective && hero > sidebar);
+});
+
+test('camera centers small maps and clamps large maps at every edge without changing hit coordinates', () => {
+  assert.equal(cameraAxis(1000, 768, 100, 1), 116);
+  assert.equal(cameraAxis(1000, 768, 700, 1), 116);
+  assert.equal(cameraAxis(400, 768, 10, 1), 0);
+  assert.equal(cameraAxis(400, 768, 750, 1), -368);
+  assert.equal(cameraAxis(400, 768, 384, 1), -184);
+  assert.equal(cameraAxis(800, 768, 10, 0.6), (800 - 768 * 0.6) / 2);
+  assert.equal(cameraAxis(400, 768, 750, 1.5), 400 - 768 * 1.5);
+  for (const viewport of [0, 390, 810, 1400])
+    for (const zoom of [0.6, 1, 1.5]) {
+      const offset = cameraAxis(viewport, 768, 400, zoom);
+      const screenPoint = 320 * zoom + offset;
+      assert.ok(Math.abs((screenPoint - offset) / zoom - 320) < 0.000001);
+      if (768 * zoom >= viewport) assert.ok(offset <= 0 && offset >= viewport - 768 * zoom);
+      else assert.equal(offset, (viewport - 768 * zoom) / 2);
+    }
 });

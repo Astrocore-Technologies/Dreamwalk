@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
+import { cameraAxis } from './camera-geometry';
 import { useObjectiveText } from './campaign-objectives';
 import { drawBundledScene, drawJournal } from './bundled-scene';
 import { TextureBudget, textureDimensions } from '../assets/texture-budget';
@@ -395,8 +396,8 @@ export function GameCanvas({
           const scale = zoomRef.current;
           world.scale.set(scale);
           world.position.set(
-            app.screen.width / 2 - (own.sprite.x + tile / 2) * scale,
-            app.screen.height / 2 - (own.sprite.y + tile / 2) * scale,
+            cameraAxis(app.screen.width, p.map.width * tile, own.sprite.x + tile / 2, scale),
+            cameraAxis(app.screen.height, p.map.height * tile, own.sprite.y + tile / 2, scale),
           );
           focus
             .clear()

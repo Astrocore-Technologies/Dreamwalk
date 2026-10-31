@@ -33,7 +33,27 @@ async function position(page: Page, id: string) {
 async function capture(page: Page, filename: string) {
   await page.evaluate(() => document.fonts.ready);
   await expect(page.locator('canvas')).toBeVisible();
-  await page.screenshot({ path: test.info().outputPath(filename), fullPage: true });
+  await page.evaluate(() => window.scrollTo(0, 0));
+  if (filename.includes('ending')) {
+    const canvas = await page.locator('canvas').boundingBox();
+    const objective = await page.getByTestId('campaign-objectives').boundingBox();
+    expect(canvas).not.toBeNull();
+    expect(objective).not.toBeNull();
+    const x = Math.max(0, Math.min(canvas!.x, objective!.x) - 8);
+    const y = Math.max(0, Math.min(canvas!.y, objective!.y) - 8);
+    const right = Math.min(
+      page.viewportSize()!.width,
+      Math.max(canvas!.x + canvas!.width, objective!.x + objective!.width) + 8,
+    );
+    const bottom = Math.max(canvas!.y + canvas!.height, objective!.y + objective!.height) + 8;
+    await page.screenshot({
+      path: test.info().outputPath(filename),
+      fullPage: true,
+      clip: { x, y, width: right - x, height: bottom - y },
+    });
+  } else {
+    await page.screenshot({ path: test.info().outputPath(filename), fullPage: false });
+  }
 }
 test('four independent players start the public Observatory with owned heroes and retain a shared ending', async ({
   browser,
@@ -49,6 +69,10 @@ test('four independent players start the public Observatory with owned heroes an
   );
   const pages = await Promise.all(contexts.map((c) => c.newPage()));
   const [owner, ...guests] = pages;
+  for (const page of pages) {
+    page.setDefaultTimeout(15000);
+    page.setDefaultNavigationTimeout(30000);
+  }
   try {
     const accounts = await Promise.all(pages.map((p, i) => account(p, i + 1)));
     await owner.goto('/home');
@@ -100,28 +124,60 @@ test('four independent players start the public Observatory with owned heroes an
       await privateDetails.locator('summary').click();
       await expect(ownNote).not.toBeVisible();
     }
-    await expect(owner.locator('[data-scene-profile="observatory-interior-v1"]')).toBeVisible();
-    await capture(owner, 'sample-adventure-room-desktop.png');
-    const key = owner.locator('[data-entity-id="key"]');
-    await key.getByRole('button', { name: 'Подойти', exact: true }).click();
-    await expect.poll(() => position(owner, id)).toEqual([4, 6]);
-    await key.getByRole('button', { name: 'Подобрать', exact: true }).click();
-    await expect(owner.locator('[data-inventory-id="key"]')).toHaveCount(1);
-    const door = owner.locator('[data-entity-id="door"]');
-    await door.getByRole('button', { name: 'Подойти', exact: true }).click();
-    await expect.poll(() => position(owner, id)).toEqual([9, 5]);
-    await door.getByRole('button', { name: 'Отпереть', exact: true }).click();
-    await door.getByRole('button', { name: 'Открыть дверь', exact: true }).click();
-    await expect(door.getByRole('button', { name: 'Закрыть дверь', exact: true })).toBeVisible();
-    const exit = owner.locator('[data-entity-id="roof-exit"]');
-    await exit.getByRole('button', { name: 'Подойти', exact: true }).click();
-    await expect.poll(() => position(owner, id)).toEqual([12, 5]);
-    await exit.getByRole('button', { name: 'Перейти', exact: true }).click();
-    await expect(owner.locator('[data-scene-profile="observatory-roof-v1"]')).toBeVisible();
-    const journal = owner.locator('[data-entity-id="journal"]');
-    await journal.getByRole('button', { name: 'Подойти', exact: true }).click();
-    await expect.poll(() => position(owner, id)).toEqual([6, 4]);
-    await journal.getByRole('button', { name: 'Подобрать', exact: true }).click();
+    await test.step(
+      'Capture the initial rendered room',
+      async () => {
+        await expect(owner.locator('[data-scene-profile="observatory-interior-v1"]')).toBeVisible();
+        await capture(owner, 'sample-adventure-room-desktop.png');
+      },
+      { timeout: 25000 },
+    );
+    await test.step(
+      'Pick up the brass key through the UI',
+      async () => {
+        const key = owner.locator('[data-entity-id="key"]');
+        await key.getByRole('button', { name: 'Подойти', exact: true }).click();
+        await expect.poll(() => position(owner, id)).toEqual([4, 6]);
+        await key.getByRole('button', { name: 'Подобрать', exact: true }).click();
+        await expect(owner.locator('[data-inventory-id="key"]')).toHaveCount(1);
+      },
+      { timeout: 30000 },
+    );
+    await test.step(
+      'Unlock and open the main door through the UI',
+      async () => {
+        const door = owner.locator('[data-entity-id="door"]');
+        await door.getByRole('button', { name: 'Подойти', exact: true }).click();
+        await expect.poll(() => position(owner, id)).toEqual([9, 5]);
+        await door.getByRole('button', { name: 'Отпереть', exact: true }).click();
+        await door.getByRole('button', { name: 'Открыть дверь', exact: true }).click();
+        await expect(
+          door.getByRole('button', { name: 'Закрыть дверь', exact: true }),
+        ).toBeVisible();
+      },
+      { timeout: 30000 },
+    );
+    await test.step(
+      'Move through the main roof exit',
+      async () => {
+        const exit = owner.locator('[data-exit-id="roof-exit"]');
+        await exit.getByRole('button', { name: 'Подойти', exact: true }).click();
+        await expect.poll(() => position(owner, id)).toEqual([12, 5]);
+        await exit.getByRole('button', { name: 'Перейти', exact: true }).click();
+        await expect(owner.locator('[data-scene-profile="observatory-roof-v1"]')).toBeVisible();
+      },
+      { timeout: 30000 },
+    );
+    await test.step(
+      'Pick up the journal through the UI',
+      async () => {
+        const journal = owner.locator('[data-entity-id="journal"]');
+        await journal.getByRole('button', { name: 'Подойти', exact: true }).click();
+        await expect.poll(() => position(owner, id)).toEqual([6, 4]);
+        await journal.getByRole('button', { name: 'Подобрать', exact: true }).click();
+      },
+      { timeout: 30000 },
+    );
     for (const page of pages) {
       await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
         'data-objective-status',
@@ -147,6 +203,15 @@ test('four independent players start the public Observatory with owned heroes an
     ).toBe(true);
     await capture(owner, 'sample-adventure-ending-mobile.png');
   } finally {
-    await Promise.all(contexts.map((c) => c.close()));
+    // Cleanup must not replace the useful failing action with a context-close error.
+    const cleanup = Promise.allSettled(contexts.map((c) => c.close()));
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    await Promise.race([
+      cleanup,
+      new Promise<void>((resolve) => {
+        timer = setTimeout(resolve, 5000);
+      }),
+    ]);
+    if (timer) clearTimeout(timer);
   }
 });
