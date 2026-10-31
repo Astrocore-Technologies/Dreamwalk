@@ -125,8 +125,8 @@ export function CampaignHero({ campaignId }: { campaignId: string }) {
             <p>{hero.backstory}</p>
             <p>{hero.traits.join(', ')}</p>
             <p>{hero.notes}</p>
+            <small>{h('pinned')}</small>
           </details>
-          <small>{h('pinned')}</small>
         </>
       ) : !snapshot.loading && !snapshot.error ? (
         <p>{h('traveler')}</p>

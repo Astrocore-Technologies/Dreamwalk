@@ -452,7 +452,7 @@ test('authored template compiler creates real editable maps, objects, NPCs and c
     assert.equal(s.entities.alice.y, 4);
     assert.equal(s.entities.key.x, 4);
     assert.equal(s.entities.key.label, 'My unique key');
-    assert.equal(s.rulesetVersion, 'hybrid-v2');
+    assert.equal(s.rulesetVersion, 'hybrid-v3');
     assert.equal(g.gameProjectionSchema.safeParse(g.projectState(s, 'alice')).success, true);
     draft.objects[0].x = 9;
     assert.equal(s.entities.key.x, 4);
@@ -492,7 +492,10 @@ test('author schemas reject prototype pollution keys, player prefixes and imposs
   assert.ok(g.compilePlayableDraft(cross).errors.some((e) => e.includes('unreachable')));
 });
 function authoredState() {
-  const c = g.compilePlayableDraft(g.createAuthoredDraft());
+  // Preserve the earlier v2 mock-plan contract rather than changing legacy saves.
+  const legacy = g.createAuthoredDraft();
+  delete legacy.npcBehavior;
+  const c = g.compilePlayableDraft(legacy);
   assert.deepEqual(c.errors, []);
   return g.createStateFromPlayable(c.playable, ['alice', 'bob'], 1);
 }

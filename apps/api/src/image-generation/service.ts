@@ -5,6 +5,9 @@ import { resolve, basename } from 'node:path';
 import type { PoolClient, QueryResultRow } from 'pg';
 import { z } from 'zod';
 import { Db } from '../db';
+import type { GameState } from '@dreamwalk/contracts';
+import { prepareSceneMedia } from '../game/media-preparation';
+import { sourceAccessSql } from '../game/source-access';
 import { config } from '../config';
 import { fail } from '../errors';
 import { AssetReuseService } from '../assets/reuse.service';
@@ -71,6 +74,70 @@ interface Job extends QueryResultRow {
   created_at: Date;
 }
 export class ImageGenerationEngine {
+  private runtimeStateReader?: (
+    campaignId: string,
+  ) => { state: GameState; dbRevision: number } | undefined;
+  attachRuntimeStateReader(
+    reader: (campaignId: string) => { state: GameState; dbRevision: number } | undefined,
+  ) {
+    this.runtimeStateReader = reader;
+  }
+  private async authorizeCampaign(c: PoolClient, actorId: string, input: GenerationRequest) {
+    const context = input.campaignContext!;
+    // Match source mutation/erasure lock order before campaign/member locks.
+    await c.query(
+      `SELECT u.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id
+      JOIN adventures a ON a.id=v.adventure_id JOIN users u ON u.id=a.owner_id
+      WHERE c.id=$1 FOR SHARE OF u`,
+      [context.campaignId],
+    );
+    await c.query(
+      `SELECT a.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id
+      JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1 FOR SHARE OF a`,
+      [context.campaignId],
+    );
+    await c.query(
+      `SELECT i.id FROM adventure_invitations i JOIN game_playable_versions v ON v.adventure_id=i.adventure_id
+      JOIN game_campaigns c ON c.source_version_id=v.id WHERE c.id=$1 AND i.recipient_id=$2 FOR SHARE OF i`,
+      [context.campaignId, actorId],
+    );
+    const row = (
+      await c.query(
+        `SELECT c.state,c.revision,c.source_version_id,m.actor_id,v.adventure_id
+       FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id
+       JOIN game_playable_versions v ON v.id=c.source_version_id
+       WHERE c.id=$1 AND c.owner_id=$2 AND m.user_id=$2 AND m.status='accepted'
+       AND c.status='active' AND ${sourceAccessSql('$2')}
+       FOR SHARE OF c,m,v`,
+        [context.campaignId, actorId],
+      )
+    ).rows[0];
+    if (!row || row.adventure_id !== input.adventureId) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+    const hot = this.runtimeStateReader?.(context.campaignId);
+    // A retained cache may predate privacy erasure or another authoritative writer.
+    // Only matching persisted revisions may contribute uncheckpointed live movement.
+    const state =
+      hot && hot.dbRevision === Number(row.revision) ? hot.state : (row.state as GameState);
+    if ((state.narrativeCanon?.revision ?? 0) !== context.expectedCanonRevision)
+      fail(409, 'MEDIA_CONTEXT_STALE', 'MEDIA_CONTEXT_STALE');
+    const prepared = prepareSceneMedia(state, row.actor_id, row.source_version_id, {
+      kind: context.kind,
+      ...(context.entityId ? { entityId: context.entityId } : {}),
+    });
+    const title = (prepared.grounding.subject?.label ?? prepared.grounding.map.label).slice(0, 120);
+    if (
+      prepared.groundingHash !== context.groundingHash ||
+      input.prompt !== prepared.prompt ||
+      input.title !== title ||
+      input.kind !== prepared.spec.kind ||
+      input.camera !== prepared.spec.camera ||
+      input.background !== prepared.spec.background ||
+      hash(input.tags) !== hash(prepared.spec.tags) ||
+      hash(input.referenceRevisionIds) !== hash(prepared.spec.referenceRevisionIds)
+    )
+      fail(409, 'MEDIA_CONTEXT_STALE', 'MEDIA_CONTEXT_STALE');
+  }
+
   constructor(
     protected db: Db,
     protected assets: AssetReuseService,
@@ -104,7 +171,8 @@ export class ImageGenerationEngine {
       ).rowCount
     )
       fail(401, 'UNAUTHORIZED', 'UNAUTHORIZED');
-    if (
+    if (input.campaignContext) await this.authorizeCampaign(c, actorId, input);
+    else if (
       !(
         await c.query(
           "SELECT id FROM adventures WHERE id=$1 AND owner_id=$2 AND status<>'archived' FOR SHARE",
@@ -219,6 +287,7 @@ export class ImageGenerationEngine {
   private dto(j: Job) {
     return {
       id: j.id,
+      operationId: j.operation_id,
       status: j.status,
       mode: j.mode,
       revisionId: j.admitted_revision_id ?? undefined,
@@ -327,9 +396,23 @@ export class ImageGenerationEngine {
     if (!j) fail(404, 'NOT_FOUND', 'NOT_FOUND');
     return this.dto(j);
   }
-  async list(actorId: string, adventureId: string) {
+  async list(actorId: string, adventureId: string, campaignId?: string) {
     z.uuid().parse(adventureId);
-    if (
+    if (campaignId) {
+      z.uuid().parse(campaignId);
+      if (
+        !(
+          await this.db.query(
+            `SELECT c.id FROM game_campaigns c
+        JOIN game_members m ON m.campaign_id=c.id JOIN game_playable_versions v ON v.id=c.source_version_id
+        WHERE c.id=$1 AND c.owner_id=$2 AND m.user_id=$2 AND m.status='accepted'
+        AND v.adventure_id=$3 AND c.status='active' AND ${sourceAccessSql('$2')}`,
+            [campaignId, actorId, adventureId],
+          )
+        ).length
+      )
+        fail(404, 'NOT_FOUND', 'NOT_FOUND');
+    } else if (
       !(
         await this.db.query(
           "SELECT id FROM adventures WHERE id=$1 AND owner_id=$2 AND status<>'archived'",
@@ -341,8 +424,9 @@ export class ImageGenerationEngine {
     return {
       jobs: (
         await this.db.query<Job>(
-          'SELECT * FROM image_generation_jobs WHERE actor_id=$1 AND adventure_id=$2 ORDER BY created_at DESC LIMIT 50',
-          [actorId, adventureId],
+          `SELECT * FROM image_generation_jobs WHERE actor_id=$1 AND adventure_id=$2
+           AND ($3::text IS NULL OR input->'campaignContext'->>'campaignId'=$3) ORDER BY created_at DESC LIMIT 50`,
+          [actorId, adventureId, campaignId ?? null],
         )
       ).map((j) => this.dto(j)),
     };

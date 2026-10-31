@@ -601,3 +601,80 @@ source renaming invalidates stale curated variants. This is not automatic user-c
 translation. The nineteenth browser scenario and actual drawn-scene screenshots still
 require exact-head CI and pixel inspection. No real-provider quality or generated-art
 acceptance is implied by deterministic tests.
+
+## 2026-10-31 — Narrative-first product alignment (local implementation; browser acceptance pending)
+
+The owner clarified the central experience: AI and players coauthor an evolving story,
+and the visual world represents its confirmed state. The initial author package is not
+an exhaustive script or catalog of every future character/location. The Observatory is
+an opening and acceptance fixture, not the product's narrative ceiling.
+
+The existing authoritative game, personal NPC memory, hero saves and media/budget
+boundaries are reusable foundations, but they do not by themselves satisfy this loop.
+A normal-play narrative director is now being integrated: player input, bounded typed
+world proposal, server validation, atomic shared canon/world commit, persistent new
+locations/secondary characters and separately consented media. No proposed outcome is
+shown as successful before commit. See `docs/narrative-director.md` for acceptance and
+failure cases. The local implementation and bounded tests below are complete; live quality and final browser acceptance are separate gates.
+
+Actual competitive visual/narrative quality remains unproven. Original vector scene
+placeholders are not final painted assets; mock acceptance is not live-model quality.
+Paid calls, secret entry, local restart and deployment remain separately controlled.
+
+The preceding complete-adventure source subsequently passed both exact-head CI runs
+at `0eadc856d3516f732f91ab40c5b29488adcdd9a4`. The new four-independent-player journey
+passed both runs, including shared ending/reload and actual desktop/mobile captures.
+Push ran all 19 browser scenarios first-pass; PR CI retried the older two-player key
+movement scenario once before passing. A separate successful-context teardown race
+was fixed; this is not described as universally retry-free. Three actual scene captures
+were visually reviewed by integration, UI and independent QA. They show original
+vector prototype art, not final generated paintings.
+
+Narrative integration targeted evidence now includes **117/117 core tests** and three
+independent real PostgreSQL suites: normal HTTP/premise/privacy **7/7**, gated-provider
+admission/rollback/privacy **14/14**, and actual raster reuse/delivery **5/5**. These are
+26 distinct targeted runtime checks across separate runs, not a single aggregate pass.
+A synthetic held private-inventory canary is absent from the shared provider payload,
+but an invisible inventory change still invalidates its pending mechanical readset.
+Confirmed erasure was tested against retained other-player responses and generated
+prose, while preserving topology and the other player's real item.
+
+Newly created editor templates now opt into the current narrative-capable ruleset.
+Previously saved drafts without the flag still compile to their original v2 behavior;
+old immutable campaigns are not silently migrated. Legacy saves show an explicit
+unavailable state rather than leaving narrative requests pending forever.
+
+The campaign-scoped image bridge has passed its initial full 28-check PostgreSQL suite. It reuses the
+existing library-first quote/consent/admission pipeline and keeps external execution
+disabled. Reuse attachment is an explicit authoritative campaign mutation, never a
+client-only picture or silent source-story edit. Full aggregate checks, exact-head
+browser acceptance and actual evolving-scene screenshot inspection remain pending.
+
+The integrated local run passed typecheck, lint, formatting, production build, core
+117/117, UI/privacy/guard checks 70/70, provider protocol 3/3, real game runtime
+165/165, platform 62/62, asset library 23/23, image generation 28/28, public discovery
+4/4 and SMTP 1/1. All provider/image responses in these tests are controlled fixtures,
+not paid calls. The NPC evaluation harness passed deterministic invariants; it does not
+measure live naturalness, production latency or artistic quality.
+
+Final review additionally tightened three boundaries after the aggregate began:
+returning to an older generated scene retains its own canonical description beyond
+the recent-turn context window; image prompts include bounded pinned story/current
+scene facts rather than a generic location name; and image authorization ignores a
+hot runtime cache whose persisted database revision predates erasure or another writer.
+The affected final-source checks are recorded separately below before publication.
+
+External image dispatch remains disabled. A valid player-facing quote, explicit
+consent, authorized raster admission and a separate authoritative attachment are
+required; there is no automatic generation or regeneration. The normal story composer
+can create confirmed scenes and new secondary NPCs without a Studio detour. Technical
+provider controls are collapsed, not prerequisites for the ordinary mock story flow.
+
+Final affected-source reruns passed: **118/118 core**, **73/73 UI/privacy/guard
+checks**, **3/3 provider protocol**, and **29/29 image PostgreSQL/API checks**.
+The image suite includes stale-hot-cache erasure fencing and retains matching-revision
+live movement checks. Independent source review confirmed the fence is used at quote,
+dispatch and admission. Final typecheck passed; publication records the terminal lint
+and formatting results alongside the immutable snapshot. The expanded twentieth
+browser scenario and its actual scene/history captures remain CI gates, not local
+browser claims.

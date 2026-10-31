@@ -109,6 +109,12 @@ export async function seedCompleteObservatory(
           'Исследуйте обсерваторию, поговорите со смотрителем и найдите журнал на крыше. После развязки можно продолжить исследование.',
       },
     };
+    compiled.playable.narrativePremise = {
+      title: row.title,
+      summary: row.synopsis,
+      world: String(row.data.content?.world ?? ''),
+      genre: row.genre,
+    };
     const payload = {
       schemaVersion: 1,
       compiled: compiled.playable,

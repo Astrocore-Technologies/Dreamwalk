@@ -538,6 +538,41 @@ export class AssetReuseService {
     )
       fail(400, 'INVALID_ART_BINDING', 'INVALID_ART_BINDING');
   }
+  /** Caller owns the authorized campaign writer transaction and current slot visibility. */
+  async pinCampaignArtTx(
+    c: PoolClient,
+    userId: string,
+    campaignId: string,
+    state: GameState,
+    slot: string,
+    revisionId: string,
+  ): Promise<FrozenArtBinding> {
+    z.uuid().parse(revisionId);
+    const { row, grantId } = await this.reusable(c, userId, revisionId, true);
+    if (
+      !validateArtBindingSlot(
+        state,
+        slot,
+        row.metadata as { kind: string; style: string; camera: string },
+      )
+    )
+      fail(400, 'INVALID_ART_BINDING', 'INVALID_ART_BINDING');
+    const binding = frozenArtBindingsSchema.parse([
+      {
+        slot,
+        revisionId,
+        sha256: row.sha256,
+        mime: row.mime,
+        width: row.width,
+        height: row.height,
+      },
+    ])[0];
+    await c.query(
+      'INSERT INTO art_campaign_pins(campaign_id,slot,revision_id,grant_id,rights_snapshot) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING',
+      [campaignId, slot, revisionId, grantId, row.metadata.rights],
+    );
+    return binding;
+  }
   /** Resolve once before package hashing; caller owns the playable freeze transaction. */
   async prepareManifestTx(
     c: PoolClient,
@@ -748,7 +783,6 @@ export class AssetReuseService {
     state: GameState,
     sourceVersionId: string | null,
   ) {
-    if (!sourceVersionId) return { bindings: [], refreshAfterMs: 5000 };
     const bindings = projectVisibleArtBindings(state, actorId);
     const missing = await this.unavailableRevisions(bindings.map((b) => b.revisionId));
     const pins = await this.db.query<{
@@ -756,8 +790,9 @@ export class AssetReuseService {
       revision_id: string;
       rights_snapshot: Record<string, unknown>;
     }>(
-      'SELECT slot,revision_id,rights_snapshot FROM art_playable_pins WHERE playable_version_id=$1 AND revision_id=ANY($2::uuid[])',
-      [sourceVersionId, bindings.map((b) => b.revisionId)],
+      `SELECT slot,revision_id,rights_snapshot FROM art_playable_pins WHERE playable_version_id=$1 AND revision_id=ANY($2::uuid[])
+       UNION ALL SELECT slot,revision_id,rights_snapshot FROM art_campaign_pins WHERE campaign_id=$3 AND revision_id=ANY($2::uuid[])`,
+      [sourceVersionId, bindings.map((b) => b.revisionId), campaignId],
     );
     const rights = new Map(pins.map((p) => [`${p.slot}:${p.revision_id}`, p.rights_snapshot]));
     return {
@@ -816,6 +851,7 @@ export class AssetReuseService {
         fail(404, 'ASSET_NOT_FOUND', 'ASSET_NOT_FOUND');
       let allowed = userId === row.owner_id;
       let versionId = context.playableVersionId;
+      let campaignPin = false;
       if (context.campaignId) {
         if (!userId) fail(404, 'NOT_FOUND', 'NOT_FOUND');
         const campaign = (
@@ -832,6 +868,20 @@ export class AssetReuseService {
         if (!visible.some((b: FrozenArtBinding) => b.revisionId === revisionId))
           fail(404, 'ASSET_NOT_FOUND', 'ASSET_NOT_FOUND');
         versionId = campaign.source_version_id;
+        campaignPin = Boolean(
+          (
+            await c.query(
+              'SELECT 1 FROM art_campaign_pins WHERE campaign_id=$1 AND revision_id=$2 AND slot=ANY($3::text[])',
+              [
+                context.campaignId,
+                revisionId,
+                visible
+                  .filter((b: FrozenArtBinding) => b.revisionId === revisionId)
+                  .map((b: FrozenArtBinding) => b.slot),
+              ],
+            )
+          ).rowCount,
+        );
       }
       if (versionId) {
         if (!context.campaignId) await this.versionAccess(c, userId, versionId, admin);
@@ -852,6 +902,7 @@ export class AssetReuseService {
             )
           ).rowCount,
         );
+      if (context.campaignId) allowed = (versionId ? allowed : false) || campaignPin;
       if (!allowed) fail(404, 'ASSET_NOT_FOUND', 'ASSET_NOT_FOUND');
       return { filename: row.filename!, mime: row.mime, sha256: row.sha256 };
     });

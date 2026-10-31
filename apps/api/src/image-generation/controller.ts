@@ -20,8 +20,11 @@ export class ImageGenerationController {
     return this.images.enqueue((await this.auth.require(req)).id, body);
   }
   @Get('jobs') async list(@Req() req: Request, @Query() query: unknown) {
-    const q = z.object({ adventureId: z.uuid() }).strict().parse(query);
-    return this.images.list((await this.auth.require(req)).id, q.adventureId);
+    const q = z
+      .object({ adventureId: z.uuid(), campaignId: z.uuid().optional() })
+      .strict()
+      .parse(query);
+    return this.images.list((await this.auth.require(req)).id, q.adventureId, q.campaignId);
   }
   @Get('jobs/:id') async get(@Req() req: Request, @Param('id') id: string) {
     return this.images.get((await this.auth.require(req)).id, id);

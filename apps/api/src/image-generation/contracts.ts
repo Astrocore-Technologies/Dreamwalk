@@ -2,6 +2,20 @@ import { z } from 'zod';
 export const generationRequestSchema = z
   .object({
     adventureId: z.uuid(),
+    campaignContext: z
+      .object({
+        campaignId: z.uuid(),
+        expectedCanonRevision: z.number().int().min(0),
+        groundingHash: z.string().regex(/^[a-f0-9]{64}$/),
+        kind: z.enum(['background', 'portrait']),
+        entityId: z
+          .string()
+          .regex(/^[\w-]+$/)
+          .max(100)
+          .optional(),
+      })
+      .strict()
+      .optional(),
     prompt: z.string().trim().min(1).max(2000),
     title: z.string().trim().min(1).max(120),
     kind: z.enum(['background', 'sprite', 'portrait', 'object']),

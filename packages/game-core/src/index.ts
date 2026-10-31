@@ -736,6 +736,16 @@ export function projectState(s: GameState, id: string): GameProjection {
       if (p !== id) intent.action = { kind: 'wait' };
   return {
     schemaVersion: 1,
+    ...(s.narrativeCanon
+      ? {
+          narrative: {
+            revision: s.narrativeCanon.revision,
+            turns: s.narrativeCanon.turns
+              .slice(-16)
+              .map(({ id, tick, narration }) => ({ id, tick, narration })),
+          },
+        }
+      : {}),
     ...(s.assetManifest ? { assetManifest: { ...s.assetManifest } } : {}),
     ...(s.artBindings ? { artBindings: projectVisibleArtBindings(s, id) } : {}),
     ...(s.objectives?.length ? { objectives: projectObjectives(s) } : {}),
@@ -956,3 +966,7 @@ export * from './art';
 
 export * from './objectives';
 export * from './observatory-story';
+
+export * from './supporting';
+
+export * from './narrative';

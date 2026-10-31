@@ -1,12 +1,14 @@
+import { mediaPreparationSchema, prepareSceneMedia } from './media-preparation';
 import { readOwnedHero, pinHero } from './hero-selection';
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { config } from '../config';
 import { AssetReuseService } from '../assets/reuse.service';
+import { ImageGenerationService } from '../image-generation/service';
 import { semanticGameProjection } from './projection-clock';
 import { pruneNpcMemory } from './npc-retention';
 import { recordNpcMetric } from './npc-telemetry';
-import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
+import { Inject, Injectable, OnModuleDestroy, Optional } from '@nestjs/common';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import type { Request } from 'express';
 import { z } from 'zod';
@@ -23,6 +25,9 @@ import {
 import {
   createObservatoryState,
   advanceObjectives,
+  buildNarrativeContext,
+  createMockNarrativeProposal,
+  applyNarrativeProposal,
   addPlayer,
   tick,
   moveInput,
@@ -156,6 +161,8 @@ function canonical(value: unknown): unknown {
 export class GameService implements OnModuleDestroy {
   private live = new Map<string, Live>();
   private queues = new Map<string, Promise<unknown>>();
+  // COMMIT visibility precedes the continuation that publishes its in-memory checkpoint.
+  private publications = new Map<string, Promise<void>>();
   private pending = new Map<string, number>();
   private listeners = new Set<(campaignId: string) => void>();
   private npcJobs = new Set<string>();
@@ -176,8 +183,13 @@ export class GameService implements OnModuleDestroy {
     @Inject(PlayableService) private playable: PlayableService,
     @Inject(NpcAiService) private ai: NpcAiService,
     @Inject(AssetReuseService) private art: AssetReuseService,
+    @Optional() @Inject(ImageGenerationService) images?: ImageGenerationService,
   ) {
     this.art.attachRuntimeStateReader((id) => this.live.get(id)?.state);
+    images?.attachRuntimeStateReader((id) => {
+      const cached = this.live.get(id);
+      return cached ? { state: cached.state, dbRevision: cached.dbRevision } : undefined;
+    });
     this.timer = setInterval(() => {
       for (const id of this.live.keys()) {
         if ((this.pending.get(id) ?? 0) > 0) continue;
@@ -214,7 +226,7 @@ export class GameService implements OnModuleDestroy {
     const cached = this.live.get(id);
     if (cached) return cached;
     const rows = await this.db.query(
-      `SELECT c.*,s.checksum,s.state AS snapshot_state,v.package->'compiled'->>'title' AS game_title,v.source_revision FROM game_campaigns c JOIN game_snapshots s ON s.campaign_id=c.id LEFT JOIN game_playable_versions v ON v.id=c.source_version_id WHERE c.id=$1 AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL) AND ${sourceLiveSql()}`,
+      `SELECT c.*,s.checksum,s.state AS snapshot_state,v.package->'compiled'->>'title' AS game_title,v.source_revision,v.package AS source_package,v.checksum AS source_checksum FROM game_campaigns c JOIN game_snapshots s ON s.campaign_id=c.id LEFT JOIN game_playable_versions v ON v.id=c.source_version_id WHERE c.id=$1 AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL) AND ${sourceLiveSql()}`,
       [id],
     );
     const row = rows[0];
@@ -222,6 +234,24 @@ export class GameService implements OnModuleDestroy {
     if (digest(row.snapshot_state) !== row.checksum || digest(row.state) !== row.checksum)
       fail(503, 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED');
     const state = row.state as GameState;
+    if (row.source_version_id && (!state.narrativePremise || !state.narrativeSource)) {
+      if (digest(canonical(row.source_package)) !== row.source_checksum)
+        fail(503, 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED');
+      const published = (
+        await this.db.query(
+          'SELECT av.snapshot FROM game_playable_approvals ap JOIN adventure_versions av ON av.id=ap.adventure_version_id WHERE ap.playable_version_id=$1',
+          [row.source_version_id],
+        )
+      )[0]?.snapshot;
+      state.narrativeSource = { versionId: row.source_version_id, checksum: row.source_checksum };
+      state.narrativePremise ??= row.source_package.compiled?.narrativePremise ?? {
+        title: String(row.source_package.source?.title ?? row.game_title ?? ''),
+        summary: String(published?.synopsis ?? ''),
+        world: String(row.source_package.source?.content?.world ?? ''),
+        genre: String(published?.genre ?? ''),
+      };
+    }
+
     // An input from a previous process can never resume after recovery.
     for (const entity of Object.values(state.entities))
       if (entity.kind === 'player' || entity.kind === 'npc') {
@@ -300,10 +330,23 @@ export class GameService implements OnModuleDestroy {
   async access(req: Request, id: string) {
     z.uuid().parse(id);
     const user = await this.auth.require(req);
-    const rows = await this.db.query(
-      `SELECT m.actor_id,c.owner_id,c.revision FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id WHERE m.campaign_id=$1 AND m.user_id=$2 AND m.status='accepted' AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL) AND ${sourceAccessSql('$2')}`,
-      [id, user.id],
-    );
+    const readAccess = () =>
+      this.db.query(
+        `SELECT m.actor_id,c.owner_id,c.revision FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id WHERE m.campaign_id=$1 AND m.user_id=$2 AND m.status='accepted' AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL) AND ${sourceAccessSql('$2')}`,
+        [id, user.id],
+      );
+    let rows = await readAccess();
+    let cached = this.live.get(id);
+    while (rows[0] && cached && Number(rows[0].revision) > cached.dbRevision) {
+      const publication = this.publications.get(id);
+      if (!publication) break;
+      // Do not await the writer queue: callers may already be inside that writer.
+      // Only a locally committing checkpoint has this short publication barrier.
+      await publication;
+      await this.auth.require(req);
+      rows = await readAccess();
+      cached = this.live.get(id);
+    }
     if (!rows[0]) {
       const stillActive = await this.db.query(
         `SELECT c.id FROM game_campaigns c WHERE c.id=$1 AND c.status='active' AND ${sourceLiveSql()}`,
@@ -314,7 +357,7 @@ export class GameService implements OnModuleDestroy {
     }
     // Account erasure and administrative changes may commit outside this process's writer.
     // Never project a cached pre-erasure checkpoint after observing a newer durable revision.
-    const cached = this.live.get(id);
+    cached = this.live.get(id);
     if (cached && Number(rows[0].revision) > cached.dbRevision) this.live.delete(id);
     return { user, actorId: String(rows[0].actor_id), ownerId: String(rows[0].owner_id) };
   }
@@ -553,6 +596,269 @@ export class GameService implements OnModuleDestroy {
     };
   }
   /** Player-facing metadata only; decision contexts remain server-private. */
+  private narrativeDto(row: Record<string, unknown>) {
+    const terminal =
+      ['cancelled', 'failed', 'stale'].includes(String(row.job_status)) ||
+      ['cancelled', 'failed'].includes(String(row.request_status));
+    const status = row.status === 'pending' && terminal ? 'failed' : row.status;
+    const result = row.result as Record<string, unknown> | null;
+    return {
+      id: row.id,
+      operationId: row.operation_id,
+      actorId: row.actor_id,
+      status,
+      text: row.input_text,
+      createdAt: (row.created_at as Date).toISOString(),
+      ...(status === 'committed' && result ? result : {}),
+      ...(row.result_code || terminal ? { code: row.result_code ?? 'DECISION_UNAVAILABLE' } : {}),
+      ...(row.job_status ? { jobStatus: row.job_status } : {}),
+    };
+  }
+  async narrative(req: Request, id: string, body?: unknown, quote = false) {
+    return this.serial(id, async () => {
+      const a = await this.access(req, id),
+        live = await this.load(id);
+      const canonRevision = live.state.narrativeCanon?.revision ?? 0;
+      await this.db.query(
+        `UPDATE game_narrative_turns t SET status='failed',result_code='DECISION_UNAVAILABLE' FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id WHERE t.id=r.id AND t.campaign_id=$1 AND t.status='pending' AND (r.status IN ('cancelled','failed') OR j.status IN ('stale','cancelled','failed'))`,
+        [id],
+      );
+
+      if (body === undefined) {
+        const rows = await this.db.query(
+          `SELECT t.*,j.status AS job_status,r.status AS request_status FROM game_narrative_turns t JOIN game_npc_decision_requests r ON r.id=t.id LEFT JOIN npc_ai_jobs j ON j.id=r.job_id WHERE t.campaign_id=$1 AND (t.status='committed' OR t.requester_user_id=$2) ORDER BY t.created_at DESC LIMIT 64`,
+          [id, a.user.id],
+        );
+        return {
+          canonRevision,
+          configuration: this.ai.configuration(),
+          canSubmit: live.state.rulesetVersion === 'hybrid-v3',
+          unavailableReason:
+            live.state.rulesetVersion === 'hybrid-v3' ? null : 'NARRATIVE_RULESET_REQUIRED',
+          turns: rows.reverse().map((r) => this.narrativeDto(r)),
+        };
+      }
+      if (live.state.rulesetVersion !== 'hybrid-v3')
+        fail(409, 'NARRATIVE_RULESET_REQUIRED', 'NARRATIVE_RULESET_REQUIRED');
+      const input = z
+        .object({
+          text: z.string().trim().min(1).max(1000),
+          expectedCanonRevision: z.number().int().nonnegative(),
+          audience: z.literal('shared').default('shared'),
+          operationId: z.uuid().optional(),
+          quoteId: z.uuid().optional(),
+          sponsorId: z.uuid().optional(),
+          consent: z.boolean().optional(),
+        })
+        .strict()
+        .parse(body);
+      const requestHash = digest(canonical(input));
+      if (!quote && input.operationId) {
+        const prior = (
+          await this.db.query(
+            'SELECT * FROM game_narrative_turns WHERE campaign_id=$1 AND requester_user_id=$2 AND operation_id=$3',
+            [id, a.user.id, input.operationId],
+          )
+        )[0];
+        if (prior) {
+          if (prior.request_hash !== requestHash)
+            fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+          return this.narrativeDto(prior);
+        }
+      }
+      if (input.expectedCanonRevision !== canonRevision) fail(409, 'STALE_CANON', 'STALE_CANON');
+      const base = buildNarrativeContext(live.state, a.actorId, input.text);
+      const scope = {
+        campaignId: id,
+        npcId: a.actorId,
+        subjectKind: 'player' as const,
+        origin: 'user' as const,
+        purpose: 'narrative' as const,
+        requesterUserId: a.user.id,
+      };
+      if (quote) return { ...(await this.ai.quote(scope, base, a.user.id)), canonRevision };
+      if (!input.operationId || input.consent !== true)
+        fail(403, 'CONSENT_REQUIRED', 'CONSENT_REQUIRED');
+      const count = (
+        await this.db.query(
+          "SELECT count(*) FILTER(WHERE status='pending')::int AS pending,count(*)::int AS total FROM game_narrative_turns WHERE campaign_id=$1 AND requester_user_id=$2",
+          [id, a.user.id],
+        )
+      )[0];
+      if (count.pending >= 2 || count.total >= 512) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+      const turnId = randomUUID(),
+        context = {
+          ...base,
+          turnId,
+          intent: input.text,
+          mockProposal: createMockNarrativeProposal(live.state, a.actorId, input.text, turnId),
+        };
+      if (Buffer.byteLength(JSON.stringify(context)) > this.ai.contextBudgetBytes())
+        fail(413, 'CONTEXT_BUDGET_EXCEEDED', 'CONTEXT_BUDGET_EXCEEDED');
+      await this.touch(id, live, a.actorId);
+      await this.persist(id, live, live.state, 'narrative.requested', undefined, async (c) => {
+        const allowed = await c.query(
+          `SELECT c.id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.user_id=$2 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('$2')}`,
+          [id, a.user.id],
+        );
+        if (!allowed.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+        await insertNpcRequest(c, id, {
+          id: turnId,
+          npcId: a.actorId,
+          purpose: 'narrative',
+          causeKey: `narrative:${a.actorId}:${input.operationId}`,
+          requesterUserId: a.user.id,
+          context,
+        });
+        await c.query(
+          "INSERT INTO game_narrative_turns(id,campaign_id,requester_user_id,actor_id,operation_id,request_hash,expected_canon_revision,input_text,status,quote_id,sponsor_id,consent) VALUES($1,$2,$3,$4,$5,$6,$7,$8,'pending',$9,$10,true)",
+          [
+            turnId,
+            id,
+            a.user.id,
+            a.actorId,
+            input.operationId,
+            requestHash,
+            canonRevision,
+            input.text,
+            input.quoteId ?? null,
+            input.sponsorId ?? null,
+          ],
+        );
+      });
+      live.decisionsPending = true;
+      return this.narrativeDto(
+        (await this.db.query('SELECT * FROM game_narrative_turns WHERE id=$1', [turnId]))[0],
+      );
+    });
+  }
+  async mediaPreparation(req: Request, id: string, body: unknown) {
+    const input = mediaPreparationSchema.parse(body);
+    return this.serial(id, async () => {
+      const a = await this.access(req, id),
+        live = await this.load(id);
+      const source = (
+        await this.db.query(
+          'SELECT c.source_version_id,v.adventure_id,a.owner_id,v.checksum FROM game_campaigns c LEFT JOIN game_playable_versions v ON v.id=c.source_version_id LEFT JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1',
+          [id],
+        )
+      )[0];
+      const prepared = prepareSceneMedia(
+        live.state,
+        a.actorId,
+        source.source_version_id ?? 'observatory-v1',
+        input,
+      );
+      const matches = await this.art.search(a.user.id, {
+        kind: prepared.spec.kind,
+        style: 'drawn2D',
+        camera: prepared.spec.camera,
+        tags: [],
+        minWidth: 1,
+        minHeight: 1,
+      });
+      return {
+        ...prepared,
+        canonRevision: live.state.narrativeCanon?.revision ?? 0,
+        sourceChecksum: source.checksum ?? null,
+        adventureId: source.adventure_id ?? null,
+        canGenerate: a.ownerId === a.user.id,
+        canAttach: a.ownerId === a.user.id,
+        expectedMapId: live.state.entities[a.actorId].mapId,
+        slot:
+          input.kind === 'background'
+            ? `map:${live.state.entities[a.actorId].mapId}:background`
+            : `entity:${input.entityId}:portrait`,
+        matches,
+        providerCalls: 0,
+        charge: 0,
+      };
+    });
+  }
+  async mediaBinding(req: Request, id: string, body: unknown) {
+    const input = mediaPreparationSchema
+      .extend({
+        operationId: z.uuid(),
+        expectedCanonRevision: z.number().int().nonnegative(),
+        expectedMapId: z.string().min(1).max(100),
+        revisionId: z.uuid(),
+      })
+      .strict()
+      .parse(body);
+    return this.serial(id, async () => {
+      const a = await this.access(req, id),
+        live = await this.load(id);
+      if (a.ownerId !== a.user.id) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+      const hash = digest({ type: 'art.attach', ...input });
+      const prior = (
+        await this.db.query(
+          'SELECT request_hash,result FROM game_operations WHERE campaign_id=$1 AND actor_id=$2 AND operation_id=$3',
+          [id, a.actorId, input.operationId],
+        )
+      )[0];
+      if (prior) {
+        if (prior.request_hash !== hash) fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+        await this.refreshArt(id, live, true);
+        return { ...prior.result, projection: this.project(live.state, a.actorId) };
+      }
+      if (
+        (live.state.narrativeCanon?.revision ?? 0) !== input.expectedCanonRevision ||
+        live.state.entities[a.actorId].mapId !== input.expectedMapId
+      )
+        fail(409, 'STALE_CANON', 'STALE_CANON');
+      // Validate current visibility and subject before considering any private library revision.
+      const view = projectState(live.state, a.actorId);
+      if (
+        input.kind === 'portrait' &&
+        !view.entities.some((e) => e.id === input.entityId && e.kind === 'npc')
+      )
+        fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      if (input.kind === 'background' && input.entityId)
+        fail(400, 'INVALID_ACTION', 'INVALID_ACTION');
+      const slot =
+        input.kind === 'background'
+          ? `map:${input.expectedMapId}:background`
+          : `entity:${input.entityId}:portrait`;
+      await this.touch(id, live, a.actorId);
+      const response = {
+        status: 'applied',
+        projection: this.project(live.state, a.actorId),
+        slot,
+        revisionId: input.revisionId,
+        charge: 0,
+      };
+      await this.persist(
+        id,
+        live,
+        live.state,
+        'art.attached',
+        {
+          actorId: a.actorId,
+          command: { operationId: input.operationId },
+          hash,
+          response,
+        },
+        undefined,
+        async (c, state) => {
+          const binding = await this.art.pinCampaignArtTx(
+            c,
+            a.user.id,
+            id,
+            state,
+            slot,
+            input.revisionId,
+          );
+          const next = structuredClone(state);
+          next.artBindings = [...(next.artBindings ?? []).filter((b) => b.slot !== slot), binding];
+          if (next.artBindings.length > 128) fail(409, 'ART_LIMIT', 'ART_LIMIT');
+          next.revision++;
+          response.projection = this.project(next, a.actorId);
+          return next;
+        },
+      );
+      return response;
+    });
+  }
   async aiStatus(req: Request, id: string) {
     const a = await this.access(req, id);
     return {
@@ -764,8 +1070,51 @@ export class GameService implements OnModuleDestroy {
           code?: string;
         }
       | undefined;
+    let narrativeOutcome:
+      { id: string; accepted: boolean; result: Record<string, unknown> | null } | undefined;
     const memory = state.npcBrains?.[job.npcId]?.living;
-    if (job.purpose === 'intent') {
+    if (job.purpose === 'narrative') {
+      const metadata = z
+        .object({ turnId: z.uuid(), intent: z.string().min(1).max(1000) })
+        .passthrough()
+        .safeParse(job.context);
+      if (metadata.success) {
+        const proposal = job.proposal as { turnId?: unknown } | null;
+        if (proposal?.turnId === metadata.data.turnId) {
+          const applied = applyNarrativeProposal(
+            state,
+            job.npcId,
+            job.proposal,
+            metadata.data.intent,
+          );
+          if (!applied.error) {
+            next = recordNpcEvents(
+              state,
+              applied.state,
+              applied.events,
+              `narrative-${metadata.data.turnId}`,
+            ).state;
+            accepted = true;
+          }
+        }
+        const turn = accepted
+          ? next.narrativeCanon?.turns.find((t) => t.id === metadata.data.turnId)
+          : undefined;
+        narrativeOutcome = {
+          id: metadata.data.turnId,
+          accepted,
+          result: turn
+            ? {
+                narration: turn.narration,
+                canonRevision: next.narrativeCanon!.revision,
+                ...(turn.sceneId ? { sceneId: turn.sceneId } : {}),
+                ...(turn.npcId ? { npcId: turn.npcId } : {}),
+                tick: turn.tick,
+              }
+            : null,
+        };
+      }
+    } else if (job.purpose === 'intent') {
       const context = z
         .object({
           intentProposalId: z.uuid(),
@@ -913,7 +1262,63 @@ export class GameService implements OnModuleDestroy {
     }
     if (!accepted)
       recordNpcMetric(job.purpose === 'summary' ? 'summaryRejected' : 'knowledgeRejected');
-    return { next, accepted, intentOutcome };
+    return { next, accepted, intentOutcome, narrativeOutcome };
+  }
+  private async saveNarrativeOutcome(
+    c: import('pg').PoolClient,
+    campaignId: string,
+    state: GameState,
+    outcome: { id: string; accepted: boolean; result: Record<string, unknown> | null } | undefined,
+  ) {
+    if (!outcome) return;
+    const changed = await c.query(
+      "UPDATE game_narrative_turns SET status=$2,result=$3,result_code=$4,committed_at=CASE WHEN $2='committed' THEN now() ELSE NULL END WHERE id=$1 AND campaign_id=$5 AND status='pending' RETURNING id",
+      [
+        outcome.id,
+        outcome.accepted ? 'committed' : 'stale',
+        JSON.stringify(outcome.result),
+        outcome.accepted ? null : 'STALE_OR_INVALID_PROPOSAL',
+        campaignId,
+      ],
+    );
+    if (!changed.rowCount) fail(409, 'STALE_STATE', 'STALE_STATE');
+    await c.query(
+      "UPDATE game_npc_decision_requests SET status=$2,result_code=$3 WHERE id=$1 AND status='scheduled'",
+      [
+        outcome.id,
+        outcome.accepted ? 'committed' : 'failed',
+        outcome.accepted ? null : 'STALE_OR_INVALID_PROPOSAL',
+      ],
+    );
+    const sceneId = outcome.result?.sceneId;
+    if (outcome.accepted && typeof sceneId === 'string' && state.maps[sceneId]) {
+      const source = (
+        await c.query('SELECT source_version_id FROM game_campaigns WHERE id=$1', [campaignId])
+      ).rows[0];
+      const map = state.maps[sceneId],
+        specification = {
+          schemaVersion: 1,
+          sourceVersionId: source.source_version_id,
+          canonRevision: state.narrativeCanon?.revision ?? 0,
+          mapId: sceneId,
+          map: { width: map.width, height: map.height, blocked: map.blocked },
+          layers: Object.values(state.entities)
+            .filter((e) => e.mapId === sceneId)
+            .map((e) => ({ id: e.id, kind: e.kind, x: e.x, y: e.y })),
+          backgroundPolicy: 'floor-only; all interactive geometry and actors are engine overlays',
+          automaticDispatch: false,
+        };
+      await c.query(
+        'INSERT INTO game_narrative_media(turn_id,campaign_id,map_id,canon_revision,specification) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING',
+        [
+          outcome.id,
+          campaignId,
+          sceneId,
+          state.narrativeCanon?.revision ?? 0,
+          JSON.stringify({ ...specification, groundingHash: digest(canonical(specification)) }),
+        ],
+      );
+    }
   }
   private async saveIntentOutcome(
     c: import('pg').PoolClient,
@@ -997,7 +1402,7 @@ export class GameService implements OnModuleDestroy {
         : [{ id }];
       if (
         !allowed.length ||
-        (r.purpose === 'intent'
+        (r.purpose === 'intent' || r.purpose === 'narrative'
           ? live.state.entities[r.npc_id]?.kind !== 'player'
           : !live.state.npcBrains?.[r.npc_id])
       ) {
@@ -1005,6 +1410,90 @@ export class GameService implements OnModuleDestroy {
           "UPDATE game_npc_decision_requests SET status='cancelled',context='{}',result_code='AUTHORIZATION_REVOKED' WHERE id=$1 AND status='queued'",
           [r.id],
         );
+        continue;
+      }
+      if (r.purpose === 'narrative') {
+        const turn = (
+          await this.db.query(
+            "SELECT * FROM game_narrative_turns WHERE id=$1 AND status='pending'",
+            [r.id],
+          )
+        )[0];
+        if (turn && new Date(turn.expires_at).getTime() <= Date.now()) {
+          await this.db.tx(async (c) => {
+            await c.query(
+              "UPDATE game_npc_decision_requests SET status='failed',context='{}',result_code='QUOTE_EXPIRED' WHERE id=$1 AND status='queued'",
+              [r.id],
+            );
+            await c.query(
+              "UPDATE game_narrative_turns SET status='failed',result_code='QUOTE_EXPIRED' WHERE id=$1 AND status='pending'",
+              [r.id],
+            );
+          });
+          continue;
+        }
+        if (!turn) {
+          await this.db.query(
+            "UPDATE game_npc_decision_requests SET status='cancelled',context='{}' WHERE id=$1 AND status='queued'",
+            [r.id],
+          );
+          continue;
+        }
+        if (
+          buildNarrativeContext(live.state, String(r.npc_id), String(turn.input_text))
+            .contextHash !== r.context.contextHash
+        ) {
+          await this.db.tx(async (c) => {
+            await c.query(
+              "UPDATE game_npc_decision_requests SET status='failed',context='{}',result_code='STALE_CANON' WHERE id=$1 AND status='queued'",
+              [r.id],
+            );
+            await c.query(
+              "UPDATE game_narrative_turns SET status='stale',result_code='STALE_CANON' WHERE id=$1 AND status='pending'",
+              [r.id],
+            );
+          });
+          continue;
+        }
+        try {
+          const job = await this.ai.queue({
+            scope: {
+              campaignId: id,
+              npcId: String(r.npc_id),
+              purpose: 'narrative',
+              subjectKind: 'player',
+              origin: 'user',
+              requesterUserId: String(r.requester_user_id),
+            },
+            context: r.context,
+            operationId: r.id,
+            requesterUserId: String(r.requester_user_id),
+            quoteId: turn.quote_id ?? undefined,
+            sponsorId: turn.sponsor_id ?? undefined,
+            consent: turn.consent,
+            requestKey: `narrative:${turn.operation_id}`,
+            runtimeRequestId: r.id,
+          });
+          await this.db.query(
+            "UPDATE game_npc_decision_requests SET status='scheduled',job_id=$2 WHERE id=$1 AND status='queued'",
+            [r.id, job.id],
+          );
+          live.aiPending = true;
+          this.dispatchAi(id);
+        } catch (error) {
+          const message = error instanceof Error ? error.message : '';
+          if (message.includes('NPC_AI_BUSY') || message.includes('RATE_LIMITED')) continue;
+          await this.db.tx(async (c) => {
+            await c.query(
+              "UPDATE game_npc_decision_requests SET status='failed',context='{}',result_code='NARRATIVE_UNAVAILABLE' WHERE id=$1 AND status='queued'",
+              [r.id],
+            );
+            await c.query(
+              "UPDATE game_narrative_turns SET status='failed',result_code='NARRATIVE_UNAVAILABLE' WHERE id=$1 AND status='pending'",
+              [r.id],
+            );
+          });
+        }
         continue;
       }
       const busy = (
@@ -1117,7 +1606,11 @@ export class GameService implements OnModuleDestroy {
   private async processAi(id: string, live: Live) {
     await this.ai.sweep(id);
     for (const job of await this.ai.ready(id)) {
-      const { next, accepted, intentOutcome } = await this.evaluateDecision(id, live.state, job);
+      const { next, accepted, intentOutcome, narrativeOutcome } = await this.evaluateDecision(
+        id,
+        live.state,
+        job,
+      );
       await this.persist(
         id,
         live,
@@ -1127,6 +1620,7 @@ export class GameService implements OnModuleDestroy {
         async (c) => {
           await this.ai.finalize(c, job.id, accepted ? 'committed' : 'stale');
           await this.saveIntentOutcome(c, intentOutcome);
+          await this.saveNarrativeOutcome(c, id, next, narrativeOutcome);
         },
       );
     }
@@ -1762,8 +2256,14 @@ export class GameService implements OnModuleDestroy {
     live: Live,
     state: GameState,
     kind: string,
-    operation?: { actorId: string; command: Command; hash: string; response: unknown },
+    operation?: {
+      actorId: string;
+      command: { operationId: string };
+      hash: string;
+      response: unknown;
+    },
     extra?: (c: import('pg').PoolClient) => Promise<void>,
+    prepare?: (c: import('pg').PoolClient, state: GameState) => Promise<GameState>,
   ) {
     const seq = live.eventSeq + 1;
     const retentionDue =
@@ -1772,100 +2272,111 @@ export class GameService implements OnModuleDestroy {
       state.tick - live.lastRetentionTick >= 100;
     let savedClock = live.clock;
     let objectiveEvents: GameResult['events'] = [];
-    await this.db.tx(async (c) => {
-      await c.query(
-        'SELECT a.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1 FOR SHARE OF a',
-        [id],
-      );
-      if (operation) {
-        const allowed = await c.query(
-          `SELECT c.id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id WHERE c.id=$1 AND m.actor_id=$2 AND m.status='accepted' AND ${sourceAccessSql('m.user_id')}`,
-          [id, operation.actorId],
+    let releasePublication!: () => void;
+    const publication = new Promise<void>((resolve) => {
+      releasePublication = resolve;
+    });
+    this.publications.set(id, publication);
+    try {
+      await this.db.tx(async (c) => {
+        await c.query(
+          'SELECT a.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1 FOR SHARE OF a',
+          [id],
         );
-        if (!allowed.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
-      }
-      // Completion is derived from committed world state and currently authorized party members.
-      // It shares the same transaction as the action result, checkpoint and idempotency receipt.
-      if (state.objectives?.length && !live.paused) {
-        const members = (
-          await c.query(
-            `SELECT m.actor_id FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('m.user_id')} FOR SHARE OF m,u`,
-            [id],
-          )
-        ).rows;
-        const completed = advanceObjectives(
-          state,
-          members.map((m) => String(m.actor_id)),
-        );
-        if (completed.events.length) {
-          state = completed.state;
-          objectiveEvents = completed.events;
-          if (operation) {
-            const response = operation.response as {
-              projection: GameProjection;
-              events: unknown[];
-            };
-            response.projection = this.project(state, operation.actorId);
-            response.events.push(...completed.events);
+        if (operation) {
+          const allowed = await c.query(
+            `SELECT c.id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id WHERE c.id=$1 AND m.actor_id=$2 AND m.status='accepted' AND ${sourceAccessSql('m.user_id')}`,
+            [id, operation.actorId],
+          );
+          if (!allowed.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+        }
+        if (prepare) state = await prepare(c, state);
+        // Completion is derived from committed world state and currently authorized party members.
+        // It shares the same transaction as the action result, checkpoint and idempotency receipt.
+        if (state.objectives?.length && !live.paused) {
+          const members = (
+            await c.query(
+              `SELECT m.actor_id FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('m.user_id')} FOR SHARE OF m,u`,
+              [id],
+            )
+          ).rows;
+          const completed = advanceObjectives(
+            state,
+            members.map((m) => String(m.actor_id)),
+          );
+          if (completed.events.length) {
+            state = completed.state;
+            objectiveEvents = completed.events;
+            if (operation) {
+              const response = operation.response as {
+                projection: GameProjection;
+                events: unknown[];
+              };
+              response.projection = this.project(state, operation.actorId);
+              response.events.push(...completed.events);
+            }
           }
         }
-      }
-      const update = await c.query(
-        `UPDATE game_campaigns SET state=$1,revision=revision+1,event_seq=$2,updated_at=now() WHERE id=$3 AND revision=$4 AND status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=game_campaigns.owner_id AND owner.deleted_at IS NULL) AND ${sourceLiveSql('game_campaigns')} RETURNING revision`,
-        [JSON.stringify(state), seq, id, live.dbRevision],
-      );
-      if (!update.rowCount) {
-        this.live.delete(id);
-        fail(409, 'STALE_STATE', 'STALE_STATE');
-      }
-      await c.query(
-        'INSERT INTO game_events(campaign_id,sequence,kind,payload) VALUES($1,$2,$3,$4)',
-        [
-          id,
-          seq,
-          kind,
-          JSON.stringify({
-            state,
-            serverTick: state.tick,
-            ...(objectiveEvents.length ? { objectiveEvents } : {}),
-          }),
-        ],
-      );
-      await c.query(
-        'INSERT INTO game_snapshots(campaign_id,sequence,checksum,state) VALUES($1,$2,$3,$4) ON CONFLICT(campaign_id) DO UPDATE SET sequence=EXCLUDED.sequence,checksum=EXCLUDED.checksum,state=EXCLUDED.state',
-        [id, seq, digest(state), JSON.stringify(state)],
-      );
-      await c.query('INSERT INTO game_outbox(campaign_id,sequence) VALUES($1,$2)', [id, seq]);
-      if (operation)
+        const update = await c.query(
+          `UPDATE game_campaigns SET state=$1,revision=revision+1,event_seq=$2,updated_at=now() WHERE id=$3 AND revision=$4 AND status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=game_campaigns.owner_id AND owner.deleted_at IS NULL) AND ${sourceLiveSql('game_campaigns')} RETURNING revision`,
+          [JSON.stringify(state), seq, id, live.dbRevision],
+        );
+        if (!update.rowCount) {
+          this.live.delete(id);
+          fail(409, 'STALE_STATE', 'STALE_STATE');
+        }
         await c.query(
-          'INSERT INTO game_operations(campaign_id,actor_id,operation_id,request_hash,result) VALUES($1,$2,$3,$4,$5)',
+          'INSERT INTO game_events(campaign_id,sequence,kind,payload) VALUES($1,$2,$3,$4)',
           [
             id,
-            operation.actorId,
-            operation.command.operationId,
-            operation.hash,
-            JSON.stringify(operation.response),
+            seq,
+            kind,
+            JSON.stringify({
+              state,
+              serverTick: state.tick,
+              ...(objectiveEvents.length ? { objectiveEvents } : {}),
+            }),
           ],
         );
-      await archiveNpcEpisodes(c, id, state);
-      if (extra) await extra(c);
-      if (retentionDue) await pruneNpcMemory(c, id, state, seq);
-      savedClock = live.paused
-        ? { ...live.clock, paused: true }
-        : await this.captureClock(state, id, c);
-      await c.query('UPDATE game_campaigns SET runtime_clock=$2 WHERE id=$1', [
-        id,
-        JSON.stringify(savedClock),
-      ]);
-    });
-    live.state = state;
-    if (retentionDue) live.lastRetentionTick = state.tick;
-    live.clock = savedClock;
-    live.dbRevision++;
-    live.eventSeq = seq;
-    live.dirty = false;
-    live.lastCheckpoint = Date.now();
-    this.notify(id);
+        await c.query(
+          'INSERT INTO game_snapshots(campaign_id,sequence,checksum,state) VALUES($1,$2,$3,$4) ON CONFLICT(campaign_id) DO UPDATE SET sequence=EXCLUDED.sequence,checksum=EXCLUDED.checksum,state=EXCLUDED.state',
+          [id, seq, digest(state), JSON.stringify(state)],
+        );
+        await c.query('INSERT INTO game_outbox(campaign_id,sequence) VALUES($1,$2)', [id, seq]);
+        if (operation)
+          await c.query(
+            'INSERT INTO game_operations(campaign_id,actor_id,operation_id,request_hash,result) VALUES($1,$2,$3,$4,$5)',
+            [
+              id,
+              operation.actorId,
+              operation.command.operationId,
+              operation.hash,
+              JSON.stringify(operation.response),
+            ],
+          );
+        await archiveNpcEpisodes(c, id, state);
+        if (extra) await extra(c);
+        if (retentionDue) await pruneNpcMemory(c, id, state, seq);
+        savedClock = live.paused
+          ? { ...live.clock, paused: true }
+          : await this.captureClock(state, id, c);
+        await c.query('UPDATE game_campaigns SET runtime_clock=$2 WHERE id=$1', [
+          id,
+          JSON.stringify(savedClock),
+        ]);
+      });
+      live.state = state;
+      if (retentionDue) live.lastRetentionTick = state.tick;
+      live.clock = savedClock;
+      live.dbRevision++;
+      live.eventSeq = seq;
+      live.dirty = false;
+      live.lastCheckpoint = Date.now();
+      this.notify(id);
+    } finally {
+      if (this.publications.get(id) === publication) this.publications.delete(id);
+      releasePublication();
+    }
   }
   private async advance(id: string) {
     const live = this.live.get(id);

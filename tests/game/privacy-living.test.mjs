@@ -283,3 +283,87 @@ test('text-free compacted provenance still erases derived reply roots', () => {
   assert.deepEqual(cleaned.npcBrains.helper.living.observations, []);
   assert.deepEqual(cleaned.npcUtterances, []);
 });
+
+test('narrative erasure clears paraphrased generated content while preserving shared topology and possessions', async () => {
+  const { redactNarrativeContent } = await import('../../scripts/narrative-data-requests.mjs');
+  const secret = 'PERSONAL_STORY_INPUT';
+  const state = fixture();
+  state.maps = {
+    original: {
+      id: 'original',
+      label: 'Protected original',
+      exits: [{ id: 'link', destinationMapId: 'scene-a', label: secret }],
+    },
+    'scene-a': {
+      id: 'scene-a',
+      label: secret,
+      width: 10,
+      height: 8,
+      blocked: [{ x: 0, y: 0 }],
+      exits: [],
+    },
+  };
+  state.entities['support-a'] = {
+    id: 'support-a',
+    kind: 'npc',
+    label: secret,
+    mapId: 'scene-a',
+    x: 4,
+    y: 4,
+    supportingNpc: {
+      generated: true,
+      roleId: 'director-secondary',
+      roleLabel: secret,
+      description: secret,
+      appearance: secret,
+      personalitySummary: secret,
+    },
+  };
+  state.entities.key = { id: 'key', kind: 'item', ownerId: 'other-player' };
+  state.narrativeCanon = {
+    revision: 2,
+    turns: [
+      {
+        id: 'a',
+        actorId: 'erased-player',
+        narration: secret,
+        evidenceIds: ['private'],
+        introducedScene: { id: 'scene-a', name: secret, description: secret },
+        introducedNpc: { id: 'support-a', name: secret, roleLabel: secret },
+      },
+      { id: 'b', actorId: 'other-player', narration: secret, evidenceIds: ['a'] },
+    ],
+  };
+  state.npcBrains.keeper.living.observations.push({
+    id: 'paraphrase',
+    text: secret,
+    rootId: 'unknown-derived',
+  });
+  const clean = redactNarrativeContent(state);
+  assert.equal(JSON.stringify(clean).includes(secret), false);
+  assert.equal(clean.maps.original.label, 'Protected original');
+  assert.deepEqual(clean.maps['scene-a'].blocked, [{ x: 0, y: 0 }]);
+  assert.equal(clean.entities.key.ownerId, 'other-player');
+  assert.equal(clean.entities['support-a'].id, 'support-a');
+  assert.equal(clean.narrativeCanon.turns.length, 2);
+  assert.equal(clean.narrativeCanon.revision, 2);
+  assert.deepEqual(clean.npcBrains.keeper.living.observations, []);
+});
+
+test('retained other-player operation projections lose narrative text and generated labels too', async () => {
+  const { redactNarrativeContent } = await import('../../scripts/narrative-data-requests.mjs');
+  const result = {
+    projection: {
+      narrative: { revision: 3, turns: [{ id: 'turn', narration: 'PERSONAL_REPLAY_TEXT' }] },
+      map: { id: 'scene-a', label: 'PERSONAL_REPLAY_TEXT' },
+      npcUtterances: [{ id: 'derived', text: 'PERSONAL_REPLAY_TEXT' }],
+      npcObligations: [
+        { id: 'promise', sourceUtterance: 'PERSONAL_REPLAY_TEXT', status: 'accepted' },
+      ],
+    },
+  };
+  const clean = redactNarrativeContent(result);
+  assert.equal(JSON.stringify(clean).includes('PERSONAL_REPLAY_TEXT'), false);
+  assert.equal(clean.projection.npcObligations[0].status, 'accepted');
+  assert.equal(clean.projection.narrative.revision, 3);
+});

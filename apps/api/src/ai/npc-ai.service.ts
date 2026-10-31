@@ -44,7 +44,7 @@ interface Job extends QueryResultRow {
   origin: 'user' | 'system';
   requester_user_id: string | null;
   payer_user_id: string | null;
-  purpose: 'plan' | 'summary' | 'speech' | 'intent';
+  purpose: 'plan' | 'summary' | 'speech' | 'intent' | 'supporting_npc' | 'narrative';
   sponsor_id: string | null;
   subject_kind: 'npc' | 'player';
   context_hash: string;
@@ -73,7 +73,9 @@ const scopeSchema = z
       .max(100),
     origin: z.enum(['user', 'system']),
     subjectKind: z.enum(['npc', 'player']).optional(),
-    purpose: z.enum(['plan', 'summary', 'speech', 'intent']).optional(),
+    purpose: z
+      .enum(['plan', 'summary', 'speech', 'intent', 'supporting_npc', 'narrative'])
+      .optional(),
     requesterUserId: z.uuid().optional(),
   })
   .strict();
@@ -146,7 +148,7 @@ export class NpcAiEngine {
       sponsorLimits: {
         maxOperations: 1000,
         maxExpiryHours: 24,
-        purposes: ['plan', 'summary', 'speech', 'intent'],
+        purposes: ['plan', 'summary', 'speech', 'intent', 'supporting_npc', 'narrative'],
       },
       policyVersion: this.policy.version,
       timeoutMs: this.policy.timeoutMs,
@@ -164,8 +166,21 @@ export class NpcAiEngine {
       s.origin === 'user' ? [s.campaignId, s.requesterUserId] : [s.campaignId],
     );
     if (!r.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
-    if ((s.purpose === 'intent') !== (s.subjectKind === 'player'))
+    if (
+      (s.purpose === 'intent' || s.purpose === 'supporting_npc' || s.purpose === 'narrative') !==
+      (s.subjectKind === 'player')
+    )
       fail(403, 'INVALID_AI_SUBJECT', 'INVALID_AI_SUBJECT');
+    if (
+      s.purpose === 'supporting_npc' &&
+      !(
+        await c.query('SELECT 1 FROM game_campaigns WHERE id=$1 AND owner_id=$2', [
+          s.campaignId,
+          s.requesterUserId,
+        ])
+      ).rowCount
+    )
+      fail(403, 'FORBIDDEN', 'FORBIDDEN');
     if (
       s.subjectKind === 'player' &&
       (s.origin !== 'user' ||
@@ -215,7 +230,10 @@ export class NpcAiEngine {
         credits: this.policy.creditPrice,
         expiresAt: expires.toISOString(),
         demo: true,
-        requiresConsent: this.policy.creditPrice > 0,
+        requiresConsent: this.policy.creditPrice > 0 || this.provider.external,
+        providerUpperMicros: this.policy.providerUpperMicros,
+        provider: this.provider.id,
+        external: this.provider.external,
         policyVersion: this.policy.version,
       };
     });
@@ -341,7 +359,11 @@ export class NpcAiEngine {
       );
       if (count >= this.policy.maxQueuedPerCampaign) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
       let payer: string | null = null;
-      if (this.policy.creditPrice > 0 && !input.sponsorId) {
+      if (
+        (this.policy.creditPrice > 0 ||
+          (this.provider.external && scope.purpose === 'narrative')) &&
+        !input.sponsorId
+      ) {
         if (!input.consent || !input.quoteId || !scope.requesterUserId)
           fail(403, 'CONSENT_REQUIRED', 'CONSENT_REQUIRED');
         const q = (
@@ -391,7 +413,11 @@ export class NpcAiEngine {
       if (input.sponsorId) {
         if (!(
           (scope.origin === 'system' && !scope.requesterUserId && scope.subjectKind !== 'player') ||
-          (scope.origin === 'user' && scope.subjectKind === 'player' && scope.purpose === 'intent')
+          (scope.origin === 'user' &&
+            scope.subjectKind === 'player' &&
+            (scope.purpose === 'intent' ||
+              scope.purpose === 'supporting_npc' ||
+              scope.purpose === 'narrative'))
         ))
           fail(403, 'INVALID_SPONSOR_ORIGIN', 'INVALID_SPONSOR_ORIGIN');
         payer = await this.sponsorship.validate(

@@ -333,3 +333,41 @@ cognition is compacted while retaining text-free causal IDs needed for erasure; 
 cached occurrence of expired speech is redacted in the same transaction. Outcomes and
 operation identities remain. Account export contains only the requester's OOC/intent
 text and safe job/sponsorship metadata, not another participant's context or NPC secrets.
+
+## Evolving narrative and campaign-local art
+
+All routes below require an active accepted member and current source access under
+`/api/v1/game/campaigns/:id`. Narrative input is explicitly shared with the party,
+not a private NPC whisper. Director requests are supported by `hybrid-v3` only.
+
+- `GET /narrative`: semantic `canonRevision`, safe provider configuration, committed
+  shared turns plus only the requester's pending/error receipts.
+- `POST /narrative/quote`: `{text, expectedCanonRevision, audience:"shared"}`.
+  Returns a bounded quote, provider identifier and provider upper cost independently
+  of demo credit price. Creating a quote does not dispatch a provider.
+- `POST /narrative`: the same input plus `operationId`, `consent:true`, and the
+  applicable `quoteId` or explicit `sponsorId`. The durable pending receipt is not a
+  fictional success. Only validated atomic world/canon commits become narration.
+  Reusing an operation ID with different input conflicts; stale canon must be
+  reviewed/requoted rather than silently rebased.
+- `POST /media-preparation`: `{kind:"background"|"portrait", entityId?}`. Portrait
+  subjects must be visible NPCs. Returns the actual current map/entity grounding,
+  canon/source identifiers, floor-only or portrait instructions, authorized library
+  matches, target `slot`, `expectedMapId`, `canAttach` and `canGenerate`. It charges
+  nothing and creates no generation job. Background art never defines collision,
+  doors, items or other authoritative interactions.
+- `POST /media-bindings`: host only, `{operationId, expectedCanonRevision,
+expectedMapId, kind, entityId?, revisionId}`. Explicitly attaches an existing
+  owned/reuse-granted immutable raster revision to the current visible subject.
+  Rights validation, append-only campaign pin, state, checkpoint and operation
+  receipt share one transaction. Returns `status:"applied"`, filtered projection,
+  slot/revision IDs and `charge:0`. It neither edits the source adventure nor
+  generates anything. A grant withdrawal blocks new reuse but preserves approved
+  pins; a takedown blocks delivery and removes the binding from live presentation.
+
+The immutable public initial premise and source checksum, plus current confirmed
+canon, ground subsequent director requests. Private NPC biographies, whispers and
+other players' inventories are not imported. The validated mechanics currently use
+bounded room/courtyard templates and existing action rules; prose plausibility is
+not a mechanically proven property. Mock proposals remain labeled mock, and no
+live provider or image budget is enabled by these endpoints.

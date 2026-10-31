@@ -31,3 +31,12 @@ secret-entry flow; never reuse earlier chat tokens. External image dispatch rema
 unavailable until a defensible request upper bound is verified under that approval.
 No deployment, merge or restart of the user's stopped application is authorized by
 this preparation alone.
+
+The owner clarified the gameplay invariant on 2026-10-31: players and AI coauthor an
+ongoing visual story. Initial author content is the world's opening and constraints,
+not an exhaustive script or catalog of future locations/NPCs. Read
+`docs/narrative-director.md`. Keep proposals separate from committed shared state,
+private NPC/hero knowledge out of shared narration, and media grounded in the current
+confirmed canon. The prepared Observatory remains an acceptance fixture, not a hard
+story ceiling. Current delivery scope is the coherent player/NPC/visual loop and one
+small adventure; automatic translation, Discord, payments and deployment are deferred.

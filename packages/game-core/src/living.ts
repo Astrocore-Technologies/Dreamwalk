@@ -962,6 +962,15 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
     .slice(0, 16);
   const context = {
     npcId,
+    ...(npc.supportingNpc
+      ? {
+          publicIdentity: {
+            name: npc.label,
+            role: npc.supportingNpc.roleLabel,
+            untrustedPersonalityFlavor: npc.supportingNpc.personalitySummary,
+          },
+        }
+      : {}),
     knowledgeRevision: m.knowledgeRevision,
     goalGeneration: m.goal.revision,
     personality: clone(m.personality),
@@ -1125,6 +1134,9 @@ export function buildNpcPublicSpeechContext(
   return {
     npcId,
     audienceIds: audience,
+    ...(npc.supportingNpc
+      ? { publicIdentity: { name: npc.label, role: npc.supportingNpc.roleLabel } }
+      : {}),
     publicSpeechStyle: m.personality.publicSpeechStyle ?? 'neutral',
     claims: observationIds.flatMap((id) => {
       const o = m.observations.find((o) => o.id === id);

@@ -1,3 +1,19 @@
+import {
+  narrativeConstraintsSchema,
+  narrativePublicTurnSchema,
+  type NarrativeConstraints,
+  type NarrativePremise,
+  type NarrativeCanon,
+  type NarrativePublicTurn,
+} from './narrative';
+export * from './narrative';
+import {
+  supportingNpcPolicySchema,
+  supportingNpcCardSchema,
+  type SupportingNpcPolicy,
+  type SupportingNpcCard,
+} from './supporting';
+export * from './supporting';
 import { frozenArtBindingsSchema, type FrozenArtBinding } from './art';
 export * from './art';
 import {
@@ -140,6 +156,7 @@ export const gameLabelTranslationsSchema = z
   .strict();
 export type GameLabelTranslations = z.infer<typeof gameLabelTranslationsSchema>;
 export interface GameEntity extends GamePoint {
+  supportingNpc?: SupportingNpcCard;
   id: string;
   kind: 'player' | 'npc' | 'item' | 'door';
   label?: string;
@@ -272,6 +289,12 @@ export const objectiveProjectionSchema = publicObjectiveCopySchema
 export type ObjectiveProjection = z.infer<typeof objectiveProjectionSchema>;
 
 export interface GameState {
+  narrativePremise?: NarrativePremise;
+  narrativeSource?: { versionId: string; checksum: string };
+  narrativeConstraints?: NarrativeConstraints;
+  narrativeCanon?: NarrativeCanon;
+  supportingNpcPolicy?: SupportingNpcPolicy;
+  supportingNpcAdmissions?: Record<string, { npcId: string; actorId: string; requestHash: string }>;
   objectives?: ObjectiveDefinition[];
   objectiveProgress?: Record<string, { achievedTick: number }>;
   artBindings?: FrozenArtBinding[];
@@ -304,6 +327,7 @@ export interface GameResult {
   error?: GameError;
 }
 export interface GameProjection {
+  narrative?: { revision: number; turns: NarrativePublicTurn[] };
   objectives?: ObjectiveProjection[];
   artBindings?: FrozenArtBinding[];
   assetManifest?: typeof bundledGameAssetManifest;
@@ -403,6 +427,7 @@ export const gamePublicEntitySchema = z
   .object({
     id: gameIdSchema,
     kind: z.enum(['player', 'npc', 'item', 'door']),
+    supportingNpc: supportingNpcCardSchema.optional(),
     label: z.string().trim().min(1).max(120).optional(),
     labelTranslations: gameLabelTranslationsSchema.optional(),
     visual: z.enum(['key', 'token', 'journal', 'door', 'keeper', 'traveler']).optional(),
@@ -462,6 +487,13 @@ export const gamePublicEncounterSchema = z
   .strict();
 export const gameProjectionSchema = z
   .object({
+    narrative: z
+      .object({
+        revision: z.number().int().nonnegative(),
+        turns: z.array(narrativePublicTurnSchema).max(16),
+      })
+      .strict()
+      .optional(),
     objectives: z.array(objectiveProjectionSchema).max(8).optional(),
     assetManifest: gameAssetManifestSchema.optional(),
     artBindings: frozenArtBindingsSchema.optional(),
@@ -600,6 +632,8 @@ export const gameVisualSchema = z.enum(['key', 'token', 'journal', 'door', 'keep
 const authoredLabel = z.string().trim().min(1).max(120);
 export const authoredGameDraftSchema = z
   .object({
+    narrativeConstraints: narrativeConstraintsSchema.optional(),
+    supportingNpcPolicy: supportingNpcPolicySchema.optional(),
     objectives: objectiveDefinitionsSchema.optional(),
     schemaVersion: z.literal(1),
     title: authoredLabel,
@@ -722,6 +756,9 @@ export interface NpcBrain {
   generation: number;
 }
 export interface PlayablePackage {
+  narrativePremise?: NarrativePremise;
+  narrativeConstraints?: NarrativeConstraints;
+  supportingNpcPolicy?: SupportingNpcPolicy;
   objectives?: ObjectiveDefinition[];
   artBindings?: FrozenArtBinding[];
   assetManifest: typeof bundledGameAssetManifest;

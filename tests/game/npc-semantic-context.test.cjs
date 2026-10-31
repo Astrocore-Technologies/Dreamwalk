@@ -126,3 +126,64 @@ test('actual provider request explains whole-audience disclosure without grantin
   });
   assert.deepEqual(result.proposal.actions, [{ kind: 'wait' }]);
 });
+test('actual narrative provider protocol admits evolving content but never model-chosen turn identity or private evidence', async () => {
+  const { randomUUID } = require('node:crypto');
+  const state = g.createStateFromPlayable(
+    g.compilePlayableDraft(g.createCompleteObservatoryDraft()).playable,
+    ['alice'],
+  );
+  const intent = 'Investigate the new signal';
+  const turnId = randomUUID();
+  const context = { ...g.buildNarrativeContext(state, 'alice', intent), turnId };
+  const original = g.createMockNarrativeProposal(state, 'alice', intent, turnId);
+  const { turnId: _turn, contextHash: _hash, ...fields } = original;
+  let response = fields;
+  const provider = new OpenAiNpcProvider(
+    {
+      enabled: true,
+      apiKey: 'synthetic',
+      model: 'fixture',
+      version: 'fixture',
+      maxInputBytes: 64000,
+      maxOutputTokens: 1000,
+      maxResponseBytes: 64000,
+      inputMicrosPerMillion: 1,
+      outputMicrosPerMillion: 1,
+    },
+    async (_url, init) => {
+      const body = JSON.parse(init.body);
+      assert.equal(body.text.format.name, 'npc_narrative');
+      assert.equal(body.text.format.schema.additionalProperties, false);
+      assert.equal(body.text.format.schema.properties.turnId, undefined);
+      assert.match(body.instructions, /current confirmed campaign canon/);
+      assert.match(body.instructions, /not an exhaustive universe/);
+      assert.equal(JSON.parse(body.input).context.intent, intent);
+      return new Response(
+        JSON.stringify({
+          id: 'fixture-narrative',
+          status: 'completed',
+          usage: { input_tokens: 50, output_tokens: 100 },
+          output: [
+            { type: 'message', content: [{ type: 'output_text', text: JSON.stringify(response) }] },
+          ],
+        }),
+      );
+    },
+  );
+  const request = {
+    jobId: 'fixture',
+    purpose: 'narrative',
+    context,
+    signal: new AbortController().signal,
+    maxCostMicros: 1000,
+  };
+  const result = await provider.generate(request);
+  assert.equal(result.proposal.turnId, turnId);
+  assert.equal(g.applyNarrativeProposal(state, 'alice', result.proposal, intent).error, undefined);
+  response = { ...fields, turnId: randomUUID() };
+  assert.equal((await provider.generate(request)).proposal, null);
+  response = { ...fields, evidenceIds: [randomUUID()] };
+  assert.equal((await provider.generate(request)).failureCode, 'PROVIDER_INVALID_EVIDENCE');
+  response = { ...fields, actions: [{ kind: 'mint_currency', targetId: null, itemId: null }] };
+  assert.equal((await provider.generate(request)).proposal, null);
+});

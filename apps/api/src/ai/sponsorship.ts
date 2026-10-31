@@ -16,9 +16,9 @@ const grantSchema = z
     perOperationProviderMicros: z.number().int().min(0).max(100000000),
     expiresAt: z.iso.datetime(),
     purposes: z
-      .array(z.enum(['plan', 'summary', 'speech', 'intent']))
+      .array(z.enum(['plan', 'summary', 'speech', 'intent', 'supporting_npc', 'narrative']))
       .min(1)
-      .max(4),
+      .max(6),
   })
   .strict();
 export type SponsorGrant = z.infer<typeof grantSchema>;

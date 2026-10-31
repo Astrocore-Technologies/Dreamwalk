@@ -81,6 +81,37 @@ export class GameController {
     res.setHeader('X-Content-Type-Options', 'nosniff');
     res.send(bytes);
   }
+  @Get('campaigns/:id/narrative') narrative(@Req() req: Request, @Param('id') id: string) {
+    return this.game.narrative(req, id);
+  }
+  @Post('campaigns/:id/narrative') narrativeSubmit(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.narrative(req, id, body);
+  }
+  @Post('campaigns/:id/narrative/quote') narrativeQuote(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.narrative(req, id, body, true);
+  }
+  @Post('campaigns/:id/media-bindings') mediaBinding(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.mediaBinding(req, id, body);
+  }
+  @Post('campaigns/:id/media-preparation') mediaPreparation(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.mediaPreparation(req, id, body);
+  }
   @Get('campaigns') list(@Req() req: Request) {
     return this.game.list(req);
   }

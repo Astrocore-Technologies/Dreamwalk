@@ -55,11 +55,14 @@ function run(s, n = 1) {
   }
   return s;
 }
-test('reactive behavior is explicit versioned opt-in, legacy authored remains v2', () => {
-  assert.equal(
-    g.compilePlayableDraft(g.createAuthoredDraft()).playable.rulesetVersion,
-    'hybrid-v2',
-  );
+test('new authored templates support narrative v3 while saved drafts without the flag remain v2', () => {
+  const fresh = g.createAuthoredDraft();
+  assert.equal(fresh.npcBehavior, 'reactive-v1');
+  assert.equal(g.compilePlayableDraft(fresh).playable.rulesetVersion, 'hybrid-v3');
+  const legacy = structuredClone(fresh);
+  delete legacy.npcBehavior;
+  assert.equal(g.compilePlayableDraft(legacy).playable.rulesetVersion, 'hybrid-v2');
+  assert.equal(legacy.npcBehavior, undefined);
   assert.equal(world().rulesetVersion, 'hybrid-v3');
   assert.equal(g.gameProjectionSchema.safeParse(g.projectState(world(), 'alice')).success, true);
 });

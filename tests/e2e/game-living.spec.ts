@@ -236,6 +236,8 @@ test('living author version saves personality and reacts without manual NPC requ
     );
     await intent.getByRole('button', { name: 'Подтвердить это действие', exact: true }).click();
     expect((await confirmed).ok()).toBeTruthy();
+    await page.getByTestId('game-advanced').locator('summary').click();
+    await guest.getByTestId('game-advanced').locator('summary').click();
     const sponsor = page.getByRole('region', { name: 'Бюджет организатора', exact: true });
     await expect(
       guest.getByRole('region', { name: 'Бюджет организатора', exact: true }),

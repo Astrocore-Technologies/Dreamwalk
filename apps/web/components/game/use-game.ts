@@ -9,6 +9,11 @@ import type {
 } from '@dreamwalk/contracts';
 import { gameEnvelopeSchema, type GameEnvelope } from '@dreamwalk/contracts';
 import { api, ApiError } from '@/lib/client';
+import {
+  canRetryEncounterBegin,
+  encounterRetryContext,
+  type EncounterRetryContext,
+} from './encounter-retry';
 
 export type CampaignSummary = {
   id: string;
@@ -62,13 +67,20 @@ export function useGame(campaignId: string) {
   const [events, setEvents] = useState<(GameEvent & { id: string })[]>([]);
   const [clockOffset, setClockOffset] = useState(0);
   const socket = useRef<WebSocket | null>(null);
+  const connectionState = useRef(connection);
+  connectionState.current = connection;
   const envelope = useRef<GameEnvelope | null>(null);
   const seq = useRef(0);
   const stopping = useRef(false);
   const queuedTarget = useRef<GamePoint | null>(null);
   const alive = useRef(false);
   const commandInFlight = useRef(false);
-  const retry = useRef<{ key: string; body: CommandBody } | null>(null);
+  const retry = useRef<{
+    key: string;
+    body: CommandBody;
+    encounterStart: EncounterRetryContext | null;
+    encounterRetries: number;
+  } | null>(null);
   const path = `/game/campaigns/${encodeURIComponent(campaignId)}`;
   const accept = useCallback((input: unknown) => {
     const parsed = gameEnvelopeSchema.safeParse(input);
@@ -102,7 +114,10 @@ export function useGame(campaignId: string) {
   const refresh = useCallback(async () => {
     try {
       const value = await api<GameEnvelope>(`${path}/snapshot`);
-      if (alive.current) accept(value);
+      if (alive.current) {
+        accept(value);
+        return value;
+      }
     } catch (err) {
       if (alive.current) {
         setError(err instanceof ApiError ? err.code : 'NETWORK_ERROR');
@@ -246,7 +261,7 @@ export function useGame(campaignId: string) {
       if (commandInFlight.current) return false;
       commandInFlight.current = true;
       const key = JSON.stringify(body);
-      const request: CommandBody =
+      let request: CommandBody =
         retry.current?.key === key
           ? retry.current.body
           : {
@@ -255,14 +270,58 @@ export function useGame(campaignId: string) {
               expectedRevision: envelope.current?.projection.revision,
               ...body,
             };
-      retry.current = { key, body: request };
+      const encounterStart =
+        retry.current?.key === key
+          ? retry.current.encounterStart
+          : encounterRetryContext(envelope.current);
+      let encounterRetries = retry.current?.key === key ? retry.current.encounterRetries : 0;
+      const initialSocket = socket.current;
+      retry.current = { key, body: request, encounterStart, encounterRetries };
       setBusy(true);
       setError('');
       try {
-        const result = await api<CommandResult>(`${path}/commands`, {
+        let result = await api<CommandResult>(`${path}/commands`, {
           method: 'POST',
           body: JSON.stringify(request),
         });
+        // A known rejection has made no world change. Never replay unknown network outcomes here.
+        if (
+          request.type === 'encounter.begin' &&
+          result.status === 'rejected' &&
+          result.code === 'STALE_STATE'
+        ) {
+          const refreshed = await refresh();
+          const after = encounterRetryContext(envelope.current);
+          if (
+            refreshed &&
+            canRetryEncounterBegin({
+              type: request.type,
+              status: result.status,
+              code: result.code,
+              attempts: encounterRetries,
+              before: encounterStart,
+              after,
+              connected:
+                connectionState.current === 'connected' &&
+                alive.current &&
+                socket.current === initialSocket &&
+                initialSocket?.readyState === WebSocket.OPEN,
+            })
+          ) {
+            encounterRetries++;
+            request = {
+              ...request,
+              operationId: crypto.randomUUID(),
+              expectedRevision: after!.revision,
+            };
+            // Preserve this new operation ID if its outcome is unknown. No third attempt is allowed.
+            retry.current = { key, body: request, encounterStart, encounterRetries };
+            result = await api<CommandResult>(`${path}/commands`, {
+              method: 'POST',
+              body: JSON.stringify(request),
+            });
+          }
+        }
         retry.current = null;
         if (!alive.current) return false;
         if (result.status === 'rejected') setError(result.code || 'INVALID_ACTION');
