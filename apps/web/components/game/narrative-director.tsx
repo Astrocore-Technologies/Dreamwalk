@@ -1,5 +1,5 @@
 'use client';
-import { useCallback, useEffect, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { GameProjection } from '@dreamwalk/contracts';
 import { SceneMedia } from './scene-media';
 import { api, ApiError, errorMessage } from '@/lib/client';
@@ -61,6 +61,7 @@ export function NarrativeDirector({
   disabled: boolean;
 }) {
   const h = useNarrativeText();
+  const inputHintId = useId();
   const path = `/game/campaigns/${campaignId}/narrative`;
   const [status, setStatus] = useState<NarrativeStatus | null>(null);
   const [text, setText] = useState('');
@@ -238,8 +239,10 @@ export function NarrativeDirector({
         }}
         className="stack"
       >
-        <Field label={h('input')} hint={h('shared')}>
+        <Field label={h('input')}>
           <Textarea
+            aria-label={h('input')}
+            aria-describedby={inputHintId}
             value={text}
             maxLength={1000}
             required
@@ -252,6 +255,7 @@ export function NarrativeDirector({
             }}
           />
         </Field>
+        <small id={inputHintId}>{h('shared')}</small>
         <Button
           type="submit"
           disabled={disabled || busy || pending || uncertain || !available || !text.trim()}

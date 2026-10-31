@@ -68,3 +68,14 @@ test('scene artwork uses authoritative CAS reuse and separate explicit grounded 
     /\/media-bindings|mode: 'external'|setConsent\(true\)|setAttested\(true\)/,
   );
 });
+
+test('narrative composer has a stable accessible name and separately associated audience hint', async () => {
+  const source = await readFile(
+    new URL('../../apps/web/components/game/narrative-director.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /aria-label=\{h\('input'\)\}/);
+  assert.match(source, /aria-describedby=\{inputHintId\}/);
+  assert.match(source, /<small id=\{inputHintId\}>\{h\('shared'\)\}/);
+  assert.doesNotMatch(source, /<Field label=\{h\('input'\)\} hint=/);
+});
