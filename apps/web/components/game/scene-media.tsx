@@ -119,6 +119,7 @@ export function SceneMedia({
         <p>{h('media')}</p>
         <Field label={h('mediaKind')}>
           <Select
+            aria-label={h('mediaKind')}
             value={kind}
             disabled={busy}
             onChange={(event) => setKind(event.target.value as typeof kind)}
@@ -130,6 +131,7 @@ export function SceneMedia({
         {kind === 'portrait' && (
           <Field label={h('mediaNpc')}>
             <Select
+              aria-label={h('mediaNpc')}
               value={npcId}
               disabled={busy}
               onChange={(event) => setSelectedNpc(event.target.value)}

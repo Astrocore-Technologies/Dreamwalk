@@ -79,3 +79,20 @@ test('narrative composer has a stable accessible name and separately associated 
   assert.match(source, /<small id=\{inputHintId\}>\{h\('shared'\)\}/);
   assert.doesNotMatch(source, /<Field label=\{h\('input'\)\} hint=/);
 });
+
+test('art selectors and approval controls have explicit localized accessible names independent of options and values', async () => {
+  const media = await readFile(
+    new URL('../../apps/web/components/game/scene-media.tsx', import.meta.url),
+    'utf8',
+  );
+  for (const key of ['mediaKind', 'mediaNpc'])
+    assert.ok(media.includes(`aria-label={h('${key}')}`));
+  const generation = await readFile(
+    new URL('../../apps/web/components/game/grounded-image.tsx', import.meta.url),
+    'utf8',
+  );
+  for (const key of ['license', 'attribution'])
+    assert.ok(generation.includes(`aria-label={a('${key}')}`));
+  for (const key of ['rights', 'consent'])
+    assert.ok(generation.includes(`aria-label={g('${key}')}`));
+});

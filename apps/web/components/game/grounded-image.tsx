@@ -237,6 +237,7 @@ export function GroundedImage({
         <p>{g('unavailable')}</p>
         <Field label={a('license')}>
           <Input
+            aria-label={a('license')}
             value={license}
             maxLength={120}
             disabled={busy}
@@ -245,6 +246,7 @@ export function GroundedImage({
         </Field>
         <Field label={a('attribution')}>
           <Input
+            aria-label={a('attribution')}
             value={attribution}
             maxLength={240}
             disabled={busy}
@@ -254,6 +256,7 @@ export function GroundedImage({
         <label>
           <input
             type="checkbox"
+            aria-label={g('rights')}
             checked={attested}
             disabled={busy}
             onChange={(e) => setAttested(e.target.checked)}
@@ -276,6 +279,7 @@ export function GroundedImage({
             <label>
               <input
                 type="checkbox"
+                aria-label={g('consent')}
                 checked={consent}
                 disabled={busy}
                 onChange={(e) => setConsent(e.target.checked)}
