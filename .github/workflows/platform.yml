@@ -53,7 +53,7 @@ jobs:
         env:
           NODE_ENV: production
       - name: Semantic NPC context and disclosure regression
-        run: node --test tests/game/npc-semantic-context.test.cjs
+        run: node --test tests/game/npc-semantic-context.test.cjs tests/game/npc-reply-binding.test.cjs
       - name: Durable isolated evaluation ledger and crash recovery
         run: node scripts/test-live-story-pg.mjs
       - name: Zero-network story evaluation rehearsal

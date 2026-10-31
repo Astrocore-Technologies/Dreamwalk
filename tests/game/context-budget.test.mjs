@@ -56,3 +56,39 @@ test('speech packing keeps asked facts and literal current question; inadequate 
   );
   assert.ok(!packed.claims.some((c) => c.observationId === 'optional'));
 });
+test('explicit reply marker protects its authorized claim even when facts and later utterances reorder the window', () => {
+  const trigger = {
+    observationId: 'exact-question',
+    kind: 'said',
+    untrustedUtterance: 'What phrase did I tell you?',
+  };
+  const input = {
+    replyToObservationId: trigger.observationId,
+    currentUtterance: trigger,
+    requestedFactIds: [],
+    claims: [
+      trigger,
+      ...Array.from({ length: 12 }, (_, i) => ({
+        observationId: `other-${i}`,
+        untrustedUtterance: 'x'.repeat(i === 11 ? 1500 : 150),
+      })),
+    ],
+  };
+  const result = packNpcContext(input, 700);
+  assert.equal(result.budgetExceeded, false);
+  assert.ok(result.claims.some((c) => c.observationId === trigger.observationId));
+  assert.deepEqual(result.currentUtterance, trigger);
+  const changed = packNpcContext({ ...input, replyToObservationId: 'other-1' }, 700);
+  assert.notEqual(result.contextHash, changed.contextHash);
+});
+
+test('oversized bound utterance fails the context budget without truncating required evidence', () => {
+  const trigger = { observationId: 'bound-question', untrustedUtterance: 'Q'.repeat(2000) };
+  const packed = packNpcContext(
+    { replyToObservationId: trigger.observationId, currentUtterance: trigger, claims: [trigger] },
+    500,
+  );
+  assert.equal(packed.budgetExceeded, true);
+  assert.deepEqual(packed.claims, [trigger]);
+  assert.deepEqual(packed.currentUtterance, trigger);
+});

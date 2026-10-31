@@ -20,10 +20,14 @@ Discord, payments, deployment and the managed preview are outside this kit.
   permitted OpenAI API egress; documentation browsing is not proof of that route.
 
 The execution ledger uses PostgreSQL WAL, not directory `fsync` or POSIX lock
-files. Linux zero-network acceptance is verified; Windows must pass the same
-zero-network commands on the intended machine before any secure key entry.
+files. Linux zero-network acceptance is verified. On 2026-10-31, clean published
+`4f0513c` also passed the native Windows controller tests, six durable-ledger
+checks and the four-receipt application rehearsal with restart and two canonical
+media packets. Any later source or machine change still requires its own offline
+check before secure execution.
 Legacy file-ledger unit cases are skipped on Windows; the PostgreSQL durability
-and crash tests are not skipped. No Windows execution success is implied here.
+and crash tests are not skipped. This is mechanical Windows proof, not proof of
+live dialogue quality.
 
 Run from the repository root after dependencies and the API/contracts/core build
 are prepared. The explicit prerequisites (performed separately, never implicitly by
@@ -122,3 +126,18 @@ dispatch; any contract mismatch stops the run. No image quote, generation or
 purchase occurs, and the text transport still permits exactly four requests.
 These packets must be revalidated against current canon before later generation;
 they are not permission to spend or reuse a stale generic starting-scene prompt.
+
+## Completed live run and reuse boundary
+
+The authorized four-request run on `4f0513c` has now completed with partial
+semantic success; see `player-journey-validation.md`. Its ledger is exhausted by
+dispatch count even though its money allowance has a remainder. Neither a prompt
+repair nor a new checkout permits a fifth request or a fresh ledger.
+
+Reports now preserve each exact player input and only newly observed replies from
+the target NPC. Job correlation is labeled as a single new authorized job within
+a serial turn window, or unresolved; a receipt is linked only by exact job ID.
+Private observation provenance is not exported through this report. Live semantic
+grades remain pending human review; fixture grades explicitly mean not evaluated.
+No phrase matcher, mock answer or schema pass can establish remembered context,
+helpful story progress or natural character behavior.

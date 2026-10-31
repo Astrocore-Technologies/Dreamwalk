@@ -726,3 +726,38 @@ not a platform-specific directory-flush assumption. Independent review found no
 additional concrete guard blocker. Actual Windows execution and the new
 authenticated browser-return/Continue scenarios remain gates for the next handoff.
 No credential was read and no external provider request was made in these checks.
+
+## 2026-10-31: real story evaluation and targeted quality repair
+
+PR17 source `4f0513c` subsequently passed both 24-scenario browser runs without a
+test retry, plus pristine native Windows PostgreSQL guard and complete no-network
+application rehearsal. The owner merged it; the repair baseline is main `d5fe85a`.
+
+An explicitly authorized real Luna evaluation then completed four requests. New
+room/NPC creation, two-player transitions and durable restart succeeded. Semantic
+acceptance was partial: NPC identity persisted, but a prior public signal name was
+not recalled despite being present in supplied claims; the continuation lacked an
+actionable lead. See `player-journey-validation.md` for evidence and accounting.
+The four-request allowance is exhausted; it is not reset by these code changes.
+
+The targeted offline repair binds ordinary dialogue to its exact admitted,
+audience-authorized utterance and rechecks provenance at commit. Context packing
+retains that trigger; manual advanced speech remains compatible. Provider guidance
+separates speaking, planning and narration, distinguishes reported words from world
+truth, and asks for a supported next step. Provider fingerprints now include the
+actual request instructions/schema, invalidating old caches and consent contracts.
+Evaluation reports retain each input and only new target replies, with conservative
+job/receipt linkage and no automatic semantic-pass grading.
+
+Affected verification passed: real PostgreSQL delayed-speech acceptance 7/7,
+provider/runtime/reporter protocol 12/12, and the complete four-fake-receipt app
+rehearsal with saved-world restart and canonical media preparation. These are
+provenance and mechanics tests, not a live quality retest. No further paid text
+request was performed for the repair. Aggregate regression and exact-head CI are
+tracked in the next publication handoff.
+
+Final offline repair regression: typecheck, production build, whole-workspace lint
+and formatting passed; contracts 9/9, core 121/121, configuration/locales/shutdown
+22/22, UI/privacy/guard/report suite 96/96, and the full real PostgreSQL game suite
+173/173 passed in one uninterrupted run. Browser acceptance for this exact repair
+still belongs to its publication CI, not to these local results.
