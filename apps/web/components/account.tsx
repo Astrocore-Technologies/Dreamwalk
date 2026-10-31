@@ -4,7 +4,7 @@ import { AccountExports } from './account-exports';
 import { EmailVerification } from './account-email';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
-import { readStoryReturn, withStoryReturn, storyAfterAuth } from './story-return';
+import { readStoryReturn, withStoryReturn, storyAfterAuth, authFormKey } from './story-return';
 import { StoryReturnLink } from './story-return-link';
 import { useLaunchGate } from './game/use-launch-gate';
 import { useState, useEffect, type FormEvent } from 'react';
@@ -37,9 +37,27 @@ import {
   UploadField,
 } from './ui';
 export function AuthPage({ signup = false, reset = false }: { signup?: boolean; reset?: boolean }) {
+  const returnTo = readStoryReturn(useSearchParams());
+  return (
+    <AuthForm
+      key={authFormKey(signup, reset, returnTo)}
+      signup={signup}
+      reset={reset}
+      returnTo={returnTo}
+    />
+  );
+}
+function AuthForm({
+  signup,
+  reset,
+  returnTo,
+}: {
+  signup: boolean;
+  reset: boolean;
+  returnTo: string | null;
+}) {
   const { t: tr, locale } = useT();
   const router = useRouter();
-  const returnTo = readStoryReturn(useSearchParams());
   const authGate = useLaunchGate(`auth:${signup}:${reset}:${returnTo}`);
   const { setUser, toast } = useClient();
   const [error, setError] = useState(''),
@@ -77,8 +95,8 @@ export function AuthPage({ signup = false, reset = false }: { signup?: boolean; 
             body: JSON.stringify({ language: locale }),
           });
         }
-        setUser(r.user);
         if (!authGate.accepts(lease)) return;
+        setUser(r.user);
         toast(signup ? tr('Добро пожаловать в Dreamwalk') : tr('С возвращением'));
         router.push(storyAfterAuth(r.user.onboarded, returnTo));
       }

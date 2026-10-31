@@ -30,3 +30,8 @@ export function storyWithHero(intent: string | null, heroId: string): string | n
   const safe = safeStoryReturn(intent);
   return safe && heroPattern.test(heroId) ? `${safe.split('?')[0]}?heroId=${heroId}` : null;
 }
+
+/** A changed auth mode or safe destination starts a fresh form, including uncontrolled inputs. */
+export function authFormKey(signup: boolean, reset: boolean, intent: string | null): string {
+  return JSON.stringify([reset ? 'reset' : signup ? 'signup' : 'signin', safeStoryReturn(intent)]);
+}

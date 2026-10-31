@@ -194,3 +194,55 @@ test('external return target is not propagated through auth links', async ({ pag
   await page.getByRole('link', { name: 'Создать аккаунт', exact: true }).click();
   await expect(page).toHaveURL(/\/auth\/sign-up$/);
 });
+
+test('switching auth mode during a pending login remounts a fresh usable signup form', async ({
+  page,
+}) => {
+  const account = credentials();
+  expect(
+    (
+      await page.request.post('/api/v1/auth/register', { data: { ...account, name: 'Mode QA' } })
+    ).ok(),
+  ).toBeTruthy();
+  expect((await page.request.post('/api/v1/auth/logout', { data: {} })).ok()).toBeTruthy();
+  await chooseStory(page);
+  let releaseLogin!: () => void;
+  let responseReady!: () => void;
+  const held = new Promise<void>((resolve) => {
+    releaseLogin = resolve;
+  });
+  const ready = new Promise<void>((resolve) => {
+    responseReady = resolve;
+  });
+  await page.route('**/api/v1/auth/login', async (route) => {
+    const response = await route.fetch();
+    expect(response.ok()).toBeTruthy();
+    responseReady();
+    await held;
+    await route.fulfill({ response });
+  });
+  try {
+    await signIn(page, account);
+    await ready;
+    await page.getByRole('link', { name: 'Создать аккаунт', exact: true }).click();
+    const signup = (url: URL) =>
+      url.pathname === '/auth/sign-up' && url.searchParams.get('returnTo') === storyPath;
+    await expect(page).toHaveURL(signup);
+    await expect(page.getByRole('button', { name: 'Создать аккаунт', exact: true })).toBeEnabled();
+    await expect(page.getByLabel('Email', { exact: true })).toHaveValue('');
+    await expect(page.getByLabel('Пароль', { exact: true })).toHaveValue('');
+    await page.getByLabel('Как тебя называть?').fill('Fresh signup remains editable');
+    const delivered = page.waitForResponse((r) => r.url().endsWith('/auth/login') && r.ok());
+    releaseLogin();
+    await delivered;
+    await assertNoCampaigns(page);
+    await expect(page).toHaveURL(signup);
+    await expect(page.getByRole('button', { name: 'Создать аккаунт', exact: true })).toBeEnabled();
+    await expect(page.getByLabel('Как тебя называть?')).toHaveValue(
+      'Fresh signup remains editable',
+    );
+  } finally {
+    releaseLogin();
+    await page.unroute('**/api/v1/auth/login');
+  }
+});
