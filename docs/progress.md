@@ -678,3 +678,51 @@ dispatch and admission. Final typecheck passed; publication records the terminal
 and formatting results alongside the immutable snapshot. The expanded twentieth
 browser scenario and its actual scene/history captures remain CI gates, not local
 browser claims.
+
+## 2026-10-31 — verified narrative baseline and complete player-journey follow-through
+
+The final narrative baseline `223bf0679bb60080eb5e8775c91222d5e3d7f7fc`
+subsequently passed both exact-head CI runs (`41170514487` and `41170510845`),
+including all 20 browser scenarios on their first attempt. Actual scene/history
+captures were reviewed. These use controlled provider responses and library raster
+fixtures; they are not evidence of live-model quality or newly generated final art.
+
+A real PostgreSQL regression reproduced and fixed a publication race: a membership
+read between database commit and hot-cache revision promotion could evict a valid
+runtime and falsely supersede its active connection. The publication fence retains
+the real lease while preserving genuine second-tab takeover, external revision and
+erasure freshness, and rollback release. No reconnect guard was disabled.
+
+After the ephemeral workspace was replaced, all 327 source files were restored and
+verified against that commit. A new isolated mock-only preview database was created;
+no previous user database was reset. The managed preview starts successfully. Public
+browser inspection verified Home, the Observatory detail page, Back navigation and
+interface-language switching. It also identified an unfinished first-play detail:
+guest Start loses the selected story at authentication. The current follow-through
+preserves a strictly local story-return intent through authentication/onboarding and
+tests explicit hero selection, launch and saved-campaign continuation. It must not
+create a campaign merely because authentication completed.
+
+Live evaluation remains separate: fresh secure credentials and an authorized network
+route are required. The approved text allowance is not reset by workspace recovery;
+the conservative carried budget reserve is 10,769 USD micro-units (reconciled
+receipts total 769; the extra safety reserve remains unavailable). Image generation still
+requires resolution of the estimate-versus-hard-upper-bound consent gate. No new
+paid calls, image-generation claims, deployment or user-computer restart are implied
+by the restored preview or these deterministic checks.
+
+Follow-through verification: typecheck, whole-workspace lint, production build,
+contracts 9/9, configuration/locales 18/18, core 118/118 and the then-current
+UI/privacy/guard suite 88/88 passed. The final Windows preload-URL refinement
+subsequently passed its affected guard suite 7/7 and the actual-application
+zero-network rehearsal again. The real PostgreSQL budget-guard suite passed 6/6,
+including a killed process after durable reservation; provider/sponsorship
+integration passed 15/15. Rehearsal executes exactly four fake provider receipts,
+two independently authenticated players, evolving scenes/NPC dialogue and an API
+restart against the same saved world and ledger. It is not live-model evidence.
+
+The Windows-compatible evaluator uses a dedicated persistent PostgreSQL ledger,
+not a platform-specific directory-flush assumption. Independent review found no
+additional concrete guard blocker. Actual Windows execution and the new
+authenticated browser-return/Continue scenarios remain gates for the next handoff.
+No credential was read and no external provider request was made in these checks.

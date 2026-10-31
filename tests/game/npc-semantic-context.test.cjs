@@ -78,6 +78,7 @@ test('actual provider request explains whole-audience disclosure without grantin
         JSON.stringify({
           id: 'synthetic-response',
           status: 'completed',
+          service_tier: 'default',
           usage: { input_tokens: 20, output_tokens: 10 },
           output: [
             {
@@ -162,6 +163,7 @@ test('actual narrative provider protocol admits evolving content but never model
         JSON.stringify({
           id: 'fixture-narrative',
           status: 'completed',
+          service_tier: 'default',
           usage: { input_tokens: 50, output_tokens: 100 },
           output: [
             { type: 'message', content: [{ type: 'output_text', text: JSON.stringify(response) }] },
@@ -186,4 +188,55 @@ test('actual narrative provider protocol admits evolving content but never model
   assert.equal((await provider.generate(request)).failureCode, 'PROVIDER_INVALID_EVIDENCE');
   response = { ...fields, actions: [{ kind: 'mint_currency', targetId: null, itemId: null }] };
   assert.equal((await provider.generate(request)).proposal, null);
+});
+test('actual OpenAI adapter pins Standard tier and holds unknown or different billing modes', async () => {
+  for (const tier of [undefined, 'priority', 'flex', 'default']) {
+    let calls = 0;
+    const provider = new OpenAiNpcProvider(
+      {
+        enabled: true,
+        apiKey: 'synthetic',
+        model: 'fixture',
+        version: 'fixture',
+        maxInputBytes: 64000,
+        maxOutputTokens: 100,
+        maxResponseBytes: 64000,
+        inputMicrosPerMillion: 100000,
+        outputMicrosPerMillion: 500000,
+      },
+      async (_url, init) => {
+        calls++;
+        assert.equal(JSON.parse(init.body).service_tier, 'default');
+        return new Response(
+          JSON.stringify({
+            id: 'receipt-tier',
+            status: 'completed',
+            service_tier: tier,
+            usage: { input_tokens: 10, output_tokens: 10 },
+            output: [
+              { type: 'message', content: [{ type: 'output_text', text: '{"text":"Hello."}' }] },
+            ],
+          }),
+        );
+      },
+    );
+    const request = {
+      jobId: 'tier-test',
+      purpose: 'speech',
+      context: { contextHash: 'safe', claims: [] },
+      signal: new AbortController().signal,
+      maxCostMicros: 50000,
+    };
+    if (tier === 'default')
+      assert.equal((await provider.generate(request)).proposal.text, 'Hello.');
+    else
+      await assert.rejects(
+        provider.generate(request),
+        (e) =>
+          e.code === 'PROVIDER_TIER_UNKNOWN' &&
+          e.uncertain === true &&
+          e.requestId === 'receipt-tier',
+      );
+    assert.equal(calls, 1);
+  }
 });

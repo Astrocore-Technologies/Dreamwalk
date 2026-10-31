@@ -10,6 +10,11 @@ export const localeNames: Record<Locale, string> = {
 export const intlLocales: Record<Locale, string> = { uk: 'uk-UA', en: 'en-GB', ru: 'ru-RU' };
 const messages: Record<string, Record<Locale, string>> = {
   ...gameMessages,
+  'Вернуться к выбранной истории': {
+    ru: 'Вернуться к выбранной истории',
+    en: 'Back to the selected story',
+    uk: 'Повернутися до вибраної історії',
+  },
   'ID тега': { ru: 'ID тега', en: 'Tag ID', uk: 'ID тегу' },
   'Добавить тег': { ru: 'Добавить тег', en: 'Add tag', uk: 'Додати тег' },
   'Свои теги': { ru: 'Свои теги', en: 'Custom tags', uk: 'Власні теги' },

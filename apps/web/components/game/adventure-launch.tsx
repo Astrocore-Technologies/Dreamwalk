@@ -1,4 +1,5 @@
 'use client';
+import { storyReturnPath, withStoryReturn } from '../story-return';
 import { HeroSelection, useHeroSelection } from './hero-selection';
 import { useLaunchGate } from './use-launch-gate';
 import { useRouter } from 'next/navigation';
@@ -31,7 +32,9 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
     [error, setError] = useState('');
   async function launch() {
     if (!user) {
-      router.push('/auth/sign-in');
+      router.push(
+        withStoryReturn('/auth/sign-in', storyReturnPath(adventure.slug, heroSelection.heroId)),
+      );
       return;
     }
     if (!versionId || !heroSelection.ready) return;
