@@ -58,7 +58,12 @@ async function capture(page: Page, filename: string) {
 test('four independent players start the public Observatory with owned heroes and retain a shared ending', async ({
   browser,
 }) => {
-  test.setTimeout(150000);
+  // Four independent live WebGL pages also record trace snapshots. Measured CI:
+  // setup/joins ~22s, four privacy disclosures ~84s, room capture ~9s,
+  // key+door ~32s, before roof/journal, four reloads and two final captures.
+  // Keep per-action 15s and per-route-step 30s limits; only the complete
+  // four-player journey needs a larger cumulative budget than one-player tests.
+  test.setTimeout(300000);
   const contexts = await Promise.all(
     Array.from({ length: 4 }, () =>
       browser.newContext({
