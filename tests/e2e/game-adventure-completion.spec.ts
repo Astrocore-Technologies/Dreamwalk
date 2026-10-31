@@ -78,6 +78,7 @@ test('four independent players start the public Observatory with owned heroes an
     page.setDefaultTimeout(15000);
     page.setDefaultNavigationTimeout(30000);
   }
+  let journeyCompleted = false;
   try {
     const accounts = await Promise.all(pages.map((p, i) => account(p, i + 1)));
     await owner.goto('/home');
@@ -207,16 +208,24 @@ test('four independent players start the public Observatory with owned heroes an
       await owner.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
     await capture(owner, 'sample-adventure-ending-mobile.png');
+    journeyCompleted = true;
   } finally {
-    // Cleanup must not replace the useful failing action with a context-close error.
-    const cleanup = Promise.allSettled(contexts.map((c) => c.close()));
-    let timer: ReturnType<typeof setTimeout> | undefined;
-    await Promise.race([
-      cleanup,
-      new Promise<void>((resolve) => {
-        timer = setTimeout(resolve, 5000);
-      }),
-    ]);
-    if (timer) clearTimeout(timer);
+    if (journeyCompleted) {
+      // Successful tests must finish every owned context/trace teardown before
+      // Playwright reuses the worker browser for the next scenario.
+      await Promise.all(contexts.map((context) => context.close()));
+    } else {
+      // A failed journey retains its original action error even if the browser
+      // is already closing. Playwright discards that failed worker afterwards.
+      const cleanup = Promise.allSettled(contexts.map((context) => context.close()));
+      let timer: ReturnType<typeof setTimeout> | undefined;
+      await Promise.race([
+        cleanup,
+        new Promise<void>((resolve) => {
+          timer = setTimeout(resolve, 5000);
+        }),
+      ]);
+      if (timer) clearTimeout(timer);
+    }
   }
 });
