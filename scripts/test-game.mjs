@@ -4,6 +4,9 @@ import { once } from 'node:events';
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { readdirSync } from 'node:fs';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
 import { startLocalPostgres } from './postgres-local.mjs';
 import { forceMockNpcTestEnvironment } from './mock-npc-test-env.mjs';
 
@@ -36,6 +39,8 @@ for (const key of [
   process.env[key] = 'false';
 process.env.GLOBAL_SPEND_CAP = '0';
 for (const key of ['SMTP_HOST', 'SMTP_FROM', 'SMTP_USER', 'SMTP_PASSWORD']) delete process.env[key];
+const assetDir = await mkdtemp(join(tmpdir(), 'dreamwalk-game-test-assets-'));
+process.env.ASSET_DIR = assetDir;
 const database = await startLocalPostgres();
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 async function run(command, args) {
@@ -61,4 +66,5 @@ try {
   ]);
 } finally {
   await database.stop();
+  await rm(assetDir, { recursive: true, force: true });
 }

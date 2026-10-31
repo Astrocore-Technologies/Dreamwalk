@@ -149,10 +149,15 @@ await test(
               owner.user.id,
             ])
           ).rows[0];
-          await db.query('DELETE FROM game_members WHERE campaign_id=$1 AND user_id=$2', [
-            campaignId,
-            owner.user.id,
-          ]);
+          await database.tx(async (c) => {
+            // This synthetic deletion models the explicitly authorized erasure path.
+            // Keep immutable hero protection enabled for ordinary application writes.
+            await c.query("SELECT set_config('dreamwalk.erasure','confirmed',true)");
+            await c.query('DELETE FROM game_members WHERE campaign_id=$1 AND user_id=$2', [
+              campaignId,
+              owner.user.id,
+            ]);
+          });
           await db.query(
             "INSERT INTO game_members(campaign_id,user_id,actor_id,status) VALUES($1,$2,$3,'accepted')",
             [campaignId, owner.user.id, membership.actor_id],

@@ -11,6 +11,8 @@ import { authorizedArt } from '../assets/art-visibility';
 import { useAssetText } from '../assets/messages';
 import { useCampaignArt } from '../assets/use-campaign-art';
 import { artPreviewUrl } from '../assets/types';
+import { HeroSelection, useHeroSelection, useHeroText, CampaignHero } from './hero-selection';
+import { useLaunchGate } from './use-launch-gate';
 import { GameCanvas } from './game-canvas';
 import { SponsorBudget } from './sponsor-budget';
 import { IntentProposals } from './intent-proposals';
@@ -76,36 +78,56 @@ export function GamePage({ campaignId }: { campaignId?: string }) {
   return campaignId ? <CampaignRoom key={campaignId} campaignId={campaignId} /> : <CampaignLobby />;
 }
 function CampaignLobby() {
+  const heroSelection = useHeroSelection();
+  const heroText = useHeroText();
+  const launchGate = useLaunchGate(heroSelection.heroId);
   const { t } = useT();
   const router = useRouter();
   const campaigns = useResource<{ campaigns: CampaignSummary[] }>('/game/campaigns');
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   async function create() {
+    if (!heroSelection.ready) return;
+    const lease = launchGate.begin();
+    if (!lease) return;
+    let navigating = false;
     setBusy(true);
     setError('');
     try {
       const result = await api<{ campaignId: string }>('/game/campaigns', {
         method: 'POST',
-        body: JSON.stringify({ template: 'observatory-v1' }),
+        body: JSON.stringify({ template: 'observatory-v1', ...heroSelection.body }),
       });
-      router.push(`/game/${result.campaignId}`);
+      if (launchGate.accepts(lease)) {
+        router.push(`/game/${result.campaignId}`);
+        navigating = true;
+      }
     } catch (err) {
-      setError(errorMessage(err));
+      if (launchGate.accepts(lease)) setError(errorMessage(err));
     } finally {
-      setBusy(false);
+      if (!navigating && launchGate.finish(lease)) setBusy(false);
     }
   }
   async function accept(id: string) {
+    if (!heroSelection.ready) return;
+    const lease = launchGate.begin();
+    if (!lease) return;
+    let navigating = false;
     setBusy(true);
     setError('');
     try {
-      await api(`/game/campaigns/${id}/accept`, { method: 'POST', body: '{}' });
-      router.push(`/game/${id}`);
+      await api(`/game/campaigns/${id}/accept`, {
+        method: 'POST',
+        body: JSON.stringify(heroSelection.body),
+      });
+      if (launchGate.accepts(lease)) {
+        router.push(`/game/${id}`);
+        navigating = true;
+      }
     } catch (err) {
-      setError(errorMessage(err));
+      if (launchGate.accepts(lease)) setError(errorMessage(err));
     } finally {
-      setBusy(false);
+      if (!navigating && launchGate.finish(lease)) setBusy(false);
     }
   }
   return (
@@ -117,6 +139,13 @@ function CampaignLobby() {
           'Настоящая ходьба, общие предметы и локальные раунды. Пока без платного AI.',
         )}
       />
+      <HeroSelection selection={heroSelection} disabled={busy} />
+      <Link
+        className="button secondary"
+        href={`/?heroId=${encodeURIComponent(heroSelection.heroId)}`}
+      >
+        {heroText('adventures')}
+      </Link>
       <section className={styles.hero}>
         <div className={styles.heroArt} aria-hidden="true">
           <Moon size={72} strokeWidth={0.7} />
@@ -126,7 +155,7 @@ function CampaignLobby() {
           <p className={styles.kicker}>{t('Исследование')}</p>
           <h2>{t('Обсерватория')}</h2>
           <p>{t('Этот отдельный тестовый мир не изменяет твои опубликованные истории.')}</p>
-          <Button busy={busy} onClick={() => void create()}>
+          <Button busy={busy} disabled={!heroSelection.ready} onClick={() => void create()}>
             <Compass size={18} />
             {t('Новая кампания')}
           </Button>
@@ -148,7 +177,11 @@ function CampaignLobby() {
                 <code>{campaign.id.slice(0, 8)}</code>
               </div>
               {campaign.membership === 'pending' ? (
-                <Button busy={busy} onClick={() => void accept(campaign.id)}>
+                <Button
+                  busy={busy}
+                  disabled={!heroSelection.ready}
+                  onClick={() => void accept(campaign.id)}
+                >
                   {t('Принять приглашение в кампанию')}
                 </Button>
               ) : (
@@ -297,6 +330,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
   const selectedTarget = p.entities.find((entity) => entity.id === selected.targetId);
   return (
     <div className={styles.root}>
+      <CampaignHero campaignId={campaignId} />
       <div className={styles.roomHeader}>
         <div>
           <Link href="/game" className={styles.back}>

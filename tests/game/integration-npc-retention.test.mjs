@@ -419,6 +419,7 @@ await test(
         async () => {
           await transaction(async (c) => {
             await c.query('UPDATE users SET deleted_at=now() WHERE id=$1', [guest.user.id]);
+            await c.query("SELECT set_config('dreamwalk.erasure','confirmed',true)");
             await purgeGameData(c, guest.user.id);
           });
           const events = (
