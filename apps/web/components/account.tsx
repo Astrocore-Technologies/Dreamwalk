@@ -3,7 +3,10 @@ import { useT } from '@/lib/i18n';
 import { AccountExports } from './account-exports';
 import { EmailVerification } from './account-email';
 import Link from 'next/link';
-import { useRouter } from 'next/navigation';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { readStoryReturn, withStoryReturn, storyAfterAuth, authFormKey } from './story-return';
+import { StoryReturnLink } from './story-return-link';
+import { useLaunchGate } from './game/use-launch-gate';
 import { useState, useEffect, type FormEvent } from 'react';
 import { ArrowRight, Fingerprint, Laptop, ShieldCheck, UserRound } from 'lucide-react';
 import {
@@ -34,14 +37,36 @@ import {
   UploadField,
 } from './ui';
 export function AuthPage({ signup = false, reset = false }: { signup?: boolean; reset?: boolean }) {
+  const returnTo = readStoryReturn(useSearchParams());
+  return (
+    <AuthForm
+      key={authFormKey(signup, reset, returnTo)}
+      signup={signup}
+      reset={reset}
+      returnTo={returnTo}
+    />
+  );
+}
+function AuthForm({
+  signup,
+  reset,
+  returnTo,
+}: {
+  signup: boolean;
+  reset: boolean;
+  returnTo: string | null;
+}) {
   const { t: tr, locale } = useT();
   const router = useRouter();
+  const authGate = useLaunchGate(`auth:${signup}:${reset}:${returnTo}`);
   const { setUser, toast } = useClient();
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
     [result, setResult] = useState('');
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
+    const lease = authGate.begin();
+    if (!lease) return;
     const data = Object.fromEntries(new FormData(event.currentTarget));
     setBusy(true);
     setError('');
@@ -51,6 +76,7 @@ export function AuthPage({ signup = false, reset = false }: { signup?: boolean; 
           method: 'POST',
           body: JSON.stringify(data),
         });
+        if (!authGate.accepts(lease)) return;
         setResult(
           response.code === 'EMAIL_DELIVERY_UNAVAILABLE'
             ? tr('Почтовая доставка не подключена. Восстановление доступа пока недоступно.')
@@ -69,14 +95,15 @@ export function AuthPage({ signup = false, reset = false }: { signup?: boolean; 
             body: JSON.stringify({ language: locale }),
           });
         }
+        if (!authGate.accepts(lease)) return;
         setUser(r.user);
         toast(signup ? tr('Добро пожаловать в Dreamwalk') : tr('С возвращением'));
-        router.push(r.user.onboarded ? '/home' : '/onboarding');
+        router.push(storyAfterAuth(r.user.onboarded, returnTo));
       }
     } catch (e) {
-      setError(errorMessage(e));
+      if (authGate.accepts(lease)) setError(errorMessage(e));
     } finally {
-      setBusy(false);
+      if (authGate.finish(lease)) setBusy(false);
     }
   }
   return (
@@ -133,6 +160,7 @@ export function AuthPage({ signup = false, reset = false }: { signup?: boolean; 
                 hint={tr('3–30 символов: латинские буквы, цифры и подчёркивание')}
               >
                 <Input
+                  aria-label={tr('Адрес профиля')}
                   name="handle"
                   autoComplete="username"
                   required
@@ -161,6 +189,7 @@ export function AuthPage({ signup = false, reset = false }: { signup?: boolean; 
               }
             >
               <Input
+                aria-label={tr('Пароль')}
                 name="password"
                 type="password"
                 autoComplete={signup ? 'new-password' : 'current-password'}
@@ -183,16 +212,17 @@ export function AuthPage({ signup = false, reset = false }: { signup?: boolean; 
           </Button>
         </form>
         {!reset && !signup && (
-          <Link className="auth-sub-link" href="/auth/reset-password">
+          <Link className="auth-sub-link" href={withStoryReturn('/auth/reset-password', returnTo)}>
             {tr('Не помню пароль')}
           </Link>
         )}
         <div className="auth-switch">
           {signup ? tr('Уже есть аккаунт?') : tr('Впервые здесь?')}{' '}
-          <Link href={signup ? '/auth/sign-in' : '/auth/sign-up'}>
+          <Link href={withStoryReturn(signup ? '/auth/sign-in' : '/auth/sign-up', returnTo)}>
             {signup ? tr('Войти') : tr('Создать аккаунт')}
           </Link>
         </div>
+        <StoryReturnLink intent={returnTo} />
         <p className="legal-note">
           {tr('Продолжая, ты принимаешь')} <Link href="/terms">{tr('условия использования')}</Link>{' '}
           {tr('и')} <Link href="/privacy">{tr('правила приватности')}</Link>
@@ -210,6 +240,7 @@ export function Protected({
   admin?: boolean;
 }) {
   const { t: tr } = useT();
+  const returnTo = readStoryReturn(useSearchParams());
   const { user, loading } = useClient();
   if (loading) return <Loading />;
   if (!user)
@@ -219,8 +250,8 @@ export function Protected({
         description={tr('Войди, чтобы сохранить открытия, создавать героев и работать в студии.')}
         action={
           <div className="row">
-            <ButtonLink href="/auth/sign-in">{tr('Войти')}</ButtonLink>
-            <ButtonLink href="/auth/sign-up" variant="secondary">
+            <ButtonLink href={withStoryReturn('/auth/sign-in', returnTo)}>{tr('Войти')}</ButtonLink>
+            <ButtonLink href={withStoryReturn('/auth/sign-up', returnTo)} variant="secondary">
               {tr('Создать аккаунт')}
             </ButtonLink>
           </div>
@@ -241,6 +272,8 @@ export function OnboardingPage() {
   const { t: tr, taxonomy } = useT();
   const { user, setUser, toast } = useClient();
   const router = useRouter();
+  const returnTo = readStoryReturn(useSearchParams());
+  const onboardingGate = useLaunchGate(`onboarding:${user?.id}:${returnTo}`);
   const [name, setName] = useState(user?.name || ''),
     [purpose, setPurpose] = useState('both'),
     [genres, setGenres] = useState<string[]>([]),
@@ -256,12 +289,15 @@ export function OnboardingPage() {
           'Немного о тебе — чтобы этот мир стал чуть ближе. Всё можно изменить позже.',
         )}
       />
+      <StoryReturnLink intent={returnTo} />
       <Panel className="form-panel">
         <form
           method="post"
           className="stack"
           onSubmit={async (e) => {
             e.preventDefault();
+            const lease = onboardingGate.begin();
+            if (!lease) return;
             setBusy(true);
             try {
               setUser(
@@ -275,12 +311,13 @@ export function OnboardingPage() {
                   }),
                 }),
               );
+              if (!onboardingGate.accepts(lease)) return;
               toast(tr('Теперь здесь немного больше тебя'));
-              router.push('/home');
+              router.push(storyAfterAuth(true, returnTo));
             } catch (e) {
-              setError(errorMessage(e));
+              if (onboardingGate.accepts(lease)) setError(errorMessage(e));
             } finally {
-              setBusy(false);
+              if (onboardingGate.finish(lease)) setBusy(false);
             }
           }}
         >

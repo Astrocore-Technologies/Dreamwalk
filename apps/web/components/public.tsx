@@ -1,4 +1,5 @@
 'use client';
+import { storyReturnPath, withStoryReturn } from './story-return';
 import { AdventureLaunch } from './game/adventure-launch';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
@@ -290,7 +291,7 @@ export function AdventurePage({ slug }: { slug: string }) {
                 <strong>{taxonomy(a.difficulty)}</strong>
               </span>
             </div>
-            <ButtonLink href="/my-characters">
+            <ButtonLink href={withStoryReturn('/my-characters', storyReturnPath(a.slug))}>
               {tr('Подготовить героя')}
               <ArrowRight size={17} />
             </ButtonLink>

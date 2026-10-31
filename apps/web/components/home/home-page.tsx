@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import { storyReturnPath, withStoryReturn } from '../story-return';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import {
@@ -159,7 +160,9 @@ export function HomePage() {
       return;
     }
     if (!user) {
-      router.push('/auth/sign-in');
+      router.push(
+        withStoryReturn('/auth/sign-in', storyReturnPath(active.slug, heroSelection.heroId)),
+      );
       return;
     }
     const lease = launchGate.current.begin();
