@@ -1,6 +1,8 @@
 /** Developer-only, real PostgreSQL. No external resources or known credentials. */
 import EmbeddedPostgres from 'embedded-postgres';
 import { randomBytes } from 'node:crypto';
+import { spawn } from 'node:child_process';
+import { once } from 'node:events';
 import {
   existsSync,
   mkdirSync,
@@ -12,6 +14,26 @@ import {
 import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { setTimeout as delay } from 'node:timers/promises';
+
+/** Stop only this owned cluster. Timeout terminates pg_ctl, never force-kills PostgreSQL. */
+export async function stopWindowsPostgres(
+  pgCtl,
+  dataDir,
+  cluster,
+  { spawnProcess = spawn, timeoutMs = 35000 } = {},
+) {
+  const child = spawnProcess(pgCtl, ['stop', '-D', dataDir, '-m', 'fast', '-w', '-t', '30'], {
+    windowsHide: true,
+    shell: false,
+    stdio: 'ignore',
+    signal: AbortSignal.timeout(timeoutMs),
+  });
+  const [code] = await once(child, 'exit');
+  if (code !== 0)
+    throw new Error(
+      `Graceful PostgreSQL stop failed for ${cluster} (pg_ctl exit ${code}). Preserve its data; no forced stop or lock deletion was attempted.`,
+    );
+}
 
 export async function startLocalPostgres() {
   if (process.env.NODE_ENV === 'production')
@@ -64,8 +86,15 @@ export async function startLocalPostgres() {
   let stopping;
   pg.stop = () =>
     (stopping ||= (async () => {
-      // EmbeddedPostgres waits for the child exit; additionally require durable lock cleanup.
-      await originalStop();
+      if (process.platform === 'win32') {
+        // The library uses taskkill /F on Windows, which leaves a dirty cluster.
+        const { pg_ctl: pgCtl } = await import('@embedded-postgres/windows-x64');
+        await stopWindowsPostgres(pgCtl, path.join(local, 'postgres'), cluster);
+        // Do not call originalStop after exit: its new exit listener can wait forever.
+      } else {
+        await originalStop();
+      }
+      // Require durable lock cleanup after the native server confirms shutdown.
       for (let attempt = 0; attempt < 120 && existsSync(pidFile); attempt++) await delay(250);
       if (existsSync(pidFile))
         throw new Error(
