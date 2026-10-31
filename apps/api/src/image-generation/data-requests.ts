@@ -1,4 +1,5 @@
 import type { PoolClient } from 'pg';
+import { normalizeSafeImageDiagnostic } from './error-diagnostics';
 export async function eraseImageGeneration(c: PoolClient, userId: string) {
   if (
     !(
@@ -64,7 +65,7 @@ export async function eraseImageGeneration(c: PoolClient, userId: string) {
     [revisionIds],
   );
   await c.query(
-    "UPDATE image_generation_jobs SET cancel_requested=true,quota_reserved_bytes=0,input='{}',reference_hashes='{}',request_hash='erased',provider_request_id=NULL,quarantine_filename=NULL,quarantine_sha256=NULL,quarantine_mime=NULL,error_code='ERASED',updated_at=now() WHERE id=ANY($1::uuid[])",
+    "UPDATE image_generation_jobs SET cancel_requested=true,quota_reserved_bytes=0,input='{}',reference_hashes='{}',request_hash='erased',provider_request_id=NULL,safe_diagnostic=NULL,quarantine_filename=NULL,quarantine_sha256=NULL,quarantine_mime=NULL,error_code='ERASED',updated_at=now() WHERE id=ANY($1::uuid[])",
     [jobIds],
   );
   await c.query(
@@ -96,9 +97,12 @@ export async function exportImageGeneration(c: PoolClient, userId: string) {
     ).rows,
     jobs: (
       await c.query(
-        'SELECT id,adventure_id,input,mode,status,upper_micros,actual_micros,admitted_revision_id,error_code,created_at FROM image_generation_jobs WHERE actor_id=$1 ORDER BY created_at',
+        'SELECT id,adventure_id,input,mode,status,upper_micros,actual_micros,admitted_revision_id,error_code,safe_diagnostic,created_at FROM image_generation_jobs WHERE actor_id=$1 ORDER BY created_at',
         [userId],
       )
-    ).rows,
+    ).rows.map((row) => ({
+      ...row,
+      safe_diagnostic: normalizeSafeImageDiagnostic(row.safe_diagnostic) ?? null,
+    })),
   };
 }
