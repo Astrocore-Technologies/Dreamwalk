@@ -379,6 +379,60 @@ async function execute(key, fixture = false) {
       undefined,
       'DELETE',
     );
+    // Prepare only through the normal authorized route; never quote or dispatch images.
+    const mediaView = (await snapshot(host)).projection;
+    const mediaCanon = await host.request(path('narrative'));
+    if (!mediaView.entities.some((e) => e.id === first.npcId && e.kind === 'npc'))
+      throw Error('MEDIA_NPC_NOT_CURRENTLY_VISIBLE');
+    report.preparedMedia = [];
+    for (const input of [{ kind: 'background' }, { kind: 'portrait', entityId: first.npcId }]) {
+      const media = await host.request(path('media-preparation'), input);
+      if (
+        media.providerCalls !== 0 ||
+        media.charge !== 0 ||
+        media.automaticDispatch !== false ||
+        media.createsGameEntities !== false ||
+        media.canonRevision !== mediaCanon.canonRevision ||
+        media.grounding?.canonRevision !== mediaCanon.canonRevision ||
+        media.grounding?.sourceVersionId !== report.sourceVersionId ||
+        !/^[a-f0-9]{64}$/.test(media.sourceChecksum ?? '') ||
+        media.grounding?.sourceChecksum !== media.sourceChecksum ||
+        media.expectedMapId !== mediaView.map.id ||
+        media.grounding?.mapId !== mediaView.map.id ||
+        !/^[a-f0-9]{64}$/.test(media.groundingHash ?? '') ||
+        typeof media.prompt !== 'string' ||
+        !media.prompt.length ||
+        media.prompt.length > 2000 ||
+        media.spec?.kind !== input.kind ||
+        media.spec?.style !== 'drawn2D' ||
+        (input.kind === 'portrait' && media.grounding?.subject?.id !== first.npcId)
+      )
+        throw Error('MEDIA_PREPARATION_CONTRACT_MISMATCH');
+      report.preparedMedia.push({
+        kind: input.kind,
+        prompt: media.prompt,
+        spec: media.spec,
+        groundingHash: media.groundingHash,
+        sourceVersionId: media.grounding.sourceVersionId,
+        sourceChecksum: media.sourceChecksum,
+        canonRevision: media.canonRevision,
+        mapId: media.expectedMapId,
+        map: media.grounding.map,
+        ...(input.kind === 'portrait'
+          ? {
+              subject: {
+                id: media.grounding.subject.id,
+                name: media.grounding.subject.label,
+                role: media.grounding.subject.card?.roleLabel ?? '',
+                appearance: media.grounding.subject.card?.appearance ?? '',
+              },
+            }
+          : {}),
+        providerCalls: 0,
+        charge: 0,
+        automaticDispatch: false,
+      });
+    }
     const before = (await host.request(path('narrative'))).turns.filter(
       (t) => t.status === 'committed',
     );

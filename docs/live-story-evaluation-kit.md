@@ -109,3 +109,16 @@ and language. A generic safe reply remains a quality failure. Synthetic narratio
 and safe receipt identifiers can appear in the private report; credentials, cookies,
 private user history and raw HTTP headers cannot. A passed rehearsal is not a passed
 live evaluation.
+
+## Grounded image handoff (preparation only)
+
+After the accepted text turns and NPC exchange, the kit calls the ordinary
+authorized media-preparation endpoint for the current background and visible
+first NPC portrait. The private report contains only the canonical prompt/spec,
+grounding hash, immutable source version/checksum, current canon/map and visual
+subject packet. It excludes library matches and private asset metadata. Both
+preparations must report zero provider calls, zero charge and no automatic
+dispatch; any contract mismatch stops the run. No image quote, generation or
+purchase occurs, and the text transport still permits exactly four requests.
+These packets must be revalidated against current canon before later generation;
+they are not permission to spend or reuse a stale generic starting-scene prompt.
