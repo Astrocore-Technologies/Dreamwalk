@@ -88,6 +88,8 @@ async function world({
   service.db = db;
   service.reconcileIntents = async () => {};
   service.ai = {
+    // No optional extended-history provider is configured in this consent/liability fixture.
+    contextWindow: () => undefined,
     manualLive: () => true,
     manualRequestAuthorized: async () => false,
     rejectManualUnqueuedRequest: (c, id, code) => manual.rejectUndispatchedRequest(c, id, code),

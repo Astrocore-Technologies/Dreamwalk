@@ -472,7 +472,7 @@ test('synthetic world requests require individual consent and stale phase fences
   expect(approvals).toBe(1);
 });
 
-test('synthetic admin notice distinguishes manual runtime from the profile catalog without calling providers', async ({
+test('admin catalog hides generation controls without enabling provider calls', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -487,12 +487,7 @@ test('synthetic admin notice distinguishes manual runtime from the profile catal
     throw new Error('Unexpected synthetic admin route');
   });
   await page.goto('/admin');
-  const notice = page.getByText(
-    'A local manual API test is configured. External requests need owner consent; the available budget is shown below.',
-    { exact: true },
-  );
-  await expect(notice).toBeVisible();
-  await expect(page.getByTestId('live-test-panel')).toBeVisible();
+  await expect(page.getByTestId('live-test-panel')).toHaveCount(0);
   await expect(
     page.getByText(
       'This catalog edits profiles and demo data. It does not enable external requests by itself; manual API-test status is available only to the designated local owner.',
@@ -500,10 +495,7 @@ test('synthetic admin notice distinguishes manual runtime from the profile catal
     ),
   ).toBeVisible();
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
-  await notice.screenshot({ path: test.info().outputPath('synthetic-admin-live-notice.png') });
-  await page
-    .getByTestId('live-test-panel')
-    .screenshot({ path: test.info().outputPath('synthetic-admin-budget.png') });
+  await page.screenshot({ path: test.info().outputPath('synthetic-admin-catalog.png') });
   expect(mock.calls.claim).toBe(0);
   expect(mock.calls.dispatch).toBe(0);
   expect(mock.calls.unexpected).toBe(0);

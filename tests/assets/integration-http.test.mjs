@@ -1,4 +1,5 @@
 /** Actual raster HTTP delivery, immutable publication and campaign projection boundaries. */
+// Asset ACL fixtures deliberately retain their immutable legacy realtime ruleset.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID, createHash } from 'node:crypto';
@@ -122,10 +123,18 @@ await test(
         { slot: 'entity:hidden-relic:object:default', revisionId: hidden.revision.id },
       ]);
       const v1 = await publish(owner, s.id);
-      const c1 = (await owner.request('/game/campaigns', { playableVersionId: v1.versionId }))
-        .campaignId;
-      const c2 = (await owner.request('/game/campaigns', { playableVersionId: v1.versionId }))
-        .campaignId;
+      const c1 = (
+        await owner.request('/game/campaigns', {
+          turnBased: false,
+          playableVersionId: v1.versionId,
+        })
+      ).campaignId;
+      const c2 = (
+        await owner.request('/game/campaigns', {
+          turnBased: false,
+          playableVersionId: v1.versionId,
+        })
+      ).campaignId;
       await invite(owner, guest, s.id, c1);
       await t.test(
         'real raster normalizes and two clients/campaigns share exact pinned bytes, not state',
@@ -195,8 +204,12 @@ await test(
           );
           const v2 = await publish(owner, s.id);
           assert.notEqual(v1.versionId, v2.versionId);
-          const c3 = (await owner.request('/game/campaigns', { playableVersionId: v2.versionId }))
-            .campaignId;
+          const c3 = (
+            await owner.request('/game/campaigns', {
+              turnBased: false,
+              playableVersionId: v2.versionId,
+            })
+          ).campaignId;
           assert.ok(
             (await snapshot(owner, c3)).projection.artBindings.some(
               (x) => x.revisionId === b.revision.id,
@@ -324,7 +337,10 @@ await test(
           ]);
           const v = await publish(other, foreign.id);
           foreignCampaign = (
-            await other.request('/game/campaigns', { playableVersionId: v.versionId })
+            await other.request('/game/campaigns', {
+              turnBased: false,
+              playableVersionId: v.versionId,
+            })
           ).campaignId;
           await owner.request(
             `/asset-library/revisions/${a.revision.id}/grants/${grant.id}/revoke`,

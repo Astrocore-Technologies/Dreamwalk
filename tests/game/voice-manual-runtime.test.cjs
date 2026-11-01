@@ -53,6 +53,9 @@ async function scenario({
     tx: async (work) => work({ query: write }),
   };
   service.ai = {
+    // This fixture exercises the original bounded request/consent path, not
+    // optional extended-history packing from a configured context-window provider.
+    contextWindow: () => undefined,
     manualLive: () => manual,
     manualRequestAuthorized: async () => authorized,
     activeSponsor: async () => undefined,
