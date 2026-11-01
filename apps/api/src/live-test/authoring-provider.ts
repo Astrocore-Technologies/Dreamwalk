@@ -2,6 +2,16 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { ProviderFailure } from '../ai/types';
 import { LIVE_TEXT } from './config';
+export interface AuthoringTextProfile {
+  model: string;
+  contextTokens: number;
+  maxOutputTokens: number;
+  maxInputBytes: number;
+  inputMicrosPerMillion: number;
+  outputMicrosPerMillion: number;
+  upperMicros: number;
+  pricing?: { reviewedAt: string; validUntil: string };
+}
 export interface AuthoringTextResult {
   proposal: unknown;
   requestId: string;
@@ -34,14 +44,37 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
     private definition: AuthoringTextDefinition,
     private apiKey: string | undefined,
     private transport: typeof fetch = fetch,
+    readonly profile: AuthoringTextProfile = LIVE_TEXT,
   ) {
+    if (
+      !profile.model.trim() ||
+      [
+        profile.contextTokens,
+        profile.maxOutputTokens,
+        profile.maxInputBytes,
+        profile.inputMicrosPerMillion,
+        profile.outputMicrosPerMillion,
+        profile.upperMicros,
+      ].some((value) => !Number.isSafeInteger(value) || value <= 0) ||
+      profile.maxInputBytes > 64000 ||
+      BigInt(profile.upperMicros) <
+        (BigInt(profile.contextTokens) * BigInt(profile.inputMicrosPerMillion) +
+          BigInt(profile.maxOutputTokens) * BigInt(profile.outputMicrosPerMillion) +
+          999999n) /
+          1000000n
+    )
+      throw new Error('INVALID_AUTHORING_PROVIDER_PROFILE');
+    this.profile = Object.freeze({
+      ...profile,
+      ...(profile.pricing ? { pricing: Object.freeze({ ...profile.pricing }) } : {}),
+    });
     this.version = createHash('sha256')
       .update(
         JSON.stringify({
           version: definition.version,
           schema: definition.schema,
           instructions: definition.instructions,
-          envelope: LIVE_TEXT,
+          envelope: profile,
         }),
       )
       .digest('hex');
@@ -52,13 +85,21 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
     signal: AbortSignal;
   }): Promise<AuthoringTextResult> {
     if (!this.apiKey) throw new ProviderFailure('LIVE_TEST_AUTHORIZED_KEY_REQUIRED', false);
+    if (
+      this.profile.pricing &&
+      !(
+        Date.parse(this.profile.pricing.reviewedAt) <= Date.now() &&
+        Date.parse(this.profile.pricing.validUntil) > Date.now()
+      )
+    )
+      throw new ProviderFailure('GENERATION_PRICING_EXPIRED', false);
     const body = JSON.stringify({
-      model: LIVE_TEXT.model,
+      model: this.profile.model,
       service_tier: 'default',
       store: false,
       stream: false,
       reasoning: { effort: 'none' },
-      max_output_tokens: LIVE_TEXT.maxOutputTokens,
+      max_output_tokens: this.profile.maxOutputTokens,
       instructions: this.definition.instructions,
       input: JSON.stringify(request.context),
       text: {
@@ -70,7 +111,7 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
         },
       },
     });
-    if (Buffer.byteLength(body) > LIVE_TEXT.maxInputBytes)
+    if (Buffer.byteLength(body) > this.profile.maxInputBytes)
       throw new ProviderFailure('AUTHORING_CONTEXT_TOO_LARGE', false);
     let response: Response;
     try {
@@ -139,8 +180,8 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
     if (value.service_tier !== 'default')
       throw new ProviderFailure('PROVIDER_TIER_UNKNOWN', true, value.id);
     const costMicros = Number(
-      (BigInt(value.usage.input_tokens) * BigInt(LIVE_TEXT.inputMicrosPerMillion) +
-        BigInt(value.usage.output_tokens) * BigInt(LIVE_TEXT.outputMicrosPerMillion) +
+      (BigInt(value.usage.input_tokens) * BigInt(this.profile.inputMicrosPerMillion) +
+        BigInt(value.usage.output_tokens) * BigInt(this.profile.outputMicrosPerMillion) +
         999999n) /
         1000000n,
     );
@@ -157,8 +198,8 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
       failureCode,
     });
     if (
-      value.usage.input_tokens > LIVE_TEXT.contextTokens ||
-      value.usage.output_tokens > LIVE_TEXT.maxOutputTokens
+      value.usage.input_tokens > this.profile.contextTokens ||
+      value.usage.output_tokens > this.profile.maxOutputTokens
     )
       return failed('PROVIDER_LIMIT_VIOLATION');
     if (value.status !== 'completed') return failed('PROVIDER_INCOMPLETE');

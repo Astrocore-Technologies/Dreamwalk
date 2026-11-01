@@ -1,0 +1,807 @@
+import { test, expect, type Page } from '@playwright/test';
+import { randomUUID, createHash } from 'node:crypto';
+
+// Browser-only synthetic provider results. No server credentials or paid transport.
+const png = Buffer.from(
+  'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lxoAAAAASUVORK5CYII=',
+  'base64',
+);
+const risk =
+  'I separately accept the risk: the estimate and reserve do not cap the provider invoice, which may be higher. An unknown charge will stop further requests.';
+const requestConsent =
+  'I authorize only this external request and transfer of the selected references. Regeneration requires new consent.';
+const budgetConsent =
+  'I own this configuration. I acknowledge the combined budget, including prior reservations and unknown charges. I will approve each request separately.';
+const review =
+  'I reviewed this image against the saved location description and want to use this revision.';
+type Locale = 'uk' | 'en' | 'ru';
+async function fixture(
+  page: Page,
+  options: {
+    locale?: Locale;
+    maxReferenceImages?: 0 | 1 | 2;
+    forbidden?: boolean;
+    stalePricing?: boolean;
+    claimLost?: boolean;
+    outcome?: 'success' | 'unknown' | 'response-lost';
+  } = {},
+) {
+  const locale = options.locale ?? 'en',
+    handle = `owner_ui_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+  const registration = await page.request.post('/api/v1/auth/register', {
+    data: {
+      handle,
+      email: `${handle}@example.test`,
+      name: 'Synthetic owner UI',
+      password: `Test-${randomUUID()}!`,
+    },
+  });
+  expect(registration.ok()).toBeTruthy();
+  expect((await (await page.request.get('/api/v1/auth/me')).json()).user.role).not.toBe('admin');
+  expect(
+    (await page.request.patch('/api/v1/account/settings', { data: { language: locale } })).ok(),
+  ).toBeTruthy();
+  await page.addInitScript(
+    (language) => localStorage.setItem('dreamwalk-language', language),
+    locale,
+  );
+  const authorizationId = randomUUID(),
+    locationId = randomUUID(),
+    revisionId = randomUUID(),
+    quoteId = randomUUID();
+  const story = await page.request.post('/api/v1/studio/adventures', {
+    data: {
+      title: 'Synthetic owner generation',
+      sourceLanguage: 'en',
+      content: {
+        world: 'A quiet library.',
+        rules: 'Pictures are not collisions.',
+        npcIds: [],
+        scenes: [],
+        startSceneId: '',
+        boundaries: [],
+        locations: [
+          { id: locationId, name: 'Library', description: 'A quiet room with a large skylight.' },
+        ],
+      },
+    },
+  });
+  expect(story.ok()).toBeTruthy();
+  const adventureId = (await story.json()).id;
+  const draft = {
+    schemaVersion: 1,
+    title: 'Owner illustration room',
+    startMapId: 'room',
+    maps: [
+      {
+        id: 'room',
+        label: 'Library map',
+        sourceLocationId: locationId,
+        width: 8,
+        height: 8,
+        blocked: [],
+        spawns: [{ x: 1, y: 1 }],
+        exits: [],
+      },
+    ],
+    objects: [],
+    npcs: [],
+    roundPolicy: { maxRounds: 5, planningMs: 30000 },
+  };
+  expect(
+    (
+      await page.request.put(`/api/v1/studio/adventures/${adventureId}/playable-draft`, {
+        data: { expectedRevision: 0, draft },
+      })
+    ).ok(),
+  ).toBeTruthy();
+  const config = {
+    generationMode: 'owner',
+    mockAvailable: false,
+    externalEnabled: true,
+    externalBlockReasons: [],
+    ownerEstimateEnabled: true,
+    estimateRiskConsentRequired: true,
+    providerEnforcesQuotedCap: false,
+    costStatus: 'approved_estimate',
+    costBasis: 'approved_estimate',
+    verifiedUpperMicros: null,
+    estimatedTotalMicros: 45880,
+    reserveMicros: 100000,
+    requestProfile: {
+      provider: 'synthetic',
+      model: 'synthetic-image-model',
+      size: '1024x1024',
+      quality: 'low',
+      outputs: 1,
+      maxReferenceImages: options.maxReferenceImages ?? 0,
+    },
+  };
+  const status = {
+    mode: 'owner',
+    enabled: true,
+    authorizationId: null as string | null,
+    sessionId: null as string | null,
+    state: 'unclaimed',
+    expiresAt: null,
+    pricingValidUntil: new Date(
+      Date.now() + (options.stalePricing ? -1000 : 86400000),
+    ).toISOString(),
+    capMicros: 1000000,
+    usedMicros: 0,
+    heldMicros: 0,
+    remainingMicros: 1000000,
+    priorHeldReservations: 0,
+    imagesEnabled: false,
+    imageBlockCode: 'GENERATION_AUTHORIZATION_REQUIRED' as string | null,
+    stopCode: null as string | null,
+    imageConfiguration: { requestProfile: config.requestProfile },
+    text: {
+      model: 'synthetic-text-model',
+      upperMicros: 20000,
+      maxOutputTokens: 2048,
+      contextTokens: 64000,
+      costEvidence: 'synthetic-test',
+    },
+  };
+  const revision = {
+    id: revisionId,
+    familyId: randomUUID(),
+    revision: 1,
+    sha256: 'b'.repeat(64),
+    mime: 'image/png',
+    width: 1,
+    height: 1,
+    metadata: {
+      title: 'Synthetic owner illustration',
+      kind: 'background',
+      style: 'drawn2D',
+      camera: 'top-down',
+      tags: ['library'],
+      variant: '',
+      provenance: { source: 'generated', provider: 'synthetic-browser-fixture' },
+      rights: {
+        basis: 'generated',
+        licenseLabel: 'Synthetic test output',
+        attribution: 'Synthetic browser fixture',
+        allowAuthorReuse: false,
+        attested: true,
+      },
+    },
+    url: `/api/v1/asset-library/revisions/${revisionId}/file`,
+    owned: true,
+    canReuse: true,
+  };
+  const calls = {
+    claim: 0,
+    quote: 0,
+    dispatch: 0,
+    bind: 0,
+    mapWrites: 0,
+    storyDraftReads: 0,
+    unexpected: 0,
+    unexpectedRequests: [] as string[],
+    legacy: 0,
+  };
+  let sourceHash = '',
+    binding: null | { revisionId: string; sourceHash: string; stale: boolean; mapId: string } =
+      null;
+  const jobs: object[] = [];
+  await page.route('**/api/v1/live-test/**', async (route) => {
+    calls.legacy++;
+    await route.abort();
+  });
+  await page.route('**/api/v1/generation/**', async (route) => {
+    const req = route.request(),
+      path = new URL(req.url()).pathname;
+    if (options.forbidden)
+      return route.fulfill({ status: 403, json: { code: 'GENERATION_OWNER_REQUIRED' } });
+    if (path.endsWith('/status') && req.method() === 'GET') return route.fulfill({ json: status });
+    if (path.endsWith('/claim') && req.method() === 'POST') {
+      expect(req.postDataJSON()).toEqual({ consent: true });
+      calls.claim++;
+      status.state = 'active';
+      status.authorizationId = authorizationId;
+      status.sessionId = authorizationId;
+      status.imagesEnabled = true;
+      status.imageBlockCode = null;
+      if (options.claimLost) return route.abort();
+      return route.fulfill({ json: status });
+    }
+    calls.unexpected++;
+    calls.unexpectedRequests.push(`${req.method()} ${path}`);
+    await route.abort();
+  });
+  await page.route('**/api/v1/asset-library**', async (route) => {
+    const req = route.request(),
+      path = new URL(req.url()).pathname;
+    if (req.method() === 'GET' && path === `/api/v1/asset-library/stories/${adventureId}/draft`) {
+      // The playable editor reads its independent art draft on mount and after
+      // binding. Keep this exact owned read on the real local API, including ACL.
+      calls.storyDraftReads++;
+      return route.fallback();
+    }
+    if (path.endsWith('/file')) return route.fulfill({ contentType: 'image/png', body: png });
+    if (path.endsWith('/' + revisionId)) return route.fulfill({ json: revision });
+    if (path.endsWith('/asset-library'))
+      return route.fulfill({
+        json: jobs.length && (options.outcome ?? 'success') === 'success' ? [revision] : [],
+      });
+    calls.unexpected++;
+    calls.unexpectedRequests.push(`${req.method()} ${path}`);
+    await route.abort();
+  });
+  await page.route('**/api/v1/image-generation/**', async (route) => {
+    const req = route.request(),
+      path = new URL(req.url()).pathname,
+      method = req.method();
+    if (path.endsWith('/config') && method === 'GET') return route.fulfill({ json: config });
+    if (path.endsWith('/studio-locations/prepare') && method === 'POST') {
+      expect(req.postDataJSON()).toEqual({ adventureId, locationId });
+      const saved = await (
+        await page.request.get(`/api/v1/studio/adventures/${adventureId}`)
+      ).json();
+      const location = saved.content.locations.find(
+        (item: { id: string }) => item.id === locationId,
+      );
+      sourceHash = createHash('sha256')
+        .update(JSON.stringify([location.name, location.description, saved.editRevision]))
+        .digest('hex');
+      return route.fulfill({
+        json: {
+          request: {
+            adventureId,
+            studioLocationContext: {
+              locationId,
+              expectedEditRevision: saved.editRevision,
+              sourceHash,
+            },
+            prompt: `Location: ${location.name}. Description: ${location.description}`,
+            title: location.name,
+            kind: 'background',
+            camera: 'top-down',
+            tags: ['library'],
+            background: 'opaque',
+            referenceRevisionIds: [],
+            privateReferenceAssetIds: [],
+            mode: 'external',
+          },
+          sourceHash,
+          sourceRevision: saved.editRevision,
+          location: { id: locationId, name: location.name },
+          binding,
+          playable: {
+            revision: 1,
+            artRevision: binding ? 1 : 0,
+            maps: [{ id: 'room', label: 'Library map' }],
+          },
+        },
+      });
+    }
+    if (path.endsWith('/quotes') && method === 'POST') {
+      const body = req.postDataJSON();
+      expect(status.state).toBe('active');
+      expect(body).toMatchObject({
+        mode: 'external',
+        liveTestSessionId: authorizationId,
+        studioLocationContext: { locationId, sourceHash },
+      });
+      calls.quote++;
+      return route.fulfill({
+        json: {
+          decision: 'quote',
+          matches: [],
+          quote: {
+            id: quoteId,
+            mode: 'external',
+            generationMode: 'owner',
+            estimateRiskConsentRequired: true,
+            providerEnforcesQuotedCap: false,
+            costBasis: 'approved_estimate',
+            upperMicros: null,
+            estimatedTotalMicros: 45880,
+            reserveMicros: 100000,
+            expiresAt: new Date(Date.now() + 300000).toISOString(),
+            rightsAttestationRequired: true,
+          },
+        },
+      });
+    }
+    if (path.endsWith('/jobs') && method === 'GET') return route.fulfill({ json: { jobs } });
+    if (path.endsWith('/jobs') && method === 'POST') {
+      const body = req.postDataJSON();
+      expect(body).toMatchObject({ quoteId, consent: true, estimateRiskConsent: true });
+      expect(body.operationId).toMatch(/^[a-f0-9-]{36}$/);
+      expect(status.state).toBe('active');
+      calls.dispatch++;
+      const succeeded = (options.outcome ?? 'success') === 'success';
+      const job = {
+        id: randomUUID(),
+        operationId: body.operationId,
+        mode: 'external',
+        status: succeeded ? 'admitted' : 'unknown',
+        studioLocationId: locationId,
+        studioSourceHash: sourceHash,
+        ...(succeeded ? { revisionId, actualMicros: 45880 } : { errorCode: 'SYNTHETIC_UNKNOWN' }),
+        heldMicros: succeeded ? 0 : 100000,
+        createdAt: new Date().toISOString(),
+        canCancel: false,
+      };
+      jobs.push(job);
+      if (!succeeded) {
+        status.state = 'stopped';
+        status.stopCode = 'GENERATION_UNKNOWN_COST';
+        status.heldMicros = 100000;
+        status.remainingMicros = 900000;
+        status.imagesEnabled = false;
+      }
+      if (options.outcome === 'response-lost') return route.abort();
+      return route.fulfill({ json: job });
+    }
+    if (path.endsWith('/studio-locations/bind') && method === 'POST') {
+      expect(req.postDataJSON()).toMatchObject({
+        adventureId,
+        locationId,
+        revisionId,
+        mapId: 'room',
+        expectedSourceHash: sourceHash,
+        expectedPlayableRevision: 1,
+        expectedArtRevision: 0,
+      });
+      expect(req.postDataJSON().operationId).toMatch(/^[a-f0-9-]{36}$/);
+      expect(calls.dispatch).toBe(1);
+      calls.bind++;
+      binding = { revisionId, sourceHash, stale: false, mapId: 'room' };
+      return route.fulfill({ json: binding });
+    }
+    calls.unexpected++;
+    calls.unexpectedRequests.push(`${method} ${path}`);
+    await route.abort();
+  });
+  await page.route('**/api/v1/visual-authoring/packages', (route) => route.fulfill({ json: [] }));
+  await page.route('**/api/v1/visual-authoring/projects', (route) => route.fulfill({ json: [] }));
+  page.on('request', (req) => {
+    if (req.method() === 'PUT' && req.url().includes('/playable-draft')) calls.mapWrites++;
+  });
+  return { adventureId, locationId, authorizationId, status, calls, draft, config };
+}
+async function openLocation(page: Page, f: Awaited<ReturnType<typeof fixture>>) {
+  await page.goto(`/studio/adventures/${f.adventureId}`);
+  await page.getByRole('button', { name: /Locations$/ }).click();
+  await page
+    .locator(`[data-location-art="${f.locationId}"]`)
+    .getByRole('button', { name: 'Image details and library', exact: true })
+    .click();
+  return page.getByTestId('location-image-dialog');
+}
+async function claim(page: Page) {
+  const panel = page.getByTestId('live-test-panel');
+  await expect(panel).toHaveAttribute('data-generation-mode', 'owner');
+  await expect(panel).not.toContainText('Expires:');
+  const button = panel.getByRole('button', { name: 'Authorize owner budget', exact: true });
+  await expect(button).toBeDisabled();
+  await panel.getByLabel(budgetConsent, { exact: true }).check();
+  await button.click();
+  await expect(panel).toContainText('Owner authorization active');
+}
+async function prepare(page: Page) {
+  const generation = page.getByRole('region', { name: 'Image preparation', exact: true });
+  await generation
+    .getByLabel('License or terms name', { exact: true })
+    .fill('Synthetic test output');
+  await generation
+    .getByLabel('I confirm rights to this request and the selected owned references.', {
+      exact: true,
+    })
+    .check();
+  await generation
+    .getByRole('button', { name: 'Check library and prepare quote', exact: true })
+    .click();
+  await expect(generation).toContainText('Estimated total cost');
+  await expect(generation).toContainText('Operational reserve');
+  await expect(generation).toContainText('do not guarantee a maximum provider invoice');
+  return generation;
+}
+for (const locale of ['uk', 'en', 'ru'] as const)
+  test(`owner configuration is localized (${locale}), available to a non-admin and has no temporary session expiry`, async ({
+    page,
+  }) => {
+    const f = await fixture(page, { locale });
+    await page.goto('/studio/visuals');
+    await expect(page.locator('html')).toHaveAttribute('lang', locale);
+    const titles = {
+      uk: 'Генерація на сервері',
+      en: 'Server generation',
+      ru: 'Генерация на сервере',
+    };
+    const panel = page.getByTestId('live-test-panel');
+    await expect(panel.getByRole('heading', { name: titles[locale], exact: true })).toBeVisible();
+    await expect(panel).toHaveAttribute('data-generation-mode', 'owner');
+    await expect(panel).not.toContainText('Invalid Date');
+    await expect(panel).not.toContainText('1970');
+    await expect(panel.locator('button').first()).toBeDisabled();
+    await expect(
+      page.locator('select').filter({ has: page.locator('option[value="external"]') }),
+    ).toHaveValue('external');
+    expect(f.calls.claim).toBe(0);
+    expect(f.calls.dispatch).toBe(0);
+    expect(f.calls.legacy).toBe(0);
+  });
+test('synthetic owner image has separate budget, request and estimate-risk consent, then explicit library/map binding', async ({
+  page,
+}) => {
+  const f = await fixture(page),
+    dialog = await openLocation(page, f);
+  expect(f.calls.dispatch).toBe(0);
+  await claim(page);
+  const generation = await prepare(page),
+    run = generation.getByRole('button', { name: 'Generate one image', exact: true });
+  await expect(run).toBeDisabled();
+  await generation.getByLabel(requestConsent, { exact: true }).check();
+  await expect(run).toBeDisabled();
+  expect(f.calls.dispatch).toBe(0);
+  await generation.getByLabel(risk, { exact: true }).check();
+  // Dismissal must not dispatch or retain either per-request consent.
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  expect(f.calls.dispatch).toBe(0);
+  await page
+    .locator(`[data-location-art="${f.locationId}"]`)
+    .getByRole('button', { name: 'Generate image', exact: true })
+    .click();
+  const fresh = await prepare(page);
+  await expect(fresh.getByLabel(risk, { exact: true })).not.toBeChecked();
+  await expect(fresh.getByLabel(requestConsent, { exact: true })).not.toBeChecked();
+  await fresh.getByLabel(risk, { exact: true }).check();
+  await expect(
+    fresh.getByRole('button', { name: 'Generate one image', exact: true }),
+  ).toBeDisabled();
+  await fresh.getByLabel(requestConsent, { exact: true }).check();
+  await fresh.getByRole('button', { name: 'Generate one image', exact: true }).click();
+  const selection = dialog.getByTestId('location-image-selection');
+  await expect(selection).toBeVisible({ timeout: 15000 });
+  const bind = selection.getByRole('button', { name: 'Save image for location', exact: true });
+  await expect(bind).toBeDisabled();
+  expect(f.calls.bind).toBe(0);
+  await selection.getByLabel('Image attachment', { exact: true }).selectOption('room');
+  await selection.getByLabel(review, { exact: true }).check();
+  await bind.click();
+  await expect(dialog.getByRole('heading', { name: 'Saved image', exact: true })).toBeVisible();
+  await page.reload();
+  await page.getByRole('button', { name: /Locations$/ }).click();
+  await page
+    .locator(`[data-location-art="${f.locationId}"]`)
+    .getByRole('button', { name: 'Image details and library', exact: true })
+    .click();
+  await expect(dialog.getByRole('heading', { name: 'Saved image', exact: true })).toBeVisible();
+  expect(f.calls.claim).toBe(1);
+  expect(f.calls.quote).toBe(2);
+  expect(f.calls.dispatch).toBe(1);
+  expect(f.calls.bind).toBe(1);
+  expect(f.calls.mapWrites).toBe(0);
+  expect(f.calls.storyDraftReads).toBeGreaterThan(0);
+  expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
+  expect(f.calls.legacy).toBe(0);
+});
+for (const outcome of ['unknown', 'response-lost'] as const)
+  test(`synthetic owner ${outcome} holds the reserve and cannot silently retry after refresh`, async ({
+    page,
+  }) => {
+    const f = await fixture(page, { outcome });
+    await openLocation(page, f);
+    await claim(page);
+    const generation = await prepare(page);
+    await generation.getByLabel(risk, { exact: true }).check();
+    await generation.getByLabel(requestConsent, { exact: true }).check();
+    await generation.getByRole('button', { name: 'Generate one image', exact: true }).click();
+    await expect(page.locator('[data-image-job-status="unknown"]')).toBeVisible({ timeout: 15000 });
+    await page
+      .getByTestId('live-test-panel')
+      .getByRole('button', { name: 'Refresh status', exact: true })
+      .click();
+    await expect(page.getByTestId('live-test-panel')).toContainText('Generation stopped');
+    await expect(
+      generation.getByRole('button', { name: 'Check library and prepare quote', exact: true }),
+    ).toBeDisabled();
+    await page.reload();
+    await page.getByRole('button', { name: /Locations$/ }).click();
+    const control = page.locator(`[data-location-art="${f.locationId}"]`);
+    await expect(
+      control.getByRole('button', { name: 'Generate image', exact: true }),
+    ).toBeDisabled();
+    await control.getByRole('button', { name: 'Image details and library', exact: true }).click();
+    await expect(page.locator('[data-image-job-status="unknown"]')).toBeVisible();
+    expect(f.calls.dispatch).toBe(1);
+    expect(f.calls.bind).toBe(0);
+    expect(f.calls.storyDraftReads).toBeGreaterThan(0);
+    expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
+    expect(f.calls.legacy).toBe(0);
+  });
+test('owner claim with a lost response is reconciled by status, never by fabricating or resubmitting an ID', async ({
+  page,
+}) => {
+  const f = await fixture(page, { claimLost: true });
+  await openLocation(page, f);
+  const panel = page.getByTestId('live-test-panel');
+  await panel.getByLabel(budgetConsent, { exact: true }).check();
+  await panel.getByRole('button', { name: 'Authorize owner budget', exact: true }).click();
+  await expect(panel).toContainText('NETWORK_ERROR');
+  await panel.getByRole('button', { name: 'Refresh status', exact: true }).click();
+  await expect(panel).toContainText('Owner authorization active');
+  await expect(
+    panel.getByRole('button', { name: 'Authorize owner budget', exact: true }),
+  ).toHaveCount(0);
+  expect(f.calls.claim).toBe(1);
+  expect(f.calls.dispatch).toBe(0);
+  expect(f.calls.legacy).toBe(0);
+});
+test('a forbidden owner status never falls back to manual routes or offers a claim', async ({
+  page,
+}) => {
+  const f = await fixture(page, { forbidden: true });
+  await page.goto('/studio/visuals');
+  await expect(page.getByTestId('generation-unavailable')).toContainText(
+    'GENERATION_OWNER_REQUIRED',
+  );
+  await expect(page.getByTestId('live-test-panel')).toHaveCount(0);
+  expect(f.calls.claim).toBe(0);
+  expect(f.calls.dispatch).toBe(0);
+  expect(f.calls.legacy).toBe(0);
+});
+test('stale pricing blocks owner activation without inventing a session expiry', async ({
+  page,
+}) => {
+  const f = await fixture(page, { stalePricing: true });
+  await page.goto('/studio/visuals');
+  const panel = page.getByTestId('live-test-panel');
+  await expect(panel).toContainText('Pricing is stale.');
+  await expect(panel).toContainText('Owner authorization has no session timer.');
+  await expect(
+    panel.getByRole('button', { name: 'Authorize owner budget', exact: true }),
+  ).toHaveCount(0);
+  expect(f.calls.claim).toBe(0);
+  expect(f.calls.dispatch).toBe(0);
+});
+
+test('owner text-only profile blocks photo concepts before project creation without switching to sample mode', async ({
+  page,
+}) => {
+  const f = await fixture(page);
+  await page.goto('/studio/visuals');
+  const source = page.getByRole('combobox', { name: 'Character', exact: true });
+  await expect(source).toHaveValue('text');
+  await expect(source.getByRole('option', { name: 'From photo', exact: true })).toBeDisabled();
+  await expect(
+    page.getByText(
+      'The configured image profile accepts text only. Photo concepts and reference-dependent package parts are unavailable. References are not removed and samples are not substituted.',
+      { exact: true },
+    ),
+  ).toBeVisible();
+  await expect(page.getByRole('combobox', { name: 'Artwork source', exact: true })).toHaveValue(
+    'external',
+  );
+  expect(f.calls.dispatch).toBe(0);
+  expect(f.calls.quote).toBe(0);
+  expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
+});
+
+for (const maxReferenceImages of [1, 2] as const)
+  test(`owner reference capacity ${maxReferenceImages} permits a private photo concept and reference-based part only with separate request/risk consent`, async ({
+    page,
+  }) => {
+    const f = await fixture(page, { maxReferenceImages });
+    const photoId = randomUUID(),
+      projectId = randomUUID();
+    const revisions = { concept: randomUUID(), portrait: randomUUID() };
+    const quotes = new Map<
+      string,
+      {
+        id: string;
+        mode: 'external';
+        generationMode: 'owner';
+        estimateRiskConsentRequired: true;
+        providerEnforcesQuotedCap: false;
+        costBasis: 'approved_estimate';
+        upperMicros: null;
+        estimatedTotalMicros: number;
+        reserveMicros: number;
+        expiresAt: string;
+        rightsAttestationRequired: true;
+      }
+    >();
+    const admitted = new Set<string>();
+    const calls = {
+      upload: 0,
+      create: 0,
+      quote: [] as string[],
+      dispatch: [] as string[],
+      approve: 0,
+    };
+    const project = {
+      id: projectId,
+      kind: 'character',
+      name: 'Synthetic private photo hero',
+      sourceHash: 'a'.repeat(64),
+      provider: 'external',
+      revision: 1,
+      status: 'concept',
+      conceptUrl: null,
+      plan: null,
+      projection: null,
+    };
+    await page.route('**/api/v1/assets', async (route) => {
+      expect(route.request().method()).toBe('POST');
+      expect(route.request().headers()['content-type']).toContain('multipart/form-data');
+      calls.upload++;
+      await route.fulfill({ json: { id: photoId, mimeType: 'image/png', size: png.length } });
+    });
+    await page.route(`**/api/v1/assets/${photoId}/file`, (route) =>
+      route.fulfill({ contentType: 'image/png', body: png }),
+    );
+    await page.route('**/api/v1/asset-library/revisions/*/file', (route) =>
+      route.fulfill({ contentType: 'image/png', body: png }),
+    );
+    await page.route('**/api/v1/visual-authoring/projects**', async (route) => {
+      const req = route.request(),
+        path = new URL(req.url()).pathname;
+      if (path.endsWith('/projects') && req.method() === 'GET')
+        return route.fulfill({ json: calls.create ? [project] : [] });
+      if (path.endsWith('/projects') && req.method() === 'POST') {
+        expect(req.postDataJSON()).toMatchObject({
+          kind: 'character',
+          generationMode: 'external',
+          brief: {
+            source: 'photo',
+            sourcePhotoAssetId: photoId,
+            sourcePhotoPermission: true,
+            allowOutputReuse: false,
+          },
+        });
+        calls.create++;
+        return route.fulfill({ json: project });
+      }
+      if (path.endsWith('/generation') && req.method() === 'GET') {
+        const roles = project.status === 'concept' ? ['concept'] : ['portrait', 'sheet'];
+        const items = [...new Set([...roles, ...admitted])].map((role) => {
+          if (admitted.has(role))
+            return {
+              role,
+              stage: role === 'concept' ? 'concept' : 'parts',
+              status: 'admitted',
+              revisionId: revisions[role as keyof typeof revisions],
+              url: `/api/v1/asset-library/revisions/${revisions[role as keyof typeof revisions]}/file`,
+              validation: { valid: true, width: 1024, height: 1024 },
+            };
+          return {
+            role,
+            stage: role === 'concept' ? 'concept' : 'parts',
+            status: quotes.has(role) ? 'quoted' : 'idle',
+            ...(quotes.has(role)
+              ? { quote: { decision: 'quote', matches: [], quote: quotes.get(role) } }
+              : {}),
+          };
+        });
+        return route.fulfill({
+          json: {
+            projectId,
+            mode: 'external',
+            requiredRoles: roles,
+            items,
+            readyForReview: false,
+            automaticRetry: false,
+            humanVisualReviewRequired: true,
+            configuration: f.config,
+          },
+        });
+      }
+      if (path.endsWith('/generation/quote') && req.method() === 'POST') {
+        const body = req.postDataJSON();
+        expect(body.liveTestSessionId).toBe(f.authorizationId);
+        expect(body.expectedRevision).toBe(project.revision);
+        expect(['concept', 'portrait']).toContain(body.role);
+        // References are resolved from the owned project on the server, never replaced by a client URL.
+        expect(body.sourcePhotoAssetId).toBeUndefined();
+        expect(body.referenceRevisionIds).toBeUndefined();
+        if (body.role === 'portrait') expect(admitted.has('concept')).toBe(true);
+        const quote = {
+          id: randomUUID(),
+          mode: 'external' as const,
+          generationMode: 'owner' as const,
+          estimateRiskConsentRequired: true as const,
+          providerEnforcesQuotedCap: false as const,
+          costBasis: 'approved_estimate' as const,
+          upperMicros: null,
+          estimatedTotalMicros: f.config.estimatedTotalMicros,
+          reserveMicros: f.config.reserveMicros,
+          expiresAt: new Date(Date.now() + 300000).toISOString(),
+          rightsAttestationRequired: true as const,
+        };
+        quotes.set(body.role, quote);
+        calls.quote.push(body.role);
+        return route.fulfill({ json: { decision: 'quote', matches: [], quote } });
+      }
+      if (path.endsWith('/generation/dispatch') && req.method() === 'POST') {
+        const body = req.postDataJSON();
+        expect(body).toMatchObject({
+          expectedRevision: project.revision,
+          consent: true,
+          estimateRiskConsent: true,
+          quoteId: quotes.get(body.role)?.id,
+        });
+        expect(admitted.has(body.role)).toBe(false);
+        expect(body.operationId).toMatch(/^[a-f0-9-]{36}$/);
+        admitted.add(body.role);
+        calls.dispatch.push(body.role);
+        return route.fulfill({ json: { id: randomUUID(), status: 'admitted' } });
+      }
+      if (path.endsWith('/approve') && req.method() === 'POST') {
+        expect(admitted.has('concept')).toBe(true);
+        expect(req.postDataJSON().consent).toBe(true);
+        calls.approve++;
+        project.status = 'approved';
+        project.revision++;
+        return route.fulfill({ json: project });
+      }
+      if (path.endsWith(projectId) && req.method() === 'GET')
+        return route.fulfill({ json: project });
+      throw new Error(`Unexpected synthetic owner photo route ${path}`);
+    });
+    await page.goto('/studio/visuals');
+    await claim(page);
+    const source = page.getByRole('combobox', { name: 'Character', exact: true });
+    await expect(source.getByRole('option', { name: 'From photo', exact: true })).toBeEnabled();
+    await source.selectOption('photo');
+    await page.getByLabel('Private reference photo', { exact: true }).setInputFiles({
+      name: 'synthetic-private-reference.png',
+      mimeType: 'image/png',
+      buffer: png,
+    });
+    await expect(page.getByAltText('Private reference photo', { exact: true })).toBeVisible();
+    const create = page.getByRole('button', {
+      name: 'Save external generation project',
+      exact: true,
+    });
+    await expect(create).toBeDisabled();
+    await page
+      .getByLabel('I have permission to use this photo to create my character.', { exact: true })
+      .check();
+    await page
+      .getByLabel('Creative brief', { exact: true })
+      .fill('A synthetic adult fictional traveler in a green cloak.');
+    await create.click();
+    for (const role of ['concept', 'portrait'] as const) {
+      const stage = page.locator(`[data-generation-role="${role}"]`);
+      await stage.getByRole('button', { name: 'Estimate this image', exact: true }).click();
+      const dispatch = stage.getByRole('button', { name: 'Dispatch one request', exact: true });
+      await expect(dispatch).toBeDisabled();
+      await expect(stage.getByLabel(risk, { exact: true })).not.toBeChecked();
+      await stage
+        .getByLabel(
+          'I have rights to the references. I authorize only this external request and transfer of the selected private photo; no automatic retry will occur.',
+          { exact: true },
+        )
+        .check();
+      await expect(dispatch).toBeDisabled();
+      await stage.getByLabel(risk, { exact: true }).check();
+      await dispatch.click();
+      await expect(stage.getByText('Structural validation passed', { exact: true })).toBeVisible();
+      if (role === 'concept')
+        await page
+          .getByRole('button', { name: 'Approve this concept / plan', exact: true })
+          .click();
+    }
+    await page.reload();
+    await page.getByRole('button', { name: 'Continue', exact: true }).click();
+    await expect(
+      page
+        .locator('[data-generation-role="portrait"]')
+        .getByText('Structural validation passed', { exact: true }),
+    ).toBeVisible();
+    expect(calls.upload).toBe(1);
+    expect(calls.create).toBe(1);
+    expect(calls.approve).toBe(1);
+    expect(calls.quote).toEqual(['concept', 'portrait']);
+    expect(calls.dispatch).toEqual(['concept', 'portrait']);
+    expect(f.calls.dispatch).toBe(0);
+    expect(f.calls.legacy).toBe(0);
+    expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
+  });

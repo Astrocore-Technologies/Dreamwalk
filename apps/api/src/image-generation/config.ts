@@ -1,10 +1,13 @@
 /** Server-owned image provider configuration. No dotenv/files, URLs, or credential values in DTOs. */
+import { type OwnerGenerationConfig } from '../generation/config';
+import { LIVE_TEXT } from '../live-test/config';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { defaultImagePolicy, type ImagePolicy, type GenerationRequest } from './contracts';
 import {
   FixtureImageProvider,
   OpenAiImageProvider,
+  OwnerOpenAiImageProvider,
   type ImageProvider,
   type ImageReference,
 } from './provider';
@@ -91,10 +94,30 @@ export interface ImageCapabilities {
   mockAvailable: boolean;
   externalEnabled: boolean;
   externalBlockReasons: string[];
-  requestProfile: Omit<typeof imageRequestProfile, 'maxReferenceImages'> & {
+  generationMode?: 'owner';
+  ownerEstimateEnabled?: true;
+  estimateRiskConsentRequired?: true;
+  requestProfile: {
+    provider: string;
+    model: string;
+    size: string;
+    quality: string;
+    outputs: number;
+    format: string;
+    maxPromptUtf8Bytes: number;
     maxReferenceImages: number;
+    maxReferencePixels: number;
+    maxReferenceBytes?: number;
   };
-  pricing: typeof imagePricing;
+  pricing: {
+    id: string;
+    inputTextMicrosPerMillion: number;
+    inputImageMicrosPerMillion: number;
+    outputImageMicrosPerMillion: number;
+    source: string;
+    reviewedAt: string;
+    expiresAt: string;
+  };
   verifiedUpperMicros: number | null;
   approvedTotalMicros: number;
   approvedImageMicros: number;
@@ -104,7 +127,7 @@ export interface ImageCapabilities {
   estimatedTotalMicros?: number;
   reserveMicros?: number;
   estimateProfile?: typeof imageEstimateProfile;
-  planningEstimate: typeof imageEstimateProfile & {
+  planningEstimate?: typeof imageEstimateProfile & {
     costBasis: 'planning_estimate';
     providerEnforcesQuotedCap: false;
   };
@@ -123,7 +146,12 @@ class ModeImageProvider implements ImageProvider {
   readonly id: string;
   private fixture = new FixtureImageProvider();
   constructor(private external: ImageProvider | undefined) {
-    this.id = `image-router-v1:${this.fixture.id}:${external?.id ?? 'external-disabled'}`;
+    // Persisted asset provenance allows 80 characters; retain full identity via a bounded digest.
+    this.id = `image-router-v2:${createHash('sha256')
+      .update(
+        JSON.stringify({ fixture: this.fixture.id, external: external?.id ?? 'external-disabled' }),
+      )
+      .digest('hex')}`;
   }
   async generate(input: GenerationRequest, dispatchId: string, refs: ImageReference[]) {
     if (input.mode === 'mock') return this.fixture.generate(input, dispatchId);
@@ -322,6 +350,80 @@ export function createImageRuntime(
             },
           }
         : {}),
+    },
+  };
+}
+
+/** Pure adapter configuration. Neither this function nor its constructor resolves a credential or claims DB consent. */
+export function createOwnerImageRuntime(
+  config: OwnerGenerationConfig,
+  dependencies: {
+    resolveApiKey: () => string | undefined;
+    fetchImpl?: typeof fetch;
+    now?: () => number;
+  },
+): ImageRuntime {
+  const p = config.image;
+  const policy: ImagePolicy = Object.freeze({
+    ...defaultImagePolicy,
+    version: `owner-image-policy-v1:${config.configFingerprint}`,
+    generationMode: 'owner',
+    generationConfigFingerprint: config.configFingerprint,
+    scopeId: LIVE_TEXT.scopeId,
+    externalEnabled: true,
+    approved: true,
+    externalExpiresAt: p.pricing.validUntil,
+    verifiedUpperMicros: null,
+    costBasis: 'approved_estimate',
+    estimatedTotalMicros: p.estimatedTotalMicros,
+    operationalReserveMicros: p.reserveMicros,
+    totalCapMicros: config.totalCapMicros,
+    imageCapMicros: config.imageCapMicros,
+    textCapMicros: config.textCapMicros,
+  });
+  return {
+    provider: new ModeImageProvider(new OwnerOpenAiImageProvider(config, dependencies)),
+    policy,
+    capabilities: {
+      mockAvailable: true,
+      externalEnabled: true,
+      externalBlockReasons: [],
+      generationMode: 'owner',
+      ownerEstimateEnabled: true,
+      estimateRiskConsentRequired: true,
+      requestProfile: {
+        provider: 'openai',
+        model: p.model,
+        size: p.size,
+        quality: p.quality,
+        outputs: p.outputs,
+        format: p.format,
+        maxPromptUtf8Bytes: p.maxPromptUtf8Bytes,
+        maxReferenceImages: p.maxReferenceImages,
+        maxReferencePixels: p.maxReferencePixels,
+        maxReferenceBytes: p.maxReferenceBytes,
+      },
+      pricing: {
+        id: `owner-pricing:${config.configFingerprint}`,
+        inputTextMicrosPerMillion: p.inputTextMicrosPerMillion,
+        inputImageMicrosPerMillion: p.inputImageMicrosPerMillion,
+        outputImageMicrosPerMillion: p.outputImageMicrosPerMillion,
+        source: p.pricing.source,
+        reviewedAt: p.pricing.reviewedAt,
+        expiresAt: p.pricing.validUntil,
+      },
+      verifiedUpperMicros: null,
+      approvedTotalMicros: config.totalCapMicros,
+      approvedImageMicros: config.imageCapMicros,
+      approvedTextMicros: config.textCapMicros,
+      costStatus: 'approved_estimate',
+      costBasis: 'approved_estimate',
+      estimatedTotalMicros: p.estimatedTotalMicros,
+      reserveMicros: p.reserveMicros,
+      riskApprovalActive: true,
+      estimateDispatchReleased: false,
+      providerEnforcesQuotedCap: false,
+      credentialState: 'not_checked',
     },
   };
 }

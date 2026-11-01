@@ -3,7 +3,8 @@ import type { PoolClient, QueryResultRow } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Db } from '../db';
-import { LiveTestService } from '../live-test/service';
+import { fenceGenerationAdmission } from '../generation/scope-fence';
+import { GenerationAuthority } from '../generation/service';
 import { ManualLiveProvider } from '../live-test/provider';
 import { fail } from '../errors';
 import { npcTelemetrySnapshot } from '../game/npc-telemetry';
@@ -113,6 +114,14 @@ export class NpcAiEngine {
       this.policy.maxQueuedPerCampaign > 64
     )
       throw new Error('INVALID_AI_LIMITS');
+  }
+  private async excludeLegacyOwnerBypass(c: PoolClient) {
+    if (!this.provider.external || this.provider instanceof ManualLiveProvider) return;
+    // Caller owns its target provider-budget row before the shared admission fence.
+    // No owner/session/shared-scope row is locked here, so owner claim cannot invert locks.
+    await fenceGenerationAdmission(c);
+    if ((await c.query("SELECT 1 FROM live_test_sessions WHERE mode='owner' LIMIT 1")).rowCount)
+      fail(409, 'GENERATION_AUTHORITY_IMMUTABLE', 'GENERATION_AUTHORITY_IMMUTABLE');
   }
   private get sponsorship() {
     return new NpcSponsorship(this.db, this.provider, this.policy, (c, scope) =>
@@ -353,6 +362,16 @@ export class NpcAiEngine {
       runtimeRequestId: input.runtimeRequestId ?? null,
     });
     return this.db.tx(async (c) => {
+      const generationAuthorizationId =
+        this.provider instanceof ManualLiveProvider
+          ? await this.provider.session.preparedAuthorizationId(c)
+          : null;
+      if (
+        this.provider instanceof ManualLiveProvider &&
+        this.provider.session.mode === 'owner' &&
+        !generationAuthorizationId
+      )
+        fail(409, 'GENERATION_CONSENT_REQUIRED', 'GENERATION_CONSENT_REQUIRED');
       await c.query(
         'SELECT a.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1 FOR SHARE OF a',
         [scope.campaignId],
@@ -503,6 +522,7 @@ export class NpcAiEngine {
           this.provider.id,
         ])
       ).rows[0];
+      await this.excludeLegacyOwnerBypass(c);
       if (budget.blocked) fail(503, 'PROVIDER_DISABLED', 'PROVIDER_DISABLED');
       if (
         Number(budget.reserved_micros) +
@@ -514,8 +534,8 @@ export class NpcAiEngine {
         fail(409, 'PROVIDER_BUDGET_EXCEEDED', 'PROVIDER_BUDGET_EXCEEDED');
       const id = randomUUID();
       const r = await c.query<Job>(
-        `INSERT INTO npc_ai_jobs(id,campaign_id,npc_id,operation_id,request_hash,origin,requester_user_id,payer_user_id,purpose,context_hash,context,provider_id,provider_version,policy_version,status,credits,reservation_status,reservation_expires_at,provider_upper_micros,provider_budget_status,quote_id,request_meta,sponsor_id,subject_kind)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'reserved',$15,$16,$17,$18,'reserved',$19,$20,$21,$22) RETURNING *`,
+        `INSERT INTO npc_ai_jobs(id,campaign_id,npc_id,operation_id,request_hash,origin,requester_user_id,payer_user_id,purpose,context_hash,context,provider_id,provider_version,policy_version,status,credits,reservation_status,reservation_expires_at,provider_upper_micros,provider_budget_status,quote_id,request_meta,sponsor_id,subject_kind,provider_external,generation_authorization_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'reserved',$15,$16,$17,$18,'reserved',$19,$20,$21,$22,$23,$24) RETURNING *`,
         [
           id,
           scope.campaignId,
@@ -545,6 +565,8 @@ export class NpcAiEngine {
           }),
           input.sponsorId ?? null,
           scope.subjectKind ?? 'npc',
+          this.provider.external === true,
+          generationAuthorizationId,
         ],
       );
       if (input.runtimeRequestId)
@@ -618,6 +640,16 @@ export class NpcAiEngine {
       const j = (await c.query<Job>('SELECT * FROM npc_ai_jobs WHERE id=$1 FOR UPDATE', [id]))
         .rows[0];
       if (!j || j.status !== 'reserved' || j.cancel_requested) return null;
+      if (this.provider.external && !(this.provider instanceof ManualLiveProvider)) {
+        const budget = (
+          await c.query(
+            'SELECT provider_id FROM npc_ai_provider_budgets WHERE provider_id=$1 FOR UPDATE',
+            [j.provider_id],
+          )
+        ).rows[0];
+        if (!budget) fail(409, 'PROVIDER_BUDGET_MISSING', 'PROVIDER_BUDGET_MISSING');
+        await this.excludeLegacyOwnerBypass(c);
+      }
       if (
         j.provider_id !== this.provider.id ||
         j.provider_version !== this.provider.version ||
@@ -1130,7 +1162,7 @@ export class NpcAiService extends NpcAiEngine implements OnModuleInit, OnModuleD
       this.maintaining = false;
     }
   }
-  constructor(@Inject(Db) db: Db, @Inject(LiveTestService) live: LiveTestService) {
+  constructor(@Inject(Db) db: Db, @Inject(GenerationAuthority) live: GenerationAuthority) {
     const configured = readNpcAiConfiguration();
     super(
       db,

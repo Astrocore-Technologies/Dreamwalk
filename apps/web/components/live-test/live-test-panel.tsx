@@ -5,7 +5,12 @@ import { useT } from '@/lib/i18n';
 import { Button, ErrorBox } from '../ui';
 import {
   formatUsd,
+  GenerationResponseScope,
   liveSessionActive,
+  generationAuthorizationId,
+  generationRemaining,
+  generationExpired,
+  generationPricingCurrent,
   sameTurnFence,
   type LiveRequests,
   type LiveTestStatus,
@@ -16,23 +21,38 @@ import styles from './live-test.module.css';
 
 export function useLiveTestStatus() {
   const { user } = useClient();
-  const [status, setStatus] = useState<LiveTestStatus | null>(null),
-    [error, setError] = useState('');
-  const owner = user?.role === 'admin' ? user.id : null;
-  const epoch = useRef(0);
+  // The server resolves the configured owner handle; owner status does not require an admin role.
+  const owner = user?.id ?? null;
+  const [snapshot, setSnapshot] = useState<{
+    owner: string | null;
+    status: LiveTestStatus | null;
+    error: string;
+  }>({ owner: null, status: null, error: '' });
+  const epoch = useRef(0),
+    identity = useRef(owner);
+  identity.current = owner;
+  const setStatus = useCallback(
+    (value: LiveTestStatus | null) => {
+      if (identity.current === owner) setSnapshot({ owner, status: value, error: '' });
+    },
+    [owner],
+  );
   const refresh = useCallback(async () => {
     if (!owner) return;
     const current = ++epoch.current;
     try {
-      const value = await api<LiveTestStatus>('/live-test/status');
-      if (current === epoch.current) {
-        setStatus(value);
-        setError('');
+      const value = await api<LiveTestStatus>('/generation/status');
+      if (current === epoch.current && identity.current === owner) {
+        setSnapshot({ owner, status: value, error: '' });
       }
     } catch (e) {
-      if (current === epoch.current) {
-        if (e instanceof ApiError && [403, 409].includes(e.status)) setStatus(null);
-        else setError(e instanceof ApiError ? e.code : 'NETWORK_ERROR');
+      if (current === epoch.current && identity.current === owner) {
+        // Never retain an authorization after a failed access/configuration refresh.
+        setSnapshot({
+          owner,
+          status: null,
+          error: e instanceof ApiError ? e.code : 'NETWORK_ERROR',
+        });
       }
     }
   }, [owner]);
@@ -42,8 +62,14 @@ export function useLiveTestStatus() {
     return () => {
       epoch.current++;
     };
-  }, [owner, refresh]);
-  return { status, setStatus, error, refresh };
+  }, [owner, refresh, setStatus]);
+  // Hide the previous account's status during the render before effect cleanup.
+  return {
+    status: snapshot.owner === owner ? snapshot.status : null,
+    setStatus,
+    error: snapshot.owner === owner ? snapshot.error : '',
+    refresh,
+  };
 }
 export function LiveTestPanel({
   campaignId,
@@ -57,22 +83,28 @@ export function LiveTestPanel({
   onStatusChange?: (value: LiveTestStatus | null) => void;
 }) {
   const { status, setStatus, error: statusError, refresh } = useLiveTestStatus();
+  const { user } = useClient();
+  const responseScope = useRef(new GenerationResponseScope()).current;
+  const scopeKey = JSON.stringify({ owner: user?.id ?? null, campaignId, turnFence });
+  responseScope.update(scopeKey);
   const m = useLiveText(),
     { locale } = useT();
   const [claimConsent, setClaimConsent] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
-  const [batch, setBatch] = useState<LiveRequests | null>(null),
+  const [batchState, setBatchState] = useState<{ stamp: number; value: LiveRequests } | null>(null),
     [consents, setConsents] = useState<Record<string, boolean>>({});
   const [now, setNow] = useState(Date.now()),
     [uncertain, setUncertain] = useState<string[]>([]);
   const inFlight = useRef(false),
     operations = useRef(new Map<string, string>()),
     mounted = useRef(true);
+  const batch = batchState && responseScope.current(batchState.stamp) ? batchState.value : null;
   useEffect(() => {
     mounted.current = true;
     return () => {
       mounted.current = false;
+      responseScope.invalidate();
     };
   }, []);
   useEffect(() => {
@@ -82,32 +114,82 @@ export function LiveTestPanel({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
+  const authorizationKey = JSON.stringify({
+    id: generationAuthorizationId(status),
+    mode: status?.mode,
+    state: status?.state,
+    cap: status?.capMicros,
+    remaining: status?.remainingMicros,
+    held: status?.heldMicros,
+    pricing: status?.pricingValidUntil,
+  });
+  useEffect(() => {
+    setClaimConsent(false);
+    setConsents({});
+  }, [authorizationKey]);
   const fenceKey = JSON.stringify(turnFence);
   useEffect(() => {
-    setBatch(null);
+    setBatchState(null);
+    setClaimConsent(false);
+    setError('');
     setConsents({});
     setUncertain([]);
-  }, [campaignId, fenceKey]);
-  if (!status) return null;
-  const active = liveSessionActive(status, now),
-    expired = Date.parse(status.expiresAt) <= now;
+  }, [scopeKey, fenceKey]);
+  if (!status)
+    return statusError ? (
+      <section
+        className={styles.panel}
+        aria-label={m('unavailableTitle')}
+        data-testid="generation-unavailable"
+      >
+        <h2>{m('unavailableTitle')}</h2>
+        <p>{m('unavailable')}</p>
+        <ErrorBox message={`${m('failure')} (${statusError})`} />
+        <Button
+          type="button"
+          variant="secondary"
+          onClick={() => {
+            setError('');
+            void refresh();
+          }}
+        >
+          {m('refresh')}
+        </Button>
+      </section>
+    ) : null;
+  const ownerMode = status.mode === 'owner',
+    active = liveSessionActive(status, now),
+    expired = generationExpired(status, now),
+    pricingCurrent = generationPricingCurrent(status, now);
+
   const money = (value: number) => formatUsd(value, locale);
   async function claim() {
-    if (inFlight.current || !claimConsent) return;
+    if (
+      !status ||
+      inFlight.current ||
+      !claimConsent ||
+      !status.enabled ||
+      status.state !== 'unclaimed' ||
+      generationExpired(status) ||
+      !generationPricingCurrent(status)
+    )
+      return;
+    const stamp = responseScope.capture();
     inFlight.current = true;
     setBusy(true);
     setError('');
     try {
-      const next = await api<LiveTestStatus>('/live-test/claim', {
+      const next = await api<LiveTestStatus>('/generation/claim', {
         method: 'POST',
         body: JSON.stringify({ consent: true }),
       });
-      if (mounted.current) {
+      if (mounted.current && responseScope.current(stamp)) {
         setStatus(next);
         setClaimConsent(false);
       }
     } catch (e) {
-      if (mounted.current) setError(e instanceof ApiError ? e.code : 'NETWORK_ERROR');
+      if (mounted.current && responseScope.current(stamp))
+        setError(e instanceof ApiError ? e.code : 'NETWORK_ERROR');
     } finally {
       inFlight.current = false;
       if (mounted.current) setBusy(false);
@@ -115,18 +197,20 @@ export function LiveTestPanel({
   }
   async function requests() {
     if (!campaignId || inFlight.current) return;
+    const stamp = responseScope.capture();
     inFlight.current = true;
     setBusy(true);
     setError('');
     try {
-      const value = await api<LiveRequests>(`/live-test/campaigns/${campaignId}/requests`);
-      if (mounted.current) {
-        setBatch(value);
+      const value = await api<LiveRequests>(`/generation/campaigns/${campaignId}/requests`);
+      if (mounted.current && responseScope.current(stamp)) {
+        setBatchState({ stamp, value });
         setConsents({});
         setUncertain([]);
       }
     } catch (e) {
-      if (mounted.current) setError(e instanceof ApiError ? e.code : 'NETWORK_ERROR');
+      if (mounted.current && responseScope.current(stamp))
+        setError(e instanceof ApiError ? e.code : 'NETWORK_ERROR');
     } finally {
       inFlight.current = false;
       if (mounted.current) setBusy(false);
@@ -143,37 +227,43 @@ export function LiveTestPanel({
       inFlight.current
     )
       return;
+    const stamp = responseScope.capture();
     inFlight.current = true;
     setBusy(true);
     setError('');
     const key = `${status.sessionId}:${requestId}:${JSON.stringify(batch.turnFence)}`;
     if (!operations.current.has(key)) operations.current.set(key, crypto.randomUUID());
     try {
-      await api(`/live-test/campaigns/${campaignId}/requests/${requestId}/consent`, {
+      await api(`/generation/campaigns/${campaignId}/requests/${requestId}/consent`, {
         method: 'POST',
         body: JSON.stringify({
-          sessionId: status.sessionId,
+          ...(ownerMode
+            ? { authorizationId: generationAuthorizationId(status) }
+            : { sessionId: status.sessionId }),
           operationId: operations.current.get(key),
           turnFence: batch.turnFence,
           consent: true,
         }),
       });
-      if (mounted.current) {
+      if (mounted.current && responseScope.current(stamp)) {
         setConsents((v) => ({ ...v, [requestId]: false }));
-        setBatch((v) =>
-          v
+        setBatchState((v) =>
+          v && responseScope.current(v.stamp)
             ? {
                 ...v,
-                requests: v.requests.map((r) =>
-                  r.id === requestId ? { ...r, permitState: 'authorized' } : r,
-                ),
+                value: {
+                  ...v.value,
+                  requests: v.value.requests.map((r) =>
+                    r.id === requestId ? { ...r, permitState: 'authorized' } : r,
+                  ),
+                },
               }
             : null,
         );
       }
-      await refresh();
+      if (mounted.current && responseScope.current(stamp)) await refresh();
     } catch (e) {
-      if (mounted.current) {
+      if (mounted.current && responseScope.current(stamp)) {
         setError(e instanceof ApiError ? e.code : 'NETWORK_ERROR');
         if (!(e instanceof ApiError) || !e.status) setUncertain((v) => [...v, requestId]);
       }
@@ -183,9 +273,14 @@ export function LiveTestPanel({
     }
   }
   return (
-    <section className={styles.panel} aria-label={m('title')} data-testid="live-test-panel">
-      <h2>{m('title')}</h2>
-      <p className={styles.note}>{m('intro')}</p>
+    <section
+      className={styles.panel}
+      aria-label={m(ownerMode ? 'ownerTitle' : 'title')}
+      data-testid="live-test-panel"
+      data-generation-mode={ownerMode ? 'owner' : 'manual'}
+    >
+      <h2>{m(ownerMode ? 'ownerTitle' : 'title')}</h2>
+      <p className={styles.note}>{m(ownerMode ? 'ownerIntro' : 'intro')}</p>
       <dl className={styles.budget}>
         {(
           [
@@ -201,20 +296,42 @@ export function LiveTestPanel({
           </div>
         ))}
       </dl>
+      {ownerMode && (
+        <p className={styles.note}>
+          {m('textRemaining')}: {money(generationRemaining(status, 'text'))} · {m('imageRemaining')}
+          : {money(generationRemaining(status, 'image'))}
+        </p>
+      )}
       <p>
         {m(
           expired
             ? 'expired'
             : status.state === 'active'
-              ? 'active'
+              ? ownerMode
+                ? 'ownerActive'
+                : 'active'
               : status.state === 'unclaimed'
-                ? 'unclaimed'
-                : 'stopped',
+                ? ownerMode
+                  ? 'ownerUnclaimed'
+                  : 'unclaimed'
+                : ownerMode
+                  ? 'ownerStopped'
+                  : 'stopped',
         )}
       </p>
-      <p className={styles.note}>
-        {m('expiry')}: {new Date(status.expiresAt).toLocaleString(locale)}
-      </p>
+      {ownerMode ? (
+        <p className={styles.note}>{m('ownerDuration')}</p>
+      ) : status.expiresAt ? (
+        <p className={styles.note}>
+          {m('expiry')}: {new Date(status.expiresAt).toLocaleString(locale)}
+        </p>
+      ) : null}
+      {status.pricingValidUntil && (
+        <p className={styles.note}>
+          {m('pricingExpiry')}: {new Date(status.pricingValidUntil).toLocaleString(locale)}
+        </p>
+      )}
+      {!pricingCurrent && <p role="status">{m('pricingExpired')}</p>}
       <p className={styles.note}>{m('debit')}</p>
       <p className={styles.note}>
         {m('model')}: {status.text.model} · {m('upper')}: {money(status.text.upperMicros)}
@@ -222,7 +339,11 @@ export function LiveTestPanel({
       <p className={styles.note}>
         {m('historical')}: {status.priorHeldReservations}
       </p>
-      <p className={styles.note}>{m(status.imagesEnabled ? 'imageAvailable' : 'imageBlocked')}</p>
+      <p className={styles.note}>
+        {m(
+          status.imagesEnabled ? 'imageAvailable' : ownerMode ? 'imageUnavailable' : 'imageBlocked',
+        )}
+      </p>
       {status.imageBlockCode && (
         <small>
           <code>{status.imageBlockCode}</code>
@@ -234,7 +355,7 @@ export function LiveTestPanel({
         </p>
       )}
       <ErrorBox message={error || statusError ? `${m('failure')} (${error || statusError})` : ''} />
-      {status.state === 'unclaimed' && !expired && (
+      {status.state === 'unclaimed' && !expired && pricingCurrent && status.enabled && (
         <>
           <label className={styles.check}>
             <input
@@ -242,14 +363,22 @@ export function LiveTestPanel({
               checked={claimConsent}
               onChange={(e) => setClaimConsent(e.target.checked)}
             />
-            {m('claimConsent')}
+            {m(ownerMode ? 'ownerClaimConsent' : 'claimConsent')}
           </label>
           <Button type="button" busy={busy} disabled={!claimConsent} onClick={() => void claim()}>
-            {m('claim')}
+            {m(ownerMode ? 'ownerClaim' : 'claim')}
           </Button>
         </>
       )}
-      <Button type="button" variant="secondary" disabled={busy} onClick={() => void refresh()}>
+      <Button
+        type="button"
+        variant="secondary"
+        disabled={busy}
+        onClick={() => {
+          setError('');
+          void refresh();
+        }}
+      >
         {m('refresh')}
       </Button>
       {campaignId && (
@@ -297,7 +426,7 @@ export function LiveTestPanel({
                       !consents[request.id] ||
                       !active ||
                       uncertain.includes(request.id) ||
-                      request.upperMicros > status.remainingMicros ||
+                      request.upperMicros > generationRemaining(status, 'text') ||
                       !sameTurnFence(turnFence, batch.turnFence)
                     }
                     onClick={() => void approve(request.id)}
@@ -310,7 +439,7 @@ export function LiveTestPanel({
           ))}
         </>
       )}
-      {!active && status.state === 'active' && !expired && <p>{m('noBudget')}</p>}
+      {status.remainingMicros <= 0 && <p>{m('noBudget')}</p>}
     </section>
   );
 }

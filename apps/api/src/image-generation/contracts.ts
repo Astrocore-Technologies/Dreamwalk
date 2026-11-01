@@ -13,6 +13,7 @@ export const generationRequestSchema = z
   .object({
     adventureId: z.uuid().optional(),
     liveTestSessionId: z.uuid().optional(),
+    generationAuthorizationId: z.uuid().optional(),
     studioLocationContext: z
       .object({
         locationId: z.string().trim().min(1).max(80),
@@ -57,6 +58,13 @@ export const generationRequestSchema = z
     declineReuse: z.boolean().optional(),
   })
   .strict()
+  .refine(
+    (v) =>
+      !v.liveTestSessionId ||
+      !v.generationAuthorizationId ||
+      v.liveTestSessionId === v.generationAuthorizationId,
+    { message: 'GENERATION_AUTHORIZATION_MISMATCH' },
+  )
   .refine((v) => !v.studioLocationContext || !!v.adventureId)
   .refine(
     (v) =>
@@ -83,6 +91,9 @@ export const generationRequestSchema = z
   });
 export type GenerationRequest = z.infer<typeof generationRequestSchema>;
 export interface ImagePolicy {
+  generationMode?: 'owner';
+  generationAuthorizationId?: string;
+  generationConfigFingerprint?: string;
   version: string;
   scopeId: string;
   externalEnabled: boolean;

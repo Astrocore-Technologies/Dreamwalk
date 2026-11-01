@@ -23,20 +23,13 @@ const deferred = () => {
   });
   return { promise, resolve };
 };
-let onQuery = () => {};
 const database = {
   query: async (sql, v = []) => (await db.query(sql, v)).rows,
   tx: async (work) => {
     const c = await db.connect();
     try {
       await c.query('BEGIN');
-      const value = await work({
-        query: async (sql, v = []) => {
-          const result = await c.query(sql, v);
-          onQuery(sql, v, result);
-          return result;
-        },
-      });
+      const value = await work(c);
       await c.query('COMMIT');
       return value;
     } catch (e) {
@@ -47,6 +40,40 @@ const database = {
     }
   },
 };
+// A broken barrier must fail and release the held transaction, not strand suite cleanup.
+async function bounded(promise, label, timeoutMs = 5000) {
+  let timer;
+  try {
+    return await Promise.race([
+      promise,
+      new Promise((_, reject) => {
+        timer = setTimeout(() => reject(new Error(`Timed out: ${label}`)), timeoutMs);
+        timer.unref();
+      }),
+    ]);
+  } finally {
+    clearTimeout(timer);
+  }
+}
+async function waitForBlockedRival(blockerPid) {
+  const deadline = Date.now() + 5000;
+  do {
+    const rows = (
+      await db.query(
+        'SELECT pid,wait_event_type FROM pg_stat_activity WHERE datname=current_database() AND $1::integer=ANY(pg_blocking_pids(pid)) ORDER BY pid',
+        [blockerPid],
+      )
+    ).rows;
+    if (rows.length) {
+      assert.equal(rows.length, 1, 'Only the competing request is blocked in this isolated test');
+      assert.notEqual(rows[0].pid, blockerPid);
+      assert.equal(rows[0].wait_event_type, 'Lock');
+      return rows[0].pid;
+    }
+    await delay(20);
+  } while (Date.now() < deadline);
+  assert.fail('The competing request did not reach the held database lock');
+}
 await test(
   'private authoring uses one durable manual grant without world or NPC fences',
   { timeout: 30000 },
@@ -227,50 +254,48 @@ await test(
       pending = deferred();
       started = deferred();
       const inside = deferred(),
-        release = deferred(),
-        readByRival = deferred();
-      let reads = 0;
-      onQuery = (sql, v) => {
-        if (
-          sql.includes('SELECT * FROM live_authoring_text_jobs WHERE id=$1 AND actor_id=$2') &&
-          v[0] === job.id &&
-          ++reads === 3
-        )
-          readByRival.resolve();
-      };
-      const first = engine.run(
-        owner,
-        job.id,
-        async (c, b) => {
-          inside.resolve();
-          await release.promise;
-          await guard(c, b);
-        },
-        commit,
-      );
-      await inside.promise;
-      const rival = engine.run(
-        owner,
-        job.id,
-        async () => {
-          throw new Error('new stale project');
-        },
-        commit,
-      );
-      await readByRival.promise;
-      release.resolve();
-      await started.promise;
-      await rival;
-      assert.equal((await engine.get(owner, job.id)).status, 'dispatched');
-      assert.equal((await live.status(owner)).heldMicros, LIVE_TEXT.upperMicros);
-      pending.resolve(result());
-      const done = await first;
-      assert.equal(done.status, 'committed');
-      assert.equal(commits, 1);
-      assert.equal(calls, 1);
-      await engine.run(owner, job.id, guard, commit);
-      assert.equal(calls, 1);
-      onQuery = () => {};
+        release = deferred();
+      let blockerPid, first, rival;
+      try {
+        first = engine.run(
+          owner,
+          job.id,
+          async (c, b) => {
+            blockerPid = (await c.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+            inside.resolve();
+            await release.promise;
+            await guard(c, b);
+          },
+          commit,
+        );
+        await bounded(inside.promise, 'first request entered its locked fence');
+        rival = engine.run(
+          owner,
+          job.id,
+          async () => {
+            throw new Error('new stale project');
+          },
+          commit,
+        );
+        // Observe actual PostgreSQL contention, not the spelling/count of job reads.
+        await bounded(waitForBlockedRival(blockerPid), 'rival waiting on first request');
+        release.resolve();
+        await bounded(started.promise, 'single provider dispatch');
+        await bounded(rival, 'rival rechecks the stored dispatched job');
+        assert.equal((await engine.get(owner, job.id)).status, 'dispatched');
+        assert.equal((await live.status(owner)).heldMicros, LIVE_TEXT.upperMicros);
+        pending.resolve(result());
+        const done = await bounded(first, 'first request committed');
+        assert.equal(done.status, 'committed');
+        assert.equal(commits, 1);
+        assert.equal(calls, 1);
+        await engine.run(owner, job.id, guard, commit);
+        assert.equal(calls, 1);
+      } finally {
+        release.resolve();
+        pending.resolve(result());
+        await bounded(Promise.allSettled([first, rival].filter(Boolean)), 'race cleanup', 7000);
+      }
     });
     await t.test('editing after quote prevents a reservation or provider call', async () => {
       mode = 'success';

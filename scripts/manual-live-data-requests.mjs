@@ -82,15 +82,18 @@ export async function purgeManualLiveData(client, userId, campaigns) {
       );
     }
     await client.query(
-      "UPDATE live_test_sessions SET state='stopped',stop_code='DATA_ERASED' WHERE id=$1",
-      [session.id],
+      // Other owners' authorizations can be stopped by an affected campaign, but
+      // their account identity is not part of this user's erasure. Manual rows
+      // must retain NULL to satisfy their immutable authorization-mode constraint.
+      "UPDATE live_test_sessions SET state='stopped',stop_code='DATA_ERASED',owner_handle=CASE WHEN owner_id=$2 AND mode='owner' THEN 'erased' ELSE owner_handle END WHERE id=$1",
+      [session.id, userId],
     );
   }
 }
 export async function exportManualLiveData(client, userId) {
   const sessions = (
     await client.query(
-      'SELECT id,scope_id,expires_at,cap_micros,state,stop_code,created_at FROM live_test_sessions WHERE owner_id=$1 ORDER BY created_at',
+      'SELECT id,scope_id,mode,owner_handle,config_hash,expires_at,cap_micros,text_cap_micros,image_cap_micros,state,stop_code,created_at FROM live_test_sessions WHERE owner_id=$1 ORDER BY created_at',
       [userId],
     )
   ).rows;

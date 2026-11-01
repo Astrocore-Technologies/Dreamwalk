@@ -4,7 +4,12 @@ import { api, ApiError } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox } from '../ui';
 import { GameCanvas } from '../game/game-canvas';
-import { formatUsd, liveSessionActive, type LiveTestStatus } from '../live-test/types';
+import {
+  generationRemaining,
+  formatUsd,
+  liveSessionActive,
+  type LiveTestStatus,
+} from '../live-test/types';
 import { spatialMessages, useSpatialText, type SpatialMessage } from './spatial-messages';
 import type { SpatialProject, SpatialState } from './spatial-types';
 import { useVisualText } from './messages';
@@ -141,7 +146,9 @@ export function SpatialPlanner({
       <p>{m('intro')}</p>
       <p>{m('noRetry')}</p>
       {state && <small>{state.model}</small>}
-      {!sessionAvailable && <p role="status">{m('unavailable')}</p>}
+      {!sessionAvailable && (
+        <p role="status">{m(session?.mode === 'owner' ? 'ownerUnavailable' : 'unavailable')}</p>
+      )}
       {state?.blockers.map((code) => (
         <small key={code}>
           <code>{code}</code>
@@ -167,6 +174,7 @@ export function SpatialPlanner({
           busy ||
           !available ||
           !state?.canQuote ||
+          state.upperMicros > generationRemaining(session, 'text') ||
           attempted ||
           unknown ||
           (!!quote && !expired)
@@ -208,7 +216,7 @@ export function SpatialPlanner({
               !quoteCostValid ||
               consent !== quote.id ||
               unknown ||
-              quote.upperMicros > (session?.remainingMicros ?? 0)
+              quote.upperMicros > generationRemaining(session, 'text')
             }
             onClick={() =>
               void mutate(

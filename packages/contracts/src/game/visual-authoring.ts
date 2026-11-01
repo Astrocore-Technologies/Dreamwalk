@@ -172,6 +172,7 @@ export const visualGenerationDispatchSchema = visualMutationSchema
     role: visualGenerationRoleSchema,
     quoteId: z.uuid(),
     consent: z.literal(true),
+    estimateRiskConsent: z.literal(true).optional(),
   })
   .strict();
 export const visualGenerationReuseSchema = visualMutationSchema

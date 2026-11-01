@@ -158,7 +158,7 @@ async function setup(page: Page, approved = false, existing = false, mapped = fa
       body = await response.json();
     await route.fulfill({ response, json: { ...body, user: { ...body.user, role: 'admin' } } });
   });
-  await page.route('**/api/v1/live-test/**', async (route) => {
+  await page.route(/\/api\/v1\/(?:generation|live-test)\//, async (route) => {
     if (
       new URL(route.request().url()).pathname.endsWith('/status') &&
       route.request().method() === 'GET'

@@ -11,9 +11,9 @@ test('generation UI gates the selected mode with fresh quote consent and stable 
   assert.match(s, /readOnly=\{!!preparedRequest\}/);
   assert.match(s, /result.quote\?\.mode === mode/);
   assert.match(s, /config.data\?\.verifiedUpperMicros/);
-  assert.match(s, /!config.data\?\.externalEnabled \|\| !liveTestSessionId/);
+  assert.match(s, /!config.data\?\.externalEnabled \|\| !authorizationId/);
   assert.match(s, /result.quote.upperMicros === 0/);
-  assert.match(s, /!valid \|\| !quote \|\| !consent/);
+  assert.match(s, /!valid\s+\|\|\s+!quoteBudgetAvailable\s+\|\|\s+!quote\s+\|\|\s+!consent/);
   assert.match(s, /quotedFingerprint.current !== fingerprint/);
   assert.match(s, /quote\?\.mode !== mode/);
   assert.match(s, /quote.upperMicros === null/);
@@ -22,7 +22,9 @@ test('generation UI gates the selected mode with fresh quote consent and stable 
   assert.match(s, /operation.current.id/);
   assert.match(s, /declineReuse: true/);
   assert.match(s, /revision.owned/);
-  assert.match(s, /references.length >= 2/);
+  assert.match(s, /Math.min\(\s*2,/);
+  assert.match(s, /references.length <= referenceLimit/);
+  assert.match(s, /references.length >= referenceLimit/);
   assert.doesNotMatch(s, /api.openai|Authorization:|apiKey|process.env/);
 });
 test('job result cannot silently publish or bind and external unavailable copy has all locales', async () => {

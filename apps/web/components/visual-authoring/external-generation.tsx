@@ -4,13 +4,22 @@ import { api, ApiError } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox } from '../ui';
 import { artPreviewUrl } from '../assets/types';
-import { formatUsd, liveSessionActive, type LiveTestStatus } from '../live-test/types';
+import {
+  generationRemaining,
+  formatUsd,
+  liveSessionActive,
+  type LiveTestStatus,
+} from '../live-test/types';
 import {
   useGenerationText,
   generationMessages,
   type GenerationMessage,
 } from './generation-messages';
-import type { GenerationProject, GenerationState } from './generation-types';
+import {
+  ownerImageQuoteMatches,
+  type GenerationProject,
+  type GenerationState,
+} from './generation-types';
 import styles from './workshop.module.css';
 
 export function ExternalGeneration({
@@ -32,6 +41,7 @@ export function ExternalGeneration({
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
   const [consents, setConsents] = useState<Record<string, boolean>>({}),
+    [riskConsents, setRiskConsents] = useState<Record<string, boolean>>({}),
     [semantics, setSemantics] = useState<Record<string, boolean>>({}),
     [decline, setDecline] = useState<Record<string, boolean>>({});
   const [uncertain, setUncertain] = useState<string[]>([]),
@@ -49,6 +59,7 @@ export function ExternalGeneration({
         setState({ ...next, projectRevision: project.revision });
         setError('');
         setConsents({});
+        setRiskConsents({});
         setSemantics({});
         setUncertain([]);
       }
@@ -71,6 +82,7 @@ export function ExternalGeneration({
   }, []);
   useEffect(() => {
     setConsents({});
+    setRiskConsents({});
   }, [session?.sessionId, session?.state]);
   async function mutate(path: string, body: object, role: string) {
     if (disabled || inFlight.current) return;
@@ -89,6 +101,7 @@ export function ExternalGeneration({
       if (stamp === epoch.current) {
         if (path.endsWith('/quote')) operations.current.delete(key);
         setConsents({});
+        setRiskConsents({});
         await refresh();
       }
     } catch (e) {
@@ -105,6 +118,8 @@ export function ExternalGeneration({
   const config = state?.configuration,
     allowed =
       !!config?.externalEnabled && !!session?.imagesEnabled && liveSessionActive(session, now);
+  const ownerReferencesUnavailable =
+    session?.mode === 'owner' && config?.requestProfile?.maxReferenceImages === 0;
   const label = (key: string) => (key in generationMessages ? g(key as GenerationMessage) : key);
   const money = (value: number) => formatUsd(value, locale);
   const roles = [
@@ -118,7 +133,8 @@ export function ExternalGeneration({
     >
       <h3>{g('stages')}</h3>
       <p>{g('manual')}</p>
-      {!allowed && <p role="status">{g('blocked')}</p>}
+      {ownerReferencesUnavailable && <p role="status">{g('ownerReferencesUnavailable')}</p>}
+      {!allowed && <p role="status">{g(session?.mode === 'owner' ? 'ownerBlocked' : 'blocked')}</p>}
       {config?.requestProfile && (
         <small>
           {config.requestProfile.provider} · {config.requestProfile.model} ·{' '}
@@ -143,17 +159,30 @@ export function ExternalGeneration({
         const item = state?.items.find((entry) => entry.role === role),
           quote = item?.quote?.quote,
           job = item?.job;
-        const expired = !!quote && Date.parse(quote.expiresAt) <= now,
+        const expired =
+            !!quote &&
+            (!Number.isFinite(Date.parse(quote.expiresAt)) || Date.parse(quote.expiresAt) <= now),
           quoteKey = `${role}:${quote?.id ?? ''}`;
+        const referenceRequired =
+          ownerReferencesUnavailable &&
+          (project.kind === 'character'
+            ? role !== 'concept'
+            : role !== 'background' &&
+              !!state?.items.some((item) => item.role === 'background' && !!item.revisionId));
         const validBound =
             typeof quote?.upperMicros === 'number' &&
-            Number.isFinite(quote.upperMicros) &&
-            quote.upperMicros >= 0,
+            Number.isSafeInteger(quote.upperMicros) &&
+            quote.upperMicros >= 0 &&
+            quote.upperMicros === config?.verifiedUpperMicros,
+          estimatedQuote = session?.mode === 'owner' && ownerImageQuoteMatches(quote, config),
+          dispatchableCost = validBound || estimatedQuote,
+          reserve = estimatedQuote ? quote?.reserveMicros : quote?.upperMicros,
           immutable = !!job || !!item?.revisionId || !!item?.dispatchOperationId,
           matches = item?.quote?.matches ?? [];
         return (
           <article key={role} className={styles.generationItem} data-generation-role={role}>
             <h4>{label(role)}</h4>
+            {referenceRequired && <p role="status">{g('ownerReferenceStage')}</p>}
             <p>{label(item?.status ?? 'idle')}</p>
             {item?.url && artPreviewUrl(item.url) && (
               <img
@@ -273,6 +302,7 @@ export function ExternalGeneration({
                   disabled ||
                   busy ||
                   !allowed ||
+                  referenceRequired ||
                   uncertain.includes(role) ||
                   (matches.length > 0 && !decline[role])
                 }
@@ -304,7 +334,7 @@ export function ExternalGeneration({
                 </p>
                 {!validBound && (
                   <>
-                    <p>{g('noInvoiceCap')}</p>
+                    <p>{g(estimatedQuote ? 'estimateNotice' : 'noInvoiceCap')}</p>
                     {typeof quote.reserveMicros === 'number' && (
                       <p>
                         {g('operationalReserve')}: {money(quote.reserveMicros)}
@@ -316,6 +346,19 @@ export function ExternalGeneration({
                   {g('expires')}: {new Date(quote.expiresAt).toLocaleString(locale)}
                 </small>
                 {expired && <p>{g('expired')}</p>}
+                {estimatedQuote && (
+                  <label className={styles.check}>
+                    <input
+                      type="checkbox"
+                      checked={!!riskConsents[quoteKey]}
+                      disabled={disabled || busy || !allowed || expired || uncertain.includes(role)}
+                      onChange={(e) =>
+                        setRiskConsents((v) => ({ ...v, [quoteKey]: e.target.checked }))
+                      }
+                    />
+                    {g('estimateRiskConsent')}
+                  </label>
+                )}
                 <label className={styles.check}>
                   <input
                     type="checkbox"
@@ -324,13 +367,14 @@ export function ExternalGeneration({
                       disabled ||
                       busy ||
                       !allowed ||
-                      !validBound ||
+                      referenceRequired ||
+                      !dispatchableCost ||
                       expired ||
                       quote.mode !== 'external'
                     }
                     onChange={(e) => setConsents((v) => ({ ...v, [quoteKey]: e.target.checked }))}
                   />
-                  {g('consent')}
+                  {g(estimatedQuote ? 'estimateRequestConsent' : 'consent')}
                 </label>
                 <Button
                   type="button"
@@ -338,12 +382,14 @@ export function ExternalGeneration({
                   disabled={
                     disabled ||
                     !allowed ||
-                    !validBound ||
+                    referenceRequired ||
+                    !dispatchableCost ||
                     !consents[quoteKey] ||
+                    (estimatedQuote && !riskConsents[quoteKey]) ||
                     expired ||
                     quote.mode !== 'external' ||
                     uncertain.includes(role) ||
-                    (quote.upperMicros ?? Infinity) > (session?.remainingMicros ?? 0)
+                    (reserve ?? Infinity) > generationRemaining(session, 'image')
                   }
                   onClick={() =>
                     void mutate(
@@ -353,6 +399,7 @@ export function ExternalGeneration({
                         role,
                         quoteId: quote.id,
                         consent: true,
+                        ...(estimatedQuote ? { estimateRiskConsent: true } : {}),
                       },
                       role,
                     )

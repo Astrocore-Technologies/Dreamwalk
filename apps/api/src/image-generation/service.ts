@@ -27,7 +27,8 @@ import {
   type ImageReference,
   type ImageResult,
 } from './provider';
-import { createImageRuntime, type ImageCapabilities } from './config';
+import { createImageRuntime, createOwnerImageRuntime, type ImageCapabilities } from './config';
+import { readOwnerGenerationConfig } from '../generation/config';
 import {
   prepareStudioLocationTx,
   authorizeStudioLocationTx,
@@ -112,14 +113,14 @@ export class ImageGenerationEngine {
   private liveAuthorizer?: (
     c: PoolClient,
     owner: string,
-    sessionId: string,
+    sessionId: string | undefined,
     input: GenerationRequest,
   ) => Promise<ImagePolicy>;
   setLiveAuthorizer(
     authorizer: (
       c: PoolClient,
       owner: string,
-      sessionId: string,
+      sessionId: string | undefined,
       input: GenerationRequest,
     ) => Promise<ImagePolicy>,
   ) {
@@ -295,9 +296,21 @@ export class ImageGenerationEngine {
       fail(409, 'REFERENCE_CHANGED', 'REFERENCE_CHANGED');
     let livePolicy: ImagePolicy | undefined;
     if (input.mode === 'external' && this.capabilities) {
-      if (!input.liveTestSessionId || !this.liveAuthorizer)
+      const authorizationId = input.generationAuthorizationId ?? input.liveTestSessionId;
+      if (!this.liveAuthorizer || (!authorizationId && this.policy.generationMode !== 'owner'))
         fail(409, 'MANUAL_LIVE_SESSION_REQUIRED', 'MANUAL_LIVE_SESSION_REQUIRED');
-      const authorized = await this.liveAuthorizer!(c, actorId, input.liveTestSessionId!, input);
+      const authorized = await this.liveAuthorizer!(c, actorId, authorizationId, input);
+      if (this.policy.generationMode === 'owner') {
+        if (
+          authorized.generationMode !== 'owner' ||
+          authorized.generationConfigFingerprint !== this.policy.generationConfigFingerprint ||
+          !authorized.generationAuthorizationId ||
+          (authorizationId && authorizationId !== authorized.generationAuthorizationId)
+        )
+          fail(409, 'GENERATION_AUTHORIZATION_MISMATCH', 'GENERATION_AUTHORIZATION_MISMATCH');
+        // Pin the explicit persisted claim, including when the caller omitted its convenience alias.
+        input.generationAuthorizationId = authorized.generationAuthorizationId;
+      }
       livePolicy = {
         ...authorized,
         verifiedUpperMicros: this.policy.verifiedUpperMicros,
@@ -313,7 +326,9 @@ export class ImageGenerationEngine {
   }
   private reservationMicros(input: GenerationRequest) {
     return input.mode === 'mock'
-      ? this.policy.mockUpperMicros
+      ? this.policy.generationMode === 'owner'
+        ? 0
+        : this.policy.mockUpperMicros
       : this.policy.costBasis === 'approved_estimate'
         ? this.policy.operationalReserveMicros!
         : this.policy.verifiedUpperMicros!;
@@ -328,13 +343,16 @@ export class ImageGenerationEngine {
         Date.parse(this.policy.externalExpiresAt) <= Date.now()) ||
       !Number.isSafeInteger(reserve) ||
       reserve <= 0 ||
-      reserve > 1000000 ||
+      reserve > (this.policy.generationMode === 'owner' ? this.policy.imageCapMicros : 1000000) ||
       (this.policy.costBasis !== 'approved_estimate' && this.policy.verifiedUpperMicros === null)
     )
       fail(409, 'LIVE_COST_BOUND_REQUIRED', 'LIVE_COST_BOUND_REQUIRED');
     if (
       this.policy.costBasis === 'approved_estimate' &&
-      (input.referenceRevisionIds.length || input.privateReferenceAssetIds.length)
+      (input.referenceRevisionIds.length || input.privateReferenceAssetIds.length) &&
+      (this.policy.generationMode !== 'owner' ||
+        input.referenceRevisionIds.length + input.privateReferenceAssetIds.length >
+          (this.capabilities?.requestProfile.maxReferenceImages ?? 0))
     )
       fail(409, 'IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE', 'IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE');
   }
@@ -344,7 +362,17 @@ export class ImageGenerationEngine {
     policy_version: string;
     upper_micros: unknown;
     request_hash: string;
+    cost_basis?: string;
+    estimated_total_micros?: unknown;
   }) {
+    if (
+      this.policy.generationMode === 'owner' &&
+      generationRequestSchema.parse(row.input).mode === 'external' &&
+      (row.cost_basis !== 'approved_estimate' ||
+        Number(row.estimated_total_micros) !== this.policy.estimatedTotalMicros ||
+        Number(row.upper_micros) !== this.policy.operationalReserveMicros)
+    )
+      fail(409, 'QUOTE_PROVIDER_CHANGED', 'QUOTE_PROVIDER_CHANGED');
     const expected = hash({
       input: row.input,
       refs: row.reference_hashes,
@@ -420,6 +448,13 @@ export class ImageGenerationEngine {
             : {}),
           expiresAt: expiresAt.toISOString(),
           rightsAttestationRequired: true,
+          ...(input.mode === 'external' && this.policy.generationMode === 'owner'
+            ? {
+                generationMode: 'owner',
+                estimateRiskConsentRequired: true,
+                providerEnforcesQuotedCap: false,
+              }
+            : {}),
         },
         matches,
       };
@@ -454,7 +489,12 @@ export class ImageGenerationEngine {
   }
   async enqueue(actorId: string, body: unknown) {
     const b = z
-      .object({ quoteId: z.uuid(), operationId: z.uuid(), consent: z.literal(true) })
+      .object({
+        quoteId: z.uuid(),
+        operationId: z.uuid(),
+        consent: z.literal(true),
+        estimateRiskConsent: z.literal(true).optional(),
+      })
       .strict()
       .parse(body);
     return this.db.tx(async (c) => {
@@ -466,8 +506,16 @@ export class ImageGenerationEngine {
       ).rows[0];
       if (!q) fail(404, 'NOT_FOUND', 'NOT_FOUND');
       const input = generationRequestSchema.parse(q.input);
+      // A separate informed action is mandatory even on idempotent replay; ordinary consent is not estimate consent.
+      if (
+        input.mode === 'external' &&
+        this.policy.generationMode === 'owner' &&
+        (q.cost_basis !== 'approved_estimate' || b.estimateRiskConsent !== true)
+      )
+        fail(409, 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED', 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED');
       const authorization = await this.authorize(c, actorId, input, q.reference_hashes);
       this.liveGate(input);
+      this.assertQuotedProvider(q);
       const previous = (
         await c.query<Job>(
           'SELECT * FROM image_generation_jobs WHERE actor_id=$1 AND operation_id=$2',
@@ -479,7 +527,6 @@ export class ImageGenerationEngine {
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
         return this.dto(previous);
       }
-      this.assertQuotedProvider(q);
       await lockRasterQuota(c, actorId, MAX_RASTER_BYTES);
       await c.query('SELECT id FROM image_generation_quotes WHERE id=$1 FOR UPDATE', [q.id]);
       if (
@@ -501,7 +548,17 @@ export class ImageGenerationEngine {
       const id = randomUUID(),
         reservation = await reserveGenerationSpend(
           c,
-          authorization.livePolicy ?? this.policy,
+          input.mode === 'mock' && this.policy.generationMode === 'owner'
+            ? {
+                ...defaultImagePolicy,
+                version: 'image-fixtures-nonfinancial-v1',
+                scopeId: 'image-fixtures-nonfinancial-v1',
+                totalCapMicros: 0,
+                imageCapMicros: 0,
+                textCapMicros: 0,
+                mockUpperMicros: 0,
+              }
+            : (authorization.livePolicy ?? this.policy),
           actorId,
           'image',
           id,
@@ -593,10 +650,27 @@ export class ImageGenerationEngine {
     return this.get(actorId, id);
   }
   private async lockBudget(c: PoolClient, job: Job) {
+    // Same lock order as authorization: session -> shared scope -> image job.
+    await c.query(
+      'SELECT s.id FROM live_test_sessions s JOIN generation_budget_reservations r ON r.scope_id=s.scope_id WHERE r.id=$1 ORDER BY s.id FOR UPDATE OF s',
+      [job.reservation_id],
+    );
     await c.query(
       'SELECT id FROM generation_budget_scopes WHERE id=(SELECT scope_id FROM generation_budget_reservations WHERE id=$1) FOR UPDATE',
       [job.reservation_id],
     );
+  }
+  /** Durable owner stop: later receipts settle liability but never silently re-enable generation. */
+  private async stopOwnerUnknown(c: PoolClient, job: Job) {
+    if (job.mode !== 'external') return;
+    const stopped = await c.query(
+      "UPDATE live_test_sessions s SET state='stopped',stop_code=COALESCE(stop_code,'IMAGE_RESULT_UNKNOWN') FROM generation_budget_reservations r WHERE r.id=$1 AND s.scope_id=r.scope_id AND s.mode='owner' RETURNING s.scope_id",
+      [job.reservation_id],
+    );
+    if (stopped.rowCount)
+      await c.query('UPDATE generation_budget_scopes SET blocked=true WHERE id=$1', [
+        stopped.rows[0].scope_id,
+      ]);
   }
   async maintenance() {
     const cleanup = await this.db.query(
@@ -645,12 +719,13 @@ export class ImageGenerationEngine {
           j.status === 'dispatched' &&
           j.dispatch_deadline &&
           j.dispatch_deadline.getTime() <= Date.now()
-        )
+        ) {
+          await this.stopOwnerUnknown(c, j);
           await c.query(
             "UPDATE image_generation_jobs SET status='unknown',error_code='DISPATCH_UNCERTAIN',updated_at=now() WHERE id=$1",
             [j.id],
           );
-        else if ((j.status === 'generated' || j.status === 'unknown') && j.cancel_requested) {
+        } else if ((j.status === 'generated' || j.status === 'unknown') && j.cancel_requested) {
           await c.query(
             "UPDATE image_generation_jobs SET status=CASE WHEN actual_micros IS NULL THEN 'unknown' ELSE 'cancelled' END,quota_reserved_bytes=0,error_code='CANCELLED',updated_at=now() WHERE id=$1",
             [j.id],
@@ -739,6 +814,7 @@ export class ImageGenerationEngine {
           ? normalizeSafeImageDiagnostic(error.diagnostic)
           : undefined;
       await this.db.tx(async (c) => {
+        await this.lockBudget(c, claimed.job);
         const current = (
           await c.query(
             'SELECT status,error_code FROM image_generation_jobs WHERE id=$1 FOR UPDATE',
@@ -748,6 +824,7 @@ export class ImageGenerationEngine {
         // Erasure/revocation may have completed while the provider was in flight.
         // Never reattach diagnostics or identifiers to erased personal data.
         if (!current || current.status !== 'dispatched' || current.error_code === 'ERASED') return;
+        await this.stopOwnerUnknown(c, claimed.job);
         await c.query(
           "UPDATE image_generation_jobs SET status='unknown',error_code='DISPATCH_UNCERTAIN',safe_diagnostic=$2,provider_request_id=COALESCE($3,provider_request_id),updated_at=now() WHERE id=$1",
           [claimed.job.id, diagnostic ?? null, diagnostic?.requestId ?? null],
@@ -814,6 +891,14 @@ export class ImageGenerationEngine {
         fail(409, 'COST_CONFLICT', 'COST_CONFLICT');
       if (!['dispatched', 'unknown', 'generated'].includes(j.status)) return;
       const erased = j.error_code === 'ERASED';
+      if (
+        result.actualMicros === undefined ||
+        j.status === 'unknown' ||
+        (j.status === 'dispatched' &&
+          j.dispatch_deadline &&
+          j.dispatch_deadline.getTime() <= Date.now())
+      )
+        await this.stopOwnerUnknown(c, j);
       if (result.actualMicros !== undefined)
         await settleGenerationSpend(c, j.reservation_id, result.actualMicros);
       await c.query(
@@ -847,7 +932,13 @@ export class ImageGenerationEngine {
         'UPDATE image_generation_jobs SET status=$2,actual_micros=COALESCE($3,actual_micros),provider_request_id=$4,quarantine_filename=$5,quarantine_sha256=$6,quarantine_mime=$7,quota_reserved_bytes=CASE WHEN $8 THEN 0 ELSE quota_reserved_bytes END,error_code=$9,updated_at=now() WHERE id=$1',
         [
           id,
-          rejected ? (result.actualMicros === undefined ? 'unknown' : 'rejected') : 'generated',
+          result.actualMicros === undefined && this.policy.generationMode === 'owner'
+            ? 'unknown'
+            : rejected
+              ? result.actualMicros === undefined
+                ? 'unknown'
+                : 'rejected'
+              : 'generated',
           result.actualMicros ?? null,
           erased ? null : result.requestId,
           rejected ? null : filename,
@@ -887,10 +978,21 @@ export class ImageGenerationEngine {
       await this.rejectAdmission(row, 'INVALID_RASTER_OR_ALPHA');
       return;
     }
+    if (row.mode === 'external' && this.policy.generationMode === 'owner') {
+      const expected = this.capabilities?.requestProfile.size.split('x').map(Number);
+      if (!expected || raster.width !== expected[0] || raster.height !== expected[1]) {
+        await this.rejectAdmission(row, 'IMAGE_PROFILE_DIMENSIONS_MISMATCH');
+        return;
+      }
+    }
     try {
       await this.db.tx(async (c) => {
         const input = generationRequestSchema.parse(row.input);
         await this.authorize(c, row.actor_id, input, row.reference_hashes);
+        if (this.policy.generationMode === 'owner') {
+          this.liveGate(input);
+          this.assertQuotedProvider(row);
+        }
         await lockRasterQuota(c, row.actor_id, raster.bytes.length, row.id);
         await this.lockBudget(c, row);
         const j = (
@@ -949,12 +1051,18 @@ export class ImageGenerationService extends ImageGenerationEngine implements OnM
   private busy: Promise<void> | undefined;
   private stopped = false;
   constructor(@Inject(Db) db: Db, @Inject(AssetReuseService) assets: AssetReuseService) {
-    const runtime = createImageRuntime(process.env, {
-      resolveApiKey: () =>
-        process.env.LIVE_TEST_ENABLED === 'true'
-          ? process.env.NPC_AI_API_KEY
-          : process.env.OPENAI_API_KEY,
-    });
+    const ownerConfig = readOwnerGenerationConfig(process.env);
+    const runtime =
+      ownerConfig.mode === 'owner'
+        ? createOwnerImageRuntime(ownerConfig, {
+            resolveApiKey: () => process.env.OPENAI_API_KEY ?? process.env.NPC_AI_API_KEY,
+          })
+        : createImageRuntime(process.env, {
+            resolveApiKey: () =>
+              process.env.LIVE_TEST_ENABLED === 'true'
+                ? process.env.NPC_AI_API_KEY
+                : process.env.OPENAI_API_KEY,
+          });
     super(db, assets, runtime.provider, runtime.policy, runtime.capabilities);
     this.timer = setInterval(() => {
       if (this.busy || this.stopped) return;

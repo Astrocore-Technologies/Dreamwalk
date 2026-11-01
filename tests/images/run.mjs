@@ -20,7 +20,8 @@ for (const key of Object.keys(process.env))
   if (
     (key.startsWith('IMAGE_') && key !== 'IMAGE_TEST_FILE') ||
     key.startsWith('OPENAI_') ||
-    key.startsWith('LIVE_NPC_')
+    key.startsWith('LIVE_NPC_') ||
+    key.startsWith('GENERATION_')
   )
     delete process.env[key];
 async function freePort() {
@@ -70,8 +71,15 @@ try {
       await run(npm, ['run', 'build', '-w', workspace]);
   await run(process.execPath, ['apps/api/dist/migrate.js']);
   await run(process.execPath, ['apps/api/dist/seed.js']);
-  await run(process.execPath, ['--import', 'tsx', '--test', 'tests/images/config.test.mjs']);
+  await run(process.execPath, [
+    '--import',
+    'tsx',
+    '--test',
+    'tests/images/config.test.mjs',
+    'tests/images/owner-config.test.mjs',
+  ]);
   let files = [
+    'integration-owner-generation.test.mjs',
     'integration-budget.test.mjs',
     'integration-diagnostics.test.mjs',
     'integration-generation.test.mjs',
@@ -82,11 +90,18 @@ try {
     if (!files.includes(selectedTestFile)) throw new Error('Unknown image test file');
     files = [selectedTestFile];
   }
-  await run(process.execPath, [
-    '--test',
-    '--test-concurrency=1',
-    ...files.map((f) => `tests/images/${f}`),
-  ]);
+  // Node sorts test filenames. Run the rollback-only owner fixture before legacy tests
+  // deliberately retain unknown liabilities; never erase those liabilities to admit an owner.
+  const ownerFile = 'integration-owner-generation.test.mjs';
+  if (files.includes(ownerFile))
+    await run(process.execPath, ['--test', `tests/images/${ownerFile}`]);
+  files = files.filter((file) => file !== ownerFile);
+  if (files.length)
+    await run(process.execPath, [
+      '--test',
+      '--test-concurrency=1',
+      ...files.map((f) => `tests/images/${f}`),
+    ]);
 } finally {
   await database.stop();
   await rm(assetDir, { recursive: true, force: true });
