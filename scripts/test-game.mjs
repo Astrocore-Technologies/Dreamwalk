@@ -29,7 +29,11 @@ process.env.NODE_ENV = 'test';
 process.env.LOCAL_POSTGRES_CLUSTER = `game-test-${randomUUID()}`;
 process.env.LOCAL_POSTGRES_PORT = String(await freePort());
 process.env.API_PORT = String(await freePort());
-process.env.WEB_ORIGIN = 'http://localhost:3000';
+// The world-item acceptance also starts Next.js. Its origin and proxy must use
+// this disposable runner's ports, never an inherited preview/default API.
+process.env.TEST_GAME_WEB_PORT = String(await freePort());
+process.env.WEB_ORIGIN = `http://127.0.0.1:${process.env.TEST_GAME_WEB_PORT}`;
+process.env.API_URL = `http://127.0.0.1:${process.env.API_PORT}`;
 process.env.TEST_GAME_API_URL = `http://127.0.0.1:${process.env.API_PORT}/api/v1`;
 process.env.AI_PROVIDER = 'mock';
 for (const key of [
