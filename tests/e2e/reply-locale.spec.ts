@@ -1,23 +1,51 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import type { StoryTurnInput, StoryTurnReceipt, StoryTurnSubmit } from '@dreamwalk/contracts';
+import {
+  gameEnvelopeSchema,
+  storyTurnInputSchema,
+  storyTurnSubmitSchema,
+  type StoryTurnFeed,
+  type StoryTurnInput,
+  type StoryTurnReceipt,
+  type StoryTurnSubmit,
+} from '@dreamwalk/contracts';
 
 type Locale = 'uk' | 'en' | 'ru';
 const copy = {
   uk: {
+    composer: 'Твій хід',
     send: 'Надіслати',
     confirm: 'Підтвердити хід',
     retry: 'Повторити той самий запит',
     name: 'Українська',
   },
-  en: { send: 'Send', confirm: 'Confirm turn', retry: 'Retry the same request', name: 'English' },
+  en: {
+    composer: 'Your turn',
+    send: 'Send',
+    confirm: 'Confirm turn',
+    retry: 'Retry the same request',
+    name: 'English',
+  },
   ru: {
+    composer: 'Твой ход',
     send: 'Отправить',
     confirm: 'Подтвердить ход',
     retry: 'Повторить тот же запрос',
     name: 'Русский',
   },
 };
+
+async function selectLocale(page: Page, locale: Locale) {
+  const saved = page.waitForResponse(
+    (response) =>
+      new URL(response.url()).pathname === '/api/v1/account/settings' &&
+      response.request().method() === 'PATCH' &&
+      response.request().postDataJSON()?.language === locale,
+  );
+  await page.locator('.locale-select').selectOption(locale);
+  expect((await saved).ok()).toBeTruthy();
+  await expect(page.locator('html')).toHaveAttribute('lang', locale);
+}
 
 async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
   const handle = `locale_ui_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
@@ -39,6 +67,34 @@ async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
   });
   expect(started.ok()).toBeTruthy();
   const { campaignId } = await started.json();
+  const campaignPath = `/api/v1/game/campaigns/${campaignId}`;
+  // Keep a real, schema-validated turn projection and socket. Only the story
+  // transport is synthetic; never invent ownTurn to enable an otherwise locked UI.
+  const snapshotResponse = await page.request.get(`${campaignPath}/snapshot`);
+  expect(snapshotResponse.ok()).toBeTruthy();
+  const { projection } = gameEnvelopeSchema.parse(await snapshotResponse.json());
+  expect(projection.turn).toMatchObject({
+    phase: 'player',
+    ownTurn: true,
+    activeActorId: projection.actorId,
+    pendingResolution: false,
+  });
+  if (!projection.turn) throw new Error('The fixture requires a real turn-based campaign');
+  const turnFence = {
+    roundId: projection.turn.roundId,
+    phaseEpoch: projection.turn.phaseEpoch,
+    rulesetVersion: 1,
+  };
+  const feedResponse = await page.request.get(`${campaignPath}/turns/feed`);
+  expect(feedResponse.ok()).toBeTruthy();
+  const initialFeed: StoryTurnFeed = await feedResponse.json();
+  expect(initialFeed.canSubmit).toBe(true);
+  expect(initialFeed.configuration).toMatchObject({
+    provider: 'local-turn-resolver',
+    enabled: true,
+    externalCallsEnabled: false,
+    providerUpperMicros: 0,
+  });
   const quotes: { input: StoryTurnInput; language?: string }[] = [];
   const submissions: { input: StoryTurnSubmit; language?: string }[] = [];
   const completed: StoryTurnReceipt[] = [];
@@ -56,22 +112,15 @@ async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
     if (path.endsWith('/feed'))
       return route.fulfill({
         json: {
-          canonRevision: 0,
-          canSubmit: true,
-          configuration: {
-            provider: 'mock',
-            enabled: true,
-            externalCallsEnabled: false,
-            demo: true,
-            creditPrice: 0,
-            providerUpperMicros: 0,
-          },
+          ...initialFeed,
           entries: [],
           turns: completed,
         },
       });
     if (path.endsWith('/quote')) {
-      const input = request.postDataJSON() as StoryTurnInput;
+      const input = storyTurnInputSchema.parse(request.postDataJSON());
+      expect(input.turnFence).toEqual(turnFence);
+      expect(input.expectedCanonRevision).toBe(initialFeed.canonRevision);
       quotes.push({ input, language: request.headers()['accept-language'] });
       return route.fulfill({
         json: {
@@ -88,7 +137,7 @@ async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
             demo: true,
             requiresConsent: true,
             providerUpperMicros: 0,
-            provider: 'mock',
+            provider: initialFeed.configuration.provider,
             external: false,
             policyVersion: 'ui-locale-fixture',
           },
@@ -96,7 +145,9 @@ async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
       });
     }
     if (path.endsWith('/turns') && request.method() === 'POST') {
-      const input = request.postDataJSON() as StoryTurnSubmit;
+      const input = storyTurnSubmitSchema.parse(request.postDataJSON());
+      expect(input.turnFence).toEqual(turnFence);
+      expect(input.expectedCanonRevision).toBe(initialFeed.canonRevision);
       submissions.push({ input, language: request.headers()['accept-language'] });
       if (loseFirstSubmission && submissions.length === 1) return route.abort('failed');
       const receipt: StoryTurnReceipt = {
@@ -117,8 +168,19 @@ async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
   await page.goto(`/game/${campaignId}`);
   const story = page.getByTestId('unified-story');
   await expect(page.locator('html')).toHaveAttribute('lang', locale);
-  await expect(story.locator('textarea')).toBeEnabled();
-  return { story, quotes, submissions, noPaidRoutes: () => expect(unexpectedPaidRoute).toBe(0) };
+  await expect(page.locator('[data-connected]')).toHaveAttribute('data-connected', 'true');
+  // PartyChat has another (hidden) textarea inside UnifiedStory. Select the
+  // actual localized story composer, and allow its real socket gate to settle.
+  const composer = (language: Locale) =>
+    story.getByRole('textbox', { name: copy[language].composer, exact: true });
+  await expect(composer(locale)).toBeEnabled();
+  return {
+    story,
+    composer,
+    quotes,
+    submissions,
+    noPaidRoutes: () => expect(unexpectedPaidRoute).toBe(0),
+  };
 }
 
 for (const locale of ['uk', 'en', 'ru'] as const) {
@@ -126,23 +188,22 @@ for (const locale of ['uk', 'en', 'ru'] as const) {
     page,
   }) => {
     const next: Locale = locale === 'uk' ? 'ru' : locale === 'en' ? 'uk' : 'en';
-    const { story, quotes, submissions, noPaidRoutes } = await setup(page, locale);
-    await story.locator('textarea').fill('A language-neutral test post 123');
+    const { story, composer, quotes, submissions, noPaidRoutes } = await setup(page, locale);
+    await composer(locale).fill('A language-neutral test post 123');
     await story.getByRole('button', { name: copy[locale].send, exact: true }).click();
     await expect(story.getByTestId('story-quote')).toBeVisible();
     expect(quotes).toHaveLength(1);
     expect(quotes[0].input.replyLocale).toBe(locale);
     expect(quotes[0].language).toBe(locale);
-    await page.locator('.locale-select').selectOption(next);
-    await expect(page.locator('html')).toHaveAttribute('lang', next);
+    await selectLocale(page, next);
     await expect(story.getByTestId('story-reply-language')).toContainText(copy[locale].name);
     await story.getByRole('button', { name: copy[next].confirm, exact: true }).click();
-    await expect(story.locator('textarea')).toHaveValue('');
+    await expect(composer(next)).toHaveValue('');
     expect(submissions).toHaveLength(1);
     expect(submissions[0].input).toMatchObject(quotes[0].input);
     expect(submissions[0].input.replyLocale).toBe(locale);
     expect(submissions[0].language).toBe(next);
-    await story.locator('textarea').fill('A new post after choosing another language');
+    await composer(next).fill('A new post after choosing another language');
     await story.getByRole('button', { name: copy[next].send, exact: true }).click();
     await expect(story.getByTestId('story-reply-language')).toContainText(copy[next].name);
     expect(quotes).toHaveLength(2);
@@ -154,16 +215,18 @@ for (const locale of ['uk', 'en', 'ru'] as const) {
 test('an uncertain submission retry keeps its original operation and language across another selector change', async ({
   page,
 }) => {
-  const { story, quotes, submissions, noPaidRoutes } = await setup(page, 'uk', true);
-  await story.locator('textarea').fill('An uncertain test post');
+  const { story, composer, quotes, submissions, noPaidRoutes } = await setup(page, 'uk', true);
+  await composer('uk').fill('An uncertain test post');
   await story.getByRole('button', { name: copy.uk.send, exact: true }).click();
   await expect(story.getByTestId('story-quote')).toBeVisible();
-  await page.locator('.locale-select').selectOption('en');
+  await selectLocale(page, 'en');
   await story.getByRole('button', { name: copy.en.confirm, exact: true }).click();
   await expect(story.getByRole('button', { name: copy.en.retry, exact: true })).toBeVisible();
-  await page.locator('.locale-select').selectOption('ru');
+  expect(submissions).toHaveLength(1);
+  await selectLocale(page, 'ru');
+  expect(submissions).toHaveLength(1);
   await story.getByRole('button', { name: copy.ru.retry, exact: true }).click();
-  await expect(story.locator('textarea')).toHaveValue('');
+  await expect(composer('ru')).toHaveValue('');
   expect(quotes).toHaveLength(1);
   expect(submissions).toHaveLength(2);
   expect(submissions[1].input).toEqual(submissions[0].input);
