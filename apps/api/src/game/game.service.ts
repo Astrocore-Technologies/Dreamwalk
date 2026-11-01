@@ -779,7 +779,8 @@ export class GameService implements OnModuleDestroy {
           ),
         };
       if (
-        Buffer.byteLength(JSON.stringify(context)) > this.ai.contextBudgetBytes() ||
+        (!this.ai.contextWindow() &&
+          Buffer.byteLength(JSON.stringify(context)) > this.ai.contextBudgetBytes()) ||
         !this.ai.contextFits('narrative', context)
       )
         fail(413, 'CONTEXT_BUDGET_EXCEEDED', 'CONTEXT_BUDGET_EXCEEDED');
@@ -1723,6 +1724,8 @@ export class GameService implements OnModuleDestroy {
       }
       // A real/manual request never becomes a fixture response when authorization or provider work fails.
       if (this.ai.manualLive() && r.purpose !== 'story_turn') {
+        if (r.context.budgetExceeded && this.ai.contextWindow() && r.context.textContextCandidate)
+          continue;
         if (r.context.budgetExceeded) {
           await this.failUnqueuedManualRequest(String(r.id), 'CONTEXT_BUDGET_EXCEEDED');
           continue;

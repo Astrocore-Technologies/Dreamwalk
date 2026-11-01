@@ -56,6 +56,14 @@ export async function purgeManualLiveData(client, userId, campaigns) {
       );
     }
     if (
+      (await client.query("SELECT to_regclass('generation_text_counts') AS present")).rows[0]
+        .present
+    )
+      await client.query(
+        `UPDATE generation_text_counts SET request_id=NULL,request_hash=NULL,source_hash=NULL,body_sha256=NULL,turn_fence='{}',status=CASE WHEN status='dispatched' THEN 'unknown' ELSE 'erased' END,result_code='DATA_ERASED' WHERE authorization_id=$1 AND ($2::boolean OR campaign_id=ANY($3::uuid[]))`,
+        [session.id, session.owner_id === userId, campaignIds],
+      );
+    if (
       (await client.query("SELECT to_regclass('live_authoring_text_jobs') AS present")).rows[0]
         .present
     ) {
@@ -138,5 +146,14 @@ export async function exportManualLiveData(client, userId) {
         [userId],
       )
     ).rows;
-  return { sessions, permits, authoring, authoringQuotes, policyRevisions };
+  const textCounts = (await client.query("SELECT to_regclass('generation_text_counts') AS present"))
+    .rows[0].present
+    ? (
+        await client.query(
+          'SELECT id,authorization_id,campaign_id,status,input_tokens,actual_micros,result_code,created_at,completed_at,pricing_snapshot,policy_revision,policy_hash FROM generation_text_counts WHERE actor_id=$1 ORDER BY created_at',
+          [userId],
+        )
+      ).rows
+    : [];
+  return { sessions, permits, authoring, authoringQuotes, policyRevisions, textCounts };
 }

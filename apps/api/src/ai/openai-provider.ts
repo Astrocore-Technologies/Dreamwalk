@@ -1,3 +1,4 @@
+import { modelContext, evidenceCounter, countOpenAiInput } from './text-preflight';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { canonical } from './context';
@@ -317,6 +318,7 @@ export function buildOpenAiNpcRequestBody(
   purpose: ProviderRequest['purpose'],
   context: unknown,
 ): string {
+  context = modelContext(context);
   if (context && typeof context === 'object' && !Array.isArray(context))
     context = Object.fromEntries(Object.entries(context).filter(([key]) => key !== 'mockProposal'));
   const common =
@@ -516,7 +518,19 @@ export class OpenAiNpcProvider implements NpcProvider {
       purpose,
       context,
       this.version,
-      this.tokenCounter,
+      evidenceCounter(this.body(purpose, context), this.config.model, this.version, context) ??
+        this.tokenCounter,
+    );
+  }
+  countBody(purpose: ProviderRequest['purpose'], context: unknown) {
+    return this.body(purpose, context);
+  }
+  count(purpose: ProviderRequest['purpose'], context: unknown, operationId: string) {
+    return countOpenAiInput(
+      this.body(purpose, context),
+      this.config.apiKey,
+      operationId,
+      this.transport,
     );
   }
   contextWindow() {
@@ -538,7 +552,8 @@ export class OpenAiNpcProvider implements NpcProvider {
     const m = measureTextContext(
       this.body(purpose, context),
       { ...this.config, contextTokens: this.config.maxModelInputTokens! },
-      this.tokenCounter,
+      evidenceCounter(this.body(purpose, context), this.config.model, this.version, context) ??
+        this.tokenCounter,
     );
     return m.serializedBytes <= m.transportLimitBytes && m.totalTokens <= m.effectiveContextTokens;
   }
@@ -630,7 +645,8 @@ export class OpenAiNpcProvider implements NpcProvider {
           measureTextContext(
             body,
             { ...this.config, contextTokens: this.config.maxModelInputTokens! },
-            this.tokenCounter,
+            evidenceCounter(body, this.config.model, this.version, request.context) ??
+              this.tokenCounter,
           ),
         );
       } catch {

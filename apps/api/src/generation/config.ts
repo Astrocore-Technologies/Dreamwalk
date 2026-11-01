@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { estimateTextRequest, estimateImageRequest, type ImageEstimateProfile } from './estimates';
-import { MAX_REQUEST_CONTEXT_TOKENS, TEXT_CONTEXT_TRANSPORT_BYTES } from '../ai/text-context';
+import { TEXT_CONTEXT_TRANSPORT_BYTES } from '../ai/text-context';
 
 const positiveMicros = z.number().int().positive().max(1_000_000_000_000);
 const model = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,159}$/);
@@ -47,7 +47,15 @@ const textSchema = z
   .object({
     model,
     contextTokens: z.number().int().positive().max(1_050_000),
-    contextBudgetTokens: z.number().int().min(1024).max(MAX_REQUEST_CONTEXT_TOKENS).optional(),
+    contextBudgetTokens: z.number().int().min(1024).optional(),
+    counting: z
+      .object({
+        kind: z.literal('owner_reviewed_fixed'),
+        microsPerRequest: z.number().int().min(0).max(1_000_000_000_000),
+        pricing: pricingSchema,
+      })
+      .strict()
+      .optional(),
     maxOutputTokens: z.number().int().min(16).max(32_000),
     maxInputBytes: z.number().int().min(1024).max(TEXT_CONTEXT_TRANSPORT_BYTES).optional(),
     inputMicrosPerMillion: positiveMicros,
@@ -61,7 +69,8 @@ const textSchema = z
     value.contextBudgetTokens !== undefined
       ? !!value.estimation &&
         value.maxOutputTokens < Math.min(value.contextBudgetTokens, value.contextTokens)
-      : value.maxInputBytes !== undefined &&
+      : !value.counting &&
+        value.maxInputBytes !== undefined &&
         value.maxInputBytes <= 64000 &&
         value.maxInputBytes + 4096 + value.maxOutputTokens <= value.contextTokens,
   )

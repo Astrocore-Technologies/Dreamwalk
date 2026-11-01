@@ -1,6 +1,78 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const liveMessages = {
+  countSucceeded: ['Подсчёт сохранён', 'Count saved', 'Підрахунок збережено'],
+  countDispatched: ['Подсчёт выполняется', 'Count in progress', 'Підрахунок виконується'],
+  countUnknown: [
+    'Результат или расход неизвестен; повторы остановлены',
+    'Outcome or spend unknown; retries stopped',
+    'Результат або витрати невідомі; повтори зупинено',
+  ],
+  countOverflow: [
+    'Контекст превышает выбранное окно',
+    'Context exceeds the selected window',
+    'Контекст перевищує вибране вікно',
+  ],
+  countStale: [
+    'Подсчёт устарел и не применён',
+    'Count is stale and was not adopted',
+    'Підрахунок застарів і не застосований',
+  ],
+  countErased: ['Приватные данные удалены', 'Private input erased', 'Приватні дані видалено'],
+
+  countTitle: [
+    'Точный подсчёт контекста',
+    'Exact context preflight',
+    'Точний підрахунок контексту',
+  ],
+  countIntro: [
+    'Отдельный ручной запрос передаёт полный разрешённый контекст OpenAI. Чтение панели ничего не отправляет.',
+    'A separate manual request sends the full permitted context to OpenAI. Reading this panel sends nothing.',
+    'Окремий ручний запит передає повний дозволений контекст OpenAI. Перегляд панелі нічого не надсилає.',
+  ],
+  countInvoice: [
+    'Точный подсчёт токенов не означает точную стоимость счёта. Цена подсчёта требует отдельной проверки и принятой ревизии политики.',
+    'Exact token counting does not mean an exact invoice. Counting needs separately reviewed pricing and an accepted policy revision.',
+    'Точний підрахунок токенів не означає точну суму рахунку. Ціна підрахунку потребує окремої перевірки та прийнятої ревізії політики.',
+  ],
+  countPrice: [
+    'Резерв отдельного подсчёта',
+    'Separate count reserve',
+    'Резерв окремого підрахунку',
+  ],
+  countPriceUnknown: [
+    'Цена подсчёта не проверена: настоящий вызов заблокирован.',
+    'Count pricing is unreviewed: real dispatch is blocked.',
+    'Ціну підрахунку не перевірено: справжній виклик заблоковано.',
+  ],
+  countPricingEvidence: [
+    'Источник и даты цены подсчёта',
+    'Count price source and dates',
+    'Джерело та дати ціни підрахунку',
+  ],
+  countHistoryLimit: [
+    'Последних записей истории (пусто — все; обязательные сохраняются)',
+    'Recent history records (blank means all; required records remain)',
+    'Останніх записів історії (порожньо — усі; обов’язкові зберігаються)',
+  ],
+  countConsent: [
+    'Разрешаю один подсчёт с показанным отдельным резервом. Это не запуск ответа.',
+    'I authorize one count with the displayed separate reserve. This does not generate a reply.',
+    'Дозволяю один підрахунок із показаним окремим резервом. Це не генерація відповіді.',
+  ],
+  countRun: ['Посчитать один раз', 'Count once', 'Порахувати один раз'],
+  countResult: ['Результат подсчёта', 'Count result', 'Результат підрахунку'],
+  countReconcile: [
+    'Узнать результат без повтора',
+    'Check result without retry',
+    'Перевірити результат без повтору',
+  ],
+  countApproximate: [
+    'Для короткого теста можно оставить приблизительную оценку. При переполнении уменьшите историю и явно запросите новый подсчёт; не более трёх на запрос.',
+    'Approximate counting remains available for a short test. On overflow, reduce history and explicitly request another count; at most three per request.',
+    'Для короткого тесту можна залишити приблизну оцінку. За переповнення зменште історію та явно замовте новий підрахунок; не більше трьох на запит.',
+  ],
+
   contextModelCapacity: [
     'Ёмкость контекста модели',
     'Model context capacity',

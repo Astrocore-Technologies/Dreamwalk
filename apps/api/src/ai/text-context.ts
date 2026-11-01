@@ -1,5 +1,4 @@
 /** Provider-independent context accounting. No network, secrets, prices or persistent mutations. */
-export const MAX_REQUEST_CONTEXT_TOKENS = 256000;
 export const TEXT_CONTEXT_TRANSPORT_BYTES = 4194304;
 export interface TextModelCapabilities {
   model: string;
@@ -46,8 +45,6 @@ export function contextWindow(policy: TextContextPolicy, capabilities?: TextMode
     ![modelContextTokens, requestedContextTokens, policy.maxOutputTokens].every(
       (n) => Number.isSafeInteger(n) && n > 0,
     ) ||
-    (policy.contextBudgetTokens !== undefined &&
-      requestedContextTokens > MAX_REQUEST_CONTEXT_TOKENS) ||
     policy.maxOutputTokens >= effectiveContextTokens ||
     policy.maxOutputTokens > (capabilities?.maxOutputTokens ?? 32000)
   )

@@ -60,7 +60,11 @@ test('requested context, model capacity and reply are independent; a smaller mod
   assert.equal(window.requestedContextTokens, 256000);
   assert.equal(window.effectiveContextTokens, 131072);
   assert.equal(window.reservedOutputTokens, p.text.maxOutputTokens);
-  assert.throws(() => parsed({ contextBudgetTokens: 256001 }), /OWNER_GENERATION_CONFIG_INVALID/);
+  assert.doesNotThrow(() => parsed({ contextBudgetTokens: 512000 }));
+  assert.throws(
+    () => parsed({ contextBudgetTokens: Number.MAX_SAFE_INTEGER + 1 }),
+    /OWNER_GENERATION_CONFIG_INVALID/,
+  );
   assert.throws(
     () => parsed({ contextTokens: 1024, contextBudgetTokens: 1024, maxOutputTokens: 1024 }),
     /OWNER_GENERATION_CONFIG_INVALID/,
@@ -355,4 +359,23 @@ test('overflow of feed-shaped records without optional IDs keeps the latest reco
   assert.equal(packed.contextHash, 'feed-canon');
   assert.deepEqual(input, original);
   assert.ok(provider.contextFits('narrative', packed));
+});
+
+test('256k is an example, not a product ceiling: larger windows follow model capability', () => {
+  const p = {
+    ...parsed().text,
+    contextTokens: 1050000,
+    contextBudgetTokens: 512000,
+    maxOutputTokens: 2048,
+  };
+  const measurement = measureTextContext('x'.repeat(300000), p);
+  assert.equal(assertTextContext(measurement).effectiveContextTokens, 512000);
+  assert.equal(
+    contextWindow({ ...p, contextBudgetTokens: 2000000 }).effectiveContextTokens,
+    1050000,
+  );
+  assert.equal(
+    contextWindow({ ...p, contextBudgetTokens: 2000000 }).requestedContextTokens,
+    2000000,
+  );
 });

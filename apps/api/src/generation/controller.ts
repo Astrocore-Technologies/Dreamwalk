@@ -94,6 +94,20 @@ export class GenerationController {
   @Get('campaigns/:id/requests') async pending(@Req() req: Request, @Param('id') id: string) {
     return this.live.pending((await this.auth.require(req)).id, id);
   }
+  @Get('text-counts/operations/:operationId') async countOperation(
+    @Req() req: Request,
+    @Param('operationId') operationId: string,
+  ) {
+    return this.live.countOperation((await this.auth.require(req)).id, operationId);
+  }
+  @Post('campaigns/:id/requests/:requestId/preflight') async preflight(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('requestId') requestId: string,
+    @Body() body: unknown,
+  ) {
+    return this.live.preflightCount((await this.auth.require(req)).id, id, requestId, body);
+  }
   @Post('campaigns/:id/requests/:requestId/consent') async consent(
     @Req() req: Request,
     @Param('id') id: string,

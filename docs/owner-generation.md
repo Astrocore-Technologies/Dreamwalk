@@ -115,7 +115,7 @@ previous test.
 ```
 
 `text.contextTokens` is the verified model capacity. `text.contextBudgetTokens`
-is the independently chosen total window **per request**, up to 256000 tokens:
+is the independently chosen total window **per request** (256000 above is only an example):
 input plus the reserved `maxOutputTokens`. A smaller model visibly reduces the
 effective window. `maxOutputTokens` remains a separate limit, not a promise that
 the model fills it or overrides typed gameplay response constraints.
@@ -135,6 +135,15 @@ is **a conservative estimate**, using complete UTF-8 envelope bytes plus at leas
 256000 actual provider tokens can be packed under this estimate. There are no
 hidden token-count API calls, paid summaries, or automatic provider retries.
 
+An optional explicit manual token preflight can retain a larger context using the
+Responses count endpoint. Its separate pricing is currently unverified: leave
+`text.counting` absent for the initial short gameplay test. The UI displays the
+blocked count control, while ordinary approximate text generation remains usable.
+Do not invent a zero fee. Once a fixed count rate and evidence are verified, an
+owner-reviewed policy revision may add `text.counting` with `kind`,
+`microsPerRequest` and `pricing`; see `text-context-window.md`. A preflight does
+not authorize generation, and exact token usage is not an exact invoice claim.
+
 Committed history stays in PostgreSQL. Context selection uses audience-safe saved
 story records and the NPC's own archived observations, alongside existing grounded
 memory. OOC chat, other participants' whispers and private NPC facts are excluded
@@ -142,6 +151,8 @@ from shared narration. Overflow drops whole older optional records, preserving
 canon/rules, current scene, obligations and the bound current question. If pinned
 content alone cannot fit, the request fails; saved history is never deleted.
 
+There is no special 256k product ceiling. A larger chosen window is usable up to the
+verified model capacity. The separate transport byte guard is not a model token limit.
 The window is not a session-wide quota and is not filled on every turn. Pricing,
 request reserves, cumulative financial caps and image budgeting remain separate.
 

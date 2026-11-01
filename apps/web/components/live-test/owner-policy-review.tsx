@@ -89,6 +89,18 @@ function PolicyComparison({
         read: (p) => money(p?.text.outputMicrosPerMillion),
       },
       {
+        key: 'countPrice',
+        label: m('countPrice'),
+        read: (p) =>
+          p?.text.counting ? money(p.text.counting.microsPerRequest) : m('countPriceUnknown'),
+      },
+      {
+        key: 'countEvidence',
+        label: m('countPricingEvidence'),
+        read: (p) =>
+          p?.text.counting ? JSON.stringify(p.text.counting.pricing) : m('countPriceUnknown'),
+      },
+      {
         key: 'context',
         label: m('contextModelCapacity'),
         read: (p) => p?.text.contextTokens ?? m('reserveUnavailable'),

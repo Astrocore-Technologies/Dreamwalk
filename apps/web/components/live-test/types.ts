@@ -38,7 +38,26 @@ export type LiveTestStatus = {
     reasoningEffort?: string;
   };
 };
+export type TextCountReceipt = {
+  id: string;
+  status: string;
+  inputTokens: number | null;
+  actualMicros: number | null;
+  resultCode: string | null;
+  costBasis: string;
+  invoiceExact: false;
+};
+export type TextCountView = {
+  blockCode: string | null;
+  candidateFingerprint: string;
+  historyRecords: number;
+  reserveMicros: number | null;
+  attempts: number;
+  maxAttempts: number;
+  latest: TextCountReceipt | null;
+};
 export type LiveRequest = {
+  counting?: TextCountView;
   errorCode?: string | null;
   configFingerprint?: string | null;
   estimateSnapshot?: TextRequestEstimateSnapshot | null;

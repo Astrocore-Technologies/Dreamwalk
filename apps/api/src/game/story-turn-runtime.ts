@@ -527,7 +527,8 @@ export class StoryTurnRuntime {
         );
         if (
           stored.budgetExceeded ||
-          Buffer.byteLength(JSON.stringify(stored)) > this.ai.contextBudgetBytes() ||
+          (!this.ai.contextWindow() &&
+            Buffer.byteLength(JSON.stringify(stored)) > this.ai.contextBudgetBytes()) ||
           !this.ai.contextFits('story_turn', stored)
         )
           fail(413, 'CONTEXT_BUDGET_EXCEEDED', 'CONTEXT_BUDGET_EXCEEDED');

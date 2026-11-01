@@ -39,6 +39,7 @@ export function safeOwnerProfile(config: OwnerGenerationConfig) {
       ...(config.text.contextBudgetTokens !== undefined
         ? { contextBudgetTokens: config.text.contextBudgetTokens }
         : {}),
+      ...(config.text.counting ? { counting: config.text.counting } : {}),
       maxOutputTokens: config.text.maxOutputTokens,
       maxInputBytes: config.text.maxInputBytes,
       inputMicrosPerMillion: config.text.inputMicrosPerMillion,
@@ -126,6 +127,7 @@ export async function policyLiabilities(c: PoolClient, scopeId: string) {
         EXISTS(SELECT 1 FROM image_generation_jobs j WHERE j.reservation_id=r.id AND (j.status='unknown' OR (j.status='dispatched' AND j.dispatch_deadline<=clock_timestamp())))
         OR EXISTS(SELECT 1 FROM live_test_text_permits p WHERE p.reservation_id=r.id AND (p.state='unknown' OR (p.state='dispatched' AND p.dispatched_at<=clock_timestamp()-interval '60 seconds')))
         OR EXISTS(SELECT 1 FROM live_authoring_text_jobs j WHERE j.reservation_id=r.id AND (j.status='unknown' OR (j.status='dispatched' AND j.deadline_at<=clock_timestamp())))
+        OR EXISTS(SELECT 1 FROM generation_text_counts t WHERE t.reservation_id=r.id AND (t.status='unknown' OR (t.status='dispatched' AND t.deadline_at<=clock_timestamp())))
       ) THEN upper_micros ELSE 0 END),0) unknown
     FROM generation_budget_reservations r WHERE scope_id=$1 GROUP BY kind`,
       [scopeId],
@@ -167,6 +169,7 @@ export async function policyWorkBlockers(c: PoolClient, scopeId: string) {
       EXISTS(SELECT 1 FROM npc_ai_jobs j JOIN live_test_sessions s ON s.id=j.generation_authorization_id
         WHERE s.scope_id=$1 AND j.provider_external IS DISTINCT FROM false
           AND j.status IN ('queued','reserved','running','result_received','validated','reconciling')) AS busy,
+      EXISTS(SELECT 1 FROM generation_text_counts WHERE scope_id=$1 AND (status='unknown' OR (status='dispatched' AND deadline_at<=clock_timestamp()))) OR
       EXISTS(SELECT 1 FROM image_generation_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id
         WHERE r.scope_id=$1 AND j.mode='external' AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=clock_timestamp()))) OR
       EXISTS(SELECT 1 FROM live_test_text_permits p JOIN live_test_sessions s ON s.id=p.session_id

@@ -442,6 +442,7 @@ test('NPC queue reserves actual affordable request when remaining provider budge
     ownerConfig: { text: { estimation } },
     preparedAuthorizationId: async () => randomUUID(),
     acknowledgedTextCap: async () => 100000,
+    configureTextCountAdapter: () => {},
     configureTextRequestPlanner: (f) => {
       planner = f;
     },
