@@ -150,8 +150,25 @@ export async function reconfirmKnownStale(
     // unhandled rejection noise if the visible interaction itself fails.
     void responsePromise.catch(() => undefined);
     void refreshed.catch(() => undefined);
-    await perform();
-    const response = await responsePromise;
+    const unexpectedStops: string[] = [];
+    const watchStop = (request: import('@playwright/test').Request) => {
+      if (
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === `/api/v1/game/campaigns/${campaignId}/stop`
+      )
+        unexpectedStops.push(request.url());
+    };
+    if (expected.type === 'action') page.on('request', watchStop);
+    let response: import('@playwright/test').Response;
+    try {
+      await perform();
+      response = await responsePromise;
+      expect(unexpectedStops, 'Internal map/menu focus must not race an action with stop').toEqual(
+        [],
+      );
+    } finally {
+      page.off('request', watchStop);
+    }
     expect(response.ok(), 'HTTP/unknown outcome must not be retried').toBeTruthy();
     const request = response.request().postDataJSON();
     expect(typeof request.operationId).toBe('string');
