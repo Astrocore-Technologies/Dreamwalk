@@ -178,7 +178,9 @@ async function fixture(
     dispatch: 0,
     bind: 0,
     mapWrites: 0,
+    storyDraftReads: 0,
     unexpected: 0,
+    unexpectedRequests: [] as string[],
     legacy: 0,
   };
   let sourceHash = '',
@@ -207,10 +209,18 @@ async function fixture(
       return route.fulfill({ json: status });
     }
     calls.unexpected++;
+    calls.unexpectedRequests.push(`${req.method()} ${path}`);
     await route.abort();
   });
   await page.route('**/api/v1/asset-library**', async (route) => {
-    const path = new URL(route.request().url()).pathname;
+    const req = route.request(),
+      path = new URL(req.url()).pathname;
+    if (req.method() === 'GET' && path === `/api/v1/asset-library/stories/${adventureId}/draft`) {
+      // The playable editor reads its independent art draft on mount and after
+      // binding. Keep this exact owned read on the real local API, including ACL.
+      calls.storyDraftReads++;
+      return route.fallback();
+    }
     if (path.endsWith('/file')) return route.fulfill({ contentType: 'image/png', body: png });
     if (path.endsWith('/' + revisionId)) return route.fulfill({ json: revision });
     if (path.endsWith('/asset-library'))
@@ -218,6 +228,7 @@ async function fixture(
         json: jobs.length && (options.outcome ?? 'success') === 'success' ? [revision] : [],
       });
     calls.unexpected++;
+    calls.unexpectedRequests.push(`${req.method()} ${path}`);
     await route.abort();
   });
   await page.route('**/api/v1/image-generation/**', async (route) => {
@@ -344,6 +355,7 @@ async function fixture(
       return route.fulfill({ json: binding });
     }
     calls.unexpected++;
+    calls.unexpectedRequests.push(`${method} ${path}`);
     await route.abort();
   });
   await page.route('**/api/v1/visual-authoring/packages', (route) => route.fulfill({ json: [] }));
@@ -466,7 +478,8 @@ test('synthetic owner image has separate budget, request and estimate-risk conse
   expect(f.calls.dispatch).toBe(1);
   expect(f.calls.bind).toBe(1);
   expect(f.calls.mapWrites).toBe(0);
-  expect(f.calls.unexpected).toBe(0);
+  expect(f.calls.storyDraftReads).toBeGreaterThan(0);
+  expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
   expect(f.calls.legacy).toBe(0);
 });
 for (const outcome of ['unknown', 'response-lost'] as const)
@@ -499,7 +512,8 @@ for (const outcome of ['unknown', 'response-lost'] as const)
     await expect(page.locator('[data-image-job-status="unknown"]')).toBeVisible();
     expect(f.calls.dispatch).toBe(1);
     expect(f.calls.bind).toBe(0);
-    expect(f.calls.unexpected).toBe(0);
+    expect(f.calls.storyDraftReads).toBeGreaterThan(0);
+    expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
     expect(f.calls.legacy).toBe(0);
   });
 test('owner claim with a lost response is reconciled by status, never by fabricating or resubmitting an ID', async ({
@@ -567,7 +581,7 @@ test('owner text-only profile blocks photo concepts before project creation with
   );
   expect(f.calls.dispatch).toBe(0);
   expect(f.calls.quote).toBe(0);
-  expect(f.calls.unexpected).toBe(0);
+  expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
 });
 
 for (const maxReferenceImages of [1, 2] as const)
@@ -789,5 +803,5 @@ for (const maxReferenceImages of [1, 2] as const)
     expect(calls.dispatch).toEqual(['concept', 'portrait']);
     expect(f.calls.dispatch).toBe(0);
     expect(f.calls.legacy).toBe(0);
-    expect(f.calls.unexpected).toBe(0);
+    expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
   });
