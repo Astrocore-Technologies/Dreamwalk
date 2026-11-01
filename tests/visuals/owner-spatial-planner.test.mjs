@@ -115,7 +115,10 @@ test(
         async () => {
           let project = await create(stories[0]);
           assert.equal((await planner.state(owner, project.id)).available, false);
-          const status = await authority.claim(owner, { consent: true });
+          const status = await authority.claim(owner, {
+            consent: true,
+            candidateFingerprint: config.configFingerprint,
+          });
           authorizationId = status.authorizationId;
           assert.match(authorizationId, /^[0-9a-f-]{36}$/);
           assert.equal(status.expiresAt, null);

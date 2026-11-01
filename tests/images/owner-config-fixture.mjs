@@ -43,3 +43,30 @@ export function ownerEnvironment(profile = ownerProfile(), handle = 'synthetic_o
     GENERATION_OWNER_CONFIG_JSON: JSON.stringify(profile),
   };
 }
+/** Preferred synthetic fixture: per-request planning, not a current tariff/model recommendation. */
+export function requestEstimateOwnerProfile(now = Date.now()) {
+  const profile = ownerProfile(now);
+  profile.text.estimation = {
+    kind: 'operator_heuristic',
+    textTokensPerKiBUtf8: 1024,
+    textProtocolTokens: 4096,
+    marginBps: 2500,
+    fixedMarginMicros: 100,
+  };
+  profile.image.estimation = {
+    kind: 'operator_heuristic',
+    textTokensPerKiBUtf8: 1024,
+    textProtocolTokens: 32,
+    outputImageTokens: 1000,
+    referenceImageTokensPerImage: 1200,
+    referenceAllowanceMicros: 10000,
+    marginBps: 2500,
+    fixedMarginMicros: 1000,
+  };
+  profile.image.maxReferenceImages = 2;
+  delete profile.image.estimatedTotalMicros;
+  delete profile.image.reserveMicros;
+  return profile;
+}
+/** Explicit compatibility alias; this profile preserves the historical fixed reserve. */
+export const legacyOwnerProfile = ownerProfile;

@@ -3,7 +3,16 @@ import type { PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { digest } from '../ai/context';
-import type { ProviderRequest } from '../ai/types';
+import type { AiPurpose, ProviderRequest } from '../ai/types';
+import type { TextReserveSnapshot } from './estimates';
+import {
+  appendPolicyRevision,
+  policyLiabilities,
+  policyRequestHash,
+  policyWorkBlockers,
+  revisionReceipt,
+  safeOwnerProfile,
+} from './policy-revisions';
 import { Db } from '../db';
 import { fail } from '../errors';
 import { reserveGenerationSpend, settleGenerationSpend } from '../image-generation/budget';
@@ -26,6 +35,15 @@ const consentSchema = z
     authorizationId: z.uuid().optional(),
     operationId: z.uuid(),
     turnFence: fenceSchema,
+    estimateFingerprint: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    policyRevision: z.number().int().nonnegative().optional(),
+    policyHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
     consent: z.literal(true),
   })
   .strict()
@@ -36,6 +54,17 @@ const consentSchema = z
 export class GenerationAuthority {
   readonly config: LiveTestConfig & { mode: 'owner' | 'manual' };
   readonly ownerConfig?: OwnerGenerationConfig;
+  private textRequestPlanner?: (purpose: AiPurpose, context: unknown) => TextReserveSnapshot;
+  configureTextRequestPlanner(
+    planner: (purpose: AiPurpose, context: unknown) => TextReserveSnapshot,
+  ) {
+    this.textRequestPlanner = planner;
+  }
+  private requestEstimate(purpose: AiPurpose, context: unknown) {
+    if (this.ownerConfig?.text.estimation && !this.textRequestPlanner)
+      fail(409, 'GENERATION_TEXT_PLANNER_REQUIRED', 'GENERATION_TEXT_PLANNER_REQUIRED');
+    return this.textRequestPlanner?.(purpose, context) ?? null;
+  }
   constructor(
     readonly db: Db,
     configuration: LiveTestConfig | OwnerGenerationConfig,
@@ -148,9 +177,10 @@ export class GenerationAuthority {
     if (!scope) fail(409, 'GENERATION_CONSENT_REQUIRED', 'GENERATION_CONSENT_REQUIRED');
     const owner = this.ownerConfig
       ? (
-          await c.query("SELECT id FROM live_test_sessions WHERE scope_id=$1 AND mode='owner'", [
-            GENERATION_SCOPE_ID,
-          ])
+          await c.query(
+            "SELECT id,policy_revision,policy_hash FROM live_test_sessions WHERE scope_id=$1 AND mode='owner'",
+            [GENERATION_SCOPE_ID],
+          )
         ).rows[0]
       : null;
     return {
@@ -160,6 +190,8 @@ export class GenerationAuthority {
             generationMode: 'owner' as const,
             generationAuthorizationId: owner.id,
             generationConfigFingerprint: this.ownerConfig!.configFingerprint,
+            generationPolicyRevision: Number(owner.policy_revision),
+            generationPolicyHash: owner.policy_hash ?? this.identity()!,
           }
         : {}),
       totalCapMicros: Math.min(policy.totalCapMicros, Number(scope.total_cap_micros)),
@@ -268,7 +300,8 @@ export class GenerationAuthority {
         'GENERATION_PRIOR_SCOPE_RECONCILIATION_REQUIRED',
       );
   }
-  /** Row order is authorization then shared scope, also used by settlement paths. */
+  /** Authorization (nonkey writes) then shared scope, also used by settlement paths.
+   * NO KEY UPDATE preserves serialization while allowing job FK KEY SHARE under admission. */
   async lockAuthorization(c: PoolClient, id: string) {
     const peek = (await c.query('SELECT scope_id FROM live_test_sessions WHERE id=$1', [id]))
       .rows[0];
@@ -276,9 +309,10 @@ export class GenerationAuthority {
     // Migrated scopes retain a manual row as well as their owner row. Every path
     // locks that entire set in the same order before touching the scope.
     const rows = (
-      await c.query('SELECT * FROM live_test_sessions WHERE scope_id=$1 ORDER BY id FOR UPDATE', [
-        peek.scope_id,
-      ])
+      await c.query(
+        'SELECT * FROM live_test_sessions WHERE scope_id=$1 ORDER BY id FOR NO KEY UPDATE',
+        [peek.scope_id],
+      )
     ).rows;
     await c.query('SELECT id FROM generation_budget_scopes WHERE id=$1 FOR UPDATE', [
       peek.scope_id,
@@ -367,9 +401,21 @@ export class GenerationAuthority {
   }
   async claim(userId: string, input: unknown) {
     await this.owner(userId);
-    z.object({ consent: z.literal(true) })
-      .strict()
-      .parse(input);
+    if (this.ownerConfig) {
+      const claim = z
+        .object({
+          consent: z.literal(true),
+          candidateFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+        })
+        .strict()
+        .parse(input);
+      if (claim.candidateFingerprint !== this.ownerConfig.configFingerprint)
+        fail(409, 'GENERATION_POLICY_STALE', 'GENERATION_POLICY_STALE');
+    } else {
+      z.object({ consent: z.literal(true) })
+        .strict()
+        .parse(input);
+    }
     if (!this.pricingCurrent())
       fail(409, 'GENERATION_PRICING_EXPIRED', 'GENERATION_PRICING_EXPIRED');
     if (
@@ -383,9 +429,10 @@ export class GenerationAuthority {
         `generation-claim:${GENERATION_SCOPE_ID}`,
       ]);
       const sessions = (
-        await c.query('SELECT * FROM live_test_sessions WHERE scope_id=$1 ORDER BY id FOR UPDATE', [
-          GENERATION_SCOPE_ID,
-        ])
+        await c.query(
+          'SELECT * FROM live_test_sessions WHERE scope_id=$1 ORDER BY id FOR NO KEY UPDATE',
+          [GENERATION_SCOPE_ID],
+        )
       ).rows;
       const owner = sessions.find((row) => row.mode === 'owner');
       if (!this.ownerConfig && owner)
@@ -415,6 +462,8 @@ export class GenerationAuthority {
             fail(409, 'GENERATION_CONFIG_IMMUTABLE', 'GENERATION_CONFIG_IMMUTABLE');
           if (owner.state !== 'active' || scope.blocked || !scope.approved)
             fail(409, 'LIVE_SESSION_STOPPED', 'LIVE_SESSION_STOPPED');
+          // An idempotent legacy claim does not create a new epoch beneath existing jobs.
+          // A reviewed amendment performs that upgrade only after the normal busy checks.
           return;
         }
         if (!scope.approved)
@@ -448,10 +497,11 @@ export class GenerationAuthority {
           'UPDATE generation_budget_scopes SET total_cap_micros=$2,text_cap_micros=$3,image_cap_micros=$4,serialize_outstanding=true WHERE id=$1',
           [GENERATION_SCOPE_ID, caps.totalCapMicros, caps.textCapMicros, caps.imageCapMicros],
         );
+        const ownerAuthorizationId = randomUUID();
         await c.query(
           "INSERT INTO live_test_sessions(id,owner_id,scope_id,expires_at,cap_micros,state,mode,config_hash,owner_handle,text_cap_micros,image_cap_micros) VALUES($1,$2,$3,NULL,$4,'active','owner',$5,$6,$7,$8)",
           [
-            randomUUID(),
+            ownerAuthorizationId,
             userId,
             GENERATION_SCOPE_ID,
             caps.totalCapMicros,
@@ -461,6 +511,16 @@ export class GenerationAuthority {
             caps.imageCapMicros,
           ],
         );
+        await appendPolicyRevision(c, {
+          authorizationId: ownerAuthorizationId,
+          scopeId: GENERATION_SCOPE_ID,
+          revision: 1,
+          hash: this.identity()!,
+          previousHash: null,
+          config: { ...this.ownerConfig, ...caps },
+          operationId: randomUUID(),
+          requestHash: policyRequestHash({ kind: 'initial_claim', hash: this.identity() }),
+        });
         await c.query(
           "UPDATE live_test_sessions SET state='stopped',stop_code=COALESCE(stop_code,'OWNER_GENERATION_MODE_ACTIVE') WHERE scope_id=$1 AND mode='manual' AND state='active'",
           [GENERATION_SCOPE_ID],
@@ -608,6 +668,7 @@ export class GenerationAuthority {
         s.owner_handle !== this.ownerConfig.ownerHandle
       )
         fail(409, 'GENERATION_CONFIG_IMMUTABLE', 'GENERATION_CONFIG_IMMUTABLE');
+      await this.assertActivePolicy(c, s.id);
       if (!this.pricingCurrent())
         fail(409, 'GENERATION_PRICING_EXPIRED', 'GENERATION_PRICING_EXPIRED');
       const caps = this.budgetCaps();
@@ -686,20 +747,37 @@ export class GenerationAuthority {
       const turn = await this.campaign(c, campaignId, userId);
       const rows = (
         await c.query(
-          "SELECT r.id,r.npc_id,r.purpose,r.result_code,p.state AS permit_state FROM game_npc_decision_requests r LEFT JOIN live_test_text_permits p ON p.request_id=r.id WHERE r.campaign_id=$1 AND r.status IN ('queued','scheduled') ORDER BY CASE WHEN r.context ? 'turnOrder' THEN (r.context->>'turnOrder')::bigint ELSE 9223372036854775807 END,r.created_at,r.id LIMIT 16",
+          "SELECT r.id,r.npc_id,r.purpose,r.context,r.result_code,p.state AS permit_state FROM game_npc_decision_requests r LEFT JOIN live_test_text_permits p ON p.request_id=r.id WHERE r.campaign_id=$1 AND r.status IN ('queued','scheduled') ORDER BY CASE WHEN r.context ? 'turnOrder' THEN (r.context->>'turnOrder')::bigint ELSE 9223372036854775807 END,r.created_at,r.id LIMIT 16",
           [campaignId],
         )
       ).rows;
+      const active = this.ownerConfig
+        ? (
+            await c.query(
+              "SELECT policy_revision,policy_hash,config_hash FROM live_test_sessions WHERE scope_id=$1 AND mode='owner'",
+              [GENERATION_SCOPE_ID],
+            )
+          ).rows[0]
+        : null;
       return {
         turnFence: { roundId: turn.roundId, phaseEpoch: turn.phaseEpoch, rulesetVersion: 1 },
-        requests: rows.map((r) => ({
-          id: r.id,
-          subjectId: r.npc_id,
-          purpose: r.purpose,
-          errorCode: r.result_code ?? null,
-          permitState: r.permit_state ?? null,
-          upperMicros: this.textUpperMicros(),
-        })),
+        requests: rows.map((r) => {
+          const estimateSnapshot = this.requestEstimate(r.purpose, r.context);
+          return {
+            id: r.id,
+            subjectId: r.npc_id,
+            purpose: r.purpose,
+            errorCode: r.result_code ?? null,
+            permitState: r.permit_state ?? null,
+            upperMicros:
+              estimateSnapshot?.costBasis === 'operator_estimate' ? null : this.textUpperMicros(),
+            reserveMicros: estimateSnapshot?.reserveMicros ?? this.textUpperMicros(),
+            estimateSnapshot,
+            configFingerprint: this.ownerConfig?.configFingerprint ?? null,
+            policyRevision: Number(active?.policy_revision ?? 0),
+            policyHash: active?.policy_hash ?? active?.config_hash ?? null,
+          };
+        }),
       };
     });
   }
@@ -764,17 +842,30 @@ export class GenerationAuthority {
         fail(409, 'TURN_PHASE_STALE', 'TURN_PHASE_STALE');
       if (r.requester_user_id && r.requester_user_id !== userId)
         fail(403, 'FORBIDDEN', 'FORBIDDEN');
+      const estimateSnapshot = this.requestEstimate(r.purpose, r.context);
+      const reserveMicros = estimateSnapshot?.reserveMicros ?? this.textUpperMicros();
+      const activePolicy = this.ownerConfig ? await this.assertActivePolicy(c, sessionId) : null;
+      if (
+        activePolicy &&
+        (v.policyRevision !== activePolicy.revision || v.policyHash !== activePolicy.hash)
+      )
+        fail(409, 'GENERATION_POLICY_STALE', 'GENERATION_POLICY_STALE');
+      if (
+        estimateSnapshot?.costBasis === 'operator_estimate' &&
+        v.estimateFingerprint !== estimateSnapshot.fingerprint
+      )
+        fail(409, 'GENERATION_TEXT_RESERVE_STALE', 'GENERATION_TEXT_RESERVE_STALE');
       const reservation = await reserveGenerationSpend(
         c,
         await this.effectivePolicy(c),
         userId,
         'text',
         `manual-text:${requestId}`,
-        this.textUpperMicros(),
+        reserveMicros,
       );
       const id = randomUUID();
       await c.query(
-        "INSERT INTO live_test_text_permits(id,session_id,campaign_id,request_id,operation_id,context_hash,round_id,phase_epoch,reservation_id,state) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'authorized')",
+        "INSERT INTO live_test_text_permits(id,session_id,campaign_id,request_id,operation_id,context_hash,round_id,phase_epoch,reservation_id,state,request_snapshot,generation_policy_revision,generation_policy_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'authorized',$10,$11,$12)",
         [
           id,
           sessionId,
@@ -785,9 +876,18 @@ export class GenerationAuthority {
           turn.roundId,
           turn.phaseEpoch,
           reservation,
+          estimateSnapshot ? JSON.stringify(estimateSnapshot) : null,
+          activePolicy?.revision ?? null,
+          activePolicy?.hash ?? null,
         ],
       );
-      return { id, state: 'authorized', upperMicros: this.textUpperMicros() };
+      return {
+        id,
+        state: 'authorized',
+        upperMicros: estimateSnapshot?.costBasis === 'operator_estimate' ? null : reserveMicros,
+        reserveMicros,
+        estimateSnapshot,
+      };
     });
   }
   async requestAuthorized(requestId: string, context?: unknown) {
@@ -836,9 +936,10 @@ export class GenerationAuthority {
         : this.config.sessionId;
       if (!configuredId) return false;
       const session = (
-        await c.query('SELECT state,expires_at FROM live_test_sessions WHERE id=$1 FOR UPDATE', [
-          configuredId,
-        ])
+        await c.query(
+          'SELECT state,expires_at FROM live_test_sessions WHERE id=$1 FOR NO KEY UPDATE',
+          [configuredId],
+        )
       ).rows[0];
       const expired =
         (this.config.expiresAt?.getTime() ?? Infinity) <= Date.now() ||
@@ -902,7 +1003,7 @@ export class GenerationAuthority {
       this.requestAuthorized(rows[0].request_meta.runtimeRequestId)
     );
   }
-  async begin(request: ProviderRequest) {
+  async begin(request: ProviderRequest, snapshot?: TextReserveSnapshot) {
     return this.db.tx(async (c) => {
       const j = (await c.query('SELECT * FROM npc_ai_jobs WHERE id=$1 FOR UPDATE', [request.jobId]))
         .rows[0];
@@ -931,6 +1032,27 @@ export class GenerationAuthority {
         digest(request.context) !== p.context_hash
       )
         fail(409, 'TURN_PHASE_STALE', 'TURN_PHASE_STALE');
+      const storedSnapshot = p.request_snapshot as TextReserveSnapshot | null;
+      if (
+        (storedSnapshot || snapshot) &&
+        (!storedSnapshot || !snapshot || digest(storedSnapshot) !== digest(snapshot))
+      )
+        fail(409, 'GENERATION_TEXT_RESERVE_STALE', 'GENERATION_TEXT_RESERVE_STALE');
+      const active = this.ownerConfig ? await this.assertActivePolicy(c, p.session_id) : null;
+      if (
+        active &&
+        (Number(p.generation_policy_revision ?? 0) !== active.revision ||
+          (p.generation_policy_hash ?? (active.revision === 0 ? active.hash : null)) !==
+            active.hash)
+      )
+        fail(409, 'GENERATION_POLICY_CHANGED', 'GENERATION_POLICY_CHANGED');
+      const reserved = (
+        await c.query('SELECT upper_micros FROM generation_budget_reservations WHERE id=$1', [
+          p.reservation_id,
+        ])
+      ).rows[0];
+      if (storedSnapshot && Number(reserved?.upper_micros) !== storedSnapshot.reserveMicros)
+        fail(409, 'GENERATION_TEXT_RESERVE_STALE', 'GENERATION_TEXT_RESERVE_STALE');
       // A dispatch already begun with no final cost is an unknown liability, never retried.
       const unresolved = (
         await c.query(
@@ -1030,6 +1152,314 @@ export class GenerationAuthority {
       );
     }
   }
+
+  /** Caller holds authorization+scope rows, OR its provider-budget row+shared admission fence.
+   * This check only reads; it never acquires either lock set or another financial scope. */
+  async assertActivePolicy(c: PoolClient, authorizationId?: string, expectedFingerprint?: string) {
+    if (!this.ownerConfig) return { revision: 0, hash: '', configFingerprint: '' };
+    const row = (
+      await c.query("SELECT * FROM live_test_sessions WHERE scope_id=$1 AND mode='owner'", [
+        GENERATION_SCOPE_ID,
+      ])
+    ).rows[0];
+    if (!row || (authorizationId && row.id !== authorizationId))
+      fail(409, 'GENERATION_CONSENT_REQUIRED', 'GENERATION_CONSENT_REQUIRED');
+    // The already-held target financial row serializes amendments; do not take the
+    // cross-scope admission lock here before callers finish their campaign/source locks.
+    const hash = this.identity()!;
+    if (
+      row.config_hash !== hash ||
+      (row.policy_hash !== null && row.policy_hash !== hash) ||
+      (expectedFingerprint && expectedFingerprint !== this.ownerConfig.configFingerprint)
+    )
+      fail(409, 'GENERATION_POLICY_CHANGED', 'GENERATION_POLICY_CHANGED');
+    if (Number(row.policy_revision) > 0) {
+      const revision = (
+        await c.query(
+          'SELECT profile_hash,config_fingerprint FROM generation_policy_revisions WHERE authorization_id=$1 AND revision=$2',
+          [row.id, row.policy_revision],
+        )
+      ).rows[0];
+      if (
+        !revision ||
+        revision.profile_hash !== hash ||
+        revision.config_fingerprint !== this.ownerConfig.configFingerprint
+      )
+        fail(409, 'GENERATION_POLICY_CHANGED', 'GENERATION_POLICY_CHANGED');
+    }
+    return {
+      revision: Number(row.policy_revision),
+      hash,
+      configFingerprint: this.ownerConfig.configFingerprint,
+    };
+  }
+
+  /**
+   * Queue-only read under the caller's locked NPC provider-budget row AND shared admission fence.
+   * Never locks an authorization/scope or takes another advisory lock under that fence.
+   * An operator candidate is not an accepted cap until its persisted revision matches.
+   */
+  async acknowledgedTextCap(c: PoolClient, authorizationId: string): Promise<number> {
+    const cfg = this.ownerConfig;
+    if (!cfg || !this.config.enabled)
+      return fail(409, 'GENERATION_OWNER_MODE_REQUIRED', 'GENERATION_OWNER_MODE_REQUIRED');
+    const row = (
+      await c.query(
+        `SELECT s.*,b.approved AS scope_approved,b.blocked AS scope_blocked,
+        b.text_cap_micros AS scope_text_cap,u.handle AS current_handle,u.deleted_at AS owner_deleted_at
+       FROM live_test_sessions s JOIN generation_budget_scopes b ON b.id=s.scope_id
+       JOIN users u ON u.id=s.owner_id WHERE s.id=$1 AND s.scope_id=$2 AND s.mode='owner'`,
+        [authorizationId, GENERATION_SCOPE_ID],
+      )
+    ).rows[0];
+    if (!row) fail(409, 'GENERATION_CONSENT_REQUIRED', 'GENERATION_CONSENT_REQUIRED');
+    if (
+      row.owner_deleted_at ||
+      row.owner_handle !== cfg.ownerHandle ||
+      row.current_handle !== cfg.ownerHandle
+    )
+      fail(403, 'GENERATION_OWNER_IMMUTABLE', 'GENERATION_OWNER_IMMUTABLE');
+    if (row.state !== 'active' || row.stop_code || !row.scope_approved || row.scope_blocked)
+      fail(409, 'LIVE_SESSION_STOPPED', 'LIVE_SESSION_STOPPED');
+    if (!this.pricingCurrent())
+      fail(409, 'GENERATION_PRICING_EXPIRED', 'GENERATION_PRICING_EXPIRED');
+    await this.assertActivePolicy(c, authorizationId, cfg.configFingerprint);
+    await this.historicalSafety(c, row.owner_id);
+    if ((await policyWorkBlockers(c, GENERATION_SCOPE_ID)).includes('LIVE_OUTCOME_UNRESOLVED'))
+      fail(409, 'LIVE_OUTCOME_UNRESOLVED', 'LIVE_OUTCOME_UNRESOLVED');
+    const caps = [Number(row.text_cap_micros), Number(row.scope_text_cap), cfg.textCapMicros];
+    if (caps.some((n) => !Number.isSafeInteger(n) || n <= 0))
+      fail(409, 'GENERATION_CONFIG_IMMUTABLE', 'GENERATION_CONFIG_IMMUTABLE');
+    return Math.min(...caps);
+  }
+  async reviewPolicy(userId: string) {
+    await this.owner(userId);
+    return this.db.tx(async (c) => {
+      await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const row = (
+        await c.query("SELECT * FROM live_test_sessions WHERE scope_id=$1 AND mode='owner'", [
+          GENERATION_SCOPE_ID,
+        ])
+      ).rows[0];
+      if (row && row.owner_id !== userId)
+        fail(403, 'GENERATION_OWNER_IMMUTABLE', 'GENERATION_OWNER_IMMUTABLE');
+      const scope = (
+        await c.query('SELECT * FROM generation_budget_scopes WHERE id=$1', [GENERATION_SCOPE_ID])
+      ).rows[0];
+      const historyRows = row
+        ? (
+            await c.query(
+              'SELECT * FROM generation_policy_revisions WHERE authorization_id=$1 ORDER BY revision',
+              [row.id],
+            )
+          ).rows
+        : [];
+      const saved = historyRows.find((r) => Number(r.revision) === Number(row?.policy_revision));
+      const matches = !!row && !!this.ownerConfig && row.config_hash === this.identity();
+      const legacy = !!row && Number(row.policy_revision) === 0;
+      const profile =
+        saved?.profile_snapshot ??
+        (legacy && matches && this.ownerConfig
+          ? safeOwnerProfile({
+              ...this.ownerConfig,
+              totalCapMicros: Number(row.cap_micros),
+              textCapMicros: Number(row.text_cap_micros),
+              imageCapMicros: Number(row.image_cap_micros),
+            })
+          : null);
+      const active = row
+        ? {
+            revision: Number(row.policy_revision),
+            hash: row.policy_hash ?? row.config_hash,
+            configFingerprint:
+              saved?.config_fingerprint ??
+              (matches ? (this.ownerConfig?.configFingerprint ?? null) : null),
+            profile,
+            acknowledgedAt: saved ? new Date(saved.acknowledged_at).toISOString() : null,
+            legacy,
+          }
+        : null;
+      const liabilities = await policyLiabilities(c, GENERATION_SCOPE_ID);
+      const blockers: string[] = [];
+      if (!this.ownerConfig) blockers.push('GENERATION_OWNER_MODE_REQUIRED');
+      if (!row) blockers.push('GENERATION_CONSENT_REQUIRED');
+      if (row && this.ownerConfig && row.owner_handle !== this.ownerConfig.ownerHandle)
+        blockers.push('GENERATION_OWNER_IMMUTABLE');
+      if (
+        row &&
+        scope &&
+        (Number(row.cap_micros) !== Number(scope.total_cap_micros) ||
+          Number(row.text_cap_micros) !== Number(scope.text_cap_micros) ||
+          Number(row.image_cap_micros) !== Number(scope.image_cap_micros) ||
+          !scope.serialize_outstanding)
+      )
+        blockers.push('GENERATION_CONFIG_IMMUTABLE');
+      if (row && (row.state !== 'active' || !scope?.approved || scope?.blocked))
+        blockers.push('LIVE_SESSION_STOPPED');
+      if (!this.pricingCurrent()) blockers.push('GENERATION_PRICING_EXPIRED');
+      if (
+        row &&
+        Number(row.policy_revision) > 0 &&
+        (!saved || saved.profile_hash !== row.config_hash || row.policy_hash !== row.config_hash)
+      )
+        blockers.push('GENERATION_POLICY_CHANGED');
+      try {
+        await this.historicalSafety(c, userId, !row);
+      } catch (e) {
+        const code = e instanceof Error ? e.message : 'GENERATION_PRIOR_LIABILITY_UNRESOLVED';
+        blockers.push(
+          /^[A-Z0-9_]{1,100}$/.test(code) ? code : 'GENERATION_PRIOR_LIABILITY_UNRESOLVED',
+        );
+      }
+      const work = await policyWorkBlockers(c, GENERATION_SCOPE_ID);
+      const dispatchBlockers = [
+        ...blockers,
+        ...work.filter((code) => code !== 'GENERATION_POLICY_BUSY'),
+      ];
+      if (row && !matches) dispatchBlockers.push('GENERATION_POLICY_REVIEW_REQUIRED');
+      const candidate = this.ownerConfig ? safeOwnerProfile(this.ownerConfig) : null;
+      const amendmentBlockers = [...blockers, ...work];
+      if (
+        this.ownerConfig &&
+        (liabilities.totalAccountedMicros > this.ownerConfig.totalCapMicros ||
+          liabilities.text.spentMicros + liabilities.text.heldMicros >
+            this.ownerConfig.textCapMicros ||
+          liabilities.image.spentMicros + liabilities.image.heldMicros >
+            this.ownerConfig.imageCapMicros)
+      )
+        amendmentBlockers.push('GENERATION_CAP_BELOW_HISTORICAL_SPEND');
+      const proposed =
+        this.ownerConfig && row && (!matches || !profile || digest(profile) !== digest(candidate))
+          ? {
+              candidateFingerprint: this.ownerConfig.configFingerprint,
+              hash: this.identity()!,
+              profile: candidate!,
+              canApply: amendmentBlockers.length === 0,
+              blockers: [...new Set(amendmentBlockers)],
+            }
+          : null;
+      return {
+        mode: this.mode,
+        authorizationId: row?.id ?? null,
+        scopeId: GENERATION_SCOPE_ID,
+        active,
+        proposed,
+        history: historyRows.map((r) => ({
+          revision: Number(r.revision),
+          hash: r.profile_hash,
+          previousHash: r.previous_hash,
+          configFingerprint: r.config_fingerprint,
+          acknowledgedAt: new Date(r.acknowledged_at).toISOString(),
+          operationId: r.operation_id,
+          profile: r.profile_snapshot,
+        })),
+        liabilities,
+        dispatchEnabled: !!row && dispatchBlockers.length === 0,
+        blockers: [...new Set(dispatchBlockers)],
+        legacyProfileStatus: !row
+          ? ('unclaimed' as const)
+          : profile
+            ? ('available' as const)
+            : ('unavailable' as const),
+      };
+    });
+  }
+  async policyOperation(userId: string, operationId: string) {
+    await this.owner(userId);
+    z.uuid().parse(operationId);
+    const row = (
+      await this.db.query(
+        "SELECT r.* FROM generation_policy_revisions r JOIN live_test_sessions s ON s.id=r.authorization_id WHERE s.owner_id=$1 AND s.scope_id=$2 AND s.mode='owner' AND r.operation_id=$3",
+        [userId, GENERATION_SCOPE_ID, operationId],
+      )
+    )[0];
+    return row ? revisionReceipt(row) : { operationId, status: 'not_found' as const };
+  }
+  async amendPolicy(userId: string, input: unknown) {
+    await this.owner(userId);
+    if (!this.ownerConfig)
+      fail(409, 'GENERATION_OWNER_MODE_REQUIRED', 'GENERATION_OWNER_MODE_REQUIRED');
+    const body = z
+      .object({
+        operationId: z.uuid(),
+        expectedRevision: z.number().int().nonnegative(),
+        expectedHash: z.string().regex(/^[a-f0-9]{64}$/),
+        candidateFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+        consent: z.literal(true),
+      })
+      .strict()
+      .parse(input);
+    const requestHash = policyRequestHash(body);
+    return this.db.tx(async (c) => {
+      await this.ownerTx(c, userId);
+      const peek = (
+        await c.query("SELECT id FROM live_test_sessions WHERE scope_id=$1 AND mode='owner'", [
+          GENERATION_SCOPE_ID,
+        ])
+      ).rows[0];
+      if (!peek) fail(409, 'GENERATION_CONSENT_REQUIRED', 'GENERATION_CONSENT_REQUIRED');
+      const row = await this.lockAuthorization(c, peek.id);
+      if (!row || row.owner_id !== userId || row.owner_handle !== this.ownerConfig!.ownerHandle)
+        fail(403, 'GENERATION_OWNER_IMMUTABLE', 'GENERATION_OWNER_IMMUTABLE');
+      // Reconcile an exact receipt before CAS, including a late first request after an uncertain response.
+      const previous = (
+        await c.query(
+          'SELECT * FROM generation_policy_revisions WHERE authorization_id=$1 AND operation_id=$2',
+          [row.id, body.operationId],
+        )
+      ).rows[0];
+      if (previous) {
+        if (previous.request_hash !== requestHash)
+          fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+        return revisionReceipt(previous);
+      }
+      if (
+        Number(row.policy_revision) !== body.expectedRevision ||
+        (row.policy_hash ?? row.config_hash) !== body.expectedHash ||
+        body.candidateFingerprint !== this.ownerConfig!.configFingerprint
+      )
+        fail(409, 'GENERATION_POLICY_STALE', 'GENERATION_POLICY_STALE');
+      await fenceGenerationAdmission(c);
+      const scope = (
+        await c.query('SELECT * FROM generation_budget_scopes WHERE id=$1', [GENERATION_SCOPE_ID])
+      ).rows[0];
+      if (row.state !== 'active' || scope?.blocked || !scope?.approved)
+        fail(409, 'LIVE_SESSION_STOPPED', 'LIVE_SESSION_STOPPED');
+      if (!this.pricingCurrent())
+        fail(409, 'GENERATION_PRICING_EXPIRED', 'GENERATION_PRICING_EXPIRED');
+      await this.historicalSafety(c, userId);
+      const work = await policyWorkBlockers(c, GENERATION_SCOPE_ID);
+      if (work.length) fail(409, work[0], work[0]);
+      const liabilities = await policyLiabilities(c, GENERATION_SCOPE_ID);
+      const cfg = this.ownerConfig!;
+      if (
+        liabilities.totalAccountedMicros > cfg.totalCapMicros ||
+        liabilities.text.spentMicros + liabilities.text.heldMicros > cfg.textCapMicros ||
+        liabilities.image.spentMicros + liabilities.image.heldMicros > cfg.imageCapMicros
+      )
+        fail(409, 'GENERATION_CAP_BELOW_HISTORICAL_SPEND', 'GENERATION_CAP_BELOW_HISTORICAL_SPEND');
+      // No spend, hold, blocked flag, stop code, owner or scope is replaced.
+      await c.query(
+        'UPDATE generation_budget_scopes SET total_cap_micros=$2,text_cap_micros=$3,image_cap_micros=$4 WHERE id=$1',
+        [GENERATION_SCOPE_ID, cfg.totalCapMicros, cfg.textCapMicros, cfg.imageCapMicros],
+      );
+      await c.query(
+        'UPDATE live_test_sessions SET config_hash=$2,cap_micros=$3,text_cap_micros=$4,image_cap_micros=$5 WHERE id=$1',
+        [row.id, this.identity(), cfg.totalCapMicros, cfg.textCapMicros, cfg.imageCapMicros],
+      );
+      const revision = await appendPolicyRevision(c, {
+        authorizationId: row.id,
+        scopeId: GENERATION_SCOPE_ID,
+        revision: Number(row.policy_revision) + 1,
+        hash: this.identity()!,
+        previousHash: row.policy_hash ?? row.config_hash,
+        config: cfg,
+        operationId: body.operationId,
+        requestHash,
+      });
+      return revisionReceipt(revision);
+    });
+  }
   async status(userId: string) {
     await this.owner(userId);
     if (this.ownerConfig) return this.ownerStatus(userId);
@@ -1107,17 +1537,12 @@ export class GenerationAuthority {
         [GENERATION_SCOPE_ID],
       )
     )[0];
-    const effectiveCap = Math.min(
-      cfg.totalCapMicros,
-      Number(row?.cap_micros ?? scope?.total_cap_micros ?? cfg.totalCapMicros),
+    const effectiveCap = Number(row?.cap_micros ?? scope?.total_cap_micros ?? cfg.totalCapMicros);
+    const effectiveTextCap = Number(
+      row?.text_cap_micros ?? scope?.text_cap_micros ?? cfg.textCapMicros,
     );
-    const effectiveTextCap = Math.min(
-      cfg.textCapMicros,
-      Number(row?.text_cap_micros ?? scope?.text_cap_micros ?? cfg.textCapMicros),
-    );
-    const effectiveImageCap = Math.min(
-      cfg.imageCapMicros,
-      Number(row?.image_cap_micros ?? scope?.image_cap_micros ?? cfg.imageCapMicros),
+    const effectiveImageCap = Number(
+      row?.image_cap_micros ?? scope?.image_cap_micros ?? cfg.imageCapMicros,
     );
     const usage = (
       await this.db.query(
@@ -1125,31 +1550,19 @@ export class GenerationAuthority {
         [GENERATION_SCOPE_ID],
       )
     )[0];
-    let stopCode: string | null = row?.stop_code ?? null;
-    try {
-      await this.db.tx(async (c) => {
-        if (row) await this.session(c, row.id, userId);
-        else {
-          if (scope && !scope.approved)
-            fail(
-              409,
-              'GENERATION_PRIOR_AUTHORIZATION_REVOKED',
-              'GENERATION_PRIOR_AUTHORIZATION_REVOKED',
-            );
-          await this.historicalSafety(c, userId, true);
-          if (!this.pricingCurrent())
-            fail(409, 'GENERATION_PRICING_EXPIRED', 'GENERATION_PRICING_EXPIRED');
-        }
-      });
-    } catch (e) {
-      const message = e instanceof Error ? e.message : '';
-      stopCode ??= /^[A-Z0-9_]{1,100}$/.test(message)
-        ? message
-        : 'GENERATION_AUTHORIZATION_UNAVAILABLE';
-    }
+    const policy = await this.reviewPolicy(userId);
+    const stopCode =
+      row?.stop_code ??
+      policy.blockers.find((code) => code !== 'GENERATION_CONSENT_REQUIRED') ??
+      null;
     return {
       mode: 'owner' as const,
       enabled: true,
+      policyRevision: policy.active?.revision ?? 0,
+      policyHash: policy.active?.hash ?? null,
+      configFingerprint: cfg.configFingerprint,
+      activeConfigFingerprint: policy.active?.configFingerprint ?? null,
+      dispatchEnabled: policy.dispatchEnabled,
       authorizationId: row?.id ?? null,
       sessionId: row?.id ?? null,
       expiresAt: null,

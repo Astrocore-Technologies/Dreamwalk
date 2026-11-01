@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import {
   providerBoundKnown,
+  providerReserveKnown,
   samePreparedTurn,
 } from '../../apps/web/components/game/narrative-guards.ts';
 test('external narrative approval fails closed without a valid explicit provider spending bound', () => {
@@ -93,4 +94,35 @@ test('art selectors and approval controls have explicit localized accessible nam
     assert.ok(generation.includes(`aria-label={a('${key}')}`));
   for (const key of ['rights', 'consent'])
     assert.ok(generation.includes(`aria-label={g('${key}')}`));
+});
+
+test('request planning permits consent only with a matching explicit reserve and never a null-as-zero ceiling', () => {
+  const quote = {
+    external: true,
+    providerUpperMicros: null,
+    providerReserveMicros: 2000,
+    providerEnforcesQuotedCap: false,
+    estimateSnapshot: {
+      schemaVersion: 1,
+      costBasis: 'operator_estimate',
+      fingerprint: 'a'.repeat(64),
+      reserveMicros: 2000,
+      estimatedTotalMicros: 1000,
+      providerEnforcesQuotedCap: false,
+    },
+  };
+  assert.equal(providerReserveKnown(quote), true);
+  assert.equal(providerBoundKnown(quote, true), true);
+  assert.equal(providerBoundKnown({ ...quote, providerReserveMicros: 0 }, true), false);
+  assert.equal(providerBoundKnown({ ...quote, estimateSnapshot: undefined }, true), false);
+  assert.equal(
+    providerBoundKnown(
+      {
+        ...quote,
+        estimateSnapshot: { ...quote.estimateSnapshot, providerEnforcesQuotedCap: true },
+      },
+      true,
+    ),
+    false,
+  );
 });

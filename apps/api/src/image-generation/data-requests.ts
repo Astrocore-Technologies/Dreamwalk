@@ -67,11 +67,11 @@ export async function eraseImageGeneration(c: PoolClient, userId: string) {
     [revisionIds],
   );
   await c.query(
-    "UPDATE image_generation_jobs SET cancel_requested=true,quota_reserved_bytes=0,input='{}',reference_hashes='{}',request_hash='erased',provider_request_id=NULL,safe_diagnostic=NULL,quarantine_filename=NULL,quarantine_sha256=NULL,quarantine_mime=NULL,error_code='ERASED',updated_at=now() WHERE id=ANY($1::uuid[])",
+    `UPDATE image_generation_jobs SET estimate_snapshot=CASE WHEN estimate_snapshot IS NULL THEN NULL ELSE (estimate_snapshot-'promptSha256'-'id'-'fingerprint')||'{"privateInputErased":true}'::jsonb END,cancel_requested=true,quota_reserved_bytes=0,input='{}',reference_hashes='{}',request_hash='erased',provider_request_id=NULL,safe_diagnostic=NULL,quarantine_filename=NULL,quarantine_sha256=NULL,quarantine_mime=NULL,error_code='ERASED',updated_at=now() WHERE id=ANY($1::uuid[])`,
     [jobIds],
   );
   await c.query(
-    "UPDATE image_generation_quotes SET input='{}',reference_hashes='{}',request_hash='erased',expires_at=least(expires_at,now()) WHERE actor_id=$1 OR input->'campaignContext'->>'campaignId'=ANY($2::text[])",
+    `UPDATE image_generation_quotes SET estimate_snapshot=CASE WHEN estimate_snapshot IS NULL THEN NULL ELSE (estimate_snapshot-'promptSha256'-'id'-'fingerprint')||'{"privateInputErased":true}'::jsonb END,input='{}',reference_hashes='{}',request_hash='erased',expires_at=least(expires_at,now()) WHERE actor_id=$1 OR input->'campaignContext'->>'campaignId'=ANY($2::text[])`,
     [userId, campaignIds],
   );
   await c.query(
@@ -98,6 +98,7 @@ export async function exportImageGeneration(c: PoolClient, userId: string) {
     quotes: (
       await c.query(
         `SELECT q.id,q.adventure_id,q.input,q.mode,q.cost_basis,q.estimated_total_micros,q.upper_micros,q.expires_at,q.created_at,
+       q.estimate_snapshot,q.pricing_profile_snapshot,q.generation_policy_revision,q.generation_policy_hash,
        EXISTS(SELECT 1 FROM image_generation_jobs j WHERE j.quote_id=q.id) AS consumed
        FROM image_generation_quotes q WHERE q.actor_id=$1 ORDER BY q.created_at`,
         [userId],
@@ -105,7 +106,7 @@ export async function exportImageGeneration(c: PoolClient, userId: string) {
     ).rows,
     jobs: (
       await c.query(
-        'SELECT id,adventure_id,input,mode,cost_basis,estimated_total_micros,status,upper_micros,actual_micros,admitted_revision_id,error_code,safe_diagnostic,created_at FROM image_generation_jobs WHERE actor_id=$1 ORDER BY created_at',
+        'SELECT id,adventure_id,input,mode,cost_basis,estimated_total_micros,estimate_snapshot,pricing_profile_snapshot,generation_policy_revision,generation_policy_hash,status,upper_micros,actual_micros,admitted_revision_id,error_code,safe_diagnostic,created_at FROM image_generation_jobs WHERE actor_id=$1 ORDER BY created_at',
         [userId],
       )
     ).rows.map((row) => ({

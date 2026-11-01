@@ -117,7 +117,9 @@ async function fixture(
       maxReferenceImages: options.maxReferenceImages ?? 0,
     },
   };
+  const configFingerprint = createHash('sha256').update(JSON.stringify(config)).digest('hex');
   const status = {
+    configFingerprint,
     mode: 'owner',
     enabled: true,
     authorizationId: null as string | null,
@@ -198,7 +200,10 @@ async function fixture(
       return route.fulfill({ status: 403, json: { code: 'GENERATION_OWNER_REQUIRED' } });
     if (path.endsWith('/status') && req.method() === 'GET') return route.fulfill({ json: status });
     if (path.endsWith('/claim') && req.method() === 'POST') {
-      expect(req.postDataJSON()).toEqual({ consent: true });
+      expect(req.postDataJSON()).toEqual({
+        consent: true,
+        candidateFingerprint: configFingerprint,
+      });
       calls.claim++;
       status.state = 'active';
       status.authorizationId = authorizationId;

@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import type { OwnerImageProfile } from '../generation/config';
 export const authoringContextSchema = z
   .object({
     projectId: z.uuid(),
@@ -92,6 +93,9 @@ export const generationRequestSchema = z
 export type GenerationRequest = z.infer<typeof generationRequestSchema>;
 export interface ImagePolicy {
   generationMode?: 'owner';
+  generationPolicyRevision?: number;
+  generationPolicyHash?: string;
+  ownerImageProfile?: OwnerImageProfile;
   generationAuthorizationId?: string;
   generationConfigFingerprint?: string;
   version: string;

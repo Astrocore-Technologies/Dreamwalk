@@ -34,6 +34,11 @@ export const storyMessages = {
   send: ['Отправить', 'Send', 'Надіслати'],
   confirm: ['Подтвердить ход', 'Confirm turn', 'Підтвердити хід'],
   dismiss: ['Изменить', 'Edit', 'Змінити'],
+  requestReserve: [
+    'Резерв запроса: {amount} USD. Это плановая сумма; фактический счёт может отличаться.',
+    'Request reserve: USD {amount}. This is a planning amount; the actual invoice may differ.',
+    'Резерв запиту: {amount} USD. Це планова сума; фактичний рахунок може відрізнятися.',
+  ],
   cost: ['Стоимость: {credits} искр', 'Price: {credits} Sparks', 'Вартість: {credits} іскор'],
   replyLanguage: [
     'Язык ответа: {language}',

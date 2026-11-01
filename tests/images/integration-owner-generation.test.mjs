@@ -50,7 +50,7 @@ await test(
       // This never supplies a production reconciliation/reset path or touches another test's grant.
       assert.match(process.env.LOCAL_POSTGRES_CLUSTER ?? '', /^images-test-/);
       sql = await db.connect();
-      await sql.query('BEGIN');
+      await sql.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
       let savepoint = 0;
       const database = {
         query: async (query, values = []) => (await sql.query(query, values)).rows,
@@ -58,7 +58,30 @@ await test(
           const name = `owner_fixture_${++savepoint}`;
           await sql.query(`SAVEPOINT ${name}`);
           try {
-            const result = await work(sql);
+            // Status opens a fresh read-only snapshot in production. This fixture already
+            // owns one repeatable-read write transaction, so model that nested read-only
+            // scope without issuing an illegal SET TRANSACTION after earlier fixture writes.
+            let readOnly = false;
+            const nested = {
+              query: async (query, values = []) => {
+                if (query === 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY') {
+                  assert.equal(
+                    (await sql.query('SHOW transaction_isolation')).rows[0].transaction_isolation,
+                    'repeatable read',
+                  );
+                  readOnly = true;
+                  return { rows: [], rowCount: 0 };
+                }
+                if (readOnly)
+                  assert.doesNotMatch(
+                    query,
+                    /\b(INSERT|UPDATE|DELETE|TRUNCATE|ALTER|DROP|CREATE|CALL)\b/i,
+                    'Status scope must remain read-only',
+                  );
+                return sql.query(query, values);
+              },
+            };
+            const result = await work(nested);
             await sql.query(`RELEASE SAVEPOINT ${name}`);
             return result;
           } catch (error) {
@@ -122,10 +145,16 @@ await test(
             failureCode('GENERATION_CONSENT_REQUIRED'),
           );
           await assert.rejects(
-            authority.claim(other.user.id, { consent: true }),
+            authority.claim(other.user.id, {
+              consent: true,
+              candidateFingerprint: configured.configFingerprint,
+            }),
             failureCode('FORBIDDEN'),
           );
-          await authority.claim(owner.user.id, { consent: true });
+          await authority.claim(owner.user.id, {
+            consent: true,
+            candidateFingerprint: configured.configFingerprint,
+          });
           const quote = await engine.quote(owner.user.id, request);
           assert.equal(quote.quote.generationMode, 'owner');
           assert.equal(quote.quote.estimateRiskConsentRequired, true);
@@ -604,7 +633,12 @@ await test(
                   'stopped',
                 );
                 await assert.rejects(scoped.quote(owner.user.id, request));
-                await assert.rejects(authority.claim(owner.user.id, { consent: true }));
+                await assert.rejects(
+                  authority.claim(owner.user.id, {
+                    consent: true,
+                    candidateFingerprint: configured.configFingerprint,
+                  }),
+                );
               } else if (outcome === 'wrong-dimensions') {
                 assert.equal(row.status, 'rejected');
                 assert.equal(row.error_code, 'IMAGE_PROFILE_DIMENSIONS_MISMATCH');
@@ -658,6 +692,7 @@ await test(
                 await assert.rejects(
                   new GenerationAuthority(database, configured).claim(owner.user.id, {
                     consent: true,
+                    candidateFingerprint: configured.configFingerprint,
                   }),
                 );
                 await scoped.workOnce();

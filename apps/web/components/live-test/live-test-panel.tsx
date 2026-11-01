@@ -5,6 +5,10 @@ import { useT } from '@/lib/i18n';
 import { Button, ErrorBox } from '../ui';
 import {
   formatUsd,
+  liveRequestReserve,
+  ownerClaimFingerprintCurrent,
+  liveRequestConsentFence,
+  liveRequestPolicyCurrent,
   GenerationResponseScope,
   liveSessionActive,
   generationAuthorizationId,
@@ -18,6 +22,8 @@ import {
 } from './types';
 import { useLiveText } from './messages';
 import styles from './live-test.module.css';
+import { TextRequestReserve } from './request-reserve';
+import { OwnerPolicyReview } from './owner-policy-review';
 
 export function useLiveTestStatus() {
   const { user } = useClient();
@@ -122,6 +128,9 @@ export function LiveTestPanel({
     remaining: status?.remainingMicros,
     held: status?.heldMicros,
     pricing: status?.pricingValidUntil,
+    configFingerprint: status?.configFingerprint,
+    policyRevision: status?.policyRevision,
+    policyHash: status?.policyHash,
   });
   useEffect(() => {
     setClaimConsent(false);
@@ -169,6 +178,7 @@ export function LiveTestPanel({
       inFlight.current ||
       !claimConsent ||
       !status.enabled ||
+      !ownerClaimFingerprintCurrent(status) ||
       status.state !== 'unclaimed' ||
       generationExpired(status) ||
       !generationPricingCurrent(status)
@@ -181,15 +191,20 @@ export function LiveTestPanel({
     try {
       const next = await api<LiveTestStatus>('/generation/claim', {
         method: 'POST',
-        body: JSON.stringify({ consent: true }),
+        body: ownerMode
+          ? JSON.stringify({ consent: true, candidateFingerprint: status.configFingerprint })
+          : JSON.stringify({ consent: true }),
       });
       if (mounted.current && responseScope.current(stamp)) {
         setStatus(next);
         setClaimConsent(false);
       }
     } catch (e) {
-      if (mounted.current && responseScope.current(stamp))
+      if (mounted.current && responseScope.current(stamp)) {
+        setClaimConsent(false);
         setError(e instanceof ApiError ? e.code : 'NETWORK_ERROR');
+        if (e instanceof ApiError && e.code === 'GENERATION_POLICY_STALE') await refresh();
+      }
     } finally {
       inFlight.current = false;
       if (mounted.current) setBusy(false);
@@ -227,6 +242,12 @@ export function LiveTestPanel({
       inFlight.current
     )
       return;
+    const request = batch.requests.find((value) => value.id === requestId);
+    if (!request || request.errorCode || !liveRequestPolicyCurrent(request, status)) return;
+    const consentFence = liveRequestConsentFence(request, status);
+    if (consentFence === null) return;
+    const reserve = liveRequestReserve(request);
+    if (reserve === null || reserve > generationRemaining(status, 'text')) return;
     const stamp = responseScope.capture();
     inFlight.current = true;
     setBusy(true);
@@ -242,6 +263,7 @@ export function LiveTestPanel({
             : { sessionId: status.sessionId }),
           operationId: operations.current.get(key),
           turnFence: batch.turnFence,
+          ...consentFence,
           consent: true,
         }),
       });
@@ -334,7 +356,7 @@ export function LiveTestPanel({
       {!pricingCurrent && <p role="status">{m('pricingExpired')}</p>}
       <p className={styles.note}>{m('debit')}</p>
       <p className={styles.note}>
-        {m('model')}: {status.text.model} · {m('upper')}: {money(status.text.upperMicros)}
+        {m('model')}: {status.text.model}
       </p>
       <p className={styles.note}>
         {m('historical')}: {status.priorHeldReservations}
@@ -365,7 +387,12 @@ export function LiveTestPanel({
             />
             {m(ownerMode ? 'ownerClaimConsent' : 'claimConsent')}
           </label>
-          <Button type="button" busy={busy} disabled={!claimConsent} onClick={() => void claim()}>
+          <Button
+            type="button"
+            busy={busy}
+            disabled={!claimConsent || !ownerClaimFingerprintCurrent(status)}
+            onClick={() => void claim()}
+          >
             {m(ownerMode ? 'ownerClaim' : 'claim')}
           </Button>
         </>
@@ -381,6 +408,12 @@ export function LiveTestPanel({
       >
         {m('refresh')}
       </Button>
+      {ownerMode && (
+        <OwnerPolicyReview
+          authorizationId={generationAuthorizationId(status)}
+          onApplied={refresh}
+        />
+      )}
       {campaignId && (
         <>
           <h3>{m('pending')}</h3>
@@ -399,9 +432,26 @@ export function LiveTestPanel({
             <article className={styles.request} key={request.id} data-live-request={request.id}>
               <strong>{request.subjectId}</strong>
               <code>{request.purpose}</code>
-              <p>
-                {m('upper')}: {money(request.upperMicros)}
-              </p>
+              {request.estimateSnapshot ? (
+                <TextRequestReserve snapshot={request.estimateSnapshot} />
+              ) : (
+                <p>
+                  {m('upper')}:{' '}
+                  {typeof request.upperMicros === 'number'
+                    ? money(request.upperMicros)
+                    : m('reserveUnavailable')}
+                  <br />
+                  <small>{m('reserveLegacy')}</small>
+                </p>
+              )}
+              {!liveRequestPolicyCurrent(request, status) && (
+                <p role="status">{m('policyStale')}</p>
+              )}
+              {request.errorCode && (
+                <p role="status">
+                  <code>{request.errorCode}</code>
+                </p>
+              )}
               {request.permitState && (
                 <p>{m(request.permitState === 'authorized' ? 'approved' : request.permitState)}</p>
               )}
@@ -412,21 +462,33 @@ export function LiveTestPanel({
                     <input
                       type="checkbox"
                       checked={!!consents[request.id]}
-                      disabled={busy || !active || !sameTurnFence(turnFence, batch.turnFence)}
+                      disabled={
+                        busy ||
+                        !active ||
+                        !!request.errorCode ||
+                        liveRequestConsentFence(request, status) === null ||
+                        !liveRequestPolicyCurrent(request, status) ||
+                        !sameTurnFence(turnFence, batch.turnFence)
+                      }
                       onChange={(e) =>
                         setConsents((v) => ({ ...v, [request.id]: e.target.checked }))
                       }
                     />
-                    {m('requestConsent')}
+                    {m(request.estimateSnapshot ? 'requestReserveConsent' : 'requestConsent')}
                   </label>
                   <Button
                     type="button"
                     busy={busy}
                     disabled={
                       !consents[request.id] ||
+                      !!request.errorCode ||
                       !active ||
                       uncertain.includes(request.id) ||
-                      request.upperMicros > generationRemaining(status, 'text') ||
+                      liveRequestReserve(request) === null ||
+                      liveRequestConsentFence(request, status) === null ||
+                      (liveRequestReserve(request) ?? Infinity) >
+                        generationRemaining(status, 'text') ||
+                      !liveRequestPolicyCurrent(request, status) ||
                       !sameTurnFence(turnFence, batch.turnFence)
                     }
                     onClick={() => void approve(request.id)}

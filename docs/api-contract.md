@@ -371,3 +371,50 @@ other players' inventories are not imported. The validated mechanics currently u
 bounded room/courtyard templates and existing action rules; prose plausibility is
 not a mechanically proven property. Mock proposals remain labeled mock, and no
 live provider or image budget is enabled by these endpoints.
+
+## Owner generation reserves and reviewed policies
+
+These authenticated routes resolve the configured owner on the server. Selecting
+an adapter, reading status or reviewing a policy dispatches no provider request.
+The financial scope and authorization identity remain stable across revisions.
+
+- `GET /api/v1/generation/status`: current owner authorization, accepted revision,
+  configuration fingerprint, liabilities and request availability. Amounts use
+  integer USD micro-units; one USD is 1,000,000 units.
+- `POST /api/v1/generation/claim`: initial owner acknowledgement requires
+  `{consent:true,candidateFingerprint}` matching the displayed server profile.
+  The old temporary manual mode retains its separate consent-only contract.
+- `GET /api/v1/generation/policy`: accepted/proposed safe profiles, immutable
+  revision history, spent/held/unknown liabilities, availability and blockers.
+  A missing historical profile is explicitly unavailable.
+- `POST /api/v1/generation/policy/revisions`: requires
+  `{operationId,expectedRevision,expectedHash,candidateFingerprint,consent:true}`.
+  The server reviews the configured candidate, never browser-supplied rates or
+  owner/scope identities. Application is atomic, idempotent and compare-and-set.
+- `GET /api/v1/generation/policy/operations/:operationId`: owner-only `applied`
+  receipt or `not_found`. Use it after an uncertain amendment response; a deliberate
+  retry preserves the exact operation and reviewed candidate.
+- `POST /api/v1/generation/campaigns/:id/requests/:requestId/consent`: owner text
+  confirmation includes the displayed `policyRevision` and `policyHash`, the existing
+  `authorizationId`, `operationId`, `turnFence` and `consent:true`. Request-estimated
+  text additionally includes the displayed `estimateFingerprint`.
+
+Owner request-estimated quotes expose a safe estimate snapshot, pricing evidence,
+reserve and accepted-policy fence. `upperMicros` (or `providerUpperMicros` for story
+quotes) is null for an operator estimate. A null value never becomes a zero bound.
+The complete serialized text envelope and actual image prompt/reference count
+feed the configured operator plan and margin. This is not an invoice guarantee.
+Legacy fixed profiles retain their explicit compatibility cost basis.
+
+`POST /api/v1/image-generation/jobs` keeps `quoteId`, `operationId` and
+`consent:true`; estimated image requests additionally require
+`estimateRiskConsent:true`. Quotes/jobs retain original price/planning snapshots.
+Repeated exact operations return their original receipt without another dispatch.
+Known usage settles once; unknown/403/overrun liabilities remain durable.
+
+A policy revision cannot clear a stop or overwrite accounting. Active paid work,
+unknown outcomes, stale expected state and caps below accounted liabilities reject
+application. Dispatch checks the accepted persisted revision again. Provider-queue
+caps follow only that acknowledged policy; increasing a server candidate alone
+cannot raise spending authority. Owner/source/asset and private-photo permissions
+remain independent checks.

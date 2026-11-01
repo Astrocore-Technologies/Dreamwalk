@@ -1,6 +1,7 @@
 /** Pure server-operator configuration. No files, credentials, network or financial scope input. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { estimateTextRequest, estimateImageRequest, type ImageEstimateProfile } from './estimates';
 
 const positiveMicros = z.number().int().positive().max(1_000_000_000_000);
 const model = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,159}$/);
@@ -25,6 +26,22 @@ const pricingSchema = z
     validUntil: z.iso.datetime(),
   })
   .strict();
+const textEstimationSchema = z
+  .object({
+    kind: z.literal('operator_heuristic'),
+    textTokensPerKiBUtf8: z.number().int().min(1).max(1048576),
+    textProtocolTokens: z.number().int().min(0).max(1048576),
+    marginBps: z.number().int().min(0).max(100000),
+    fixedMarginMicros: z.number().int().min(0).max(1000000000000),
+  })
+  .strict();
+const imageEstimationSchema = textEstimationSchema
+  .extend({
+    outputImageTokens: z.number().int().min(1).max(1048576),
+    referenceImageTokensPerImage: z.number().int().min(0).max(1048576),
+    referenceAllowanceMicros: z.number().int().min(0).max(1000000000000),
+  })
+  .strict();
 const textSchema = z
   .object({
     model,
@@ -33,6 +50,7 @@ const textSchema = z
     maxInputBytes: z.number().int().min(1024).max(64_000),
     inputMicrosPerMillion: positiveMicros,
     outputMicrosPerMillion: positiveMicros,
+    estimation: textEstimationSchema.optional(),
     pricing: pricingSchema,
   })
   .strict()
@@ -50,13 +68,24 @@ const imageSchema = z
     inputTextMicrosPerMillion: positiveMicros,
     inputImageMicrosPerMillion: positiveMicros,
     outputImageMicrosPerMillion: positiveMicros,
-    estimatedTotalMicros: positiveMicros,
-    reserveMicros: positiveMicros,
+    estimatedTotalMicros: positiveMicros.optional(),
+    reserveMicros: positiveMicros.optional(),
+    estimation: imageEstimationSchema.optional(),
     estimateRiskAccepted: z.literal(true),
     pricing: pricingSchema,
   })
   .strict()
-  .refine((value) => value.reserveMicros >= value.estimatedTotalMicros);
+  .refine((value) =>
+    value.estimation
+      ? value.estimatedTotalMicros === undefined &&
+        value.reserveMicros === undefined &&
+        (!value.maxReferenceImages ||
+          value.estimation.referenceImageTokensPerImage > 0 ||
+          value.estimation.referenceAllowanceMicros > 0)
+      : value.estimatedTotalMicros !== undefined &&
+        value.reserveMicros !== undefined &&
+        value.reserveMicros >= value.estimatedTotalMicros,
+  );
 const profileSchema = z
   .object({
     totalCapMicros: positiveMicros,
@@ -70,7 +99,9 @@ const profileSchema = z
 export type OwnerPricingEvidence = Readonly<z.infer<typeof pricingSchema>>;
 export type OwnerTextProfile = Readonly<z.infer<typeof textSchema> & { upperMicros: number }>;
 export type OwnerImageProfile = Readonly<
-  z.infer<typeof imageSchema> & {
+  Omit<z.infer<typeof imageSchema>, 'estimatedTotalMicros' | 'reserveMicros'> & {
+    estimatedTotalMicros: number;
+    reserveMicros: number;
     maxReferenceBytes: number;
     maxReferencePixels: number;
     costBasis: 'approved_estimate';
@@ -131,25 +162,51 @@ export function readOwnerGenerationConfig(
     !ownerPricingIsCurrent(profile.image.pricing, now)
   )
     invalid('OWNER_GENERATION_CURRENT_PRICING_REQUIRED');
-  const upper =
-    (BigInt(profile.text.contextTokens) * BigInt(profile.text.inputMicrosPerMillion) +
-      BigInt(profile.text.maxOutputTokens) * BigInt(profile.text.outputMicrosPerMillion) +
-      999_999n) /
-    1_000_000n;
+  let minimumTextReserve: number,
+    upper: number,
+    maxImageReserve: number,
+    imageBaseline: { estimatedTotalMicros: number; reserveMicros: number };
+  try {
+    upper = estimateTextRequest(
+      'a'.repeat(profile.text.maxInputBytes),
+      profile.text,
+      'configuration-limit-validation',
+    ).reserveMicros;
+    minimumTextReserve = estimateTextRequest(
+      '',
+      profile.text,
+      'configuration-minimum',
+    ).reserveMicros;
+    const imageProfile = profile.image as ImageEstimateProfile;
+    maxImageReserve = estimateImageRequest(
+      'a'.repeat(profile.image.maxPromptUtf8Bytes),
+      profile.image.maxReferenceImages,
+      imageProfile,
+      'configuration-limit-validation',
+    ).reserveMicros;
+    imageBaseline = estimateImageRequest('', 0, imageProfile, 'configuration-baseline');
+  } catch {
+    invalid('OWNER_GENERATION_ESTIMATION_INVALID');
+  }
   if (
-    upper > BigInt(profile.textCapMicros) ||
+    (profile.text.estimation ? minimumTextReserve : upper) > profile.textCapMicros ||
     profile.textCapMicros > profile.totalCapMicros ||
     profile.imageCapMicros > profile.totalCapMicros ||
-    profile.image.reserveMicros > profile.imageCapMicros
+    (profile.image.estimation ? imageBaseline.reserveMicros : maxImageReserve) >
+      profile.imageCapMicros
   )
     invalid('OWNER_GENERATION_BUDGET_INVALID');
   const text: OwnerTextProfile = Object.freeze({
     ...profile.text,
     pricing: Object.freeze(profile.text.pricing),
-    upperMicros: Number(upper),
+    ...(profile.text.estimation ? { estimation: Object.freeze(profile.text.estimation) } : {}),
+    upperMicros: upper,
   });
   const image: OwnerImageProfile = Object.freeze({
     ...profile.image,
+    estimatedTotalMicros: profile.image.estimatedTotalMicros ?? imageBaseline.estimatedTotalMicros,
+    reserveMicros: profile.image.reserveMicros ?? imageBaseline.reserveMicros,
+    ...(profile.image.estimation ? { estimation: Object.freeze(profile.image.estimation) } : {}),
     pricing: Object.freeze(profile.image.pricing),
     maxReferenceBytes: 5 * 1024 * 1024,
     maxReferencePixels: 4096 * 4096,

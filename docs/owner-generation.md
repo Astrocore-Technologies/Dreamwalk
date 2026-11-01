@@ -74,6 +74,13 @@ previous test.
       "source": "<official HTTPS pricing/model documentation URL>",
       "reviewedAt": "<UTC ISO timestamp of review>",
       "validUntil": "<explicit UTC ISO pricing-review validity timestamp>"
+    },
+    "estimation": {
+      "kind": "operator_heuristic",
+      "textTokensPerKiBUtf8": "<owner-reviewed planning tokens per 1024 serialized UTF-8 bytes>",
+      "textProtocolTokens": "<owner protocol token allowance>",
+      "marginBps": "<percentage margin in basis points; 10000 means 100 percent>",
+      "fixedMarginMicros": "<additional fixed request reserve in USD micro-units>"
     }
   },
   "image": {
@@ -87,22 +94,44 @@ previous test.
     "inputTextMicrosPerMillion": "<verified text-input rate>",
     "inputImageMicrosPerMillion": "<verified image-input rate>",
     "outputImageMicrosPerMillion": "<verified image-output rate>",
-    "estimatedTotalMicros": "<documented planning estimate for this profile>",
-    "reserveMicros": "<chosen operational reserve, at least the estimate>",
     "estimateRiskAccepted": true,
     "pricing": {
       "source": "<official HTTPS pricing/model documentation URL>",
       "reviewedAt": "<UTC ISO timestamp of review>",
       "validUntil": "<explicit UTC ISO pricing-review validity timestamp>"
+    },
+    "estimation": {
+      "kind": "operator_heuristic",
+      "textTokensPerKiBUtf8": "<owner-reviewed prompt planning tokens per 1024 UTF-8 bytes>",
+      "textProtocolTokens": "<owner image-request protocol token allowance>",
+      "outputImageTokens": "<reviewed output-token assumption for this exact model/size/quality>",
+      "referenceImageTokensPerImage": "<operator input-token allowance per selected reference>",
+      "referenceAllowanceMicros": "<extra uncertainty reserve per selected reference>",
+      "marginBps": "<percentage margin in basis points>",
+      "fixedMarginMicros": "<additional fixed request reserve in USD micro-units>"
     }
   }
 }
 ```
 
-One USD equals 1,000,000 micro-units. Each purpose ceiling must fit the total. The
-text reserve is calculated conservatively from the entire declared context and
-output ceiling at the configured rates, not a guessed characters-to-tokens ratio.
-The serialized input plus protocol allowance and output limit must fit the context.
+The `estimation` blocks are versioned operator planning assumptions. They are
+not an OpenAI tokenization rule. A quote records the actual serialized input
+length/reference count and each component of its reserve. Its percentage margin
+is rounded up; the fixed margin and reference uncertainty allowance are added
+separately. Configure the image output assumption for the exact model, size and
+quality. Do not copy an output-only cost as the total request estimate.
+
+Legacy profiles may omit `estimation` and keep their explicit
+`image.estimatedTotalMicros`/`image.reserveMicros`; their old fixed behavior is
+retained and labelled `legacy_fixed`. A move to request planning is an explicit
+policy revision, not a silent reinterpretation of old prices or reservations.
+
+One USD equals 1,000,000 micro-units. Each purpose ceiling must fit the total. Legacy text profiles reserve the entire declared context and output ceiling at
+the configured rates. Request-estimation profiles instead plan the complete
+serialized envelope and bounded output using the explicitly reviewed heuristic,
+protocol allowance and margins. Neither a planning heuristic nor model context
+capacity is a provider-enforced monetary ceiling. The planned input, protocol
+allowance and output limit must fit the configured context.
 Only Standard service tier, no reasoning, no tools and bounded outputs are requested.
 Use a model that actually supports that contract; configuration is not proof of access.
 
@@ -113,8 +142,16 @@ silently stripping a reference. Each reference must be PNG/WebP, at most 5 MiB a
 4096 × 4096 pixels; ownership, consent, content hash and actual raster bounds are
 checked before dispatch. Private photo character creation and approved-concept
 references use the same normal review/adoption flow. A reference-capable profile
-must use a model supporting image edits and its estimate/reserve must cover the
-maximum configured references and their input cost, not just a no-reference request.
+must use a model supporting image edits. A legacy fixed reserve must cover all
+configured references; request estimation instead includes the actual selected
+reference count and its operator-reviewed input and uncertainty allowances.
+
+New profiles should use request estimation settings instead of reserving the
+entire account balance. Each image quote uses the actual prompt byte count,
+reference count, configured model/size/quality output assumption and reserve
+margin. Per-reference allowances are owner planning assumptions, not an official
+token formula. Text and image quotes explain their reserve separately from
+reported final cost. Legacy fixed-reserve profiles remain explicitly labelled.
 
 An image estimate is **not a guaranteed invoice maximum**. The provider does not
 enforce our monetary reserve. The server records reported usage, stops on unknown
@@ -170,11 +207,16 @@ reset its recorded spending or unresolved liability.
   Restart, repeated clicks, a new operation ID, model changes or a key rotation do not
   make that request free or authorize a retry. Late known accounting does not resume
   a stopped authorization automatically.
-- Owner identity and the cost/model profile are pinned to the durable acknowledgement.
-  Changing a pinned profile fails closed; an explicit operator policy-amendment/
-  reconciliation workflow is not supplied by this version. Do not edit database
-  counters or authorization rows to work around it. Key rotation alone does not
-  change the nonsecret profile identity or reset spend.
+- Owner identity remains fixed. Cost/model profiles have append-only, explicitly
+  acknowledged revisions on the same authorization and financial scope. Editing
+  the server configuration prepares a candidate; it does not approve dispatch.
+  Review active/proposed settings and unchanged liabilities in the owner panel,
+  then explicitly apply the matching candidate. See
+  [policy review and request reserves](generation-policy-revisions.md).
+- A revision cannot clear a permanent stop, unknown outcome or outstanding job.
+  Caps cannot fall below existing liabilities. Old jobs retain their original
+  pricing snapshots; stale quotes and workers cannot dispatch against another
+  accepted revision. Key rotation alone does not revise the policy or reset spend.
 - The old temporary manual-test mode remains compatible and separately restricted;
   its expired grant cannot activate owner mode. Never select both modes together.
 

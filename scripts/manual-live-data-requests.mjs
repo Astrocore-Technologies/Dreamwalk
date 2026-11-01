@@ -51,7 +51,7 @@ export async function purgeManualLiveData(client, userId, campaigns) {
           [p.reservation_id],
         );
       await client.query(
-        "UPDATE live_test_text_permits SET request_id=NULL,context_hash='erased',round_id='erased',provider_request_id=NULL,state=CASE WHEN state='authorized' THEN 'cancelled' WHEN state='dispatched' THEN 'unknown' ELSE state END,result_code='DATA_ERASED' WHERE id=$1",
+        `UPDATE live_test_text_permits SET request_snapshot=CASE WHEN request_snapshot IS NULL THEN NULL ELSE (request_snapshot-'bodySha256'-'id'-'fingerprint')||'{"privateInputErased":true}'::jsonb END,request_id=NULL,context_hash='erased',round_id='erased',provider_request_id=NULL,state=CASE WHEN state='authorized' THEN 'cancelled' WHEN state='dispatched' THEN 'unknown' ELSE state END,result_code='DATA_ERASED' WHERE id=$1`,
         [p.id],
       );
     }
@@ -72,12 +72,12 @@ export async function purgeManualLiveData(client, userId, campaigns) {
             [job.reservation_id],
           );
         await client.query(
-          "UPDATE live_authoring_text_jobs SET context='{}',context_hash='erased',source_hash='erased',readset_hash='erased',proposal=NULL,result=NULL,provider_request_id=NULL,cancel_requested=true,status=CASE WHEN status='dispatched' THEN 'unknown' WHEN status IN ('queued','generated','committed') THEN 'cancelled' ELSE status END,error_code='DATA_ERASED',updated_at=now() WHERE id=$1",
+          `UPDATE live_authoring_text_jobs SET request_snapshot=CASE WHEN request_snapshot IS NULL THEN NULL ELSE (request_snapshot-'bodySha256'-'id'-'fingerprint')||'{"privateInputErased":true}'::jsonb END,context='{}',context_hash='erased',source_hash='erased',readset_hash='erased',proposal=NULL,result=NULL,provider_request_id=NULL,cancel_requested=true,status=CASE WHEN status='dispatched' THEN 'unknown' WHEN status IN ('queued','generated','committed') THEN 'cancelled' ELSE status END,error_code='DATA_ERASED',updated_at=now() WHERE id=$1`,
           [job.id],
         );
       }
       await client.query(
-        "UPDATE live_authoring_text_quotes SET context='{}',context_hash='erased',source_hash='erased',readset_hash='erased',request_hash='erased' WHERE session_id=$1 AND actor_id=$2",
+        `UPDATE live_authoring_text_quotes SET request_snapshot=CASE WHEN request_snapshot IS NULL THEN NULL ELSE (request_snapshot-'bodySha256'-'id'-'fingerprint')||'{"privateInputErased":true}'::jsonb END,context='{}',context_hash='erased',source_hash='erased',readset_hash='erased',request_hash='erased' WHERE session_id=$1 AND actor_id=$2`,
         [session.id, userId],
       );
     }
@@ -99,20 +99,44 @@ export async function exportManualLiveData(client, userId) {
   ).rows;
   const permits = (
     await client.query(
-      'SELECT p.id,p.session_id,p.campaign_id,p.operation_id,p.state,p.dispatched_at,p.completed_at,p.result_code,p.reservation_id FROM live_test_text_permits p JOIN live_test_sessions s ON s.id=p.session_id WHERE s.owner_id=$1 ORDER BY p.id',
+      'SELECT p.id,p.session_id,p.campaign_id,p.operation_id,p.state,p.dispatched_at,p.completed_at,p.result_code,p.reservation_id,p.request_snapshot,p.generation_policy_revision,p.generation_policy_hash FROM live_test_text_permits p JOIN live_test_sessions s ON s.id=p.session_id WHERE s.owner_id=$1 ORDER BY p.id',
       [userId],
     )
   ).rows;
-  let authoring = [];
+  let authoring = [],
+    authoringQuotes = [];
   if (
     (await client.query("SELECT to_regclass('live_authoring_text_jobs') AS present")).rows[0]
       .present
-  )
+  ) {
     authoring = (
       await client.query(
-        'SELECT id,project_id,status,actual_micros,error_code,created_at,completed_at FROM live_authoring_text_jobs WHERE actor_id=$1 ORDER BY created_at',
+        'SELECT id,project_id,status,actual_micros,error_code,created_at,completed_at,request_snapshot,generation_policy_revision,generation_policy_hash FROM live_authoring_text_jobs WHERE actor_id=$1 ORDER BY created_at',
         [userId],
       )
     ).rows;
-  return { sessions, permits, authoring };
+    authoringQuotes = (
+      await client.query(
+        'SELECT id,project_id,upper_micros,expires_at,created_at,request_snapshot,generation_policy_revision,generation_policy_hash FROM live_authoring_text_quotes WHERE actor_id=$1 ORDER BY created_at',
+        [userId],
+      )
+    ).rows;
+  }
+  // Immutable policy history contains public cost/model settings only. Account
+  // ownership is resolved through the original authorization, never caller input.
+  let policyRevisions = [];
+  if (
+    (await client.query("SELECT to_regclass('generation_policy_revisions') AS present")).rows[0]
+      .present
+  )
+    policyRevisions = (
+      await client.query(
+        `SELECT r.id,r.authorization_id,r.scope_id,r.revision,r.profile_hash,r.config_fingerprint,
+        r.previous_hash,r.profile_snapshot,r.operation_id,r.acknowledged_at
+        FROM generation_policy_revisions r JOIN live_test_sessions s ON s.id=r.authorization_id
+        WHERE s.owner_id=$1 ORDER BY r.authorization_id,r.revision`,
+        [userId],
+      )
+    ).rows;
+  return { sessions, permits, authoring, authoringQuotes, policyRevisions };
 }

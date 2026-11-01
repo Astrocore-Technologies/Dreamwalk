@@ -3,6 +3,7 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox } from '../ui';
+import { RequestReserve } from '../live-test/request-reserve';
 import { artPreviewUrl } from '../assets/types';
 import {
   generationRemaining,
@@ -83,7 +84,7 @@ export function ExternalGeneration({
   useEffect(() => {
     setConsents({});
     setRiskConsents({});
-  }, [session?.sessionId, session?.state]);
+  }, [session?.sessionId, session?.state, session?.policyRevision, session?.policyHash]);
   async function mutate(path: string, body: object, role: string) {
     if (disabled || inFlight.current) return;
     inFlight.current = true;
@@ -174,7 +175,8 @@ export function ExternalGeneration({
             Number.isSafeInteger(quote.upperMicros) &&
             quote.upperMicros >= 0 &&
             quote.upperMicros === config?.verifiedUpperMicros,
-          estimatedQuote = session?.mode === 'owner' && ownerImageQuoteMatches(quote, config),
+          estimatedQuote =
+            session?.mode === 'owner' && ownerImageQuoteMatches(quote, config, session),
           dispatchableCost = validBound || estimatedQuote,
           reserve = estimatedQuote ? quote?.reserveMicros : quote?.upperMicros,
           immutable = !!job || !!item?.revisionId || !!item?.dispatchOperationId,
@@ -324,6 +326,7 @@ export function ExternalGeneration({
             )}
             {quote && !immutable && (
               <div className={styles.quote}>
+                {quote.estimateSnapshot && <RequestReserve snapshot={quote.estimateSnapshot} />}
                 <p>
                   {g(validBound ? 'upper' : 'planningEstimate')}:{' '}
                   {typeof quote.upperMicros === 'number'

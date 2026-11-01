@@ -1,6 +1,13 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const locationImageMessages = {
+  profileEstimate: [
+    'Пример оценки профиля; запрос рассчитывается отдельно',
+    'Profile example estimate; each request is calculated separately',
+    'Приклад оцінки профілю; кожен запит розраховується окремо',
+  ],
+  profileReserve: ['Пример резерва профиля', 'Profile example reserve', 'Приклад резерву профілю'],
+
   ownerAuthorization: [
     'Нужно подтверждение бюджета владельца. Открой панель изображения; каждый запрос подтверждается отдельно.',
     'Owner budget authorization is required. Open image details; each request is approved separately.',

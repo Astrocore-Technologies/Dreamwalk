@@ -1,3 +1,4 @@
+import { estimateImageRequest } from '../generation/estimates';
 import sharp from 'sharp';
 import { ownerPricingIsCurrent, type OwnerGenerationConfig } from '../generation/config';
 import { ImageProviderFailure, safeImageErrorDiagnostic } from './error-diagnostics';
@@ -201,6 +202,7 @@ export class OwnerOpenAiImageProvider implements ImageProvider {
       now?: () => number;
     },
   ) {
+    this.config = structuredClone(config);
     this.id = `openai-owner-images-v1:${config.configFingerprint}`;
   }
   async generate(
@@ -255,6 +257,7 @@ export class OwnerOpenAiImageProvider implements ImageProvider {
     // Freshness is independent of owner authorization; recheck just before key resolution/network.
     if (!ownerPricingIsCurrent(p.pricing, this.dependencies.now?.() ?? Date.now()))
       throw new Error('OWNER_GENERATION_CURRENT_PRICING_REQUIRED');
+    const requestEstimate = estimateImageRequest(request.prompt, referenceIds.length, p, this.id);
     if (
       !p.estimateRiskAccepted ||
       p.costBasis !== 'approved_estimate' ||
@@ -263,9 +266,11 @@ export class OwnerOpenAiImageProvider implements ImageProvider {
       !Number.isInteger(p.maxReferenceImages) ||
       p.maxReferenceImages < 0 ||
       p.maxReferenceImages > 2 ||
-      !Number.isSafeInteger(p.reserveMicros) ||
-      p.reserveMicros < p.estimatedTotalMicros ||
-      p.estimatedTotalMicros <= 0
+      !Number.isSafeInteger(requestEstimate.reserveMicros) ||
+      requestEstimate.reserveMicros < requestEstimate.estimatedTotalMicros ||
+      requestEstimate.estimatedTotalMicros <= 0 ||
+      requestEstimate.reserveMicros > this.config.imageCapMicros ||
+      requestEstimate.reserveMicros > this.config.totalCapMicros
     )
       throw new Error('INVALID_IMAGE_PROVIDER_POLICY');
     const apiKey = this.dependencies.resolveApiKey();

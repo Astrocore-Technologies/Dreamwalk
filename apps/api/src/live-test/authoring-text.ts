@@ -6,6 +6,7 @@ import { fail } from '../errors';
 import { digest } from '../ai/context';
 import { ProviderFailure } from '../ai/types';
 import { reserveGenerationSpend } from '../image-generation/budget';
+import type { TextReserveSnapshot } from '../generation/estimates';
 import { GenerationAuthority } from '../generation/service';
 import {
   BoundedAuthoringTextProvider,
@@ -42,6 +43,9 @@ interface AuthoringJob extends QueryResultRow {
   provider_version: string;
   reservation_id: string;
   budget_upper_micros: string;
+  request_snapshot: TextReserveSnapshot | null;
+  generation_policy_revision: number | null;
+  generation_policy_hash: string | null;
   status: string;
   proposal: unknown;
   result: unknown;
@@ -87,10 +91,21 @@ export class AuthoringTextEngine {
     return {
       id: row.id,
       projectId: row.project_id,
+      policyRevision: row.generation_policy_revision ?? null,
+      policyHash: row.generation_policy_hash ?? null,
       status,
       canCancel: !row.cancel_requested && ['queued', 'dispatched', 'generated'].includes(status),
       canRetry: false,
-      upperMicros: Number(row.budget_upper_micros),
+      upperMicros: row.request_snapshot ? null : Number(row.budget_upper_micros),
+      reserveMicros: Number(row.budget_upper_micros),
+      ...(row.request_snapshot
+        ? {
+            estimateSnapshot: row.request_snapshot,
+            estimatedTotalMicros: row.request_snapshot.estimatedTotalMicros,
+            costBasis: row.request_snapshot.costBasis,
+            providerEnforcesQuotedCap: false,
+          }
+        : {}),
       actualMicros: row.actual_micros === null ? null : Number(row.actual_micros),
       costStatus:
         status === 'unknown' ? 'unknown' : row.actual_micros !== null ? 'settled' : 'reserved',
@@ -105,12 +120,51 @@ export class AuthoringTextEngine {
   private quoteDto(row: QueryResultRow) {
     return {
       id: row.id,
-      upperMicros: Number(row.upper_micros),
+      policyRevision: row.generation_policy_revision ?? null,
+      policyHash: row.generation_policy_hash ?? null,
+      upperMicros: row.request_snapshot ? null : Number(row.upper_micros),
+      reserveMicros: Number(row.upper_micros),
+      ...(row.request_snapshot
+        ? {
+            estimateSnapshot: row.request_snapshot,
+            estimatedTotalMicros: row.request_snapshot.estimatedTotalMicros,
+            costBasis: row.request_snapshot.costBasis,
+            providerEnforcesQuotedCap: false,
+          }
+        : {}),
       expiresAt: new Date(row.expires_at).toISOString(),
       requiresConsent: true,
-      model: this.live.textProfile().model,
-      costEvidence: 'conservative_configured_rates' as const,
+      model: row.request_snapshot?.model ?? this.live.textProfile().model,
+      costEvidence: row.request_snapshot ? 'operator_estimate' : 'conservative_configured_rates',
     };
+  }
+  private verifySnapshot(
+    context: unknown,
+    snapshot: TextReserveSnapshot | null | undefined,
+    reserve?: number,
+  ) {
+    const current = this.provider.prepareTextRequest?.(context)?.snapshot;
+    if (snapshot) {
+      if (
+        !current ||
+        digest(snapshot) !== digest(current) ||
+        (reserve !== undefined && reserve !== snapshot.reserveMicros)
+      )
+        throw new ProviderFailure('AUTHORING_REQUEST_SNAPSHOT_CHANGED', false);
+    } else if (current) throw new ProviderFailure('AUTHORING_REQUEST_SNAPSHOT_REQUIRED', false);
+  }
+  private policyMatches(row: QueryResultRow, active: { revision: number; hash: string } | null) {
+    if (!active) return true;
+    const revision = Number(row.generation_policy_revision ?? 0);
+    return (
+      revision === active.revision &&
+      (row.generation_policy_hash === active.hash ||
+        (revision === 0 && row.generation_policy_hash == null))
+    );
+  }
+  private async activePolicy(c: PoolClient, authorizationId: string) {
+    if (this.live.mode === 'owner') return this.live.assertActivePolicy(c, authorizationId);
+    return null;
   }
   async quote(
     ownerId: string,
@@ -127,10 +181,17 @@ export class AuthoringTextEngine {
     const context = JSON.parse(JSON.stringify(input.context));
     if (Buffer.byteLength(JSON.stringify(context)) > 32000)
       fail(400, 'AUTHORING_CONTEXT_TOO_LARGE', 'AUTHORING_CONTEXT_TOO_LARGE');
-    const requestHash = digest({ binding, context, provider: this.provider.version });
+    const snapshot = this.provider.prepareTextRequest?.(context)?.snapshot ?? null;
+    const requestHash = digest({
+      binding,
+      context,
+      provider: this.provider.version,
+      ...(snapshot ? { requestSnapshot: snapshot } : {}),
+    });
     return this.db.tx(async (c) => {
       await this.lockSource(c, ownerId);
       await this.live.authorizeText(c, ownerId, binding.sessionId);
+      const activePolicy = await this.activePolicy(c, binding.sessionId);
       await validateFence(c, binding);
       const prior = (
         await c.query(
@@ -149,7 +210,7 @@ export class AuthoringTextEngine {
         );
       const row = (
         await c.query(
-          'INSERT INTO live_authoring_text_quotes(id,actor_id,session_id,project_id,operation_id,request_hash,project_revision,source_hash,readset_hash,context_hash,context,provider_version,upper_micros,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *',
+          'INSERT INTO live_authoring_text_quotes(id,actor_id,session_id,project_id,operation_id,request_hash,project_revision,source_hash,readset_hash,context_hash,context,provider_version,upper_micros,expires_at,request_snapshot,generation_policy_revision,generation_policy_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17) RETURNING *',
           [
             id,
             ownerId,
@@ -163,8 +224,11 @@ export class AuthoringTextEngine {
             digest(context),
             JSON.stringify(context),
             this.provider.version,
-            this.live.textUpperMicros(),
+            snapshot?.reserveMicros ?? this.live.textUpperMicros(),
             expiresAt,
+            snapshot ? JSON.stringify(snapshot) : null,
+            activePolicy?.revision ?? null,
+            activePolicy?.hash ?? null,
           ],
         )
       ).rows[0];
@@ -216,6 +280,7 @@ export class AuthoringTextEngine {
         return this.dto(serializedPrevious);
       }
       const policy = await this.live.authorizeText(c, ownerId, binding.sessionId, true);
+      const activePolicy = await this.activePolicy(c, binding.sessionId);
       await validateFence(c, binding);
       const locked = (
         await c.query('SELECT * FROM live_authoring_text_quotes WHERE id=$1 FOR UPDATE', [quote.id])
@@ -231,6 +296,9 @@ export class AuthoringTextEngine {
           .rowCount
       )
         fail(409, 'QUOTE_CONSUMED', 'QUOTE_CONSUMED');
+      if (!this.policyMatches(locked, activePolicy))
+        fail(409, 'GENERATION_POLICY_CHANGED', 'GENERATION_POLICY_CHANGED');
+      this.verifySnapshot(locked.context, locked.request_snapshot, Number(locked.upper_micros));
       const id = randomUUID();
       const reservation = await reserveGenerationSpend(
         c,
@@ -238,11 +306,11 @@ export class AuthoringTextEngine {
         ownerId,
         'text',
         `manual-authoring-text:${id}`,
-        this.live.textUpperMicros(),
+        Number(locked.upper_micros),
       );
       const job = (
         await c.query<AuthoringJob>(
-          "INSERT INTO live_authoring_text_jobs(id,actor_id,session_id,project_id,operation_id,quote_id,request_hash,project_revision,source_hash,readset_hash,context_hash,context,provider_version,reservation_id,status) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'queued') RETURNING *",
+          "INSERT INTO live_authoring_text_jobs(id,actor_id,session_id,project_id,operation_id,quote_id,request_hash,project_revision,source_hash,readset_hash,context_hash,context,provider_version,reservation_id,status,request_snapshot,generation_policy_revision,generation_policy_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'queued',$15,$16,$17) RETURNING *",
           [
             id,
             ownerId,
@@ -258,6 +326,9 @@ export class AuthoringTextEngine {
             JSON.stringify(quote.context),
             this.provider.version,
             reservation,
+            locked.request_snapshot ? JSON.stringify(locked.request_snapshot) : null,
+            locked.generation_policy_revision ?? null,
+            locked.generation_policy_hash ?? null,
           ],
         )
       ).rows[0];
@@ -388,6 +459,7 @@ export class AuthoringTextEngine {
         ).rows[0];
         if (!serialized || serialized.status !== 'queued') return null;
         await this.live.authorizeText(c, ownerId, row.session_id, true);
+        const activePolicy = await this.activePolicy(c, row.session_id);
         await validateFence(c, this.binding(row));
         const job = (
           await c.query<AuthoringJob>(
@@ -402,14 +474,30 @@ export class AuthoringTextEngine {
           job.context_hash !== digest(job.context)
         )
           throw new ProviderFailure('AUTHORING_STALE', false);
+        if (!this.policyMatches(job, activePolicy))
+          throw new ProviderFailure('GENERATION_POLICY_CHANGED', false);
+        this.verifySnapshot(
+          job.context,
+          job.request_snapshot,
+          Number(serialized.budget_upper_micros),
+        );
         await c.query(
           "UPDATE live_authoring_text_jobs SET status='dispatched',dispatched_at=now(),deadline_at=$2,updated_at=now() WHERE id=$1",
           [id, new Date(Date.now() + this.timeoutMs)],
         );
         return job;
       });
-    } catch {
-      await this.failure(id, new ProviderFailure('AUTHORING_STALE', false), true, ownerId);
+    } catch (error) {
+      const response = (error as { getResponse?: () => unknown })?.getResponse?.();
+      const policyCode =
+        (error instanceof ProviderFailure && error.code === 'GENERATION_POLICY_CHANGED') ||
+        (response &&
+          typeof response === 'object' &&
+          'code' in response &&
+          response.code === 'GENERATION_POLICY_CHANGED')
+          ? 'GENERATION_POLICY_CHANGED'
+          : 'AUTHORING_STALE';
+      await this.failure(id, new ProviderFailure(policyCode, false), true, ownerId);
       return this.get(ownerId, id);
     }
     if (!claimed) {
@@ -421,7 +509,17 @@ export class AuthoringTextEngine {
     let timer: ReturnType<typeof setTimeout> | undefined;
     const work = Promise.resolve()
       .then(() =>
-        this.provider.generate({ jobId: id, context: currentClaim.context, signal: abort.signal }),
+        this.provider.generate({
+          jobId: id,
+          context: currentClaim.context,
+          signal: abort.signal,
+          ...(currentClaim.request_snapshot
+            ? {
+                textReservationSnapshot: currentClaim.request_snapshot,
+                maxCostMicros: currentClaim.request_snapshot.reserveMicros,
+              }
+            : {}),
+        }),
       )
       .then((result) => this.receive(id, result, validateFence, commit));
     try {
@@ -524,6 +622,7 @@ export class AuthoringTextEngine {
       await this.db.tx(async (c) => {
         await this.lockSource(c, current.actor_id);
         await this.live.authorizeText(c, current.actor_id, current.session_id);
+        const activePolicy = await this.activePolicy(c, current.session_id);
         await validateFence(c, this.binding(current));
         const row = (
           await c.query<AuthoringJob>(
@@ -532,6 +631,8 @@ export class AuthoringTextEngine {
           )
         ).rows[0];
         if (row.status !== 'generated' || row.cancel_requested) return;
+        if (!this.policyMatches(row, activePolicy))
+          throw new ProviderFailure('GENERATION_POLICY_CHANGED', false);
         if (
           row.provider_version !== this.provider.version ||
           row.deadline_at === null ||

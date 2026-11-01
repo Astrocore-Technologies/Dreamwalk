@@ -5,6 +5,7 @@ import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { setTimeout as delay } from 'node:timers/promises';
 import { db } from './support-runtime.mjs';
+import { cleanupPolicyRevisionFixture } from './policy-revision-fixture-cleanup.mjs';
 const require = createRequire(import.meta.url);
 const { GenerationAuthority } = require('../../apps/api/dist/generation/service.js');
 const { readOwnerGenerationConfig } = require('../../apps/api/dist/generation/config.js');
@@ -113,15 +114,19 @@ function admissionBarrier(holdCommit, target = 'scope') {
         database.tx(async (c) => {
           // SQL lock failures are test failures, never an accepted race outcome.
           await c.query("SET LOCAL lock_timeout='8s'");
-          const pid = (await c.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
+          let pid;
           let scopeLocked = false,
-            admissionLocked = false;
+            admissionLocked = false,
+            readOnly = false;
           const observed = {
             query: async (sql, values) => {
+              if (sql === 'SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY')
+                readOnly = true;
               const admission =
                 sql.includes('pg_advisory_xact_lock') &&
                 values?.[0] === 'generation-scope-admission';
               if (admission) {
+                pid ??= (await c.query('SELECT pg_backend_pid() AS pid')).rows[0].pid;
                 assert.equal(
                   scopeLocked,
                   true,
@@ -143,6 +148,15 @@ function admissionBarrier(holdCommit, target = 'scope') {
             },
           };
           const value = await work(observed);
+          if (readOnly) {
+            assert.equal(scopeLocked, false, 'Read-only status must not acquire financial locks');
+            assert.equal(
+              admissionLocked,
+              false,
+              'Read-only status must not acquire admission locks',
+            );
+            return value;
+          }
           assert.equal(admissionLocked, true, 'both admission paths must acquire the shared fence');
           ready.release(pid);
           if (holdCommit) await release.reached;
@@ -248,7 +262,10 @@ async function fixture(run) {
     return { id, context, npcId };
   }
   async function claim(service = authority) {
-    const status = await service.claim(owner, { consent: true });
+    const status = await service.claim(owner, {
+      consent: true,
+      candidateFingerprint: service.ownerConfig.configFingerprint,
+    });
     authorizationId = status.authorizationId;
     assert.match(authorizationId, /^[0-9a-f-]{36}$/);
     assert.equal(
@@ -263,6 +280,8 @@ async function fixture(run) {
       authorizationId,
       operationId: randomUUID(),
       turnFence: fence,
+      policyRevision: 1,
+      policyHash: digest(config),
       consent: true,
       ...extra,
     };
@@ -543,6 +562,7 @@ async function fixture(run) {
     await db.query('DELETE FROM npc_ai_provider_budgets WHERE provider_id=ANY($1::text[])', [
       providers,
     ]);
+    await cleanupPolicyRevisionFixture(db, grantIds);
     await db.query(
       'DELETE FROM live_test_sessions WHERE id=ANY($1::uuid[]) AND owner_id=ANY($2::uuid[])',
       [grantIds, [owner, other]],
@@ -569,7 +589,10 @@ await test(
           fixture(async (f) => {
             await assert.rejects(f.authority.requireOwner(f.other), denied(/FORBIDDEN/));
             await assert.rejects(
-              f.authority.claim(f.other, { consent: true }),
+              f.authority.claim(f.other, {
+                consent: true,
+                candidateFingerprint: f.authority.ownerConfig.configFingerprint,
+              }),
               denied(/FORBIDDEN/),
             );
             await assert.rejects(f.authority.claim(f.owner, { consent: false }));
@@ -629,7 +652,15 @@ await test(
             assert.equal(first.capMicros, f.config.totalCapMicros);
             const id = f.authorizationId();
             const restarted = new GenerationAuthority(database, profile(f.handle));
-            assert.equal((await restarted.claim(f.owner, { consent: true })).authorizationId, id);
+            assert.equal(
+              (
+                await restarted.claim(f.owner, {
+                  consent: true,
+                  candidateFingerprint: restarted.ownerConfig.configFingerprint,
+                })
+              ).authorizationId,
+              id,
+            );
             await db.query(
               "UPDATE live_test_sessions SET created_at=now()-interval '30 days' WHERE id=$1",
               [id],
@@ -638,7 +669,15 @@ await test(
             try {
               Date.now = () => oldClock() + 24 * 3600000;
               assert.equal((await restarted.status(f.owner)).state, 'active');
-              assert.equal((await restarted.claim(f.owner, { consent: true })).authorizationId, id);
+              assert.equal(
+                (
+                  await restarted.claim(f.owner, {
+                    consent: true,
+                    candidateFingerprint: restarted.ownerConfig.configFingerprint,
+                  })
+                ).authorizationId,
+                id,
+              );
             } finally {
               Date.now = oldClock;
             }
@@ -756,6 +795,7 @@ await test(
               await assert.rejects(
                 changed.claim(cfg.ownerHandle === f.otherHandle ? f.other : f.owner, {
                   consent: true,
+                  candidateFingerprint: changed.ownerConfig.configFingerprint,
                 }),
                 denied(/IMMUTABLE|CONFIG|OWNER|SCOPE/),
               );
@@ -802,6 +842,7 @@ await test(
               (
                 await new GenerationAuthority(database, profile(f.handle)).claim(f.owner, {
                   consent: true,
+                  candidateFingerprint: f.config.configFingerprint,
                 })
               ).authorizationId,
               f.authorizationId(),
@@ -832,10 +873,15 @@ await test(
                 restart.consent(f.owner, f.campaignId, next.id, f.consentInput()),
                 denied(/STOPPED|BLOCKED|UNRESOLVED/),
               );
-              const claim = await restart.claim(f.owner, { consent: true }).catch((error) => {
-                assert.match(String(codeOf(error)), /STOPPED|BLOCKED|UNRESOLVED/);
-                return null;
-              });
+              const claim = await restart
+                .claim(f.owner, {
+                  consent: true,
+                  candidateFingerprint: restart.ownerConfig.configFingerprint,
+                })
+                .catch((error) => {
+                  assert.match(String(codeOf(error)), /STOPPED|BLOCKED|UNRESOLVED/);
+                  return null;
+                });
               if (claim) {
                 assert.equal(claim.state, 'stopped');
                 assert.equal(claim.authorizationId, f.authorizationId());
@@ -953,7 +999,10 @@ await test(
             assert.equal(status.usedMicros, 5000);
             assert.equal(status.heldMicros, 0);
             await assert.rejects(
-              restart.claim(f.owner, { consent: true }),
+              restart.claim(f.owner, {
+                consent: true,
+                candidateFingerprint: restart.ownerConfig.configFingerprint,
+              }),
               denied(/STOPPED|BLOCKED|UNRESOLVED/),
             );
             const next = await f.request();
@@ -1111,7 +1160,12 @@ await test(
             );
             const restarted = new GenerationAuthority(database, profile(f.handle));
             assert.equal(
-              (await restarted.claim(f.owner, { consent: true })).authorizationId,
+              (
+                await restarted.claim(f.owner, {
+                  consent: true,
+                  candidateFingerprint: restarted.ownerConfig.configFingerprint,
+                })
+              ).authorizationId,
               f.authorizationId(),
             );
             const restartedStatus = await restarted.status(f.owner);
@@ -1243,7 +1297,10 @@ await test(
                 ])
               ).rows;
               await assert.rejects(
-                f.authority.claim(f.owner, { consent: true }),
+                f.authority.claim(f.owner, {
+                  consent: true,
+                  candidateFingerprint: f.authority.ownerConfig.configFingerprint,
+                }),
                 denied(/^GENERATION_PRIOR_NPC_RECONCILIATION_REQUIRED$/),
               );
               assert.deepEqual(
@@ -1339,7 +1396,13 @@ await test(
               const authority = new GenerationAuthority(claimant.database, f.config);
               const legacy = await f.legacyEngine({ engineDatabase: enqueue.database });
               const request = await f.request();
-              const startClaim = () => outcome(authority.claim(f.owner, { consent: true }));
+              const startClaim = () =>
+                outcome(
+                  authority.claim(f.owner, {
+                    consent: true,
+                    candidateFingerprint: authority.ownerConfig.configFingerprint,
+                  }),
+                );
               const startQueue = () => outcome(legacy.queue(request));
               const firstBarrier = winner === 'owner claim' ? claimant : enqueue;
               const secondBarrier = winner === 'owner claim' ? enqueue : claimant;
@@ -1402,7 +1465,13 @@ await test(
               const claimant = admissionBarrier(winner === 'claim');
               const reserver = admissionBarrier(winner !== 'claim');
               const authority = new GenerationAuthority(claimant.database, f.config);
-              const startClaim = () => outcome(authority.claim(f.owner, { consent: true }));
+              const startClaim = () =>
+                outcome(
+                  authority.claim(f.owner, {
+                    consent: true,
+                    candidateFingerprint: authority.ownerConfig.configFingerprint,
+                  }),
+                );
               const startReserve = () =>
                 outcome(
                   f.externalReservation({
@@ -1547,7 +1616,10 @@ await test(
                 )
               ).rows;
               await assert.rejects(
-                f.authority.claim(f.owner, { consent: true }),
+                f.authority.claim(f.owner, {
+                  consent: true,
+                  candidateFingerprint: f.authority.ownerConfig.configFingerprint,
+                }),
                 denied(
                   /HELD|OUTSTANDING|BLOCKED|UNRESOLVED|LEGACY|LIABILITY|RECONCILIATION|HISTORICAL_SPEND|UNAPPROVED|NOT_APPROVED|REVOKED|OWNER_IMMUTABLE/,
                 ),
