@@ -1,3 +1,4 @@
+import { exposeDiscoveryFixtures } from './support/discovery-fixtures';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 async function account(page: Page, index: number) {
@@ -81,6 +82,7 @@ test('four independent players start the public Observatory with owned heroes an
   let journeyCompleted = false;
   try {
     const accounts = await Promise.all(pages.map((p, i) => account(p, i + 1)));
+    await exposeDiscoveryFixtures(owner);
     await owner.goto('/home');
     const featured = owner.getByTestId('home-featured');
     await expect(featured).toBeVisible();

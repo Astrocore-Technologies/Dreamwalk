@@ -1,3 +1,4 @@
+import { exposeDiscoveryFixtures } from './support/discovery-fixtures';
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import type { GameProjection } from '@dreamwalk/contracts';
@@ -30,6 +31,7 @@ for (const entry of ['home', 'detail'] as const) {
       });
       expect(heroResponse.ok()).toBeTruthy();
       const hero = (await heroResponse.json()).id;
+      await exposeDiscoveryFixtures(page);
       await page.goto(
         (entry === 'home' ? '/home' : '/adventures/old-observatory') + '?heroId=' + hero,
       );
