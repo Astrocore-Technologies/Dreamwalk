@@ -18,14 +18,29 @@ export async function mapMenu(page: Page, campaignId: string, id: string, exit =
     : projection.entities.find((e) => e.id === id);
   expect(target, `Visible map target ${id} must exist`).toBeTruthy();
   const canvas = page.locator('[data-camera-scale]');
-  await expect(canvas).toHaveAttribute('data-camera-scale', /[0-9]/);
-  await canvas.scrollIntoViewIfNeeded();
-  const box = (await canvas.boundingBox())!;
-  const camera = await canvas.evaluate((element) => ({
-    x: Number((element as HTMLElement).dataset.cameraX),
-    y: Number((element as HTMLElement).dataset.cameraY),
-    scale: Number((element as HTMLElement).dataset.cameraScale),
-  }));
+  // One rendered DOM roundtrip: four live canvases make separate trace/actionability
+  // snapshots expensive. This changes test observation cost, never simulation.
+  const camera = await canvas.evaluate((element) => {
+    let bounds = element.getBoundingClientRect();
+    if (
+      bounds.top < 0 ||
+      bounds.left < 0 ||
+      bounds.bottom > innerHeight ||
+      bounds.right > innerWidth
+    ) {
+      element.scrollIntoView({ block: 'nearest', inline: 'nearest', behavior: 'instant' });
+      bounds = element.getBoundingClientRect();
+    }
+    const data = (element as HTMLElement).dataset;
+    return {
+      left: bounds.left,
+      top: bounds.top,
+      x: Number(data.cameraX),
+      y: Number(data.cameraY),
+      scale: Number(data.cameraScale),
+    };
+  });
+  expect(camera.scale).toBeGreaterThan(0);
   const layout = exit
     ? { x: target!.x * 48, y: target!.y * 48, width: 48, height: 48 }
     : entityLayout(
@@ -33,8 +48,8 @@ export async function mapMenu(page: Page, campaignId: string, id: string, exit =
         projection.entities,
       );
   await page.mouse.click(
-    box.x + camera.x + (layout.x + layout.width / 2) * camera.scale,
-    box.y + camera.y + (layout.y + layout.height / 2) * camera.scale,
+    camera.left + camera.x + (layout.x + layout.width / 2) * camera.scale,
+    camera.top + camera.y + (layout.y + layout.height / 2) * camera.scale,
     { button: 'right' },
   );
   const menu = page.getByRole('dialog', { name: 'Действия', exact: true });
@@ -67,6 +82,7 @@ export async function legacyRealtimeLaunch(page: Page) {
   });
 }
 export async function approachTarget(page: Page, campaignId: string, id: string, exit = false) {
+  const before = await readProjection(page, campaignId);
   const menu = await mapMenu(page, campaignId, id, exit);
   const approach = menu.getByRole('button', { name: 'Подойти', exact: true });
   if (await approach.count()) await approach.click();
@@ -79,12 +95,93 @@ export async function approachTarget(page: Page, campaignId: string, id: string,
     .poll(async () => {
       const p = await readProjection(page, campaignId),
         actor = p.entities.find((e) => e.id === p.actorId)!;
+      expect(p.map.id, 'Approach must not transition maps').toBe(before.map.id);
       const target = exit
         ? p.map.exits.find((e) => e.id === id)!
         : p.entities.find((e) => e.id === id)!;
+      expect(target?.id, 'Approach retains the intended visible target').toBe(id);
       return Math.abs(actor.x - target.x) + Math.abs(actor.y - target.y);
     })
     .toBeLessThanOrEqual(1);
+}
+type ExpectedCommand = {
+  type: string;
+  action?: { kind: string; targetId: string };
+  npcId?: string;
+  decision?: string;
+};
+/** Each repeat is a fresh visible user decision after a proven no-effect rejection.
+ * Unknown outcomes, HTTP errors and other rejection codes are never retried. */
+export async function reconfirmKnownStale(
+  page: Page,
+  campaignId: string,
+  expected: ExpectedCommand,
+  perform: () => Promise<void>,
+) {
+  const operations = new Set<string>();
+  let intended: unknown;
+  for (let attempt = 0; attempt < 3; attempt++) {
+    let observedCommandResponse = false;
+    const responsePromise = page.waitForResponse((response) => {
+      const request = response.request();
+      if (
+        request.method() !== 'POST' ||
+        new URL(response.url()).pathname !== `/api/v1/game/campaigns/${campaignId}/commands`
+      )
+        return false;
+      const body = request.postDataJSON();
+      const matches =
+        body.type === expected.type &&
+        (!expected.action ||
+          (body.action?.kind === expected.action.kind &&
+            body.action?.targetId === expected.action.targetId)) &&
+        (!expected.npcId || body.npcId === expected.npcId) &&
+        (!expected.decision || body.decision === expected.decision);
+      if (matches) observedCommandResponse = true;
+      return matches;
+    });
+    const refreshed = page.waitForResponse(
+      (response) =>
+        observedCommandResponse &&
+        response.request().method() === 'GET' &&
+        new URL(response.url()).pathname === `/api/v1/game/campaigns/${campaignId}/snapshot`,
+    );
+    // Attach handlers immediately; awaiting below preserves failure while avoiding
+    // unhandled rejection noise if the visible interaction itself fails.
+    void responsePromise.catch(() => undefined);
+    void refreshed.catch(() => undefined);
+    await perform();
+    const response = await responsePromise;
+    expect(response.ok(), 'HTTP/unknown outcome must not be retried').toBeTruthy();
+    const request = response.request().postDataJSON();
+    expect(typeof request.operationId).toBe('string');
+    expect(operations.has(request.operationId), 'Reconfirmation needs a new operation').toBe(false);
+    operations.add(request.operationId);
+    const intent = {
+      type: request.type,
+      action: request.action,
+      npcId: request.npcId,
+      promiseId: request.promiseId,
+      decision: request.decision,
+    };
+    if (attempt === 0) intended = intent;
+    else expect(intent, 'Reconfirmation must preserve the exact intended action').toEqual(intended);
+    const result = await response.json();
+    expect(result.operationId).toBe(request.operationId);
+    if (result.status === 'committed') return;
+    expect(result.status).toBe('rejected');
+    expect(result.code).toBe('STALE_STATE');
+    expect(result.events).toEqual([]);
+    const snapshot = await refreshed;
+    expect(snapshot.ok()).toBeTruthy();
+    expect((await snapshot.json()).projection.revision).toBeGreaterThan(request.expectedRevision);
+    await expect(
+      page.getByText(
+        /Мир изменился\. Состояние обновлено\.|Ход уже изменился\. Обнови состояние перед действием\./,
+      ),
+    ).toBeVisible();
+    expect(attempt, 'Three explicit decisions exhausted without commit').toBeLessThan(2);
+  }
 }
 export async function mapAction(
   page: Page,
@@ -93,9 +190,28 @@ export async function mapAction(
   name: string,
   exit = false,
 ) {
-  await (
-    await mapMenu(page, campaignId, id, exit)
-  )
-    .getByRole('button', { name, exact: true })
-    .click();
+  const perform = async () => {
+    const button = (await mapMenu(page, campaignId, id, exit)).getByRole('button', {
+      name,
+      exact: true,
+    });
+    await expect(button).toBeEnabled();
+    await button.click();
+  };
+  const kinds: Record<string, string> = {
+    Взять: 'pick_up',
+    Отпереть: 'unlock',
+    Открыть: 'open',
+    'Закрыть дверь': 'close',
+    Перейти: 'transition',
+    Толкнуть: 'push',
+  };
+  if (kinds[name])
+    await reconfirmKnownStale(
+      page,
+      campaignId,
+      { type: 'action', action: { kind: kinds[name], targetId: id } },
+      perform,
+    );
+  else await perform();
 }

@@ -1,5 +1,6 @@
 import {
   approachTarget,
+  reconfirmKnownStale,
   mapAction,
   readProjection,
   inventory,
@@ -186,7 +187,16 @@ test('legacy realtime author version retains personality, obligations and privat
     expect(help.ok()).toBeTruthy();
     expect((await help.json()).status).toBe('committed');
     await expect(page.locator('[data-npc-obligation="proposed"]')).toBeVisible();
-    await page.getByRole('button', { name: 'Принять обещание', exact: true }).click();
+    await reconfirmKnownStale(
+      page,
+      campaignId,
+      { type: 'npc.promise', npcId: 'helper', decision: 'accept' },
+      async () => {
+        const accept = page.getByRole('button', { name: 'Принять обещание', exact: true });
+        await expect(accept).toBeEnabled();
+        await accept.click();
+      },
+    );
     await expect(page.locator('[data-npc-obligation="fulfilled"]')).toBeVisible();
     await expect((await inventory(page)).locator('[data-inventory-id="token"]')).toBeVisible();
     await closeInventory(page);

@@ -72,6 +72,7 @@ test('four players retain the legacy realtime Observatory ending with owned hero
       browser.newContext({
         baseURL: test.info().project.use.baseURL,
         viewport: { width: 1440, height: 1000 },
+        reducedMotion: 'reduce',
       }),
     ),
   );

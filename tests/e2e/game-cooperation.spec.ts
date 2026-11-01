@@ -2,7 +2,8 @@ import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import {
   readProjection,
-  position,
+  approachTarget,
+  mapAction,
   mapMenu,
   inventory,
   closeInventory,
@@ -63,19 +64,8 @@ test('two independent browser sessions share one key, preserve it on reload, and
     expect((await readProjection(guest, campaignId)).entities.some((e) => e.id === 'key')).toBe(
       true,
     );
-    await (
-      await mapMenu(owner, campaignId, 'key')
-    )
-      .getByRole('button', { name: 'Подойти', exact: true })
-      .click();
-    // Current Approach selects the nearest free adjacent tile (left of key at4,6),
-    // unlike the deleted nearby-list helper that moved onto the item's tile.
-    await expect.poll(() => position(owner, campaignId)).toEqual([3, 6]);
-    await (
-      await mapMenu(owner, campaignId, 'key')
-    )
-      .getByRole('button', { name: 'Взять', exact: true })
-      .click();
+    await approachTarget(owner, campaignId, 'key');
+    await mapAction(owner, campaignId, 'key', 'Взять');
     await expect
       .poll(async () => (await readProjection(owner, campaignId)).inventory.map((e) => e.id))
       .toEqual(['key']);
@@ -96,28 +86,15 @@ test('two independent browser sessions share one key, preserve it on reload, and
     expect((await readProjection(guest, campaignId)).inventory).toHaveLength(0);
     await closeInventory(owner);
     await closeInventory(guest);
-    await (
-      await mapMenu(owner, campaignId, 'door')
-    )
-      .getByRole('button', { name: 'Подойти', exact: true })
-      .click();
-    await expect.poll(() => position(owner, campaignId)).toEqual([9, 5]);
-    await (
-      await mapMenu(owner, campaignId, 'door')
-    )
-      .getByRole('button', { name: 'Отпереть', exact: true })
-      .click();
+    await approachTarget(owner, campaignId, 'door');
+    await mapAction(owner, campaignId, 'door', 'Отпереть');
     await expect
       .poll(
         async () =>
           (await readProjection(owner, campaignId)).entities.find((e) => e.id === 'door')?.locked,
       )
       .toBe(false);
-    await (
-      await mapMenu(owner, campaignId, 'door')
-    )
-      .getByRole('button', { name: 'Открыть', exact: true })
-      .click();
+    await mapAction(owner, campaignId, 'door', 'Открыть');
     await expect
       .poll(
         async () =>
@@ -134,17 +111,8 @@ test('two independent browser sessions share one key, preserve it on reload, and
       .getByRole('dialog', { name: 'Действия', exact: true })
       .getByRole('button', { name: 'Закрыть', exact: true })
       .click();
-    await (
-      await mapMenu(owner, campaignId, 'roof-exit', true)
-    )
-      .getByRole('button', { name: 'Подойти', exact: true })
-      .click();
-    await expect.poll(() => position(owner, campaignId)).toEqual([12, 5]);
-    await (
-      await mapMenu(owner, campaignId, 'roof-exit', true)
-    )
-      .getByRole('button', { name: 'Перейти', exact: true })
-      .click();
+    await approachTarget(owner, campaignId, 'roof-exit', true);
+    await mapAction(owner, campaignId, 'roof-exit', 'Перейти', true);
     await expect(
       owner.getByRole('heading', { name: 'Крыша', exact: true, level: 1 }),
     ).toBeVisible();
