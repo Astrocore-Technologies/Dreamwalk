@@ -52,7 +52,7 @@ export function CharacterSpriteControl({
 }) {
   const { locale } = useT(),
     i = locale === 'ru' ? 0 : locale === 'en' ? 1 : 2,
-    t = (k: keyof typeof messages) => messages[k][i];
+    text = (k: keyof typeof messages) => messages[k][i];
   const [appearance, setAppearance] = useState(''),
     [photo, setPhoto] = useState(false),
     [share, setShare] = useState(false),
@@ -152,11 +152,11 @@ export function CharacterSpriteControl({
   }
   return (
     <section>
-      <h3>{t('title')}</h3>
-      <p>{t('info')}</p>
+      <h3>{text('title')}</h3>
+      <p>{text('info')}</p>
       {!project && (
         <>
-          <Field label={t('appearance')}>
+          <Field label={text('appearance')}>
             <Textarea
               value={appearance}
               onChange={(e) => setAppearance(e.target.value)}
@@ -165,16 +165,16 @@ export function CharacterSpriteControl({
           </Field>
           <label>
             <input type="checkbox" checked={photo} onChange={(e) => setPhoto(e.target.checked)} />
-            {t('photo')}
+            {text('photo')}
           </label>
           <br />
           <label>
             <input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} />
-            {t('share')}
+            {text('share')}
           </label>
           <br />
           <Button busy={busy} onClick={() => void act('prepare')}>
-            {t('prepare')}
+            {text('prepare')}
           </Button>
         </>
       )}
@@ -189,7 +189,7 @@ export function CharacterSpriteControl({
           />
           <label>
             <input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} />
-            {t('review')}
+            {text('review')}
           </label>
           {project.status === 'concept' ? (
             <Button
@@ -197,16 +197,16 @@ export function CharacterSpriteControl({
               disabled={!review || !admittedConcept(generation) || generating}
               onClick={() => void act('approve')}
             >
-              {t('approve')}
+              {text('approve')}
             </Button>
           ) : (
             <Button busy={busy} disabled={!review || generating} onClick={() => void act('equip')}>
-              {t('equip')}
+              {text('equip')}
             </Button>
           )}
         </>
       )}
-      {saved && <p role="status">{t('done')}</p>}
+      {saved && <p role="status">{text('done')}</p>}
       <ErrorBox message={error} />
     </section>
   );

@@ -26,7 +26,6 @@ import { api, assetUrl, useClient, type User } from '@/lib/client';
 const nav = [
   { href: '/home', label: 'Главная', icon: House },
   { href: '/explore', label: 'Открыть миры', icon: Compass },
-  { href: '/game', label: 'Игровой прототип', icon: Compass },
   { href: '/library', label: 'Моя библиотека', icon: Library },
   { href: '/my-characters', label: 'Мои герои', icon: UsersRound },
 ];
@@ -91,7 +90,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
           >
             <Feather size={19} />
             {tr('Студия автора')}
-            <span className="mini-tag">{tr('NEW')}</span>
           </Link>
           <Link
             className={`nav-item ${active('/wallet') ? 'active' : ''}`}
@@ -113,19 +111,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
           )}
         </nav>
         <div className="sidebar-bottom">
-          <div className="studio-promo">
-            <span className="little-star">✦</span>
-            <strong>
-              {tr('У каждого мира')}
-              <br />
-              {tr('есть автор.')}
-            </strong>
-            <p>{tr('Каким будет твой?')}</p>
-            <Link href="/studio/adventures/new" onClick={() => setMenu(false)}>
-              {tr('Создать историю')}
-              <ArrowUpRight size={15} />
-            </Link>
-          </div>
+          <Link className="nav-item" href="/studio/adventures/new" onClick={() => setMenu(false)}>
+            <Feather size={18} />
+            {tr('Создать историю')}
+          </Link>
           <Link className="nav-item" href="/account/settings" onClick={() => setMenu(false)}>
             <Settings size={18} />
             {tr('Настройки')}
@@ -223,10 +212,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
                     {user.avatarAssetId ? (
                       <img src={assetUrl(user.avatarAssetId)} alt="" />
                     ) : (
-                      user.name.slice(0, 1)
+                      user.handle.slice(0, 1)
                     )}
                   </span>
-                  <span>{user.name}</span>
+                  <span>{user.handle}</span>
                 </Link>
                 <button
                   className="icon-button logout"

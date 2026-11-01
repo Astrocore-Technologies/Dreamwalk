@@ -1,11 +1,13 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { exposeDiscoveryFixtures } from './support/discovery-fixtures';
 const storyPath = '/adventures/old-observatory';
 function credentials() {
   const handle = `return_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   return { handle, email: `${handle}@example.test`, password: `Return-${randomUUID()}!` };
 }
 async function chooseStory(page: Page) {
+  await exposeDiscoveryFixtures(page);
   await page.goto('/home');
   const featured = page.getByTestId('home-featured');
   await expect(featured).toHaveAttribute('data-featured-slug', /.+/);
@@ -45,15 +47,13 @@ test('guest selected story survives signup and onboarding; explicit hero launch 
   await expect(page).toHaveURL(
     (url) => url.pathname === '/auth/sign-up' && url.searchParams.get('returnTo') === storyPath,
   );
-  await page.getByLabel('Как тебя называть?').fill('Story return QA');
-  await page.getByLabel('Адрес профиля').fill(account.handle);
+  await page.getByLabel('Логин').fill(account.handle);
   await page.getByLabel('Email', { exact: true }).fill(account.email);
   await page.getByLabel('Пароль', { exact: true }).fill(account.password);
   await page.getByRole('button', { name: 'Создать аккаунт', exact: true }).click();
   await expect(page).toHaveURL(
     (url) => url.pathname === '/onboarding' && url.searchParams.get('returnTo') === storyPath,
   );
-  await page.getByLabel('Имя', { exact: true }).fill('Story return QA');
   await page.getByRole('button', { name: 'Открыть Dreamwalk', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`${storyPath}$`));
   await assertNoCampaigns(page);
@@ -231,16 +231,14 @@ test('switching auth mode during a pending login remounts a fresh usable signup 
     await expect(page.getByRole('button', { name: 'Создать аккаунт', exact: true })).toBeEnabled();
     await expect(page.getByLabel('Email', { exact: true })).toHaveValue('');
     await expect(page.getByLabel('Пароль', { exact: true })).toHaveValue('');
-    await page.getByLabel('Как тебя называть?').fill('Fresh signup remains editable');
+    await page.getByLabel('Логин').fill('fresh_signup_editable');
     const delivered = page.waitForResponse((r) => r.url().endsWith('/auth/login') && r.ok());
     releaseLogin();
     await delivered;
     await assertNoCampaigns(page);
     await expect(page).toHaveURL(signup);
     await expect(page.getByRole('button', { name: 'Создать аккаунт', exact: true })).toBeEnabled();
-    await expect(page.getByLabel('Как тебя называть?')).toHaveValue(
-      'Fresh signup remains editable',
-    );
+    await expect(page.getByLabel('Логин')).toHaveValue('fresh_signup_editable');
   } finally {
     releaseLogin();
     await page.unroute('**/api/v1/auth/login');

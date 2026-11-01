@@ -100,13 +100,20 @@ try {
   if (files.includes(ownerFile))
     await run(process.execPath, ['--test', `tests/images/${ownerFile}`]);
   files = files.filter((file) => file !== ownerFile);
-  const requestFile = 'integration-request-estimates.test.mjs';
-  if (!selectedTestFile && files.includes(requestFile)) {
-    await run(process.execPath, ['tests/images/run.mjs', '--skip-build'], {
-      ...process.env,
-      IMAGE_TEST_FILE: requestFile,
-    });
-    files = files.filter((file) => file !== requestFile);
+  // Owner admission fixtures need a fresh scope. Legacy budget tests below
+  // deliberately retain unknown liabilities; never erase them to admit a new owner.
+  for (const isolatedFile of [
+    'integration-request-estimates.test.mjs',
+    'integration-retained-rejections.test.mjs',
+    'integration-recovery.test.mjs',
+  ]) {
+    if (!selectedTestFile && files.includes(isolatedFile)) {
+      await run(process.execPath, ['tests/images/run.mjs', '--skip-build'], {
+        ...process.env,
+        IMAGE_TEST_FILE: isolatedFile,
+      });
+      files = files.filter((file) => file !== isolatedFile);
+    }
   }
   if (files.length)
     await run(process.execPath, [

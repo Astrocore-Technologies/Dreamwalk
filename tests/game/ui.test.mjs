@@ -80,7 +80,10 @@ test('mouse-only map movement keeps stop, focus and explicit accessible controls
   assert.match(source, /sceneClick\(state.projection, x, y\)/);
   assert.match(source, /state.onSelectNpc\(interaction.npcId\)/);
   assert.match(source, /else if \(interaction\?\.kind === 'move'\)/);
-  assert.match(source, /onBlur=\{explicitStop\}/);
+  assert.match(
+    source,
+    /if \(!event.currentTarget.contains\(event.relatedTarget\)\) explicitStop\(\)/,
+  );
   assert.match(source, /onClick=\{explicitStop\}/);
   assert.match(source, /tabIndex=\{0\}/);
   assert.doesNotMatch(
@@ -391,4 +394,51 @@ test('NPC countdowns do not invalidate command revisions but outcomes and positi
     semanticGameProjection(p),
     semanticGameProjection({ ...p, entities: [{ id: 'helper', x: 3, y: 3 }] }),
   );
+});
+
+test('map focus boundary retains internal menu/inventory focus and stops only on genuine exit', async () => {
+  const text = await readFile(
+    new URL('../../apps/web/components/game/game-canvas.tsx', import.meta.url),
+    'utf8',
+  );
+  const source = ts.createSourceFile(
+    'game-canvas.tsx',
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  let handler, stop;
+  const walk = (node) => {
+    if (ts.isJsxAttribute(node) && node.name.getText(source) === 'onBlur')
+      handler = node.initializer.expression.getText(source);
+    if (ts.isVariableDeclaration(node) && node.name.getText(source) === 'explicitStop')
+      stop = node.initializer.getText(source);
+    ts.forEachChild(node, walk);
+  };
+  walk(source);
+  assert.ok(handler && stop);
+  for (const disabled of [false, true])
+    for (const planning of [false, true]) {
+      let stops = 0;
+      const explicitStop = new Function('latest', 'planning', 'onStop', 'return (' + stop + ')')(
+        { current: { disabled } },
+        planning,
+        () => stops++,
+      );
+      const blur = new Function('explicitStop', 'return (' + handler + ')')(explicitStop);
+      const root = {},
+        menuClose = {},
+        take = {},
+        inventory = {},
+        external = {};
+      const internal = new Set([root, menuClose, take, inventory]);
+      const currentTarget = { contains: (node) => internal.has(node) };
+      for (const relatedTarget of internal) blur({ currentTarget, relatedTarget });
+      assert.equal(stops, 0, 'internal focus/return must not stop or mutate revision');
+      blur({ currentTarget, relatedTarget: external });
+      blur({ currentTarget, relatedTarget: null });
+      explicitStop(); // The accessible Stop button retains exactly the same handler.
+      assert.equal(stops, disabled || planning ? 0 : 3);
+    }
 });

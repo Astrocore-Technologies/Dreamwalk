@@ -246,7 +246,7 @@ await test('public snapshots, media visibility and taxonomy regressions', async 
           );
           await request('PATCH', '/admin/taxonomy', old, 401, false);
         } finally {
-          await request('PATCH', '/admin/taxonomy', old);
+          await request('PATCH', '/admin/taxonomy', { genres: old.genres, tags: old.tags });
         }
       },
     );

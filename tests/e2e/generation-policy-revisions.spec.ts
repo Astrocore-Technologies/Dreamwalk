@@ -256,8 +256,18 @@ async function fixture(
     const request = route.request(),
       path = new URL(request.url()).pathname,
       method = request.method();
+    if (method === 'GET' && path === '/api/v1/taxonomy')
+      return route.fulfill({ json: { genres: [], tags: [], genreDefinitions: [], revision: 0 } });
     if (method === 'GET' && path === '/api/v1/auth/me') return route.fulfill({ json: { user } });
-    if (method === 'GET' && ['/api/v1/heroes', '/api/v1/npcs'].includes(path))
+    if (
+      method === 'GET' &&
+      [
+        '/api/v1/heroes',
+        '/api/v1/npcs',
+        '/api/v1/visual-authoring/projects',
+        '/api/v1/visual-authoring/packages',
+      ].includes(path)
+    )
       return route.fulfill({ json: [] });
     if (method === 'GET' && path === '/api/v1/admin/overview')
       return route.fulfill({ json: { users: 1, adventures: 0, pendingReview: 0, openReports: 0 } });
@@ -352,7 +362,7 @@ test('review compares saved and proposed policy, cancel clears consent, and appl
   page,
 }) => {
   const f = await fixture(page);
-  await page.goto('/admin');
+  await page.goto('/studio/visuals');
   expect(f.calls.policyGets).toBe(0);
   const dialog = await openReview(page);
   await expect(page.getByRole('dialog')).toHaveAccessibleName(reviewTitles.en);
@@ -447,7 +457,7 @@ test('duplicate apply clicks submit one operation while the first result is pend
 }) => {
   const f = await fixture(page, { holdApply: true });
   try {
-    await page.goto('/admin');
+    await page.goto('/studio/visuals');
     const dialog = await openReview(page);
     await dialog.getByLabel(acknowledgment, { exact: true }).check();
     const apply = dialog.getByRole('button', { name: 'Apply reviewed revision', exact: true });
@@ -473,7 +483,7 @@ test('unknown apply survives reload and reconciles only by GET, including an inc
   page,
 }) => {
   const f = await fixture(page, { outcome: 'unknown' });
-  await page.goto('/admin');
+  await page.goto('/studio/visuals');
   const dialog = await openReview(page);
   await dialog.getByLabel(acknowledgment, { exact: true }).check();
   await dialog.getByRole('button', { name: 'Apply reviewed revision', exact: true }).click();
@@ -510,7 +520,7 @@ test('stale proposal reloads the comparison and requires fresh acknowledgment', 
   page,
 }) => {
   const f = await fixture(page, { outcome: 'stale' });
-  await page.goto('/admin');
+  await page.goto('/studio/visuals');
   const dialog = await openReview(page);
   await dialog.getByLabel(acknowledgment, { exact: true }).check();
   await dialog.getByRole('button', { name: 'Apply reviewed revision', exact: true }).click();
@@ -533,7 +543,7 @@ test('stale proposal reloads the comparison and requires fresh acknowledgment', 
 
 test('historical liability blocker disables acknowledgment and application', async ({ page }) => {
   const f = await fixture(page, { blocker: 'GENERATION_CAP_BELOW_HISTORICAL_SPEND' });
-  await page.goto('/admin');
+  await page.goto('/studio/visuals');
   const dialog = await openReview(page);
   await expect(dialog).toContainText('GENERATION_CAP_BELOW_HISTORICAL_SPEND');
   await expect(dialog.getByLabel(acknowledgment, { exact: true })).toBeDisabled();
@@ -548,7 +558,7 @@ for (const locale of ['uk', 'en', 'ru'] as const)
   test(`policy review is localized and usable at mobile width (${locale})`, async ({ page }) => {
     await page.setViewportSize({ width: 390, height: 844 });
     const f = await fixture(page, { locale });
-    await page.goto('/admin');
+    await page.goto('/studio/visuals');
     await expect(page.locator('html')).toHaveAttribute('lang', locale);
     const dialog = await openReview(page);
     await expect(page.getByRole('dialog')).toHaveAccessibleName(reviewTitles[locale]);
@@ -790,7 +800,7 @@ async function imageFixture(
   return { quotes, dispatches, configuration };
 }
 async function applyThenOpenImage(page: Page) {
-  await page.goto('/admin');
+  await page.goto('/studio/visuals');
   const dialog = await openReview(page);
   await dialog.getByLabel(acknowledgment, { exact: true }).check();
   await dialog.getByRole('button', { name: 'Apply reviewed revision', exact: true }).click();
@@ -893,7 +903,7 @@ for (const locale of ['uk', 'en', 'ru'] as const) {
     text.contextBudgetTokens = 256000;
     text.maxOutputTokens = 8192;
     text.maxInputBytes = 4194304;
-    await page.goto('/admin');
+    await page.goto('/studio/visuals');
     const dialog = await openReview(page);
     await expect(dialog).toContainText(
       {

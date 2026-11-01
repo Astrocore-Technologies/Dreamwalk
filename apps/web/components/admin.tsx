@@ -3,7 +3,7 @@ import { PlayableReview } from './studio/playable-review';
 import { selectAdventureText, selectNpcText } from '@dreamwalk/contracts';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
-import { useCallback, useEffect, useState, type FormEvent } from 'react';
+import { useCallback, useState, type FormEvent } from 'react';
 import {
   Activity,
   ArrowRight,
@@ -12,7 +12,6 @@ import {
   ClipboardList,
   Coins,
   Layers,
-  LockKeyhole,
   Plus,
   Search,
   Settings2,
@@ -22,7 +21,6 @@ import {
 } from 'lucide-react';
 import type {
   Adventure,
-  ControlledTag,
   ModelProfile,
   Npc,
   RuntimeProfile,
@@ -46,9 +44,10 @@ import {
   Textarea,
   Toggle,
 } from './ui';
-import { LiveTestPanel, useLiveTestStatus } from './live-test/live-test-panel';
+import { useLiveTestStatus } from './live-test/live-test-panel';
 import { useLiveText } from './live-test/messages';
 import styles from './studio/admin.module.css';
+import { AdminTaxonomy } from './studio/admin-taxonomy';
 
 type Report = {
   id: string;
@@ -106,8 +105,6 @@ const links = [
 ];
 export function AdminPage({ path }: { path: string }) {
   const { t } = useT();
-  const liveText = useLiveText(),
-    live = useLiveTestStatus();
   const { user, loading } = useClient();
   if (loading) return <Loading />;
   if (user?.role !== 'admin')
@@ -138,17 +135,6 @@ export function AdminPage({ path }: { path: string }) {
           active: path === l.href,
         }))}
       />
-      <div className="notice">
-        <LockKeyhole size={17} />
-        {liveText(
-          live.status?.mode === 'owner'
-            ? 'adminOwner'
-            : live.status?.enabled
-              ? 'adminLive'
-              : 'adminProfiles',
-        )}
-      </div>
-      <LiveTestPanel />
       {path === '/admin/users' ? (
         <AdminUsers />
       ) : path === '/admin/adventures' ? (
@@ -1482,159 +1468,6 @@ function AdminAudit() {
             description={t('Административные изменения появятся здесь после сохранения.')}
           />
         )
-      )}
-    </>
-  );
-}
-
-function AdminTaxonomy() {
-  const { t } = useT(),
-    { toast } = useClient();
-  const resource = useResource<{ genres: string[]; tags: ControlledTag[] }>('/admin/taxonomy');
-  const [genres, setGenres] = useState(''),
-    [tags, setTags] = useState<ControlledTag[]>([]),
-    [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
-  useEffect(() => {
-    if (resource.data) {
-      setGenres(resource.data.genres.join('\n'));
-      setTags(resource.data.tags);
-    }
-  }, [resource.data]);
-  async function save(e: FormEvent) {
-    e.preventDefault();
-    setBusy(true);
-    setError('');
-    try {
-      const data = await api<{ genres: string[]; tags: ControlledTag[] }>('/admin/taxonomy', {
-        method: 'PATCH',
-        body: JSON.stringify({
-          genres: genres
-            .split('\n')
-            .map((s) => s.trim())
-            .filter(Boolean),
-          tags,
-        }),
-      });
-      resource.setData(data);
-      toast(t('Жанры и теги сохранены'));
-    } catch (e) {
-      setError(errorMessage(e));
-    } finally {
-      setBusy(false);
-    }
-  }
-  return (
-    <>
-      <div className={styles.sectionHeading}>
-        <Layers size={22} />
-        <h2>{t('Жанры и теги')}</h2>
-      </div>
-      <div className="notice">
-        {t(
-          'Справочник помогает ориентироваться в каталоге. Изменения не переписывают жанры и теги уже созданных историй.',
-        )}
-      </div>
-      <ErrorBox message={resource.error} retry={resource.reload} />
-      {resource.loading ? (
-        <Loading />
-      ) : (
-        <Panel>
-          <form method="post" className="stack" onSubmit={(e) => void save(e)}>
-            <div className="field-grid">
-              <Field label={t('Жанры')} hint={t('Один жанр на строку. От 1 до 50, без повторов.')}>
-                <Textarea
-                  rows={12}
-                  required
-                  value={genres}
-                  onChange={(e) => setGenres(e.target.value)}
-                />
-              </Field>
-              <fieldset className="stack">
-                <legend>{t('Рекомендуемые теги')}</legend>
-                {tags.map((tag, index) => (
-                  <div className="panel stack" key={index}>
-                    <Field label={t('ID тега')}>
-                      <Input
-                        required
-                        pattern="[a-z][a-z0-9-]{1,39}"
-                        maxLength={40}
-                        readOnly={resource.data?.tags.some((existing) => existing.id === tag.id)}
-                        value={tag.id}
-                        onChange={(e) =>
-                          setTags(
-                            tags.map((item, i) =>
-                              i === index ? { ...item, id: e.target.value } : item,
-                            ),
-                          )
-                        }
-                      />
-                    </Field>
-                    {(['uk', 'en', 'ru'] as const).map((language) => (
-                      <Field
-                        key={language}
-                        label={t(
-                          language === 'uk'
-                            ? 'Украинский'
-                            : language === 'en'
-                              ? 'Английский'
-                              : 'Русский',
-                        )}
-                      >
-                        <Input
-                          required
-                          maxLength={40}
-                          value={tag.labels[language]}
-                          onChange={(e) =>
-                            setTags(
-                              tags.map((item, i) =>
-                                i === index
-                                  ? {
-                                      ...item,
-                                      labels: { ...item.labels, [language]: e.target.value },
-                                    }
-                                  : item,
-                              ),
-                            )
-                          }
-                        />
-                      </Field>
-                    ))}
-                  </div>
-                ))}
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={tags.length >= 100}
-                  onClick={() =>
-                    setTags([...tags, { id: '', labels: { uk: '', en: '', ru: '' }, aliases: [] }])
-                  }
-                >
-                  {t('Добавить тег')}
-                </Button>
-              </fieldset>
-            </div>
-            <ErrorBox message={error} />
-            <div className="form-actions">
-              <Button
-                variant="secondary"
-                type="button"
-                onClick={() => {
-                  if (resource.data) {
-                    setGenres(resource.data.genres.join('\n'));
-                    setTags(resource.data.tags);
-                  }
-                  setError('');
-                }}
-              >
-                {t('Отменить изменения')}
-              </Button>
-              <Button type="submit" busy={busy}>
-                {t('Сохранить справочник')}
-              </Button>
-            </div>
-          </form>
-        </Panel>
       )}
     </>
   );

@@ -107,7 +107,8 @@ test('one primary story surface replaces competing forms and guards private reci
   assert.match(source, /confirmedActionHash: sent.result.confirmationHash/);
   assert.match(source, /consent: true/);
   assert.match(source, /submitted.current = sent/);
-  assert.match(source, /hidden=\{tab !== 'ooc'\}/);
+  // The single story composer no longer exposes a competing OOC surface.
+  assert.doesNotMatch(source, /<PartyChat|tab === 'ooc'|tab !== 'ooc'|setTab/);
   assert.match(source, /aria-label=\{h\('composer'\)\}/);
 });
 

@@ -1,9 +1,14 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import {
+  readProjection,
+  approachTarget,
+  mapAction,
+  mapMenu,
+  inventory,
+  closeInventory,
+} from './support/map-actions';
 
-type Snapshot = {
-  projection: { actorId: string; entities: { id: string; x: number; y: number }[] };
-};
 async function register(page: Page) {
   const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
   const handle = `coop_${suffix}`;
@@ -18,27 +23,23 @@ async function register(page: Page) {
   expect(response.status()).toBe(201);
   return { handle, user: (await response.json()).user as { id: string } };
 }
-async function position(page: Page, campaignId: string) {
-  const response = await page.request.get(`/api/v1/game/campaigns/${campaignId}/snapshot`);
-  expect(response.ok()).toBeTruthy();
-  const snapshot = (await response.json()) as Snapshot;
-  const actor = snapshot.projection.entities.find(
-    (entity) => entity.id === snapshot.projection.actorId,
-  )!;
-  return [actor.x, actor.y];
-}
-
 test('two independent browser sessions share one key, preserve it on reload, and split maps', async ({
   browser,
 }) => {
   test.setTimeout(90000);
-  const ownerContext = await browser.newContext({ baseURL: test.info().project.use.baseURL });
-  const guestContext = await browser.newContext({ baseURL: test.info().project.use.baseURL });
+  const ownerContext = await browser.newContext({
+    baseURL: test.info().project.use.baseURL,
+    reducedMotion: 'reduce',
+  });
+  const guestContext = await browser.newContext({
+    baseURL: test.info().project.use.baseURL,
+    reducedMotion: 'reduce',
+  });
   const owner = await ownerContext.newPage(),
     guest = await guestContext.newPage();
   try {
-    const ownerAccount = await register(owner),
-      guestAccount = await register(guest);
+    await register(owner);
+    const guestAccount = await register(guest);
     // This existing key/door scenario verifies the retained realtime compatibility save format.
     const created = await owner.request.post('/api/v1/game/campaigns', {
       data: { template: 'observatory-v1', turnBased: false },
@@ -56,37 +57,75 @@ test('two independent browser sessions share one key, preserve it on reload, and
     await expect(guest).toHaveURL(new RegExp(`/game/${campaignId}$`));
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
     await expect(guest.locator('canvas')).toBeVisible();
-    const key = owner.locator('[data-entity-id="key"]');
-    await key.getByRole('button', { name: 'Подойти', exact: true }).click();
-    await expect.poll(() => position(owner, campaignId)).toEqual([4, 6]);
-    await key.getByRole('button', { name: 'Подобрать', exact: true }).click();
-    await expect(owner.locator('[data-inventory-id="key"]')).toHaveCount(1);
-    await expect(guest.locator('[data-entity-id="key"]')).toHaveCount(0);
-    await expect(guest.locator('[data-inventory-id="key"]')).toHaveCount(0);
+    const ownerActorId = (await readProjection(owner, campaignId)).actorId;
+    expect(
+      (await readProjection(guest, campaignId)).entities.some((e) => e.id === ownerActorId),
+    ).toBe(true);
+    expect((await readProjection(guest, campaignId)).entities.some((e) => e.id === 'key')).toBe(
+      true,
+    );
+    await approachTarget(owner, campaignId, 'key');
+    await mapAction(owner, campaignId, 'key', 'Взять');
+    await expect
+      .poll(async () => (await readProjection(owner, campaignId)).inventory.map((e) => e.id))
+      .toEqual(['key']);
+    await expect
+      .poll(async () =>
+        (await readProjection(guest, campaignId)).entities.some((e) => e.id === 'key'),
+      )
+      .toBe(false);
+    expect((await readProjection(guest, campaignId)).inventory).toHaveLength(0);
+    await expect((await inventory(owner)).locator('[data-inventory-id="key"]')).toHaveCount(1);
+    await expect((await inventory(guest)).locator('[data-inventory-id="key"]')).toHaveCount(0);
     await Promise.all([owner.reload(), guest.reload()]);
     await expect(owner.getByText('Подключено', { exact: true })).toBeVisible();
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
-    await expect(owner.locator('[data-inventory-id="key"]')).toHaveCount(1);
-    await expect(guest.locator('[data-inventory-id="key"]')).toHaveCount(0);
-    const door = owner.locator('[data-entity-id="door"]');
-    await door.getByRole('button', { name: 'Подойти', exact: true }).click();
-    await expect.poll(() => position(owner, campaignId)).toEqual([9, 5]);
-    await door.getByRole('button', { name: 'Отпереть', exact: true }).click();
-    await door.getByRole('button', { name: 'Открыть дверь', exact: true }).click();
-    await expect(door.getByRole('button', { name: 'Закрыть дверь', exact: true })).toBeVisible();
-    const exit = owner
-      .locator('article')
-      .filter({ has: owner.getByRole('heading', { name: 'Крыша', exact: true }) });
-    await exit.getByRole('button', { name: 'Подойти', exact: true }).click();
-    await expect.poll(() => position(owner, campaignId)).toEqual([12, 5]);
-    await exit.getByRole('button', { name: 'Перейти', exact: true }).click();
+    await expect((await inventory(owner)).locator('[data-inventory-id="key"]')).toHaveCount(1);
+    await expect((await inventory(guest)).locator('[data-inventory-id="key"]')).toHaveCount(0);
+    expect((await readProjection(owner, campaignId)).inventory.map((e) => e.id)).toEqual(['key']);
+    expect((await readProjection(guest, campaignId)).inventory).toHaveLength(0);
+    await closeInventory(owner);
+    await closeInventory(guest);
+    await approachTarget(owner, campaignId, 'door');
+    await mapAction(owner, campaignId, 'door', 'Отпереть');
+    await expect
+      .poll(
+        async () =>
+          (await readProjection(owner, campaignId)).entities.find((e) => e.id === 'door')?.locked,
+      )
+      .toBe(false);
+    await mapAction(owner, campaignId, 'door', 'Открыть');
+    await expect
+      .poll(
+        async () =>
+          (await readProjection(owner, campaignId)).entities.find((e) => e.id === 'door')?.open,
+      )
+      .toBe(true);
+    await expect(
+      (await mapMenu(owner, campaignId, 'door')).getByRole('button', {
+        name: 'Закрыть дверь',
+        exact: true,
+      }),
+    ).toBeVisible();
+    await owner
+      .getByRole('dialog', { name: 'Действия', exact: true })
+      .getByRole('button', { name: 'Закрыть', exact: true })
+      .click();
+    await approachTarget(owner, campaignId, 'roof-exit', true);
+    await mapAction(owner, campaignId, 'roof-exit', 'Перейти', true);
     await expect(
       owner.getByRole('heading', { name: 'Крыша', exact: true, level: 1 }),
     ).toBeVisible();
     await expect(
       guest.getByRole('heading', { name: 'Обсерватория', exact: true, level: 1 }),
     ).toBeVisible();
-    await expect(guest.locator(`[data-entity-id="player-${ownerAccount.user.id}"]`)).toHaveCount(0);
+    await expect.poll(async () => (await readProjection(owner, campaignId)).map.id).toBe('roof');
+    await expect
+      .poll(async () => (await readProjection(guest, campaignId)).map.id)
+      .toBe('observatory');
+    expect(
+      (await readProjection(guest, campaignId)).entities.some((e) => e.id === ownerActorId),
+    ).toBe(false);
     await owner.locator('header').getByRole('combobox').selectOption('en');
     await expect(
       owner.getByRole('heading', { name: 'Rooftop', exact: true, level: 1 }),
@@ -98,7 +137,9 @@ test('two independent browser sessions share one key, preserve it on reload, and
     expect(
       await owner.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
-    await expect(owner.locator('[data-inventory-id="key"]')).toHaveCount(1);
+    await expect((await inventory(owner, true)).locator('[data-inventory-id="key"]')).toHaveCount(
+      1,
+    );
   } finally {
     await ownerContext.close();
     await guestContext.close();

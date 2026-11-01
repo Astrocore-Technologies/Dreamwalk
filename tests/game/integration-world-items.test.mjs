@@ -159,6 +159,27 @@ async function withItems(owner, id) {
     cup: Object.values(s.entities).find((e) => e.item?.definitionId === 'cup').id,
   };
 }
+await test('world-item browser harness has matching disposable origin and API proxy', () => {
+  const port = Number(process.env.TEST_GAME_WEB_PORT);
+  assert.ok(
+    Number.isInteger(port) && port > 0 && port <= 65535,
+    'Runner must allocate TEST_GAME_WEB_PORT',
+  );
+  assert.equal(
+    process.env.WEB_ORIGIN,
+    `http://127.0.0.1:${port}`,
+    'Browser origin must match its allocated listener',
+  );
+  assert.equal(
+    process.env.API_URL,
+    new URL(process.env.TEST_GAME_API_URL).origin,
+    'Next proxy must target the disposable API',
+  );
+  assert.ok(
+    !process.env.E2E_BROWSER_CHANNEL || process.env.E2E_BROWSER_CHANNEL === 'chrome',
+    'Only the explicit chrome override is supported',
+  );
+});
 await test(
   'world item commands are durable/idempotent and map context menu works without scrolling',
   { timeout: 240000 },
@@ -250,17 +271,35 @@ await test(
           if (logs.length > 30) logs.shift();
         });
       const base = process.env.WEB_ORIGIN;
-      await until(
-        async () => {
-          if (web.exitCode !== null) throw Error('Test web stopped ' + web.exitCode);
-          return fetch(base, { signal: AbortSignal.timeout(2500) })
-            .then((r) => r.ok)
-            .catch(() => false);
-        },
-        Boolean,
-        90000,
-      );
-      browser = await chromium.launch({ headless: true, channel: 'chrome' });
+      let startupError;
+      web.once('error', (error) => {
+        startupError = error;
+      });
+      try {
+        await until(
+          async () => {
+            if (startupError) throw startupError;
+            if (web.exitCode !== null || web.signalCode !== null)
+              throw Error(`Test web stopped (exit ${web.exitCode}, signal ${web.signalCode})`);
+            return fetch(base, { signal: AbortSignal.timeout(2500) })
+              .then((r) => r.ok)
+              .catch(() => false);
+          },
+          Boolean,
+          90000,
+        );
+      } catch (error) {
+        // Bounded synthetic startup output makes invalid CLI/proxy/build failures
+        // actionable without printing environment variables or session cookies.
+        throw new Error(
+          `Test web startup failed at ${base}: ${error.message}\n${logs.join('').slice(-12000)}`,
+          { cause: error },
+        );
+      }
+      browser = await chromium.launch({
+        headless: true,
+        ...(process.env.E2E_BROWSER_CHANNEL === 'chrome' ? { channel: 'chrome' } : {}),
+      });
       const context = await browser.newContext({
         viewport: { width: 1440, height: 1000 },
         reducedMotion: 'reduce',

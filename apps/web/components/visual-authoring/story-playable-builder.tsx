@@ -55,7 +55,7 @@ const copy = {
 export function StoryPlayableBuilder({ adventureId }: { adventureId: string }) {
   const { locale } = useT(),
     i = locale === 'ru' ? 0 : locale === 'en' ? 1 : 2,
-    t = (k: keyof typeof copy) => copy[k][i];
+    text = (k: keyof typeof copy) => copy[k][i];
   const [state, setState] = useState<State | null>(null),
     [quote, setQuote] = useState<Quote | null>(null),
     [review, setReview] = useState(false),
@@ -116,20 +116,20 @@ export function StoryPlayableBuilder({ adventureId }: { adventureId: string }) {
     : null;
   return (
     <section>
-      <h2>{t('title')}</h2>
-      <p>{t('intro')}</p>
+      <h2>{text('title')}</h2>
+      <p>{text('intro')}</p>
       {!state ? (
         <Button busy={busy} onClick={() => void act('prepare')}>
-          {t('prepare')}
+          {text('prepare')}
         </Button>
       ) : (
         <>
           <Button busy={busy} variant="secondary" onClick={() => void act('refresh')}>
-            {t('refresh')}
+            {text('refresh')}
           </Button>
           {state.status === 'prepared' && !state.jobs.length && (
             <Button busy={busy} onClick={() => void act('quote')}>
-              {t('quote')}
+              {text('quote')}
             </Button>
           )}
           {quote && (
@@ -147,7 +147,7 @@ export function StoryPlayableBuilder({ adventureId }: { adventureId: string }) {
                 disabled={Date.parse(quote.expiresAt) <= Date.now() || !state.sourceCurrent}
                 onClick={() => void act('dispatch')}
               >
-                {t('dispatch')}
+                {text('dispatch')}
               </Button>
             </div>
           )}
@@ -175,18 +175,18 @@ export function StoryPlayableBuilder({ adventureId }: { adventureId: string }) {
                   checked={review}
                   onChange={(e) => setReview(e.target.checked)}
                 />
-                {t('review')}
+                {text('review')}
               </label>
               <Button
                 busy={busy}
                 disabled={!review || !state.sourceCurrent}
                 onClick={() => void act('apply')}
               >
-                {t('apply')}
+                {text('apply')}
               </Button>
             </>
           )}
-          {state.status === 'applied' && <p role="status">{t('done')}</p>}
+          {state.status === 'applied' && <p role="status">{text('done')}</p>}
         </>
       )}
       <ErrorBox message={error} />

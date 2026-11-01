@@ -1,4 +1,5 @@
 /** Isolated service/SQL acceptance. New HTTP routes are not wired into main until the asset tranche. */
+// Asset ACL fixtures deliberately retain their immutable legacy realtime ruleset.
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
@@ -173,9 +174,11 @@ await test(
           }
           const a = await author.request('/game/campaigns', {
             playableVersionId: ownVersion.versionId,
+            turnBased: false,
           });
           const b = await author.request('/game/campaigns', {
             playableVersionId: ownVersion.versionId,
+            turnBased: false,
           });
           assert.notEqual(a.campaignId, b.campaignId);
           assert.deepEqual(

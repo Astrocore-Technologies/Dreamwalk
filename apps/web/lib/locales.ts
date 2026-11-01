@@ -10,6 +10,10 @@ export const localeNames: Record<Locale, string> = {
 export const intlLocales: Record<Locale, string> = { uk: 'uk-UA', en: 'en-GB', ru: 'ru-RU' };
 const messages: Record<string, Record<Locale, string>> = {
   ...gameMessages,
+  Украинский: { ru: 'Украинский', en: 'Ukrainian', uk: 'Українська' },
+  Английский: { ru: 'Английский', en: 'English', uk: 'Англійська' },
+  Логин: { ru: 'Логин', en: 'Login', uk: 'Логін' },
+  Приватный: { ru: 'Приватный', en: 'Private', uk: 'Приватний' },
   'Вернуться к выбранной истории': {
     ru: 'Вернуться к выбранной истории',
     en: 'Back to the selected story',
@@ -1115,6 +1119,11 @@ const messages: Record<string, Record<Locale, string>> = {
     ru: 'Другие смогут увидеть твоё имя, описание и опубликованные истории.',
     en: 'Others can see your name, biography and published stories.',
     uk: 'Інші зможуть бачити твоє ім’я, опис і опубліковані історії.',
+  },
+  'Другие смогут увидеть твой логин, описание и опубликованные истории.': {
+    ru: 'Другие смогут увидеть твой логин, описание и опубликованные истории.',
+    en: 'Others can see your login, biography and published stories.',
+    uk: 'Інші зможуть бачити твій логін, опис і опубліковані історії.',
   },
   'Открыть Dreamwalk': {
     ru: 'Открыть Dreamwalk',

@@ -728,7 +728,11 @@ export function GameCanvas({
         role="group"
         aria-label={t('Карта приключения')}
         aria-describedby="game-controls-help"
-        onBlur={explicitStop}
+        onBlur={(event) => {
+          // React blur bubbles from nested menu/inventory controls. Moving focus
+          // within the map must not race the selected command with a stop revision.
+          if (!event.currentTarget.contains(event.relatedTarget)) explicitStop();
+        }}
       >
         <div ref={host} className={styles.canvas} />
         <button

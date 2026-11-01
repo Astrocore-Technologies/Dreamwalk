@@ -65,6 +65,10 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
+      # The world-item suite includes its complete map/inventory browser journey.
+      # Use the same Playwright-managed Chromium installed by the browser shards.
+      - name: World-item browser dependencies
+        run: npx playwright install --with-deps chromium
       # This wrapper builds all three server workspaces before starting its
       # disposable cluster. Keep its serial tests: they share runtime resources.
       - name: Game runtime and isolated PostgreSQL integration

@@ -1,3 +1,4 @@
+import { approachTarget, legacyRealtimeLaunch } from './support/map-actions';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 async function register(page: Page) {
@@ -31,7 +32,7 @@ async function tileClick(page: Page, x: number, y: number) {
     position: { x: offsetX + (x + 0.5) * 48 * scale, y: offsetY + (y + 0.5) * 48 * scale },
   });
 }
-test('one mixed-turn composer keeps audience, order and scene input coherent', async ({
+test('legacy realtime composer keeps audience, order and scene input coherent', async ({
   browser,
 }) => {
   test.setTimeout(180000);
@@ -48,6 +49,7 @@ test('one mixed-turn composer keeps audience, order and scene input coherent', a
     await owner.setViewportSize({ width: 1440, height: 1000 });
     await register(owner);
     const guestHandle = await register(guest);
+    await legacyRealtimeLaunch(owner);
     await owner.goto('/adventures/old-observatory');
     await owner.getByRole('button', { name: 'Начать прохождение', exact: true }).click();
     await expect(owner).toHaveURL(/\/game\/[a-f0-9-]+$/);
@@ -61,8 +63,7 @@ test('one mixed-turn composer keeps audience, order and scene input coherent', a
       .click();
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
     const story = owner.getByTestId('unified-story');
-    const keeper = owner.locator('[data-entity-id="keeper"]');
-    await keeper.getByRole('button', { name: 'Подойти', exact: true }).click();
+    await approachTarget(owner, id, 'keeper');
     await expect
       .poll(async () => {
         const p = await state(owner, id);

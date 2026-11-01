@@ -9,27 +9,26 @@ async function register(page: Page) {
     password: `Browser-${randomUUID()}!`,
   };
   await page.goto('/auth/sign-up');
-  await page.getByLabel('Как тебя называть?').fill('Исследователь QA');
-  await page.getByLabel('Адрес профиля').fill(credentials.handle);
+  await page.getByLabel('Логин').fill(credentials.handle);
   await page.getByLabel('Email', { exact: true }).fill(credentials.email);
   await page.getByLabel('Пароль').fill(credentials.password);
   await page.getByRole('button', { name: 'Создать аккаунт', exact: true }).click();
   await expect(page).toHaveURL(/\/onboarding$/);
-  await page.getByLabel('Имя', { exact: true }).fill('Исследователь QA');
   await page.getByRole('button', { name: 'Открыть Dreamwalk' }).click();
   await expect(page).toHaveURL(/\/home$/);
   return credentials;
 }
 
 test('player: register, save account settings, reload, and cancel deletion', async ({ page }) => {
-  await register(page);
+  const account = await register(page);
   await page.goto('/account/profile');
-  await page.getByLabel('Имя', { exact: true }).fill('Новое имя путешественника');
+  await expect(page.getByLabel('Логин')).toHaveValue(account.handle);
   await page.getByLabel('О себе').fill('Люблю тайны и тихие приключения.');
   await page.getByRole('button', { name: 'Сохранить профиль' }).click();
   await expect(page.getByRole('status').filter({ hasText: 'Профиль сохранён' })).toBeVisible();
   await page.reload();
-  await expect(page.getByLabel('Имя', { exact: true })).toHaveValue('Новое имя путешественника');
+  await expect(page.getByLabel('Логин')).toHaveValue(account.handle);
+  await expect(page.getByLabel('О себе')).toHaveValue('Люблю тайны и тихие приключения.');
   await page.goto('/account/settings');
   await page.getByRole('combobox', { name: 'Тема', exact: true }).selectOption('light');
   await page.getByLabel('Часовой пояс').fill('Europe/Paris');

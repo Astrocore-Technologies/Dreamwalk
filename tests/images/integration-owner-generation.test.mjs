@@ -664,7 +664,65 @@ await test(
                 ).rows[0];
                 assert.equal(session.state, 'stopped');
                 assert.equal(session.stop_code, 'IMAGE_RESULT_UNKNOWN');
-                await assert.rejects(scoped.quote(owner.user.id, request));
+                if (outcome === '403') {
+                  // A confirmed model-access refusal retains its full unknown-billing hold.
+                  // Only a distinct, freshly consented image may use the remaining cap.
+                  assert.equal(row.safe_diagnostic.httpStatus, 403);
+                  assert.equal(row.safe_diagnostic.category, 'model_access');
+                  assert.equal(row.safe_diagnostic.providerCode, 'model_access_denied');
+                  const status = await authority.status(owner.user.id);
+                  assert.equal(status.imageOnlyAdmission, true);
+                  assert.equal(status.state, 'stopped');
+                  assert.equal(status.retainedImageHoldMicros, Number(held.upper_micros));
+                  assert.ok(status.usedMicros >= Number(held.upper_micros));
+                  assert.equal(status.remainingMicros, status.capMicros - status.usedMicros);
+                  const next = await scoped.quote(owner.user.id, request);
+                  assert.notEqual(next.quote.id, quote.quote.id);
+                  await assert.rejects(
+                    scoped.enqueue(owner.user.id, {
+                      quoteId: next.quote.id,
+                      operationId: randomUUID(),
+                      consent: false,
+                      estimateRiskConsent: true,
+                    }),
+                  );
+                  await assert.rejects(
+                    scoped.enqueue(owner.user.id, {
+                      quoteId: next.quote.id,
+                      operationId: randomUUID(),
+                      consent: true,
+                      estimateRiskConsent: false,
+                    }),
+                  );
+                  await assert.rejects(
+                    database.tx((c) => authority.resolveAuthorizationId(c, owner.user.id)),
+                  );
+                  await assert.rejects(
+                    authority.claim(owner.user.id, {
+                      consent: true,
+                      candidateFingerprint: configured.configFingerprint,
+                    }),
+                  );
+                  assert.deepEqual(
+                    (
+                      await sql.query('SELECT * FROM generation_budget_reservations WHERE id=$1', [
+                        row.reservation_id,
+                      ])
+                    ).rows[0],
+                    held,
+                  );
+                  assert.deepEqual(
+                    (
+                      await sql.query('SELECT * FROM generation_budget_scopes WHERE id=$1', [
+                        GENERATION_SCOPE_ID,
+                      ])
+                    ).rows[0],
+                    scope,
+                  );
+                  assert.equal((await authority.status(owner.user.id)).state, 'stopped');
+                  assert.equal(transports, 1);
+                  assert.equal(keyReads, 1);
+                } else await assert.rejects(scoped.quote(owner.user.id, request));
                 await scoped.recordResult(queued.id, {
                   bytes: png,
                   mime: 'image/png',

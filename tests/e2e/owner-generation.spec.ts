@@ -375,7 +375,7 @@ async function openLocation(page: Page, f: Awaited<ReturnType<typeof fixture>>) 
   await page.getByRole('button', { name: /Locations$/ }).click();
   await page
     .locator(`[data-location-art="${f.locationId}"]`)
-    .getByRole('button', { name: 'Image details and library', exact: true })
+    .getByRole('button', { name: 'Budget and library settings', exact: true })
     .click();
   return page.getByTestId('location-image-dialog');
 }
@@ -451,7 +451,7 @@ test('synthetic owner image has separate budget, request and estimate-risk conse
   expect(f.calls.dispatch).toBe(0);
   await page
     .locator(`[data-location-art="${f.locationId}"]`)
-    .getByRole('button', { name: 'Generate image', exact: true })
+    .getByRole('button', { name: 'Budget and library settings', exact: true })
     .click();
   const fresh = await prepare(page);
   await expect(fresh.getByLabel(risk, { exact: true })).not.toBeChecked();
@@ -475,7 +475,7 @@ test('synthetic owner image has separate budget, request and estimate-risk conse
   await page.getByRole('button', { name: /Locations$/ }).click();
   await page
     .locator(`[data-location-art="${f.locationId}"]`)
-    .getByRole('button', { name: 'Image details and library', exact: true })
+    .getByRole('button', { name: 'Budget and library settings', exact: true })
     .click();
   await expect(dialog.getByRole('heading', { name: 'Saved image', exact: true })).toBeVisible();
   expect(f.calls.claim).toBe(1);
@@ -498,7 +498,9 @@ for (const outcome of ['unknown', 'response-lost'] as const)
     await generation.getByLabel(risk, { exact: true }).check();
     await generation.getByLabel(requestConsent, { exact: true }).check();
     await generation.getByRole('button', { name: 'Generate one image', exact: true }).click();
-    await expect(page.locator('[data-image-job-status="unknown"]')).toBeVisible({ timeout: 15000 });
+    await expect(
+      page.getByTestId('location-image-dialog').locator('[data-image-job-status="unknown"]'),
+    ).toBeVisible({ timeout: 15000 });
     await page
       .getByTestId('live-test-panel')
       .getByRole('button', { name: 'Refresh status', exact: true })
@@ -513,8 +515,10 @@ for (const outcome of ['unknown', 'response-lost'] as const)
     await expect(
       control.getByRole('button', { name: 'Generate image', exact: true }),
     ).toBeDisabled();
-    await control.getByRole('button', { name: 'Image details and library', exact: true }).click();
-    await expect(page.locator('[data-image-job-status="unknown"]')).toBeVisible();
+    await control.getByRole('button', { name: 'Budget and library settings', exact: true }).click();
+    await expect(
+      page.getByTestId('location-image-dialog').locator('[data-image-job-status="unknown"]'),
+    ).toBeVisible();
     expect(f.calls.dispatch).toBe(1);
     expect(f.calls.bind).toBe(0);
     expect(f.calls.storyDraftReads).toBeGreaterThan(0);

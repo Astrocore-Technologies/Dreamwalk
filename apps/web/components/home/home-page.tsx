@@ -1,5 +1,6 @@
 'use client';
 import Link from 'next/link';
+import { isDiscoveryStory } from '@/lib/discovery';
 import { storyReturnPath, withStoryReturn } from '../story-return';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
@@ -90,7 +91,7 @@ function Rail({
               <h3>{text.title}</h3>
               <p>{text.synopsis}</p>
               <div className={styles.cardFoot}>
-                <span>{adventure.author.name}</span>
+                <span>{adventure.author.handle}</span>
                 <span>
                   <UsersRound size={13} />
                   {adventure.playersMin}–{adventure.playersMax}
@@ -110,9 +111,7 @@ export function HomePage() {
     { user } = useClient(),
     router = useRouter();
   const catalog = useResource<Adventure[]>('/adventures?sort=popular');
-  const adventures = (catalog.error ? [] : catalog.data || []).filter(
-    (item) => item.visibility === 'public' && item.status === 'published',
-  );
+  const adventures = (catalog.error ? [] : catalog.data || []).filter(isDiscoveryStory);
   const [index, setIndex] = useState(0),
     [busy, setBusy] = useState(false),
     [launchError, setLaunchError] = useState('');
