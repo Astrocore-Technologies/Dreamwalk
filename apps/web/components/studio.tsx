@@ -926,7 +926,15 @@ function AdventureEditor({ id }: { id: string }) {
                     </Field>
                     <LocationImageAction
                       settings={locationImages}
+                      adventureId={id}
                       locationId={location.id}
+                      sourceKey={JSON.stringify([location.name, location.description])}
+                      beforePrepare={autosave.flush}
+                      playableDirty={playableDirty}
+                      onSaved={(attached) => {
+                        if (attached) setLocationArtEpoch((value) => value + 1);
+                        refreshArtModeration();
+                      }}
                       saved={!isNew}
                       disabled={busy}
                       onOpen={() => setLocationImageId(location.id)}

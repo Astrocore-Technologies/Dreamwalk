@@ -41,7 +41,8 @@ await test(
         expectedRevision: 1,
       });
       const create = async () =>
-        (await a.request('/game/campaigns', { playableVersionId: versionId })).campaignId;
+        (await a.request('/game/campaigns', { turnBased: false, playableVersionId: versionId }))
+          .campaignId;
       const read = async (id) =>
         (await db.query('SELECT state,runtime_clock FROM game_campaigns WHERE id=$1', [id]))
           .rows[0];

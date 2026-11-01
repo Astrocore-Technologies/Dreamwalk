@@ -76,6 +76,7 @@ await test(
         ])
       ).rows[0];
       const { campaignId: id } = await owner.request('/game/campaigns', {
+        turnBased: false,
         playableVersionId: version.versionId,
       });
       const invitation = await owner.request(`/studio/adventures/${story.id}/invitations`, {

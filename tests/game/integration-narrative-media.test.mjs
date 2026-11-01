@@ -92,6 +92,7 @@ await test(
         retainExistingPins: true,
       });
       const { campaignId: id } = await owner.request('/game/campaigns', {
+        turnBased: false,
         playableVersionId: source.playableVersionId,
       });
       await owner.request(path(id, 'invitations'), { username: guest.handle });
@@ -212,6 +213,7 @@ await test(
           });
           await file(guest, art.id, id, 200);
           const next = await owner.request('/game/campaigns', {
+            turnBased: false,
             playableVersionId: source.playableVersionId,
           });
           await owner.request(

@@ -1,3 +1,4 @@
+import { retainedModelRejectionAdmission } from '../image-generation/retained-rejections';
 import {
   bodyHash,
   modelContext,
@@ -571,15 +572,20 @@ export class GenerationAuthority {
     };
   }
   /** Existing financial identity is retained; this is not a new allowance or reconciliation. */
-  private async historicalSafety(c: PoolClient, userId: string, firstClaim = false) {
+  private async historicalSafety(
+    c: PoolClient,
+    userId: string,
+    firstClaim = false,
+    imageOnlyAdmission = false,
+  ) {
     const unsafe = (
       await c.query(
         `SELECT 1 FROM generation_budget_reservations r JOIN generation_budget_scopes b ON b.id=r.scope_id
        WHERE ((r.scope_id<>$1 OR $2::boolean) AND r.status='held' AND r.upper_micros>0) OR (r.status='settled' AND r.actual_micros IS NULL)
-       UNION ALL SELECT 1 FROM generation_budget_scopes b WHERE blocked AND (approved OR id=$1 OR EXISTS(SELECT 1 FROM generation_budget_reservations r WHERE r.scope_id=b.id AND (r.upper_micros>0 OR r.actual_micros>0)))
-       UNION ALL SELECT 1 FROM live_test_sessions WHERE scope_id=$1 AND state='stopped' AND COALESCE(stop_code,'')<>'OWNER_GENERATION_MODE_ACTIVE'
+       UNION ALL SELECT 1 FROM generation_budget_scopes b WHERE blocked AND NOT($3::boolean AND id=$1) AND (approved OR id=$1 OR EXISTS(SELECT 1 FROM generation_budget_reservations r WHERE r.scope_id=b.id AND (r.upper_micros>0 OR r.actual_micros>0)))
+       UNION ALL SELECT 1 FROM live_test_sessions WHERE scope_id=$1 AND state='stopped' AND COALESCE(stop_code,'')<>'OWNER_GENERATION_MODE_ACTIVE' AND NOT($3::boolean AND mode='owner' AND stop_code='IMAGE_RESULT_UNKNOWN')
        LIMIT 1`,
-        [GENERATION_SCOPE_ID, firstClaim],
+        [GENERATION_SCOPE_ID, firstClaim, imageOnlyAdmission],
       )
     ).rowCount;
     if (unsafe)
@@ -604,7 +610,7 @@ export class GenerationAuthority {
       await c.query(
         `
       SELECT 1 FROM image_generation_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id
-      WHERE (r.scope_id<>$1 OR $2::boolean) AND j.mode='external' AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=now()))
+      WHERE (r.scope_id<>$1 OR $2::boolean) AND j.mode='external' AND NOT EXISTS(SELECT 1 FROM image_generation_recoveries recovery WHERE recovery.job_id=j.id AND recovery.scope_id=r.scope_id AND j.status='rejected' AND r.status='settled' AND recovery.actual_micros=r.actual_micros) AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=now()))
       UNION ALL SELECT 1 FROM live_test_text_permits p JOIN live_test_sessions a ON a.id=p.session_id
       WHERE (a.scope_id<>$1 OR $2::boolean) AND (p.state='unknown' OR p.result_code='PROVIDER_HTTP_403' OR (p.state='dispatched' AND p.dispatched_at<=now()-interval '60 seconds'))
       UNION ALL SELECT 1 FROM generation_text_counts WHERE status='unknown' OR (status='dispatched' AND deadline_at<=now())
@@ -726,6 +732,7 @@ export class GenerationAuthority {
     c: PoolClient,
     userId: string,
     suppliedId?: string,
+    purpose: 'text' | 'image' = 'text',
   ): Promise<string> {
     await this.ownerTx(c, userId);
     let id = suppliedId;
@@ -741,7 +748,7 @@ export class GenerationAuthority {
       id = row.id;
     }
     if (!id) fail(403, 'LIVE_SESSION_FORBIDDEN', 'LIVE_SESSION_FORBIDDEN');
-    await this.session(c, id!, userId);
+    await this.session(c, id!, userId, purpose);
     return id!;
   }
   private async enableExclusiveScope(c: PoolClient) {
@@ -1009,10 +1016,16 @@ export class GenerationAuthority {
   }
   async authorizeImage(c: PoolClient, userId: string, sessionId?: string): Promise<ImagePolicy> {
     await this.owner(userId);
-    const id = await this.resolveAuthorizationId(c, userId, sessionId);
+    const id = await this.resolveAuthorizationId(c, userId, sessionId, 'image');
+    const row = (await c.query('SELECT * FROM live_test_sessions WHERE id=$1', [id])).rows[0];
+    const scope = (
+      await c.query('SELECT * FROM generation_budget_scopes WHERE id=$1', [row.scope_id])
+    ).rows[0];
+    const retained = this.ownerConfig ? await retainedModelRejectionAdmission(c, row, scope) : null;
     // The grant supplies rights/caps only; an image factory must supply its own cost evidence.
     return {
       ...(await this.effectivePolicy(c)),
+      ...(retained?.eligible ? { preserveModelRejectionHolds: true as const } : {}),
       verifiedUpperMicros: null,
       ...(this.ownerConfig
         ? {
@@ -1023,7 +1036,12 @@ export class GenerationAuthority {
         : {}),
     };
   }
-  private async session(c: PoolClient, sessionId: string, userId: string) {
+  private async session(
+    c: PoolClient,
+    sessionId: string,
+    userId: string,
+    purpose: 'text' | 'image' = 'text',
+  ) {
     if (!this.config.enabled) fail(409, 'LIVE_TEST_DISABLED', 'LIVE_TEST_DISABLED');
     await this.ownerTx(c, userId);
     const s = await this.lockAuthorization(c, sessionId);
@@ -1032,6 +1050,7 @@ export class GenerationAuthority {
     const scope = (
       await c.query('SELECT * FROM generation_budget_scopes WHERE id=$1', [s.scope_id])
     ).rows[0];
+    let retained: Awaited<ReturnType<typeof retainedModelRejectionAdmission>> | undefined;
     if (this.ownerConfig) {
       if (
         s.mode !== 'owner' ||
@@ -1054,7 +1073,8 @@ export class GenerationAuthority {
         !scope.serialize_outstanding
       )
         fail(409, 'GENERATION_CONFIG_IMMUTABLE', 'GENERATION_CONFIG_IMMUTABLE');
-      await this.historicalSafety(c, userId);
+      if (purpose === 'image') retained = await retainedModelRejectionAdmission(c, s, scope);
+      await this.historicalSafety(c, userId, false, retained?.eligible === true);
     } else {
       if (s.mode !== 'manual' || !s.expires_at || sessionId !== this.config.sessionId)
         fail(403, 'LIVE_SESSION_FORBIDDEN', 'LIVE_SESSION_FORBIDDEN');
@@ -1074,12 +1094,12 @@ export class GenerationAuthority {
       if (new Date(s.expires_at).getTime() <= Date.now())
         fail(409, 'LIVE_TEST_EXPIRED', 'LIVE_TEST_EXPIRED');
     }
-    if (s.state !== 'active' || scope.blocked || !scope.approved)
+    if ((s.state !== 'active' || scope.blocked || !scope.approved) && !retained?.eligible)
       fail(409, 'LIVE_SESSION_STOPPED', 'LIVE_SESSION_STOPPED');
     const unknown = (
       await c.query(
-        "SELECT 1 FROM generation_budget_reservations b JOIN image_generation_jobs j ON j.reservation_id=b.id WHERE b.scope_id=$1 AND j.mode='external' AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=now())) UNION ALL SELECT 1 FROM live_test_text_permits p JOIN live_test_sessions a ON a.id=p.session_id WHERE a.scope_id=$1 AND (p.state='unknown' OR (p.state='dispatched' AND p.dispatched_at<=now()-interval '60 seconds')) LIMIT 1",
-        [s.scope_id],
+        "SELECT 1 FROM generation_budget_reservations b JOIN image_generation_jobs j ON j.reservation_id=b.id WHERE b.scope_id=$1 AND NOT(b.id=ANY($2::uuid[])) AND j.mode='external' AND NOT EXISTS(SELECT 1 FROM image_generation_recoveries recovery WHERE recovery.job_id=j.id AND recovery.scope_id=b.scope_id AND j.status='rejected' AND b.status='settled' AND recovery.actual_micros=b.actual_micros) AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=now())) UNION ALL SELECT 1 FROM live_test_text_permits p JOIN live_test_sessions a ON a.id=p.session_id WHERE a.scope_id=$1 AND (p.state='unknown' OR (p.state='dispatched' AND p.dispatched_at<=now()-interval '60 seconds')) LIMIT 1",
+        [s.scope_id, retained?.eligible ? retained.reservationIds : []],
       )
     ).rowCount;
     if (unknown) fail(409, 'LIVE_OUTCOME_UNRESOLVED', 'LIVE_OUTCOME_UNRESOLVED');
@@ -1875,7 +1895,7 @@ export class GenerationAuthority {
     let unsafe =
       (
         await this.db.query(
-          "SELECT 1 FROM generation_budget_reservations b JOIN image_generation_jobs j ON j.reservation_id=b.id WHERE b.scope_id=$1 AND j.mode='external' AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=now())) UNION ALL SELECT 1 FROM live_test_text_permits p WHERE p.session_id=$2 AND (p.state='unknown' OR (p.state='dispatched' AND p.dispatched_at<=now()-interval '60 seconds')) LIMIT 1",
+          "SELECT 1 FROM generation_budget_reservations b JOIN image_generation_jobs j ON j.reservation_id=b.id WHERE b.scope_id=$1 AND j.mode='external' AND NOT EXISTS(SELECT 1 FROM image_generation_recoveries recovery WHERE recovery.job_id=j.id AND recovery.scope_id=b.scope_id AND j.status='rejected' AND b.status='settled' AND recovery.actual_micros=b.actual_micros) AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=now())) UNION ALL SELECT 1 FROM live_test_text_permits p WHERE p.session_id=$2 AND (p.state='unknown' OR (p.state='dispatched' AND p.dispatched_at<=now()-interval '60 seconds')) LIMIT 1",
           [GENERATION_SCOPE_ID, this.config.sessionId],
         )
       ).length > 0;
@@ -1916,6 +1936,49 @@ export class GenerationAuthority {
       imageBlockCode: 'VERIFIED_IMAGE_UPPER_BOUND_REQUIRED',
     };
   }
+  private async imageOnlyAdmissionStatus(userId: string) {
+    const denied = {
+      imageOnlyAdmission: false,
+      retainedImageHoldMicros: 0,
+      imageActiveHeldMicros: 0,
+    };
+    if (!this.ownerConfig || !this.pricingCurrent()) return denied;
+    return this.db.tx(async (c) => {
+      await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const row = (
+        await c.query(
+          "SELECT * FROM live_test_sessions WHERE scope_id=$1 AND mode='owner' AND owner_id=$2",
+          [GENERATION_SCOPE_ID, userId],
+        )
+      ).rows[0];
+      const scope = (
+        await c.query('SELECT * FROM generation_budget_scopes WHERE id=$1', [GENERATION_SCOPE_ID])
+      ).rows[0];
+      if (
+        !row ||
+        row.config_hash !== this.identity() ||
+        row.owner_handle !== this.ownerConfig!.ownerHandle ||
+        !scope ||
+        Number(scope.total_cap_micros) !== Number(row.cap_micros) ||
+        Number(scope.image_cap_micros) !== Number(row.image_cap_micros) ||
+        Number(scope.text_cap_micros) !== Number(row.text_cap_micros)
+      )
+        return denied;
+      try {
+        await this.assertActivePolicy(c, row.id);
+        const admission = await retainedModelRejectionAdmission(c, row, scope);
+        if (!admission.eligible) return denied;
+        await this.historicalSafety(c, userId, false, true);
+        return {
+          imageOnlyAdmission: true,
+          retainedImageHoldMicros: admission.retainedMicros,
+          imageActiveHeldMicros: admission.activeHeldMicros,
+        };
+      } catch {
+        return denied;
+      }
+    });
+  }
   private async ownerStatus(userId: string) {
     const cfg = this.ownerConfig!;
     const row = (
@@ -1948,6 +2011,7 @@ export class GenerationAuthority {
       policy.blockers.find((code) => code !== 'GENERATION_CONSENT_REQUIRED') ??
       null;
     return {
+      ...(await this.imageOnlyAdmissionStatus(userId)),
       mode: 'owner' as const,
       enabled: true,
       policyRevision: policy.active?.revision ?? 0,

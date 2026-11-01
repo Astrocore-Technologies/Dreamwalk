@@ -34,7 +34,8 @@ export class GenerationController {
     const status = await this.live.status(userId);
     const image = this.images.configuration();
     const reserve = 'reserveMicros' in image ? image.reserveMicros : image.verifiedUpperMicros;
-    const grantActive = status.enabled && status.state === 'active';
+    const imageOnly = 'imageOnlyAdmission' in status && status.imageOnlyAdmission === true;
+    const grantActive = status.enabled && (status.state === 'active' || imageOnly);
     const imageRemaining =
       status.mode === 'owner' ? status.imageRemainingMicros : status.remainingMicros;
     const perRequest =
@@ -45,13 +46,15 @@ export class GenerationController {
     const sufficient = perRequest
       ? imageRemaining > 0
       : typeof reserve === 'number' && imageRemaining >= reserve;
-    const busy = status.heldMicros > 0;
+    const retained =
+      imageOnly && 'retainedImageHoldMicros' in status ? Number(status.retainedImageHoldMicros) : 0;
+    const busy = status.heldMicros - retained > 0;
     const blocked = !image.externalEnabled
       ? (image.externalBlockReasons[0] ?? 'EXTERNAL_PROVIDER_DISABLED')
-      : busy
-        ? 'GENERATION_OUTSTANDING_REQUEST'
-        : !grantActive
-          ? (status.stopCode ?? 'MANUAL_LIVE_SESSION_REQUIRED')
+      : !grantActive
+        ? (status.stopCode ?? 'MANUAL_LIVE_SESSION_REQUIRED')
+        : busy
+          ? 'GENERATION_OUTSTANDING_REQUEST'
           : !sufficient
             ? 'GENERATION_BUDGET_EXCEEDED'
             : null;

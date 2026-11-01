@@ -46,7 +46,8 @@ try {
   // Root env-run intentionally loads .env; bypass that wrapper here because the
   // launcher already parsed it and removed provider credentials from preparation.
   await run(['run', 'db:migrate', '-w', '@dreamwalk/api']);
-  await run(['run', 'db:seed', '-w', '@dreamwalk/api']);
+  // Existing saved games may start without running the optional demo seeder.
+  if (!process.argv.includes('--skip-seed')) await run(['run', 'db:seed', '-w', '@dreamwalk/api']);
   await run(['run', 'build', '-w', '@dreamwalk/api']);
   if (process.env.LOCAL_ADMIN_EMAIL) {
     if (!['development', 'test', undefined].includes(process.env.NODE_ENV))

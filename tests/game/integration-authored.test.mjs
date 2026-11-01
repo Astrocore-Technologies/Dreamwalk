@@ -28,7 +28,8 @@ import {
 const draftPath = (id) => `/studio/adventures/${id}/playable-draft`;
 const versionsPath = (id) => `/studio/adventures/${id}/playable-versions`;
 const availablePath = (id) => `/game/adventures/${id}/playable-versions`;
-const create = (c, versionId) => c.request('/game/campaigns', { playableVersionId: versionId });
+const create = (c, versionId) =>
+  c.request('/game/campaigns', { turnBased: false, playableVersionId: versionId });
 
 await test(
   'authored playable snapshots preserve source ACL, moderation and live version immutability',
@@ -105,11 +106,21 @@ await test(
         'private source invitation and campaign membership are independent gates',
         async () => {
           await outsider.request(availablePath(story.id), undefined, 'GET', 404);
-          await outsider.request('/game/campaigns', { playableVersionId: versionId }, 'POST', 403);
+          await outsider.request(
+            '/game/campaigns',
+            { turnBased: false, playableVersionId: versionId },
+            'POST',
+            403,
+          );
           invitation = await author.request(`/studio/adventures/${story.id}/invitations`, {
             handle: guest.handle,
           });
-          await guest.request('/game/campaigns', { playableVersionId: versionId }, 'POST', 403);
+          await guest.request(
+            '/game/campaigns',
+            { turnBased: false, playableVersionId: versionId },
+            'POST',
+            403,
+          );
           await guest.request(`/invitations/${invitation.id}/respond`, { decision: 'accept' });
           assert.ok(
             (await guest.request(availablePath(story.id))).versions.some((v) => v.id === versionId),
@@ -216,7 +227,12 @@ await test(
             'GET',
             404,
           );
-          await outsider.request('/game/campaigns', { playableVersionId: pending.id }, 'POST', 403);
+          await outsider.request(
+            '/game/campaigns',
+            { turnBased: false, playableVersionId: pending.id },
+            'POST',
+            403,
+          );
           await promisify(execFile)(
             process.execPath,
             ['scripts/admin-grant.mjs', '--email', author.email],
@@ -287,7 +303,7 @@ await test(
           assert.ok(pending2);
           await outsider.request(
             '/game/campaigns',
-            { playableVersionId: pending2.id },
+            { turnBased: false, playableVersionId: pending2.id },
             'POST',
             403,
           );
@@ -361,10 +377,15 @@ await test(
           );
           const unchanged = await snapshot(outsider, publicCampaign.campaignId);
           assert.deepEqual([actor(unchanged).x, actor(unchanged).y], [2, 2]);
-          await outsider.request('/game/campaigns', { playableVersionId: pending.id }, 'POST', 403);
           await outsider.request(
             '/game/campaigns',
-            { playableVersionId: pending2.id },
+            { turnBased: false, playableVersionId: pending.id },
+            'POST',
+            403,
+          );
+          await outsider.request(
+            '/game/campaigns',
+            { turnBased: false, playableVersionId: pending2.id },
             'POST',
             403,
           );

@@ -171,7 +171,7 @@ export async function policyWorkBlockers(c: PoolClient, scopeId: string) {
           AND j.status IN ('queued','reserved','running','result_received','validated','reconciling')) AS busy,
       EXISTS(SELECT 1 FROM generation_text_counts WHERE scope_id=$1 AND (status='unknown' OR (status='dispatched' AND deadline_at<=clock_timestamp()))) OR
       EXISTS(SELECT 1 FROM image_generation_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id
-        WHERE r.scope_id=$1 AND j.mode='external' AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=clock_timestamp()))) OR
+        WHERE r.scope_id=$1 AND j.mode='external' AND NOT EXISTS(SELECT 1 FROM image_generation_recoveries recovery WHERE recovery.job_id=j.id AND recovery.scope_id=r.scope_id AND j.status='rejected' AND r.status='settled' AND recovery.actual_micros=r.actual_micros) AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=clock_timestamp()))) OR
       EXISTS(SELECT 1 FROM live_test_text_permits p JOIN live_test_sessions s ON s.id=p.session_id
         WHERE s.scope_id=$1 AND (p.state='unknown' OR p.result_code='PROVIDER_HTTP_403' OR (p.state='dispatched' AND p.dispatched_at<=clock_timestamp()-interval '60 seconds'))) OR
       EXISTS(SELECT 1 FROM live_authoring_text_jobs j JOIN live_test_sessions s ON s.id=j.session_id

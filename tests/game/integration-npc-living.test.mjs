@@ -45,7 +45,10 @@ async function setup(owner, role = 'guard', change = () => {}) {
   const { versionId } = await owner.request(`/studio/adventures/${story.id}/playable-versions`, {
     expectedRevision: 1,
   });
-  const { campaignId } = await owner.request('/game/campaigns', { playableVersionId: versionId });
+  const { campaignId } = await owner.request('/game/campaigns', {
+    turnBased: false,
+    playableVersionId: versionId,
+  });
   return { story, draft, campaignId };
 }
 await test(

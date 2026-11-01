@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { ImagePlus } from 'lucide-react';
+import { LocationImageInline } from './location-image-inline';
 import { api, ApiError, errorMessage, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Field, Modal, Select, Textarea } from '../ui';
@@ -82,46 +82,8 @@ function LocationImageStatus({ settings, saved }: { settings: Configuration; sav
     </div>
   );
 }
-export function LocationImageAction({
-  settings,
-  locationId,
-  saved,
-  disabled,
-  onOpen,
-}: {
-  settings: Configuration;
-  locationId: string;
-  saved: boolean;
-  disabled: boolean;
-  onOpen: () => void;
-}) {
-  const m = useLocationImageText();
-  const allowed =
-    settings.config?.externalEnabled &&
-    (verified(settings.config) || estimateAllowed(settings)) &&
-    liveSessionActive(settings.live.status) &&
-    !!settings.live.status?.imagesEnabled;
-  return (
-    <section
-      className={styles.locationImage}
-      data-location-art={locationId}
-      aria-label={m('title')}
-    >
-      <strong>{m('title')}</strong>
-      <p>{m('intro')}</p>
-      <LocationImageStatus settings={settings} saved={saved} />
-      <div className={styles.toolbar}>
-        <Button type="button" disabled={disabled || !saved || !allowed} onClick={onOpen}>
-          <ImagePlus size={16} />
-          {m('generate')}
-        </Button>
-        <Button type="button" variant="secondary" disabled={disabled || !saved} onClick={onOpen}>
-          {m('manage')}
-        </Button>
-      </div>
-      <small>{m('geometry')}</small>
-    </section>
-  );
+export function LocationImageAction(props: Parameters<typeof LocationImageInline>[0]) {
+  return <LocationImageInline {...props} />;
 }
 export function LocationImageDialog({
   adventureId,

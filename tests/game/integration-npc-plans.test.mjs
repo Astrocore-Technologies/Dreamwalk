@@ -40,6 +40,7 @@ await test(
         expectedRevision: 1,
       });
       const { campaignId: id } = await a.request('/game/campaigns', {
+        turnBased: false,
         playableVersionId: versionId,
       });
       const read = async () =>
@@ -173,6 +174,7 @@ await test(
           });
           await guest.request(`/invitations/${invitation.id}/respond`, { decision: 'accept' });
           const { campaignId: guestCampaign } = await guest.request('/game/campaigns', {
+            turnBased: false,
             playableVersionId: versionId,
           });
           const requested = await command(guest, guestCampaign, {

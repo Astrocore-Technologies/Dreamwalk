@@ -13,6 +13,9 @@ async function status({
   perRequest = true,
   held = 0,
   state = 'active',
+  stopCode = null,
+  imageOnlyAdmission = false,
+  retainedImageHoldMicros = 0,
   external = true,
   mode = 'owner',
 } = {}) {
@@ -22,7 +25,9 @@ async function status({
       mode,
       enabled: true,
       state,
-      stopCode: null,
+      stopCode,
+      imageOnlyAdmission,
+      retainedImageHoldMicros,
       imageRemainingMicros: remaining,
       remainingMicros: remaining,
       heldMicros: held,
@@ -67,4 +72,28 @@ test('per-request quote capability keeps zero-budget, held, stopped and provider
     assert.equal(value.imagesEnabled, false);
     assert.equal(value.imageBlockCode, code);
   }
+});
+
+test('a stopped unknown image exposes its real reason even while its reserve is held', async () => {
+  const value = await status({ state: 'stopped', held: 66900, stopCode: 'IMAGE_RESULT_UNKNOWN' });
+  assert.equal(value.imagesEnabled, false);
+  assert.equal(value.imageBlockCode, 'IMAGE_RESULT_UNKNOWN');
+});
+
+test('only a server-verified model refusal can keep its hold while enabling a distinct image', async () => {
+  const options = {
+    state: 'stopped',
+    stopCode: 'IMAGE_RESULT_UNKNOWN',
+    held: 66900,
+    remaining: 933100,
+    imageOnlyAdmission: true,
+    retainedImageHoldMicros: 66900,
+  };
+  assert.equal((await status(options)).imagesEnabled, true);
+  assert.equal(
+    (await status({ ...options, held: 100000 })).imageBlockCode,
+    'GENERATION_OUTSTANDING_REQUEST',
+  );
+  assert.equal((await status({ ...options, imageOnlyAdmission: false })).imagesEnabled, false);
+  assert.equal((await status({ ...options, remaining: 0 })).imagesEnabled, false);
 });

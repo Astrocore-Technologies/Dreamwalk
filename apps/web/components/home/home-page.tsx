@@ -173,7 +173,11 @@ export function HomePage() {
     try {
       const result = await api<{ campaignId: string }>('/game/campaigns', {
         method: 'POST',
-        body: JSON.stringify({ playableVersionId: startVersion, ...heroSelection.body }),
+        body: JSON.stringify({
+          playableVersionId: startVersion,
+          turnBased: true,
+          ...heroSelection.body,
+        }),
       });
       if (launchGate.current.accepts(lease)) {
         router.push(`/game/${result.campaignId}`);

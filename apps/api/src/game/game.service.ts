@@ -2068,7 +2068,10 @@ export class GameService implements OnModuleDestroy {
       const state = sourceVersion
         ? await this.playable.resolveForStart(c, u.id, sourceVersion, actorId, seed)
         : createObservatoryState([actorId], seed);
-      if (input.turnBased && !state.turnController) {
+      // Authored launches default to sequential turns, including older clients omitting the flag.
+      // Explicit false remains a compatibility path for historical clients/fixtures only.
+      const useTurnBased = input.turnBased ?? Boolean(sourceVersion);
+      if (useTurnBased && !state.turnController) {
         if (state.rulesetVersion !== 'hybrid-v3') {
           if (sourceVersion)
             fail(409, 'TURN_RULESET_UPGRADE_REQUIRED', 'TURN_RULESET_UPGRADE_REQUIRED');
