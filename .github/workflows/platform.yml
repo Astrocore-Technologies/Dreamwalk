@@ -1,36 +1,31 @@
 name: Platform checks
 on:
   push:
+    branches: [main]
   pull_request:
 permissions:
   contents: read
+# Do not repeat the full suite for both a feature push and its PR. A newer
+# revision cancels only its own PR/ref; unrelated branches keep their checks.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.ref }}
+  cancel-in-progress: true
+env:
+  NODE_ENV: test
+  WEB_ORIGIN: http://localhost:3000
+  AI_PROVIDER: mock
+  NPC_AI_PROVIDER: mock
+  NPC_AI_EXTERNAL_APPROVED: 'false'
+  PAID_GENERATION_ENABLED: 'false'
+  PAYMENTS_ENABLED: 'false'
+  DISCORD_ENABLED: 'false'
+  DEV_AUTH_ENABLED: 'false'
+  DEMO_FAUCET_ENABLED: 'false'
 jobs:
-  platform:
+  static:
+    name: Static checks and production build
     runs-on: ubuntu-latest
-    services:
-      postgres:
-        image: postgres:17.10-alpine
-        env:
-          POSTGRES_USER: dreamwalk
-          POSTGRES_DB: dreamwalk_test
-          POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-ephemeral
-        ports:
-          - 55432:5432
-        options: >-
-          --health-cmd "pg_isready -U dreamwalk -d dreamwalk_test"
-          --health-interval 5s --health-timeout 5s --health-retries 10
-    env:
-      DATABASE_URL: postgresql://dreamwalk:${{ github.run_id }}-${{ github.run_attempt }}-ephemeral@127.0.0.1:55432/dreamwalk_test
-      NODE_ENV: test
-      WEB_ORIGIN: http://localhost:3000
-      AI_PROVIDER: mock
-      NPC_AI_PROVIDER: mock
-      NPC_AI_EXTERNAL_APPROVED: 'false'
-      PAID_GENERATION_ENABLED: 'false'
-      PAYMENTS_ENABLED: 'false'
-      DISCORD_ENABLED: 'false'
-      DEV_AUTH_ENABLED: 'false'
-      DEMO_FAUCET_ENABLED: 'false'
+    timeout-minutes: 15
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -38,108 +33,295 @@ jobs:
           node-version: '24'
           cache: npm
       - run: npm ci
-      - run: npm run build -w @dreamwalk/contracts
-      - run: npm run db:migrate
-      - name: Seed with compiled workspace dependencies
-        run: npm run db:seed
-      - run: npm run typecheck
+      - run: npm run build
+        env:
+          NODE_ENV: production
+      # The full build above already compiles contracts/game-core. This is the
+      # final command of the root typecheck script, with all workspace checks.
+      - run: npm run typecheck --workspaces --if-present
       - run: npm run lint
       - run: npm run test:unit
       - name: Game rules, UI projection and autosave controller tests
         run: npm run test:game
       - name: Deterministic NPC behavior rubric and bounded local benchmark
         run: npm run test:npc:eval
-      - run: npm run build
-        env:
-          NODE_ENV: production
       - name: Semantic NPC context and disclosure regression
         run: node --test tests/game/npc-semantic-context.test.cjs tests/game/npc-reply-binding.test.cjs tests/game/authoring-provider.test.cjs tests/game/live-secret-loader.test.mjs
       - name: Safe image provider error diagnostics
         run: node --test tests/images/provider-error-diagnostics.test.mjs
+      # Exact test payload of test:voice; the same-job production build supplies
+      # contracts, game-core and API output. No cross-commit build cache is used.
+      - name: Manual-provider and world-progress safeguards (zero external calls)
+        run: node --test tests/game/voice-*.test.cjs
+
+  integration:
+    name: Isolated PostgreSQL integrations
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      # This wrapper builds all three server workspaces before starting its
+      # disposable cluster. Keep its serial tests: they share runtime resources.
+      - name: Game runtime and isolated PostgreSQL integration
+        run: npm run test:game:integration
       - name: Durable isolated evaluation ledger and crash recovery
         run: node scripts/test-live-story-pg.mjs
       - name: Zero-network story evaluation rehearsal
         run: node scripts/evaluate-live-story.mjs --rehearse
+      # Use only existing skip-build switches, after a successful same-job build.
+      # The wrappers still own mock gates, migrations, seeding, tests and cleanup.
       - name: Live API integration tests
-        run: npm run test:integration
-      - name: Game runtime and isolated PostgreSQL integration
-        run: npm run test:game:integration
+        run: npm run test:integration -- --skip-build
       - name: Reusable asset ACL and immutable publication integration
         run: npm run test:assets:integration
       - name: Image quote, consent, budget and admission integration
-        run: npm run test:images:integration
+        run: npm run test:images:integration -- --skip-build
       - name: Visual and spatial authoring integration (synthetic transports only)
-        run: npm run test:visuals:integration
-      - name: Manual-provider and world-progress safeguards (zero external calls)
-        run: npm run test:voice
+        run: npm run test:visuals:integration -- --skip-build
       - name: Public discovery snapshot isolation
         run: npm run test:home:integration
+      # Exact test payload of test:mail, after the same-job server build.
       - name: Local SMTP capture integration
-        run: npm run test:mail
+        run: node --test tests/mail-integration.test.mjs
+
+  browser_1:
+    name: Browser shard 1 of 2
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Each shard has a separate runner, database, application and asset directory.
+    # Keep one worker; multi-player WebGL journeys already use several contexts.
+    services:
+      postgres:
+        image: postgres:17.10-alpine
+        env:
+          POSTGRES_USER: dreamwalk
+          POSTGRES_DB: dreamwalk_test
+          POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-browser-1-ephemeral
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U dreamwalk -d dreamwalk_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://dreamwalk:${{ github.run_id }}-${{ github.run_attempt }}-browser-1-ephemeral@127.0.0.1:55432/dreamwalk_test
+      ASSET_DIR: ${{ runner.temp }}/dreamwalk-browser-1-assets
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
       - name: Browser dependencies
         run: npx playwright install --with-deps chromium
-      - name: Browser end-to-end tests
+      - name: Browser end-to-end tests (shard 1 of 2)
         run: |
-          NODE_ENV=development npm run dev > /tmp/dreamwalk-web.log 2>&1 &
+          # The existing dev launcher builds dependencies/API, migrates and seeds
+          # this shard's database before starting the same application as before.
+          setsid env NODE_ENV=development npm run dev > "$RUNNER_TEMP/dreamwalk-web.log" 2>&1 &
           APP_PID=$!
-          trap 'kill "$APP_PID" 2>/dev/null || true' EXIT
+          trap 'kill -- "-$APP_PID" 2>/dev/null || true' EXIT
+          ready=false
           for attempt in $(seq 1 90); do
-            if curl -sf http://127.0.0.1:3000/ > /dev/null; then break; fi
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "Application exited before becoming ready" >&2
+              exit 1
+            fi
+            if curl --max-time 2 -sf http://127.0.0.1:3000/ > /dev/null && \
+               curl --max-time 2 -sf http://127.0.0.1:4000/api/v1/auth/me > /dev/null; then
+              ready=true
+              break
+            fi
             sleep 1
           done
-          npm run test:e2e
-      # A successful retry must not discard the first attempt's diagnostic trace.
+          if [ "$ready" != true ]; then
+            echo "Application did not become ready" >&2
+            exit 1
+          fi
+          npm run test:e2e -- --shard=1/2 --workers=1
+      # Retain the initial failure trace even if its one configured retry succeeds.
       - uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: platform-test-evidence
+          name: platform-test-evidence-shard-1
           path: |
             test-results/
             playwright-report/
           if-no-files-found: ignore
           retention-days: 3
-
       - name: Save actual reusable-art canvas preview
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: reusable-art-preview
+          name: reusable-art-preview-shard-1
           path: test-results/**/custom-art-scene.png
           if-no-files-found: ignore
           retention-days: 7
-
       - name: Save actual homepage desktop and mobile previews
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: homepage-preview
+          name: homepage-preview-shard-1
           path: test-results/**/home-*.png
           if-no-files-found: ignore
           retention-days: 7
-
       - name: Save actual complete-adventure scene previews
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: complete-adventure-preview
+          name: complete-adventure-preview-shard-1
           path: test-results/**/sample-adventure-*.png
           if-no-files-found: ignore
           retention-days: 7
-
       - name: Save actual evolving-story and media previews
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: narrative-director-preview
+          name: narrative-director-preview-shard-1
           path: test-results/**/director-*.png
           if-no-files-found: ignore
           retention-days: 7
-
       - name: Save actual unified story desktop and mobile previews
         uses: actions/upload-artifact@v4
         if: always()
         with:
-          name: unified-story-preview
+          name: unified-story-preview-shard-1
           path: test-results/**/unified-story-*.png
           if-no-files-found: ignore
           retention-days: 7
+
+  browser_2:
+    name: Browser shard 2 of 2
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Each shard has a separate runner, database, application and asset directory.
+    # Keep one worker; multi-player WebGL journeys already use several contexts.
+    services:
+      postgres:
+        image: postgres:17.10-alpine
+        env:
+          POSTGRES_USER: dreamwalk
+          POSTGRES_DB: dreamwalk_test
+          POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-browser-2-ephemeral
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U dreamwalk -d dreamwalk_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://dreamwalk:${{ github.run_id }}-${{ github.run_attempt }}-browser-2-ephemeral@127.0.0.1:55432/dreamwalk_test
+      ASSET_DIR: ${{ runner.temp }}/dreamwalk-browser-2-assets
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Browser dependencies
+        run: npx playwright install --with-deps chromium
+      - name: Browser end-to-end tests (shard 2 of 2)
+        run: |
+          # The existing dev launcher builds dependencies/API, migrates and seeds
+          # this shard's database before starting the same application as before.
+          setsid env NODE_ENV=development npm run dev > "$RUNNER_TEMP/dreamwalk-web.log" 2>&1 &
+          APP_PID=$!
+          trap 'kill -- "-$APP_PID" 2>/dev/null || true' EXIT
+          ready=false
+          for attempt in $(seq 1 90); do
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "Application exited before becoming ready" >&2
+              exit 1
+            fi
+            if curl --max-time 2 -sf http://127.0.0.1:3000/ > /dev/null && \
+               curl --max-time 2 -sf http://127.0.0.1:4000/api/v1/auth/me > /dev/null; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            echo "Application did not become ready" >&2
+            exit 1
+          fi
+          npm run test:e2e -- --shard=2/2 --workers=1
+      # Retain the initial failure trace even if its one configured retry succeeds.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: platform-test-evidence-shard-2
+          path: |
+            test-results/
+            playwright-report/
+          if-no-files-found: ignore
+          retention-days: 3
+      - name: Save actual reusable-art canvas preview
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reusable-art-preview-shard-2
+          path: test-results/**/custom-art-scene.png
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Save actual homepage desktop and mobile previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: homepage-preview-shard-2
+          path: test-results/**/home-*.png
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Save actual complete-adventure scene previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: complete-adventure-preview-shard-2
+          path: test-results/**/sample-adventure-*.png
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Save actual evolving-story and media previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: narrative-director-preview-shard-2
+          path: test-results/**/director-*.png
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Save actual unified story desktop and mobile previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unified-story-preview-shard-2
+          path: test-results/**/unified-story-*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
+  # Keep the former required check's exact name. Explicit shard jobs let this
+  # gate inspect every result, rather than trusting one matrix aggregate result.
+  platform:
+    name: platform
+    runs-on: ubuntu-latest
+    timeout-minutes: 5
+    if: ${{ always() }}
+    needs: [static, integration, browser_1, browser_2]
+    steps:
+      - name: Require every check and browser shard to succeed
+        env:
+          REQUIRED_RESULTS: ${{ toJSON(needs) }}
+        run: |
+          node <<'NODE'
+          const expected = ['static', 'integration', 'browser_1', 'browser_2'];
+          const results = JSON.parse(process.env.REQUIRED_RESULTS);
+          if (Object.keys(results).length !== expected.length ||
+              expected.some((name) => results[name]?.result !== 'success')) {
+            console.error('Required checks did not all succeed:',
+              Object.fromEntries(expected.map((name) => [name, results[name]?.result ?? 'missing'])));
+            process.exit(1);
+          }
+          console.log('All static, integration and browser shard checks passed.');
+          NODE
