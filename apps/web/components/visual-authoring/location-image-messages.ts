@@ -1,6 +1,17 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const locationImageMessages = {
+  ownerAuthorization: [
+    'Нужно подтверждение бюджета владельца. Открой панель изображения; каждый запрос подтверждается отдельно.',
+    'Owner budget authorization is required. Open image details; each request is approved separately.',
+    'Потрібне підтвердження бюджету власника. Відкрий панель зображення; кожен запит підтверджується окремо.',
+  ],
+  estimateRisk: [
+    'Настроена генерация по оценке: резерв не ограничивает счёт провайдера. Перед каждым запросом нужно отдельное согласие на риск.',
+    'Estimate-based generation is configured: the reserve does not cap the provider invoice. Every request requires separate risk consent.',
+    'Налаштовано генерацію за оцінкою: резерв не обмежує рахунок провайдера. Кожен запит потребує окремої згоди на ризик.',
+  ],
+
   title: ['Изображение локации', 'Location image', 'Зображення локації'],
   generate: ['Сгенерировать изображение', 'Generate image', 'Згенерувати зображення'],
   manage: ['Изображение и библиотека', 'Image details and library', 'Зображення й бібліотека'],

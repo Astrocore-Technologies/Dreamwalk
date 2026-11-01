@@ -10,7 +10,7 @@ import { artPreviewUrl, type ArtRevision } from '../assets/types';
 import { LiveTestPanel, useLiveTestStatus } from '../live-test/live-test-panel';
 import { formatUsd, liveSessionActive } from '../live-test/types';
 import { useLocationImageText } from './location-image-messages';
-import type { ImageConfiguration } from './generation-types';
+import { ownerImageEstimateAvailable, type ImageConfiguration } from './generation-types';
 import styles from './workshop.module.css';
 
 type Preparation = {
@@ -31,6 +31,8 @@ const verified = (config: ImageConfiguration | null) =>
   typeof config?.verifiedUpperMicros === 'number' &&
   Number.isFinite(config.verifiedUpperMicros) &&
   config.verifiedUpperMicros >= 0;
+const estimateAllowed = (settings: Configuration) =>
+  settings.live.status?.mode === 'owner' && ownerImageEstimateAvailable(settings.config);
 function LocationImageStatus({ settings, saved }: { settings: Configuration; saved: boolean }) {
   const m = useLocationImageText(),
     { locale } = useT(),
@@ -60,7 +62,7 @@ function LocationImageStatus({ settings, saved }: { settings: Configuration; sav
               {m('bound')}: {formatUsd(config.verifiedUpperMicros!, locale)}
             </p>
           ) : (
-            <p role="status">{m('unverified')}</p>
+            <p role="status">{m(estimateAllowed(settings) ? 'estimateRisk' : 'unverified')}</p>
           )}
           {!config.externalEnabled && <p>{m('unavailable')}</p>}
           {config.externalBlockReasons?.map((code) => (
@@ -68,7 +70,9 @@ function LocationImageStatus({ settings, saved }: { settings: Configuration; sav
               <code>{code}</code>
             </small>
           ))}
-          {saved && !liveSessionActive(settings.live.status) && <p>{m('session')}</p>}
+          {saved && !liveSessionActive(settings.live.status) && (
+            <p>{m(settings.live.status?.mode === 'owner' ? 'ownerAuthorization' : 'session')}</p>
+          )}
         </>
       )}
       {!saved && <p>{m('saveFirst')}</p>}
@@ -92,8 +96,9 @@ export function LocationImageAction({
   const m = useLocationImageText();
   const allowed =
     settings.config?.externalEnabled &&
-    verified(settings.config) &&
-    liveSessionActive(settings.live.status);
+    (verified(settings.config) || estimateAllowed(settings)) &&
+    liveSessionActive(settings.live.status) &&
+    !!settings.live.status?.imagesEnabled;
   return (
     <section
       className={styles.locationImage}
@@ -283,8 +288,9 @@ export function LocationImageDialog({
   }
   const realAllowed =
     !!settings.config?.externalEnabled &&
-    verified(settings.config) &&
-    liveSessionActive(settings.live.status);
+    (verified(settings.config) || estimateAllowed(settings)) &&
+    liveSessionActive(settings.live.status) &&
+    !!settings.live.status?.imagesEnabled;
   return (
     <Modal title={m('title')} onClose={onClose}>
       <div className={styles.workshop} data-testid="location-image-dialog">
@@ -327,8 +333,9 @@ export function LocationImageDialog({
               adventureId={adventureId}
               preparedRequest={prepared.request}
               externalOnly
+              authorization={settings.live.status}
               externalDispatchAllowed={realAllowed}
-              liveTestSessionId={settings.live.status?.sessionId}
+              liveTestSessionId={settings.live.status?.sessionId ?? undefined}
               spec={{
                 kind: 'background',
                 style: 'drawn2D',

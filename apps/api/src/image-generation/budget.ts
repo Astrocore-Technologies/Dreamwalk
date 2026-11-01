@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { fail } from '../errors';
+import { fenceGenerationAdmission } from '../generation/scope-fence';
 import type { ImagePolicy } from './contracts';
 /** Shared total+purpose ledger. Any future live text caller must use this same authorization scope. */
 export async function reserveGenerationSpend(
@@ -38,6 +39,24 @@ export async function reserveGenerationSpend(
   const scope = (
     await c.query('SELECT * FROM generation_budget_scopes WHERE id=$1 FOR UPDATE', [policy.scopeId])
   ).rows[0];
+  if (!mock) {
+    await fenceGenerationAdmission(c);
+    // A pre-existing ordinary authority prevents reviving a legacy allowance under
+    // another scope, actor or provider mode. This read takes no foreign row locks.
+    const owner = (
+      await c.query(
+        "SELECT id,scope_id,owner_id FROM live_test_sessions WHERE mode='owner' ORDER BY id LIMIT 1",
+      )
+    ).rows[0];
+    if (
+      owner &&
+      (owner.scope_id !== policy.scopeId ||
+        owner.owner_id !== actorId ||
+        policy.generationMode !== 'owner' ||
+        policy.generationAuthorizationId !== owner.id)
+    )
+      fail(409, 'GENERATION_AUTHORITY_IMMUTABLE', 'GENERATION_AUTHORITY_IMMUTABLE');
+  }
   if (scope.blocked || (!mock && !scope.approved))
     fail(409, 'GENERATION_BUDGET_BLOCKED', 'GENERATION_BUDGET_BLOCKED');
   const prior = (

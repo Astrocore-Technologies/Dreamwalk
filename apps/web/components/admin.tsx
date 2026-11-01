@@ -140,7 +140,13 @@ export function AdminPage({ path }: { path: string }) {
       />
       <div className="notice">
         <LockKeyhole size={17} />
-        {liveText(live.status?.enabled ? 'adminLive' : 'adminProfiles')}
+        {liveText(
+          live.status?.mode === 'owner'
+            ? 'adminOwner'
+            : live.status?.enabled
+              ? 'adminLive'
+              : 'adminProfiles',
+        )}
       </div>
       <LiveTestPanel />
       {path === '/admin/users' ? (
@@ -165,7 +171,8 @@ export function AdminPage({ path }: { path: string }) {
 }
 function AdminOverview() {
   const { t } = useT();
-  const liveText = useLiveText();
+  const liveText = useLiveText(),
+    live = useLiveTestStatus();
   const overview = useResource<{
     users: number;
     adventures: number;
@@ -237,7 +244,9 @@ function AdminOverview() {
             <Layers size={22} />
             <h2>{t('Стиль не равен модели')}</h2>
           </div>
-          <p className="muted">{liveText('adminProfiles')}</p>
+          <p className="muted">
+            {liveText(live.status?.mode === 'owner' ? 'ownerProfiles' : 'adminProfiles')}
+          </p>
           <Link className="text-link" href="/admin/models">
             {t('Каталог профилей')}
             <ArrowRight size={16} />

@@ -97,6 +97,7 @@ export function VisualWorkshop() {
     [liveVersion, setLiveVersion] = useState(0);
   const [editingMapId, setEditingMapId] = useState('');
   const [generationMode, setGenerationMode] = useState<'fixture' | 'external'>('fixture');
+  const generationModeChosen = useRef(false);
   const [liveStatus, setLiveStatus] = useState<LiveTestStatus | null>(null);
   const [generationState, setGenerationState] = useState<GenerationState | null>(null);
   const [generationBusy, setGenerationBusy] = useState(false),
@@ -190,6 +191,11 @@ export function VisualWorkshop() {
     setLayerY(editingLayer.y);
     setVisual(editingLayer.visual);
   }, [editingMap?.id, editingLayer?.id, editingLayer?.x, editingLayer?.y, editingLayer?.visual]);
+  const ownerReferencesUnavailable =
+    generationMode === 'external' &&
+    liveStatus?.mode === 'owner' &&
+    liveStatus.imageConfiguration?.requestProfile?.maxReferenceImages === 0;
+  const unsupportedPhoto = kind === 'character' && source === 'photo' && ownerReferencesUnavailable;
   const external = project?.provider === 'external';
   const generation =
     generationState?.projectId === project?.id &&
@@ -202,7 +208,12 @@ export function VisualWorkshop() {
   useEffect(() => {
     setVisualReview(false);
   }, [reviewKey]);
+  useEffect(() => {
+    if (liveStatus?.mode === 'owner' && !generationModeChosen.current && !project)
+      setGenerationMode('external');
+  }, [liveStatus?.mode, project]);
   function selectProject(p: Project) {
+    generationModeChosen.current = true;
     setGenerationMode(p.provider ?? 'fixture');
     setSpatialMode(p.planProvenance === 'deterministic-editable-template' ? 'manual' : 'ai');
     setGenerationState(null);
@@ -278,6 +289,10 @@ export function VisualWorkshop() {
           className={styles.form}
           onSubmit={(e) => {
             e.preventDefault();
+            if (unsupportedPhoto) {
+              setError(g('ownerReferencesUnavailable'));
+              return;
+            }
             void run<Project>(
               '/visual-authoring/projects',
               {
@@ -334,7 +349,10 @@ export function VisualWorkshop() {
               <Select
                 aria-label={g('mode')}
                 value={generationMode}
-                onChange={(e) => setGenerationMode(e.target.value as 'fixture' | 'external')}
+                onChange={(e) => {
+                  generationModeChosen.current = true;
+                  setGenerationMode(e.target.value as 'fixture' | 'external');
+                }}
               >
                 <option value="fixture">{g('fixture')}</option>
                 <option value="external">{g('external')}</option>
@@ -382,8 +400,13 @@ export function VisualWorkshop() {
                   }}
                 >
                   <option value="text">{m('text')}</option>
-                  <option value="photo">{m('photo')}</option>
+                  <option value="photo" disabled={ownerReferencesUnavailable}>
+                    {m('photo')}
+                  </option>
                 </Select>
+                {ownerReferencesUnavailable && (
+                  <p role="status">{g('ownerReferencesUnavailable')}</p>
+                )}
                 {source === 'photo' && (
                   <>
                     <UploadField
@@ -438,6 +461,7 @@ export function VisualWorkshop() {
               type="submit"
               busy={working}
               disabled={
+                unsupportedPhoto ||
                 (kind === 'location' && !adventureId) ||
                 (kind === 'character' && source === 'photo' && (!photoId || !photoConsent))
               }

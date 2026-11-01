@@ -73,13 +73,18 @@ export class SpatialPlannerService {
   async state(owner: string, id: string) {
     const p = await this.project(owner, id);
     const blockers: string[] = [];
-    const configuration = this.engine?.live.config;
-    const available = !!(
-      configuration?.enabled &&
-      configuration.ownerId === owner &&
-      configuration.expiresAt &&
-      configuration.expiresAt.getTime() > Date.now()
-    );
+    let available = false;
+    if (this.engine?.live.config.enabled) {
+      try {
+        const authorization = await this.engine.live.status(owner);
+        available = authorization.enabled && authorization.state === 'active';
+      } catch (error) {
+        const code = (error as { getResponse?: () => { code?: string } })?.getResponse?.().code;
+        if (!['FORBIDDEN', 'LIVE_TEST_DISABLED', 'GENERATION_DISABLED'].includes(code ?? ''))
+          throw error;
+      }
+    }
+    const profile = this.engine?.live.textProfile() ?? LIVE_TEXT;
     if (!available) blockers.push('SPATIAL_PLANNER_UNAVAILABLE');
     if (p.plan_origin !== 'ai-pending') blockers.push('SPATIAL_MODE_NOT_PENDING');
     if (p.status !== 'concept') blockers.push('STATE_CONFLICT');
@@ -101,7 +106,7 @@ export class SpatialPlannerService {
       [id, owner],
     );
     const rows = await this.db.query(
-      'SELECT * FROM live_authoring_text_jobs WHERE project_id=$1 AND actor_id=$2 ORDER BY created_at DESC LIMIT 20',
+      'SELECT j.*,r.upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.project_id=$1 AND j.actor_id=$2 ORDER BY j.created_at DESC LIMIT 20',
       [id, owner],
     );
     const jobs = rows.map((row) => {
@@ -117,7 +122,7 @@ export class SpatialPlannerService {
         status,
         canCancel: ['queued', 'dispatched', 'generated'].includes(status),
         canRetry: false,
-        upperMicros: LIVE_TEXT.upperMicros,
+        upperMicros: Number(row.upper_micros),
         actualMicros: row.actual_micros === null ? null : Number(row.actual_micros),
         costStatus:
           status === 'unknown' ? 'unknown' : row.actual_micros !== null ? 'settled' : 'reserved',
@@ -172,9 +177,9 @@ export class SpatialPlannerService {
     return {
       available,
       manualDispatchOnly: true,
-      model: LIVE_TEXT.model,
-      maxOutputTokens: LIVE_TEXT.maxOutputTokens,
-      upperMicros: LIVE_TEXT.upperMicros,
+      model: profile.model,
+      maxOutputTokens: profile.maxOutputTokens,
+      upperMicros: profile.upperMicros,
       quotes: quotes.map((q) => ({ ...q, upperMicros: Number(q.upperMicros) })),
       jobs,
       currentProposal,

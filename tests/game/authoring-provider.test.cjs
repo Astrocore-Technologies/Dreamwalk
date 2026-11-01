@@ -19,6 +19,73 @@ const request = {
   context: { brief: 'Synthetic fixture' },
   signal: new AbortController().signal,
 };
+test('owner text profile pins explicit model, current pricing and conservative usage without a test session', async () => {
+  const now = Date.now();
+  const profile = {
+    model: 'synthetic-owner-model',
+    contextTokens: 12000,
+    maxOutputTokens: 64,
+    maxInputBytes: 4096,
+    inputMicrosPerMillion: 200000,
+    outputMicrosPerMillion: 600000,
+    upperMicros: 2439,
+    pricing: {
+      reviewedAt: new Date(now - 1000).toISOString(),
+      validUntil: new Date(now + 60000).toISOString(),
+    },
+  };
+  let calls = 0;
+  const transport = async (url, init) => {
+    calls++;
+    assert.equal(url, 'https://api.openai.com/v1/responses');
+    const body = JSON.parse(init.body);
+    assert.equal(body.model, 'synthetic-owner-model');
+    assert.equal(body.max_output_tokens, 64);
+    assert.equal(body.service_tier, 'default');
+    return new Response(
+      JSON.stringify({
+        id: 'synthetic-owner-response',
+        status: 'completed',
+        service_tier: 'default',
+        usage: { input_tokens: 50, output_tokens: 10 },
+        output: [
+          { type: 'message', content: [{ type: 'output_text', text: '{"title":"Synthetic"}' }] },
+        ],
+      }),
+    );
+  };
+  const provider = new BoundedAuthoringTextProvider(
+    definition,
+    'synthetic-owner-key',
+    transport,
+    profile,
+  );
+  profile.model = 'mutated-after-construction';
+  const result = await provider.generate(request);
+  assert.equal(result.usage.costMicros, 16);
+  assert.deepEqual(result.proposal, { title: 'Synthetic' });
+  assert.equal(calls, 1);
+  const stale = new BoundedAuthoringTextProvider(definition, 'synthetic-owner-key', transport, {
+    ...profile,
+    pricing: {
+      reviewedAt: new Date(now - 2000).toISOString(),
+      validUntil: new Date(now - 1).toISOString(),
+    },
+  });
+  await assert.rejects(
+    stale.generate(request),
+    (e) => e.code === 'GENERATION_PRICING_EXPIRED' && !e.uncertain,
+  );
+  assert.equal(calls, 1);
+  assert.throws(
+    () =>
+      new BoundedAuthoringTextProvider(definition, 'synthetic-owner-key', transport, {
+        ...profile,
+        upperMicros: 1,
+      }),
+    /INVALID_AUTHORING_PROVIDER_PROFILE/,
+  );
+});
 test('private adapter pins model/endpoint/caps and retains known usage for invalid JSON', async () => {
   let calls = 0;
   const provider = new BoundedAuthoringTextProvider(

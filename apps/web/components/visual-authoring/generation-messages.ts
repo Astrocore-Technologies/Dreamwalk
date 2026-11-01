@@ -1,6 +1,38 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const generationMessages = {
+  ownerReferencesUnavailable: [
+    'Настроенный профиль изображений принимает только текст. Концепты по фото и части пакета с изображениями-референсами недоступны. Референсы не удаляются, образцы не подставляются.',
+    'The configured image profile accepts text only. Photo concepts and reference-dependent package parts are unavailable. References are not removed and samples are not substituted.',
+    'Налаштований профіль зображень приймає лише текст. Концепти за фото й частини пакета із зображеннями-референсами недоступні. Референси не видаляються, приклади не підставляються.',
+  ],
+  ownerReferenceStage: [
+    'Этой стадии нужен референс, который текущий профиль не поддерживает. Можно выбрать разрешённую готовую версию; платный запрос недоступен.',
+    'This stage needs a reference that the current profile does not support. A permitted existing revision can be selected; a paid request is unavailable.',
+    'Цей етап потребує референсу, який поточний профіль не підтримує. Можна вибрати дозволену готову версію; платний запит недоступний.',
+  ],
+
+  ownerBlocked: [
+    'Генерация недоступна. Проверь конфигурацию сервера, разрешение владельца и остаток бюджета. Образцы не подставляются автоматически.',
+    'Generation is unavailable. Check server configuration, owner authorization and remaining budget. Samples are never substituted automatically.',
+    'Генерація недоступна. Перевір конфігурацію сервера, дозвіл власника й залишок бюджету. Приклади не підставляються автоматично.',
+  ],
+  estimateNotice: [
+    'Оценка и резерв не ограничивают счёт провайдера; он может быть выше.',
+    'The estimate and reserve do not cap the provider invoice; it may be higher.',
+    'Оцінка й резерв не обмежують рахунок провайдера; він може бути вищим.',
+  ],
+  estimateRiskConsent: [
+    'Отдельно принимаю риск: оценка и резерв не ограничивают счёт провайдера, он может быть выше. Неизвестное списание остановит дальнейшие запросы.',
+    'I separately accept the risk: the estimate and reserve do not cap the provider invoice, which may be higher. An unknown charge will stop further requests.',
+    'Окремо приймаю ризик: оцінка й резерв не обмежують рахунок провайдера, він може бути вищим. Невідоме списання зупинить подальші запити.',
+  ],
+  estimateRequestConsent: [
+    'У меня есть права на референсы. Разрешаю только этот внешний запрос и передачу выбранного приватного фото; автоматического повтора не будет.',
+    'I have rights to the references. I authorize only this external request and transfer of the selected private photo; no automatic retry will occur.',
+    'Маю права на референси. Дозволяю лише цей зовнішній запит і передавання вибраного приватного фото; автоматичного повтору не буде.',
+  ],
+
   httpStatus: ['Статус HTTP', 'HTTP status', 'Стан HTTP'],
   planningEstimate: [
     'Плановая оценка, не потолок счёта',

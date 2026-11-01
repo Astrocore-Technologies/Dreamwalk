@@ -151,7 +151,7 @@ async function fixtures(page: Page, mode: 'success' | 'unknown' | 'estimate' = '
       configuration,
     };
   };
-  await page.route('**/api/v1/live-test/**', async (route) => {
+  await page.route(/\/api\/v1\/(?:generation|live-test)\//, async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith('/status') && route.request().method() === 'GET')
       return route.fulfill({ json: live });
@@ -424,7 +424,7 @@ test('synthetic world requests require individual consent and stale phase fences
   await page.route(`**/api/v1/game/campaigns/${id}/snapshot`, (route) =>
     route.fulfill({ json: envelope }),
   );
-  await page.route('**/api/v1/live-test/**', async (route) => {
+  await page.route(/\/api\/v1\/(?:generation|live-test)\//, async (route) => {
     const path = new URL(route.request().url()).pathname;
     if (path.endsWith('/status')) return route.fulfill({ json: live });
     if (path.endsWith('/requests') && route.request().method() === 'GET')

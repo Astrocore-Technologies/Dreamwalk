@@ -1,6 +1,12 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const spatialMessages = {
+  ownerUnavailable: [
+    'Текстовое планирование недоступно. Проверь серверную модель, разрешение владельца и доступный бюджет.',
+    'Text planning is unavailable. Check the server model, owner authorization and available budget.',
+    'Текстове планування недоступне. Перевір серверну модель, дозвіл власника й доступний бюджет.',
+  ],
+
   mapToEdit: ['Карта для редактирования', 'Map to edit', 'Карта для редагування'],
   placeholderPreview: [
     'Это просмотр геометрии с временными значками, а не сгенерированная иллюстрация. После применения можно пройти по плану в песочнице.',

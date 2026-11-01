@@ -212,7 +212,7 @@ async function fixtures(page: Page, mode: Mode = 'success') {
     canApply: dispatched && !applied && ['success', 'stale', 'response-lost'].includes(mode),
     blockers: [],
   });
-  await page.route('**/api/v1/live-test/**', async (route) => {
+  await page.route(/\/api\/v1\/(?:generation|live-test)\//, async (route) => {
     if (
       new URL(route.request().url()).pathname.endsWith('/status') &&
       route.request().method() === 'GET'

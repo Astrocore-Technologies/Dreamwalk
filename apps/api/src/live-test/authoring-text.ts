@@ -6,8 +6,7 @@ import { fail } from '../errors';
 import { digest } from '../ai/context';
 import { ProviderFailure } from '../ai/types';
 import { reserveGenerationSpend } from '../image-generation/budget';
-import { LIVE_TEXT } from './config';
-import { LiveTestService } from './service';
+import { GenerationAuthority } from '../generation/service';
 import {
   BoundedAuthoringTextProvider,
   type AuthoringTextDefinition,
@@ -42,6 +41,7 @@ interface AuthoringJob extends QueryResultRow {
   context: unknown;
   provider_version: string;
   reservation_id: string;
+  budget_upper_micros: string;
   status: string;
   proposal: unknown;
   result: unknown;
@@ -59,7 +59,7 @@ const safeCode = (error: unknown, fallback: string) =>
 export class AuthoringTextEngine {
   constructor(
     readonly db: Db,
-    readonly live: LiveTestService,
+    readonly live: GenerationAuthority,
     readonly provider: AuthoringTextProvider,
     readonly definition: AuthoringTextDefinition,
     readonly timeoutMs = 60000,
@@ -90,7 +90,7 @@ export class AuthoringTextEngine {
       status,
       canCancel: !row.cancel_requested && ['queued', 'dispatched', 'generated'].includes(status),
       canRetry: false,
-      upperMicros: LIVE_TEXT.upperMicros,
+      upperMicros: Number(row.budget_upper_micros),
       actualMicros: row.actual_micros === null ? null : Number(row.actual_micros),
       costStatus:
         status === 'unknown' ? 'unknown' : row.actual_micros !== null ? 'settled' : 'reserved',
@@ -105,10 +105,10 @@ export class AuthoringTextEngine {
   private quoteDto(row: QueryResultRow) {
     return {
       id: row.id,
-      upperMicros: LIVE_TEXT.upperMicros,
+      upperMicros: Number(row.upper_micros),
       expiresAt: new Date(row.expires_at).toISOString(),
       requiresConsent: true,
-      model: LIVE_TEXT.model,
+      model: this.live.textProfile().model,
       costEvidence: 'conservative_configured_rates' as const,
     };
   }
@@ -117,7 +117,7 @@ export class AuthoringTextEngine {
     input: AuthoringTextBinding & { operationId: string; context: unknown },
     validateFence: AuthoringTextFence,
   ) {
-    this.live.requireOwner(ownerId);
+    await this.live.requireOwner(ownerId);
     z.uuid().parse(input.operationId);
     const binding = bindingSchema.parse(
       Object.fromEntries(
@@ -144,7 +144,9 @@ export class AuthoringTextEngine {
         return this.quoteDto(prior);
       }
       const id = randomUUID(),
-        expiresAt = new Date(Math.min(Date.now() + 60000, this.live.config.expiresAt!.getTime()));
+        expiresAt = new Date(
+          Math.min(Date.now() + 60000, this.live.config.expiresAt?.getTime() ?? Infinity),
+        );
       const row = (
         await c.query(
           'INSERT INTO live_authoring_text_quotes(id,actor_id,session_id,project_id,operation_id,request_hash,project_revision,source_hash,readset_hash,context_hash,context,provider_version,upper_micros,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14) RETURNING *',
@@ -161,7 +163,7 @@ export class AuthoringTextEngine {
             digest(context),
             JSON.stringify(context),
             this.provider.version,
-            LIVE_TEXT.upperMicros,
+            this.live.textUpperMicros(),
             expiresAt,
           ],
         )
@@ -174,7 +176,7 @@ export class AuthoringTextEngine {
     input: { quoteId: string; operationId: string; consent: true },
     validateFence: AuthoringTextFence,
   ) {
-    this.live.requireOwner(ownerId);
+    await this.live.requireOwner(ownerId);
     const value = z
       .object({ quoteId: z.uuid(), operationId: z.uuid(), consent: z.literal(true) })
       .strict()
@@ -183,7 +185,7 @@ export class AuthoringTextEngine {
     return this.db.tx(async (c) => {
       const previous = (
         await c.query<AuthoringJob>(
-          'SELECT * FROM live_authoring_text_jobs WHERE actor_id=$1 AND operation_id=$2',
+          'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.operation_id=$2',
           [ownerId, value.operationId],
         )
       ).rows[0];
@@ -204,7 +206,7 @@ export class AuthoringTextEngine {
       // A concurrent identical request may have committed while this transaction waited for the owner lock.
       const serializedPrevious = (
         await c.query<AuthoringJob>(
-          'SELECT * FROM live_authoring_text_jobs WHERE actor_id=$1 AND operation_id=$2',
+          'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.operation_id=$2',
           [ownerId, value.operationId],
         )
       ).rows[0];
@@ -236,7 +238,7 @@ export class AuthoringTextEngine {
         ownerId,
         'text',
         `manual-authoring-text:${id}`,
-        LIVE_TEXT.upperMicros,
+        this.live.textUpperMicros(),
       );
       const job = (
         await c.query<AuthoringJob>(
@@ -259,15 +261,15 @@ export class AuthoringTextEngine {
           ],
         )
       ).rows[0];
-      return this.dto(job);
+      return this.dto({ ...job, budget_upper_micros: String(quote.upper_micros) });
     });
   }
   async get(ownerId: string, id: string) {
-    this.live.requireOwner(ownerId);
+    await this.live.requireOwner(ownerId);
     z.uuid().parse(id);
     const row = (
       await this.db.query<AuthoringJob>(
-        'SELECT * FROM live_authoring_text_jobs WHERE id=$1 AND actor_id=$2',
+        'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
         [id, ownerId],
       )
     )[0];
@@ -275,11 +277,11 @@ export class AuthoringTextEngine {
     return this.dto(row);
   }
   async list(ownerId: string, projectId: string) {
-    this.live.requireOwner(ownerId);
+    await this.live.requireOwner(ownerId);
     z.uuid().parse(projectId);
     return (
       await this.db.query<AuthoringJob>(
-        'SELECT * FROM live_authoring_text_jobs WHERE actor_id=$1 AND project_id=$2 ORDER BY created_at DESC LIMIT 20',
+        'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.project_id=$2 ORDER BY j.created_at DESC LIMIT 20',
         [ownerId, projectId],
       )
     ).map((j) => this.dto(j));
@@ -294,7 +296,7 @@ export class AuthoringTextEngine {
       const actual = known ? 0 : null;
       const code = safeCode(error, 'AUTHORING_OUTCOME_UNKNOWN');
       // Accounting locks precede the job lock, matching dispatch/cancel ordering.
-      await c.query('SELECT id FROM live_test_sessions WHERE id=$1 FOR UPDATE', [row.session_id]);
+      await this.live.lockAuthorization(c, row.session_id);
       const job = (
         await c.query<AuthoringJob>(
           'SELECT * FROM live_authoring_text_jobs WHERE id=$1 FOR UPDATE',
@@ -325,17 +327,17 @@ export class AuthoringTextEngine {
     });
   }
   async cancel(ownerId: string, id: string) {
-    this.live.requireOwner(ownerId);
+    await this.live.requireOwner(ownerId);
     z.uuid().parse(id);
     const row = (
       await this.db.query<AuthoringJob>(
-        'SELECT * FROM live_authoring_text_jobs WHERE id=$1 AND actor_id=$2',
+        'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
         [id, ownerId],
       )
     )[0];
     if (!row) fail(403, 'FORBIDDEN', 'FORBIDDEN');
     await this.db.tx(async (c) => {
-      await c.query('SELECT id FROM live_test_sessions WHERE id=$1 FOR UPDATE', [row.session_id]);
+      await this.live.lockAuthorization(c, row.session_id);
       const job = (
         await c.query<AuthoringJob>(
           'SELECT * FROM live_authoring_text_jobs WHERE id=$1 FOR UPDATE',
@@ -364,14 +366,14 @@ export class AuthoringTextEngine {
     validateFence: AuthoringTextFence,
     commit: AuthoringTextCommit,
   ) {
-    this.live.requireOwner(ownerId);
+    await this.live.requireOwner(ownerId);
     z.uuid().parse(id);
     let claimed: AuthoringJob | null = null;
     try {
       claimed = await this.db.tx(async (c) => {
         const row = (
           await c.query<AuthoringJob>(
-            'SELECT * FROM live_authoring_text_jobs WHERE id=$1 AND actor_id=$2',
+            'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
             [id, ownerId],
           )
         ).rows[0];
@@ -380,7 +382,7 @@ export class AuthoringTextEngine {
         await this.lockSource(c, ownerId);
         const serialized = (
           await c.query<AuthoringJob>(
-            'SELECT * FROM live_authoring_text_jobs WHERE id=$1 AND actor_id=$2',
+            'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
             [id, ownerId],
           )
         ).rows[0];
@@ -513,7 +515,7 @@ export class AuthoringTextEngine {
   ) {
     const current = (
       await this.db.query<AuthoringJob>(
-        'SELECT * FROM live_authoring_text_jobs WHERE id=$1 AND actor_id=$2',
+        'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
         [id, ownerId],
       )
     )[0];
@@ -566,13 +568,20 @@ export class AuthoringTextEngine {
 }
 export function createAuthoringTextEngine(
   db: Db,
-  live: LiveTestService,
+  live: GenerationAuthority,
   definition: AuthoringTextDefinition,
 ) {
   return new AuthoringTextEngine(
     db,
     live,
-    new BoundedAuthoringTextProvider(definition, process.env.NPC_AI_API_KEY),
+    new BoundedAuthoringTextProvider(
+      definition,
+      live.mode === 'owner'
+        ? (process.env.NPC_AI_API_KEY ?? process.env.OPENAI_API_KEY)
+        : process.env.NPC_AI_API_KEY,
+      fetch,
+      live.textProfile(),
+    ),
     definition,
   );
 }

@@ -3,6 +3,9 @@ import { spatialPlanDefinition } from './visual-authoring/spatial-plan';
 import { createAuthoringTextEngine } from './live-test/authoring-text';
 import { LiveTestController } from './live-test/controller';
 import { LiveTestService } from './live-test/service';
+import { GenerationAuthority } from './generation/service';
+import { readOwnerGenerationConfig } from './generation/config';
+import { readLiveTestConfig } from './live-test/config';
 import { VisualAuthoringController } from './visual-authoring/controller';
 import { VisualAuthoringService } from './visual-authoring/service';
 import { ImageGenerationService } from './image-generation/service';
@@ -41,7 +44,12 @@ class Health {
     return {
       status: 'ok',
       mode: 'platform',
-      aiProvider: process.env.LIVE_TEST_ENABLED === 'true' ? 'openai-manual' : 'mock',
+      aiProvider:
+        process.env.GENERATION_MODE === 'owner'
+          ? 'owner-configured'
+          : process.env.LIVE_TEST_ENABLED === 'true'
+            ? 'openai-manual'
+            : 'mock',
       paymentsEnabled: false,
     };
   }
@@ -64,13 +72,24 @@ class Health {
   ],
   providers: [
     Db,
-    LiveTestService,
+    {
+      provide: GenerationAuthority,
+      inject: [Db],
+      useFactory: (db: Db) => {
+        const owner = readOwnerGenerationConfig(process.env);
+        if (owner.mode === 'owner' && process.env.LIVE_TEST_ENABLED === 'true')
+          throw new Error('GENERATION_MODES_CONFLICT');
+        return new GenerationAuthority(db, owner.mode === 'owner' ? owner : readLiveTestConfig());
+      },
+    },
+    // Compatibility token only; ordinary mode uses the generic authority above.
+    { provide: LiveTestService, useExisting: GenerationAuthority },
     VisualAuthoringService,
     SpatialPlannerService,
     {
       provide: 'AUTHORING_TEXT_ENGINE',
-      inject: [Db, LiveTestService],
-      useFactory: (db: Db, live: LiveTestService) =>
+      inject: [Db, GenerationAuthority],
+      useFactory: (db: Db, live: GenerationAuthority) =>
         createAuthoringTextEngine(db, live, spatialPlanDefinition),
     },
     Auth,
@@ -89,7 +108,7 @@ async function bootstrap() {
   app
     .get(ImageGenerationService)
     .setLiveAuthorizer((client, owner, sessionId) =>
-      app.get(LiveTestService).authorizeImage(client, owner, sessionId),
+      app.get(GenerationAuthority).authorizeImage(client, owner, sessionId),
     );
   app.use(json({ limit: '256kb' }));
   app.useGlobalFilters(new Errors());

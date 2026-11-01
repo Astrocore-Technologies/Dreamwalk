@@ -1,7 +1,18 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import { api, errorMessage, useResource } from '@/lib/client';
+import { api, ApiError, errorMessage, useResource } from '@/lib/client';
 import { Button, ErrorBox, Field, Input, Select, Textarea } from '@/components/ui';
+import { LiveTestPanel } from '../live-test/live-test-panel';
+import {
+  generationAuthorizationId,
+  generationRemaining,
+  liveSessionActive,
+  type LiveTestStatus,
+} from '../live-test/types';
+import {
+  ownerImageQuoteMatches,
+  type ImageConfiguration,
+} from '../visual-authoring/generation-types';
 import type { ArtRevision, ArtSpec } from './types';
 import { artPreviewUrl } from './types';
 import { useAssetText } from './messages';
@@ -43,6 +54,9 @@ type Job = {
   canCancel: boolean;
 };
 type Quote = {
+  generationMode?: 'owner' | 'manual';
+  estimateRiskConsentRequired?: boolean;
+  providerEnforcesQuotedCap?: boolean;
   id: string;
   mode: 'mock' | 'external';
   upperMicros: number | null;
@@ -93,6 +107,7 @@ function GeneratedRevision({
 export function ImageGeneration({
   adventureId,
   liveTestSessionId,
+  authorization,
   preparedRequest,
   externalOnly = false,
   externalDispatchAllowed = true,
@@ -102,6 +117,7 @@ export function ImageGeneration({
 }: {
   adventureId: string;
   liveTestSessionId?: string;
+  authorization?: LiveTestStatus | null;
   preparedRequest?: PreparedStudioLocationRequest;
   externalOnly?: boolean;
   externalDispatchAllowed?: boolean;
@@ -111,13 +127,14 @@ export function ImageGeneration({
 }) {
   const a = useAssetText(),
     g = useImageText();
-  const config = useResource<{
-    mockAvailable: boolean;
-    externalEnabled: boolean;
-    externalBlockReasons: string[];
-    verifiedUpperMicros: number | null;
-    requestProfile?: { model: string; size: string; quality: string; outputs: number };
-  }>('/image-generation/config');
+  const config = useResource<ImageConfiguration & { mockAvailable: boolean }>(
+    '/image-generation/config',
+  );
+  const [managedAuthorization, setManagedAuthorization] = useState<LiveTestStatus | null>(null);
+  const grant = authorization ?? managedAuthorization,
+    authorizationId = generationAuthorizationId(grant) ?? liveTestSessionId,
+    ownerMode = grant?.mode === 'owner';
+  const modeChosen = useRef(false);
   const library = useResource<ArtRevision[]>('/asset-library');
   const [mode, setMode] = useState<'mock' | 'external'>(externalOnly ? 'external' : 'mock');
   const [prompt, setPrompt] = useState(''),
@@ -131,6 +148,8 @@ export function ImageGeneration({
     [attested, setAttested] = useState(false),
     [references, setReferences] = useState<string[]>([]),
     [consent, setConsent] = useState(false),
+    [estimateRiskConsent, setEstimateRiskConsent] = useState(false),
+    [dispatchUncertain, setDispatchUncertain] = useState(false),
     [quote, setQuote] = useState<Quote | null>(null),
     [matches, setMatches] = useState<ArtRevision[]>([]),
     [busy, setBusy] = useState(false),
@@ -145,6 +164,10 @@ export function ImageGeneration({
     cancelOperations = useRef(new Map<string, string>()),
     callbacks = useRef({ onAdmitted });
   callbacks.current = { onAdmitted };
+  const referenceLimit =
+    mode === 'external'
+      ? Math.min(2, Math.max(0, config.data?.requestProfile?.maxReferenceImages ?? 2))
+      : 2;
   const supported =
     ['background', 'sprite', 'portrait', 'object'].includes(spec.kind) &&
     ['top-down', 'portrait', 'unrestricted'].includes(spec.camera);
@@ -166,9 +189,33 @@ export function ImageGeneration({
       attested: true as const,
     },
     mode: externalOnly ? ('external' as const) : mode,
-    ...(mode === 'external' && liveTestSessionId ? { liveTestSessionId } : {}),
+    ...(mode === 'external' && authorizationId ? { liveTestSessionId: authorizationId } : {}),
   };
-  const fingerprint = JSON.stringify({ request, attested, externalDispatchAllowed });
+  const outstandingExternalJob = jobs.some(
+    (job) =>
+      job.mode === 'external' &&
+      ['queued', 'dispatched', 'unknown', 'generated'].includes(job.status),
+  );
+  const dispatchAllowed =
+    !outstandingExternalJob &&
+    externalDispatchAllowed &&
+    (!ownerMode || (!!grant?.imagesEnabled && liveSessionActive(grant, now)));
+  const fingerprint = JSON.stringify({
+    request,
+    attested,
+    externalDispatchAllowed: dispatchAllowed,
+    authorizationMode: grant?.mode,
+    costConfiguration: config.data,
+  });
+  const estimatedQuote = ownerMode && ownerImageQuoteMatches(quote, config.data);
+  const quoteBudgetAvailable =
+    !ownerMode ||
+    (quote !== null &&
+      (estimatedQuote ? (quote.reserveMicros ?? Infinity) : (quote.upperMicros ?? Infinity)) <=
+        generationRemaining(grant, 'image'));
+  useEffect(() => {
+    if (ownerMode && !modeChosen.current) setMode('external');
+  }, [ownerMode]);
   useEffect(() => {
     if (externalOnly) setMode('external');
   }, [externalOnly]);
@@ -188,6 +235,7 @@ export function ImageGeneration({
     quotedFingerprint.current = null;
     setMatches([]);
     setConsent(false);
+    setEstimateRiskConsent(false);
     operation.current = null;
     setBusy(false);
   }, [fingerprint]);
@@ -256,17 +304,19 @@ export function ImageGeneration({
     !!title.trim() &&
     !!license.trim() &&
     attested &&
+    references.length <= referenceLimit &&
     (mode === 'mock'
       ? config.data?.mockAvailable
-      : config.data?.externalEnabled && !!liveTestSessionId);
+      : config.data?.externalEnabled && !!authorizationId);
   async function prepare(declineReuse = false) {
-    if (!externalDispatchAllowed && request.mode === 'external') return;
+    if ((!dispatchAllowed || dispatchUncertain) && request.mode === 'external') return;
     if (!valid || busy) return;
     const generation = ++epoch.current;
     setBusy(true);
     setError('');
     setQuote(null);
     setConsent(false);
+    setEstimateRiskConsent(false);
     operation.current = null;
     try {
       const result = await api<QuoteResponse>('/image-generation/quotes', {
@@ -278,11 +328,13 @@ export function ImageGeneration({
         if (
           result.decision === 'quote' &&
           result.quote?.mode === mode &&
-          result.quote.upperMicros !== null &&
-          Number.isSafeInteger(result.quote.upperMicros) &&
-          (mode === 'mock'
-            ? result.quote.upperMicros === 0
-            : result.quote.upperMicros === config.data?.verifiedUpperMicros)
+          ((result.quote.upperMicros !== null &&
+            Number.isSafeInteger(result.quote.upperMicros) &&
+            result.quote.upperMicros >= 0 &&
+            (mode === 'mock'
+              ? result.quote.upperMicros === 0
+              : result.quote.upperMicros === config.data?.verifiedUpperMicros)) ||
+            (ownerMode && ownerImageQuoteMatches(result.quote, config.data)))
         ) {
           quotedFingerprint.current = fingerprint;
           setQuote(result.quote);
@@ -295,14 +347,23 @@ export function ImageGeneration({
     }
   }
   async function run() {
-    if (!externalDispatchAllowed && request.mode === 'external') return;
+    if ((!dispatchAllowed || dispatchUncertain) && request.mode === 'external') return;
     if (
       quotedFingerprint.current !== fingerprint ||
       quote?.mode !== mode ||
-      quote.upperMicros === null
+      (quote.upperMicros === null && (!estimatedQuote || !estimateRiskConsent))
     )
       return;
-    if (!valid || !quote || !consent || busy || Date.parse(quote.expiresAt) <= Date.now()) return;
+    if (
+      !valid ||
+      !quoteBudgetAvailable ||
+      !quote ||
+      !consent ||
+      busy ||
+      !Number.isFinite(Date.parse(quote.expiresAt)) ||
+      Date.parse(quote.expiresAt) <= Date.now()
+    )
+      return;
     const generation = epoch.current;
     if (operation.current?.quoteId !== quote.id)
       operation.current = { quoteId: quote.id, id: crypto.randomUUID() };
@@ -315,6 +376,7 @@ export function ImageGeneration({
           quoteId: quote.id,
           operationId: operation.current.id,
           consent: true,
+          ...(estimatedQuote ? { estimateRiskConsent: true } : {}),
         }),
       });
       if (generation === epoch.current) {
@@ -324,7 +386,10 @@ export function ImageGeneration({
         operation.current = null;
       }
     } catch (err) {
-      if (generation === epoch.current) setError(errorMessage(err));
+      if (generation === epoch.current) {
+        setError(errorMessage(err));
+        if (!(err instanceof ApiError) || !err.status) setDispatchUncertain(true);
+      }
     } finally {
       if (generation === epoch.current) setBusy(false);
     }
@@ -352,16 +417,20 @@ export function ImageGeneration({
   return (
     <section className={styles.root} aria-label={g('title')}>
       <h3>{g('title')}</h3>
+      {!externalOnly && <LiveTestPanel onStatusChange={setManagedAuthorization} />}
       {!externalOnly && (
         <Field label={g('mode')}>
           <Select
             aria-label={g('mode')}
             value={mode}
             disabled={busy}
-            onChange={(event) => setMode(event.target.value as 'mock' | 'external')}
+            onChange={(event) => {
+              modeChosen.current = true;
+              setMode(event.target.value as 'mock' | 'external');
+            }}
           >
             <option value="mock">{g('mockMode')}</option>
-            <option value="external" disabled={!config.data?.externalEnabled || !liveTestSessionId}>
+            <option value="external" disabled={!config.data?.externalEnabled || !authorizationId}>
               {g('externalMode')}
             </option>
           </Select>
@@ -370,10 +439,16 @@ export function ImageGeneration({
       {!externalOnly && mode === 'mock' && <p>{g('mock')}</p>}
       {!config.data?.externalEnabled && (
         <div className={styles.notice}>
-          <p>{g('unavailable')}</p>
+          <p>
+            {g(
+              ownerMode || config.data?.generationMode === 'owner'
+                ? 'ownerUnavailable'
+                : 'unavailable',
+            )}
+          </p>
           <details>
             <summary>{g('diagnostics')}</summary>
-            {config.data?.externalBlockReasons.map((reason) => (
+            {config.data?.externalBlockReasons?.map((reason) => (
               <p key={reason}>
                 <code>{reason}</code>
               </p>
@@ -394,7 +469,13 @@ export function ImageGeneration({
           void prepare();
         }}
       >
-        <fieldset disabled={busy || !config.data?.mockAvailable || !supported}>
+        <fieldset
+          disabled={
+            busy ||
+            !supported ||
+            (mode === 'mock' ? !config.data?.mockAvailable : !config.data?.externalEnabled)
+          }
+        >
           <Field label={a('name')}>
             <Input
               value={title}
@@ -450,7 +531,13 @@ export function ImageGeneration({
           </label>
           {!preparedRequest && (
             <fieldset>
-              <legend>{g('references')}</legend>
+              <legend>
+                {g(
+                  referenceLimit === 0 && mode === 'external'
+                    ? 'referencesUnavailable'
+                    : 'references',
+                )}
+              </legend>
               <p>{g('derivative')}</p>
               {library.data
                 ?.filter((revision) => revision.owned)
@@ -459,7 +546,9 @@ export function ImageGeneration({
                     <input
                       type="checkbox"
                       checked={references.includes(revision.id)}
-                      disabled={!references.includes(revision.id) && references.length >= 2}
+                      disabled={
+                        !references.includes(revision.id) && references.length >= referenceLimit
+                      }
                       onChange={(event) => {
                         setReferences((current) =>
                           event.target.checked
@@ -482,7 +571,7 @@ export function ImageGeneration({
             />
             {g('rights')}
           </label>
-          <Button type="submit" disabled={!valid || !externalDispatchAllowed}>
+          <Button type="submit" disabled={!valid || !dispatchAllowed || dispatchUncertain}>
             {g('quote')}
           </Button>
         </fieldset>
@@ -504,14 +593,15 @@ export function ImageGeneration({
             <Button
               type="button"
               variant="secondary"
-              disabled={!valid || busy}
+              disabled={!valid || busy || !dispatchAllowed || dispatchUncertain}
               onClick={() => void prepare(true)}
             >
-              {g('decline')}
+              {g(ownerMode ? 'declineExternal' : 'decline')}
             </Button>
           )}
         </div>
       )}
+      {dispatchUncertain && <p role="status">{g('unknown')}</p>}
       {quote && (
         <div role="status">
           <p>
@@ -527,27 +617,46 @@ export function ImageGeneration({
               {g('estimateNotice')}
             </p>
           )}
-          {quote.upperMicros === null ? (
+          {quote.upperMicros === null && !estimatedQuote ? (
             <p>{g('estimatePending')}</p>
-          ) : Date.parse(quote.expiresAt) <= now ? (
+          ) : !Number.isFinite(Date.parse(quote.expiresAt)) ||
+            Date.parse(quote.expiresAt) <= now ? (
             <p>{g('expires')}</p>
           ) : (
             <>
+              {estimatedQuote && (
+                <label>
+                  <input
+                    type="checkbox"
+                    checked={estimateRiskConsent}
+                    disabled={busy || dispatchUncertain || !dispatchAllowed}
+                    onChange={(event) => setEstimateRiskConsent(event.target.checked)}
+                  />
+                  {g('estimateRiskConsent')}
+                </label>
+              )}
               <label>
                 <input
                   type="checkbox"
+                  disabled={busy || dispatchUncertain || !dispatchAllowed}
                   checked={consent}
                   onChange={(event) => setConsent(event.target.checked)}
                 />
-                {g('consent')}
+                {g(ownerMode ? 'externalConsent' : 'consent')}
               </label>
               <Button
                 type="button"
                 busy={busy}
-                disabled={!consent || !externalDispatchAllowed}
+                disabled={
+                  !consent ||
+                  !quoteBudgetAvailable ||
+                  !dispatchAllowed ||
+                  dispatchUncertain ||
+                  (estimatedQuote && !estimateRiskConsent)
+                }
                 onClick={() => void run()}
               >
-                {g('run')}
+                {g(ownerMode ? 'runExternal' : 'run')}
               </Button>
             </>
           )}

@@ -57,6 +57,13 @@ import { ownedCharacterPackage } from './character-package';
 import { visualDigest as digest } from './fingerprint';
 import { authorizeSpatialPlan, spatialReadset, type SpatialAuthority } from './spatial-plan';
 const previewActor = 'visual-preview-player';
+function stageRequestDigest(input: GenerationRequest) {
+  // The authority pins this derived ID after the stage request is stored. It is
+  // validated independently at every financial boundary, not authored content.
+  const content = { ...input };
+  delete content.generationAuthorizationId;
+  return digest(content);
+}
 type Project = {
   id: string;
   owner_id: string;
@@ -126,7 +133,7 @@ export class VisualAuthoringService {
       context.expectedProjectRevision !== p.revision ||
       context.sourceHash !== p.source_hash ||
       context.stage !== row.stage ||
-      digest(input) !== digest(row.request)
+      stageRequestDigest(input) !== stageRequestDigest(row.request)
     )
       fail(409, 'MEDIA_CONTEXT_STALE', 'MEDIA_CONTEXT_STALE');
     if (
@@ -268,6 +275,7 @@ export class VisualAuthoringService {
       quoteId: b.quoteId,
       operationId: b.operationId,
       consent: true,
+      ...(b.estimateRiskConsent ? { estimateRiskConsent: true } : {}),
     });
     await this.db.query(
       `UPDATE visual_authoring_stage_items SET job_id=$4,updated_at=now()

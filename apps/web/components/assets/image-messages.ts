@@ -1,6 +1,35 @@
 'use client';
 import { useT } from '@/lib/i18n';
 const rows = {
+  referencesUnavailable: [
+    'Референсы недоступны в настроенном профиле. Сними их выбор для запроса только по тексту; автоматически они не удаляются.',
+    'References are unavailable in the configured profile. Deselect them for a text-only request; they are never removed automatically.',
+    'Референси недоступні в налаштованому профілі. Зніми їх вибір для запиту лише за текстом; автоматично вони не видаляються.',
+  ],
+
+  ownerUnavailable: [
+    'Внешняя генерация недоступна из-за настроек или разрешений сервера. Проверь причины ниже. Тестовый образец не заменяет результат API.',
+    'External generation is unavailable because of server configuration or authorization. Check the reasons below. A test sample does not replace an API result.',
+    'Зовнішня генерація недоступна через налаштування або дозволи сервера. Перевір причини нижче. Тестовий приклад не замінює результат API.',
+  ],
+
+  runExternal: ['Создать одно изображение', 'Generate one image', 'Створити одне зображення'],
+  declineExternal: [
+    'Не использовать найденное; подготовить новую оценку',
+    'Decline these matches; prepare a new quote',
+    'Не використовувати знайдене; підготувати нову оцінку',
+  ],
+  externalConsent: [
+    'Разрешаю только этот внешний запрос и передачу выбранных референсов. Повторной генерации без нового согласия не будет.',
+    'I authorize only this external request and transfer of the selected references. Regeneration requires new consent.',
+    'Дозволяю лише цей зовнішній запит і передавання вибраних референсів. Повторна генерація потребує нової згоди.',
+  ],
+  estimateRiskConsent: [
+    'Отдельно принимаю риск: оценка и резерв не ограничивают счёт провайдера, он может быть выше. Неизвестное списание остановит дальнейшие запросы.',
+    'I separately accept the risk: the estimate and reserve do not cap the provider invoice, which may be higher. An unknown charge will stop further requests.',
+    'Окремо приймаю ризик: оцінка й резерв не обмежують рахунок провайдера, він може бути вищим. Невідоме списання зупинить подальші запити.',
+  ],
+
   estimatedCost: ['Оценка полной стоимости', 'Estimated total cost', 'Оцінка повної вартості'],
   reserveCost: ['Операционный резерв', 'Operational reserve', 'Операційний резерв'],
   estimateNotice: [

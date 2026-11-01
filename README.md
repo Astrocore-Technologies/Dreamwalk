@@ -88,6 +88,14 @@ The managed Work environment uses its provided CUA browser and `sites-preview` d
 
 `AI_PROVIDER=mock`, paid generation/payments/Discord flags off, `GLOBAL_SPEND_CAP=0`. These platform flags still reject live generation and money flows. The separate NPC provider boundary defaults to `NPC_AI_PROVIDER=mock` and external approval off; enabling its trusted HTTP adapter requires explicit operator configuration and separately approved budget, not a player setting. No vendor integration or live cost measurement is claimed. Production also rejects dev auth/faucet and requires HTTPS. Server credentials never belong in `NEXT_PUBLIC_*`.
 
+An opt-in [owner-operated generation mode](docs/owner-generation.md) now separates
+ordinary text/image configuration from temporary manual-test sessions. It uses an
+explicit persistent database, server-only key/profile configuration and a durable
+owner budget acknowledgement; individual generation still requires informed consent.
+`npm run dev` keeps provider credentials out of Next.js and build/migration children.
+No real provider access, generated-image quality or invoice accuracy is implied by
+the synthetic verification of this mode. The defaults above remain unchanged.
+
 Docs: [Architecture](docs/architecture.md), [API contract](docs/api-contract.md), [Plan](docs/implementation-plan.md), [Progress/evidence](docs/progress.md), [Backup/restore](docs/runbooks/backup-restore.md), [Account data operations](docs/runbooks/account-data.md), [Optional email](docs/runbooks/email.md), [agent rules](AGENTS.md).
 
 ## Hybrid RPG prototype (G0–G3, local only)

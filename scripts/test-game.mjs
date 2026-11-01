@@ -43,11 +43,11 @@ const assetDir = await mkdtemp(join(tmpdir(), 'dreamwalk-game-test-assets-'));
 process.env.ASSET_DIR = assetDir;
 const database = await startLocalPostgres();
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-async function run(command, args) {
+async function run(command, args, env = process.env) {
   const child = spawn(
     command === npm && process.platform === 'win32' ? process.execPath : command,
     command === npm && process.platform === 'win32' ? [process.env.npm_execpath, ...args] : args,
-    { stdio: 'inherit', env: process.env },
+    { stdio: 'inherit', env },
   );
   const [code] = await once(child, 'exit');
   if (code !== 0) throw new Error(`Game test subprocess failed (${code})`);
@@ -63,11 +63,23 @@ try {
       throw new Error('Unknown game integration test file');
     files = [process.env.GAME_TEST_FILE];
   }
-  await run(process.execPath, [
-    '--test',
-    '--test-concurrency=1',
-    ...files.map((name) => `tests/game/${name}`),
-  ]);
+  // Legacy synthetic suites intentionally retain financial liabilities. The owner
+  // admission suite must prove clean first-claim behavior in its own fresh cluster,
+  // not erase those liabilities or weaken the production guard to share a fixture.
+  const ownerFile = 'integration-generation-owner.test.mjs';
+  if (!process.env.GAME_TEST_FILE && files.includes(ownerFile)) {
+    await run(process.execPath, ['scripts/test-game.mjs'], {
+      ...process.env,
+      GAME_TEST_FILE: ownerFile,
+    });
+    files = files.filter((name) => name !== ownerFile);
+  }
+  if (files.length)
+    await run(process.execPath, [
+      '--test',
+      '--test-concurrency=1',
+      ...files.map((name) => `tests/game/${name}`),
+    ]);
 } finally {
   await database.stop();
   await rm(assetDir, { recursive: true, force: true });

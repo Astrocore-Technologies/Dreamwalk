@@ -1,6 +1,68 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const liveMessages = {
+  textRemaining: ['Доступно для текста', 'Available for text', 'Доступно для тексту'],
+  imageRemaining: ['Доступно для изображений', 'Available for images', 'Доступно для зображень'],
+  ownerTitle: ['Генерация на сервере', 'Server generation', 'Генерація на сервері'],
+  adminOwner: [
+    'Настроена генерация на частном сервере владельца. Бюджет и разрешения показаны ниже; каждый внешний запрос требует отдельного согласия.',
+    'Generation is configured on the owner’s private server. Budget and authorization are shown below; each external request requires separate consent.',
+    'Генерацію налаштовано на приватному сервері власника. Бюджет і дозволи показано нижче; кожен зовнішній запит потребує окремої згоди.',
+  ],
+  ownerProfiles: [
+    'Каталог не включает внешние запросы. Модели, ключи и бюджет настраиваются владельцем на сервере; секреты в браузер не передаются.',
+    'The catalog does not enable external requests. The owner configures models, keys and budget on the server; secrets are never sent to the browser.',
+    'Каталог не вмикає зовнішні запити. Власник налаштовує моделі, ключі й бюджет на сервері; секрети не передаються до браузера.',
+  ],
+  ownerIntro: [
+    'Обычная конфигурация сервера, не временный API-тест. Открытие панели не запускает ИИ. Каждый запрос требует отдельного подтверждения.',
+    'Normal server configuration, not a temporary API test. Opening this panel does not call AI. Every request requires separate consent.',
+    'Звичайна конфігурація сервера, а не тимчасовий API-тест. Відкриття панелі не запускає ШІ. Кожен запит потребує окремої згоди.',
+  ],
+  ownerClaimConsent: [
+    'Я владелец этой конфигурации. Принимаю общий бюджет, включая прежние удержания и неизвестные списания. Каждый запрос подтвержу отдельно.',
+    'I own this configuration. I acknowledge the combined budget, including prior reservations and unknown charges. I will approve each request separately.',
+    'Я власник цієї конфігурації. Приймаю загальний бюджет, включно з попередніми утриманнями та невідомими списаннями. Кожен запит підтверджу окремо.',
+  ],
+  ownerClaim: [
+    'Подтвердить бюджет владельца',
+    'Authorize owner budget',
+    'Підтвердити бюджет власника',
+  ],
+  ownerActive: [
+    'Разрешение владельца активно',
+    'Owner authorization active',
+    'Дозвіл власника активний',
+  ],
+  ownerUnclaimed: [
+    'Настроено; бюджет ещё не подтверждён',
+    'Configured; budget not yet authorized',
+    'Налаштовано; бюджет ще не підтверджено',
+  ],
+  ownerStopped: ['Генерация приостановлена', 'Generation stopped', 'Генерацію призупинено'],
+  ownerDuration: [
+    'Разрешение владельца без таймера сессии. Свежесть тарифов, бюджет, права и согласие проверяются отдельно для каждого запроса.',
+    'Owner authorization has no session timer. Pricing freshness, budget, access and consent are checked separately for every request.',
+    'Дозвіл власника не має таймера сесії. Актуальність тарифів, бюджет, права й згода перевіряються окремо для кожного запиту.',
+  ],
+  pricingExpiry: ['Тарифы подтверждены до', 'Pricing verified until', 'Тарифи підтверджено до'],
+  pricingExpired: [
+    'Тарифы устарели. Запросы недоступны до обновления конфигурации.',
+    'Pricing is stale. Requests are unavailable until configuration is updated.',
+    'Тарифи застаріли. Запити недоступні до оновлення конфігурації.',
+  ],
+  unavailableTitle: ['Генерация недоступна', 'Generation unavailable', 'Генерація недоступна'],
+  unavailable: [
+    'Конфигурация сервера недоступна или не разрешена для этого аккаунта. Внешние запросы не запускаются; подмены образцом нет.',
+    'Server configuration is unavailable or not authorized for this account. External requests will not run; no sample fallback is used.',
+    'Конфігурація сервера недоступна або не дозволена для цього акаунта. Зовнішні запити не запускаються; підміни прикладом немає.',
+  ],
+  imageUnavailable: [
+    'Внешние изображения недоступны. Проверь настройки и код причины.',
+    'External images are unavailable. Check the configuration and reason code.',
+    'Зовнішні зображення недоступні. Перевір налаштування й код причини.',
+  ],
+
   adminLive: [
     'Настроен локальный ручной API-тест. Внешние запросы требуют согласия владельца; доступный бюджет показан ниже.',
     'A local manual API test is configured. External requests need owner consent; the available budget is shown below.',

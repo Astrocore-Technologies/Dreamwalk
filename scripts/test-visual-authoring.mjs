@@ -42,6 +42,7 @@ const allowedTests = [
   'tests/visuals/real-pipeline.test.mjs',
   'tests/visuals/spatial-plan.test.mjs',
   'tests/visuals/spatial-planner.test.mjs',
+  'tests/visuals/owner-spatial-planner.test.mjs',
   'tests/visuals/spatial-http.test.mjs',
 ];
 const args = process.argv.slice(2),
