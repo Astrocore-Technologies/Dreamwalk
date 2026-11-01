@@ -187,6 +187,11 @@ $env:LOCAL_POSTGRES_CLUSTER = '<existing-cluster-name>'
 npm run db:local
 ```
 
+Cluster storage is relative to the checkout running `db:local`. Run that command
+from the checkout that already contains the cluster; reusing its name in another
+checkout creates a different database. Point the application checkout at the existing
+`database.env` and preserve its existing asset directory.
+
 Keep that terminal open and run the application in another terminal. A different
 existing cluster must use its actual name and corresponding database file. If there
 is a stale lock or unclean shutdown, follow the database recovery procedure; do not
