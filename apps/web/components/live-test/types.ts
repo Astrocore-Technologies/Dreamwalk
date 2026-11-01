@@ -32,6 +32,7 @@ export type LiveTestStatus = {
     upperMicros: number;
     maxOutputTokens: number;
     contextTokens: number;
+    contextBudgetTokens?: number;
     costEvidence: string;
     pricingSource?: string;
     reasoningEffort?: string;

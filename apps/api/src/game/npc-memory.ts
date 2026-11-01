@@ -21,8 +21,11 @@ export async function recallNpcEpisodes(
   campaignId: string,
   state: GameState,
   npcId: string,
+  maximum = 16,
 ): Promise<NpcObservation[]> {
   const started = performance.now();
+  const selectedLimit = Math.max(1, Math.min(32768, Math.floor(maximum)));
+  const candidateLimit = Math.max(128, selectedLimit);
   const m = state.npcBrains?.[npcId]?.living;
   if (!m) return [];
   const emotionalSubjects = Object.entries(m.relationships)
@@ -39,10 +42,10 @@ export async function recallNpcEpisodes(
     `WITH recent AS (
     SELECT observation_id,observed_tick,actor_id,target_id,payload FROM game_npc_episodes
     WHERE campaign_id=$1 AND npc_id=$2 AND NOT(observation_id=ANY($3::text[]))
-    ORDER BY observed_tick DESC,observation_id LIMIT 128),
+    ORDER BY observed_tick DESC,observation_id LIMIT $7),
     relevant AS (SELECT observation_id,observed_tick,actor_id,target_id,payload FROM game_npc_episodes
     WHERE campaign_id=$1 AND npc_id=$2 AND NOT(observation_id=ANY($3::text[]))
-    AND (actor_id=ANY($4::text[]) OR target_id=ANY($4::text[])) ORDER BY observed_tick DESC,observation_id LIMIT 128),
+    AND (actor_id=ANY($4::text[]) OR target_id=ANY($4::text[])) ORDER BY observed_tick DESC,observation_id LIMIT $7),
     candidates AS (SELECT * FROM recent UNION SELECT * FROM relevant)
     SELECT payload,count(*) OVER() AS candidate_count FROM candidates ORDER BY
     (CASE WHEN actor_id=ANY($4::text[]) OR target_id=ANY($4::text[]) THEN 4 ELSE 0 END
@@ -50,7 +53,7 @@ export async function recallNpcEpisodes(
     +CASE WHEN actor_id=ANY($5::text[]) THEN 2 ELSE 0 END
     +CASE WHEN $6='alarmed' AND payload->>'kind' IN ('item_taken','item_missing','noise') THEN 3 WHEN $6='grateful' AND payload->>'kind'='helped' THEN 3 ELSE 0 END
     +CASE WHEN payload->>'confidence'='witnessed' THEN 1 ELSE 0 END) DESC,
-    observed_tick DESC,observation_id LIMIT 16`,
+    observed_tick DESC,observation_id LIMIT $8`,
     [
       campaignId,
       npcId,
@@ -58,6 +61,8 @@ export async function recallNpcEpisodes(
       subjects,
       emotionalSubjects,
       m.affect?.mood ?? 'calm',
+      candidateLimit,
+      selectedLimit,
     ],
   );
   recordNpcMetric('retrievalCalls');

@@ -7,6 +7,7 @@ export type PolicyProfile = {
   text: {
     model: string;
     contextTokens: number;
+    contextBudgetTokens?: number;
     maxOutputTokens: number;
     maxInputBytes: number;
     inputMicrosPerMillion: number;

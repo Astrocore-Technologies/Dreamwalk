@@ -666,11 +666,290 @@ test(
     );
 
     await t.test(
+      'context-only revision admits 130k bytes of history with the same ledger, exact request reserve and one fake dispatch',
+      async () => {
+        const operatorRaw = {
+          ...finalRaw,
+          text: {
+            ...finalRaw.text,
+            contextTokens: 1050000,
+            contextBudgetTokens: 256000,
+            estimation: {
+              kind: 'operator_heuristic',
+              textTokensPerKiBUtf8: 1024,
+              textProtocolTokens: 4096,
+              marginBps: 2500,
+              fixedMarginMicros: 17,
+            },
+          },
+        };
+        const operatorCfg = readOwnerGenerationConfig(ownerEnvironment(operatorRaw, handle));
+        const operator = new GenerationAuthority(database, operatorCfg);
+        const view = await operator.reviewPolicy(owner);
+        const applied = await operator.amendPolicy(owner, body(view, operatorCfg));
+        assert.equal(applied.revision, 5);
+        const { OpenAiNpcProvider } = require('../../apps/api/dist/ai/openai-provider.js');
+        const { GenerationProvider } = require('../../apps/api/dist/generation/provider.js');
+        const { NpcAiEngine } = require('../../apps/api/dist/ai/npc-ai.service.js');
+        let calls = 0,
+          dispatchedBody;
+        const inner = new OpenAiNpcProvider(
+          {
+            enabled: true,
+            apiKey: 'synthetic-only-never-a-real-key',
+            model: operatorCfg.text.model,
+            version: 'synthetic-jsonb-v1',
+            maxInputBytes: operatorCfg.text.maxInputBytes,
+            maxModelInputTokens: operatorCfg.text.contextTokens,
+            contextBudgetTokens: operatorCfg.text.contextBudgetTokens,
+            maxOutputTokens: operatorCfg.text.maxOutputTokens,
+            maxResponseBytes: 128000,
+            inputMicrosPerMillion: operatorCfg.text.inputMicrosPerMillion,
+            outputMicrosPerMillion: operatorCfg.text.outputMicrosPerMillion,
+            pricing: operatorCfg.text.pricing,
+            estimation: operatorCfg.text.estimation,
+          },
+          async (_url, options) => {
+            calls++;
+            dispatchedBody = options.body;
+            return new Response(
+              JSON.stringify({
+                id: 'synthetic-jsonb-response',
+                status: 'completed',
+                service_tier: 'default',
+                usage: { input_tokens: 50, output_tokens: 10 },
+                output: [
+                  {
+                    type: 'message',
+                    content: [
+                      {
+                        type: 'output_text',
+                        text: JSON.stringify({ text: 'Synthetic JSONB response' }),
+                      },
+                    ],
+                  },
+                ],
+              }),
+            );
+          },
+        );
+        const provider = new GenerationProvider(inner, operator);
+        const engineErrors = [];
+        const engineDatabase = {
+          ...database,
+          tx: (work) =>
+            database.tx(async (c) => {
+              try {
+                return await work(c);
+              } catch (error) {
+                engineErrors.push({
+                  name: error.name,
+                  code: error.code ?? null,
+                  constraint: error.constraint ?? null,
+                  message: String(error.message).slice(0, 120),
+                });
+                throw error;
+              }
+            }),
+        };
+        const ai = new NpcAiEngine(engineDatabase, provider, {
+          externalApproved: true,
+          providerUpperMicros: operatorCfg.text.upperMicros,
+          providerCapMicros: operatorCfg.totalCapMicros,
+          timeoutMs: 1000,
+        });
+        const campaignId = randomUUID(),
+          requestId = randomUUID(),
+          npcId = 'jsonb-' + randomUUID();
+        const turnFence = { roundId: 'jsonb-round', phaseEpoch: 7, rulesetVersion: 1 };
+        const context = {
+          zeta: 'last field',
+          history: 'x'.repeat(130000),
+          replyLocale: 'uk',
+          contextHash: requestId,
+          turnFence,
+          alpha: { z: 'last nested', a: 'first nested' },
+          mockProposal: { text: 'fixture-hidden' },
+        };
+        await db.query(
+          "INSERT INTO game_campaigns(id,owner_id,playable_version,state) VALUES($1,$2,'synthetic',$3)",
+          [
+            campaignId,
+            owner,
+            JSON.stringify({
+              turnController: {
+                phase: 'world',
+                roundId: turnFence.roundId,
+                phaseEpoch: 7,
+                ruleset: { version: 1 },
+              },
+            }),
+          ],
+        );
+        await db.query(
+          "INSERT INTO game_members(campaign_id,user_id,actor_id,status) VALUES($1,$2,'player','accepted')",
+          [campaignId, owner],
+        );
+        await db.query(
+          "INSERT INTO game_npc_decision_requests(id,campaign_id,npc_id,purpose,cause_key,requester_user_id,context,status) VALUES($1,$2,$3,'speech',$6,$4,$5,'queued')",
+          [requestId, campaignId, npcId, owner, JSON.stringify(context), requestId],
+        );
+        const historyTurn = randomUUID();
+        await db.query(
+          "INSERT INTO game_story_turns(id,campaign_id,requester_user_id,actor_id,operation_id,request_hash,input,segments,context,status) VALUES($1,$2,$3,'player',$4,'history-fixture','{}','[]','{}','committed')",
+          [historyTurn, campaignId, owner, randomUUID()],
+        );
+        const feed = Array.from({ length: 164 }, (_, i) => ({
+          id: randomUUID(),
+          ordinal: i,
+          channel: i === 160 ? 'whisper' : 'say',
+          audience:
+            i === 161
+              ? ['player']
+              : i === 162
+                ? ['*']
+                : i === 163
+                  ? ['other']
+                  : ['player', 'friend'],
+          entry: {
+            kind: 'speech',
+            authorId: 'player',
+            text:
+              i < 160
+                ? 'History ' + i + ' ' + 'h'.repeat(600)
+                : i === 162
+                  ? 'PUBLIC_HISTORY'
+                  : 'PRIVATE_HISTORY_CANARY',
+          },
+        }));
+        await db.query(
+          `INSERT INTO game_story_feed(id,turn_id,campaign_id,sequence,ordinal,tick,channel,audience_ids,entry)
+          SELECT (x->>'id')::uuid,$1,$2,(x->>'ordinal')::bigint,(x->>'ordinal')::int,0,x->>'channel',ARRAY(SELECT jsonb_array_elements_text(x->'audience')),x->'entry' FROM jsonb_array_elements($3::jsonb) x`,
+          [historyTurn, campaignId, JSON.stringify(feed)],
+        );
+        const { extendContextHistory } = require('../../apps/api/dist/game/context-history.js');
+        const longHistory = await extendContextHistory(
+          database,
+          ai,
+          campaignId,
+          {},
+          'player',
+          {
+            contextHash: 'public-canon',
+            sharedAudience: [{ id: 'friend' }],
+            rules: 'PINNED_RULES',
+          },
+          'narrative',
+        );
+        assert.equal(longHistory.history.length, 161);
+        assert.ok(Buffer.byteLength(JSON.stringify(longHistory)) > 64000);
+        assert.doesNotMatch(JSON.stringify(longHistory), /PRIVATE_HISTORY_CANARY/);
+        assert.match(JSON.stringify(longHistory), /PUBLIC_HISTORY/);
+        assert.equal(longHistory.contextHash, 'public-canon');
+        assert.equal(
+          Number(
+            (await db.query('SELECT count(*) FROM game_story_feed WHERE turn_id=$1', [historyTurn]))
+              .rows[0].count,
+          ),
+          164,
+        );
+        const stored = (
+          await db.query('SELECT context FROM game_npc_decision_requests WHERE id=$1', [requestId])
+        ).rows[0].context;
+        assert.notEqual(
+          JSON.stringify(context),
+          JSON.stringify(stored),
+          'Fixture must exercise JSONB key reordering',
+        );
+        const prepared = inner.prepareTextRequest('speech', context);
+        assert.ok(prepared.snapshot.serializedBytes > 130000);
+        assert.equal(prepared.snapshot.contextWindow.requestedContextTokens, 256000);
+        assert.equal(prepared.snapshot.contextWindow.precision, 'conservative_estimate');
+        assert.equal(ai.contextWindow().transportLimitBytes, 4194304);
+        assert.deepEqual(inner.prepareTextRequest('speech', stored).snapshot, prepared.snapshot);
+        const job = await ai.queue({
+          scope: { campaignId, npcId, origin: 'system', purpose: 'speech' },
+          operationId: requestId,
+          context,
+          runtimeRequestId: requestId,
+        });
+        const pending = (await operator.pending(owner, campaignId)).requests[0];
+        assert.equal(pending.policyRevision, 5);
+        assert.equal(pending.upperMicros, null);
+        assert.equal(pending.reserveMicros, prepared.snapshot.reserveMicros);
+        assert.ok(
+          pending.reserveMicros < operatorCfg.text.upperMicros,
+          'Request reserve should not reserve entire input capability',
+        );
+        const consent = {
+          authorizationId,
+          operationId: randomUUID(),
+          turnFence,
+          consent: true,
+          policyRevision: 5,
+          policyHash: applied.hash,
+          estimateFingerprint: prepared.snapshot.fingerprint,
+        };
+        await assert.rejects(
+          operator.consent(owner, campaignId, requestId, {
+            ...consent,
+            estimateFingerprint: '0'.repeat(64),
+          }),
+          denied(/TEXT_RESERVE_STALE/),
+        );
+        await operator.consent(owner, campaignId, requestId, consent);
+        await operator.consent(owner, campaignId, requestId, consent);
+        const permit = (
+          await db.query('SELECT * FROM live_test_text_permits WHERE request_id=$1', [requestId])
+        ).rows[0];
+        const held = (
+          await db.query('SELECT * FROM generation_budget_reservations WHERE id=$1', [
+            permit.reservation_id,
+          ])
+        ).rows[0];
+        assert.deepEqual(permit.request_snapshot, prepared.snapshot);
+        assert.equal(Number(held.upper_micros), prepared.snapshot.reserveMicros);
+        assert.equal(
+          Number(
+            (await db.query('SELECT provider_upper_micros FROM npc_ai_jobs WHERE id=$1', [job.id]))
+              .rows[0].provider_upper_micros,
+          ),
+          prepared.snapshot.reserveMicros,
+        );
+        await ai.run(job.id, async () => true);
+        await ai.run(job.id, async () => true);
+        assert.equal(calls, 1, 'Only the injected transport may execute');
+        assert.equal(dispatchedBody, prepared.body);
+        const settled = (
+          await db.query('SELECT * FROM live_test_text_permits WHERE id=$1', [permit.id])
+        ).rows[0];
+        assert.equal(settled.state, 'settled');
+        assert.deepEqual(settled.request_snapshot, prepared.snapshot);
+        const afterOperator = await operator.reviewPolicy(owner);
+        const accounting = (
+          await db.query(
+            'SELECT status,result_code,provider_budget_status,provider_upper_micros,provider_actual_micros FROM npc_ai_jobs WHERE id=$1',
+            [job.id],
+          )
+        ).rows[0];
+        assert.equal(
+          afterOperator.dispatchEnabled,
+          true,
+          JSON.stringify({ blockers: afterOperator.blockers, accounting, engineErrors }),
+        );
+        await database.tx((c) => ai.finalize(c, job.id, 'committed'));
+        settledOperatorJobId = job.id;
+        finalAuthority = operator;
+        finalRaw = operatorRaw;
+      },
+    );
+
+    await t.test(
       'accepted text-cap increase renews the secondary cap and serializes a real job FK insert',
       async () => {
         const { NpcAiEngine } = require('../../apps/api/dist/ai/npc-ai.service.js');
         const { GenerationProvider } = require('../../apps/api/dist/generation/provider.js');
-        const { estimation: _ignored, ...fixedText } = finalRaw.text;
+        const { estimation: _ignored, contextBudgetTokens: _window, ...fixedText } = finalRaw.text;
         const fixedRaw = {
           ...finalRaw,
           totalCapMicros: 2000000,
@@ -689,7 +968,7 @@ test(
         assert.equal(
           (await fixed.amendPolicy(owner, body(await fixed.reviewPolicy(owner), fixedCfg)))
             .revision,
-          5,
+          6,
         );
         const campaignId = randomUUID(),
           seedRequest = randomUUID(),
@@ -837,7 +1116,7 @@ test(
           owner,
           body(await raised.reviewPolicy(owner), raisedCfg),
         );
-        assert.equal(accepted.revision, 6);
+        assert.equal(accepted.revision, 7);
         const oldEngine = new NpcAiEngine(database, new GenerationProvider(inner, fixed), {
           externalApproved: true,
           providerUpperMicros: fixedCfg.text.upperMicros,
@@ -937,7 +1216,7 @@ test(
         await database.tx((c) => engine.finalize(c, job.id, 'cancelled'));
         finalAuthority = raised;
         finalRaw = raisedRaw;
-        assert.equal((await raised.reviewPolicy(owner)).active.revision, 6);
+        assert.equal((await raised.reviewPolicy(owner)).active.revision, 7);
       },
     );
     await t.test('unknown/403 and late known usage never unlock higher limits', async () => {
@@ -984,7 +1263,7 @@ test(
       ).rows[0];
       assert.equal(row.state, 'stopped');
       assert.equal(row.stop_code, 'PROVIDER_HTTP_403');
-      assert.equal(after.history.length, 6);
+      assert.equal(after.history.length, 7);
     });
     await db.end();
   },

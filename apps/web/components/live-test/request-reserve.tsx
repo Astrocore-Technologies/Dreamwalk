@@ -86,6 +86,29 @@ export function TextRequestReserve({ snapshot }: { snapshot: TextRequestEstimate
           ))}
       </dl>
       <p>{m('reserveNotCap')}</p>
+      {snapshot.contextWindow && (
+        <section data-testid="text-context-window">
+          <dl className={styles.budget}>
+            {(
+              [
+                ['contextModelCapacity', snapshot.contextWindow.modelContextTokens],
+                ['contextRequested', snapshot.contextWindow.requestedContextTokens],
+                ['contextEffective', snapshot.contextWindow.effectiveContextTokens],
+                ['contextAnswer', snapshot.contextWindow.reservedOutputTokens],
+              ] as [LiveMessage, number][]
+            ).map(([label, value]) => (
+              <div key={label}>
+                <dt>{m(label)}</dt>
+                <dd>{value.toLocaleString(locale)}</dd>
+              </div>
+            ))}
+          </dl>
+          <p>
+            {m(snapshot.contextWindow.precision === 'exact' ? 'contextExact' : 'contextEstimate')}
+          </p>
+          <p>{m('contextHistory')}</p>
+        </section>
+      )}
       <small>
         {m('reserveBodyBytes')}: {snapshot.serializedBytes} · {m('reserveInputTokens')}:{' '}
         {snapshot.estimatedInputTokens} · {m('policyOutputTokens')}: {snapshot.maxOutputTokens}

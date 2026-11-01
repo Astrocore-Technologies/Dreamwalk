@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { estimateTextRequest, estimateImageRequest, type ImageEstimateProfile } from './estimates';
+import { MAX_REQUEST_CONTEXT_TOKENS, TEXT_CONTEXT_TRANSPORT_BYTES } from '../ai/text-context';
 
 const positiveMicros = z.number().int().positive().max(1_000_000_000_000);
 const model = z.string().regex(/^[a-zA-Z0-9][a-zA-Z0-9._:-]{0,159}$/);
@@ -46,8 +47,9 @@ const textSchema = z
   .object({
     model,
     contextTokens: z.number().int().positive().max(1_050_000),
+    contextBudgetTokens: z.number().int().min(1024).max(MAX_REQUEST_CONTEXT_TOKENS).optional(),
     maxOutputTokens: z.number().int().min(16).max(32_000),
-    maxInputBytes: z.number().int().min(1024).max(64_000),
+    maxInputBytes: z.number().int().min(1024).max(TEXT_CONTEXT_TRANSPORT_BYTES).optional(),
     inputMicrosPerMillion: positiveMicros,
     outputMicrosPerMillion: positiveMicros,
     estimation: textEstimationSchema.optional(),
@@ -55,7 +57,19 @@ const textSchema = z
   })
   .strict()
   // Conservative UTF-8 byte bound plus protocol allowance, not a guessed tokenizer ratio.
-  .refine((value) => value.maxInputBytes + 4096 + value.maxOutputTokens <= value.contextTokens);
+  .refine((value) =>
+    value.contextBudgetTokens !== undefined
+      ? !!value.estimation &&
+        value.maxOutputTokens < Math.min(value.contextBudgetTokens, value.contextTokens)
+      : value.maxInputBytes !== undefined &&
+        value.maxInputBytes <= 64000 &&
+        value.maxInputBytes + 4096 + value.maxOutputTokens <= value.contextTokens,
+  )
+  .transform((value) => ({
+    ...value,
+    maxInputBytes:
+      value.contextBudgetTokens !== undefined ? TEXT_CONTEXT_TRANSPORT_BYTES : value.maxInputBytes!,
+  }));
 const imageSchema = z
   .object({
     model,
@@ -168,7 +182,16 @@ export function readOwnerGenerationConfig(
     imageBaseline: { estimatedTotalMicros: number; reserveMicros: number };
   try {
     upper = estimateTextRequest(
-      'a'.repeat(profile.text.maxInputBytes),
+      'a'.repeat(
+        profile.text.contextBudgetTokens !== undefined
+          ? Math.max(
+              0,
+              Math.min(profile.text.contextBudgetTokens, profile.text.contextTokens) -
+                profile.text.maxOutputTokens -
+                Math.max(4096, profile.text.estimation?.textProtocolTokens ?? 0),
+            )
+          : profile.text.maxInputBytes,
+      ),
       profile.text,
       'configuration-limit-validation',
     ).reserveMicros;

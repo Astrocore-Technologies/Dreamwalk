@@ -65,9 +65,9 @@ previous test.
   "imageCapMicros": "<image purpose ceiling>",
   "text": {
     "model": "<explicit supported Responses model>",
-    "contextTokens": "<verified model context limit>",
+    "contextTokens": "<verified model context capacity>",
+    "contextBudgetTokens": 256000,
     "maxOutputTokens": "<chosen bounded output limit>",
-    "maxInputBytes": "<chosen serialized request limit, at most 64000>",
     "inputMicrosPerMillion": "<verified input USD micro-units per million tokens>",
     "outputMicrosPerMillion": "<verified output USD micro-units per million tokens>",
     "pricing": {
@@ -113,6 +113,37 @@ previous test.
   }
 }
 ```
+
+`text.contextTokens` is the verified model capacity. `text.contextBudgetTokens`
+is the independently chosen total window **per request**, up to 256000 tokens:
+input plus the reserved `maxOutputTokens`. A smaller model visibly reduces the
+effective window. `maxOutputTokens` remains a separate limit, not a promise that
+the model fills it or overrides typed gameplay response constraints.
+
+For this explicit window mode the server derives a 4 MiB transport safety guard;
+a legacy `maxInputBytes` value no longer silently limits a 256k-token policy to
+64 KiB. Transport overflow fails before dispatch instead of truncating text.
+Profiles without `contextBudgetTokens` retain the previous legacy byte behavior.
+The new mode requires request estimation. Existing accepted profiles are changed
+through the normal reviewed policy revision, on the same financial scope.
+
+The complete serialized request includes instructions, roles and output schema.
+A provider-specific exact counter can supply its result when supported; no GPT
+counter is assumed from another model's tokenizer. The current offline fallback
+is **a conservative estimate**, using complete UTF-8 envelope bytes plus at least
+4096 protocol tokens. The UI labels its precision. It does not guarantee that
+256000 actual provider tokens can be packed under this estimate. There are no
+hidden token-count API calls, paid summaries, or automatic provider retries.
+
+Committed history stays in PostgreSQL. Context selection uses audience-safe saved
+story records and the NPC's own archived observations, alongside existing grounded
+memory. OOC chat, other participants' whispers and private NPC facts are excluded
+from shared narration. Overflow drops whole older optional records, preserving
+canon/rules, current scene, obligations and the bound current question. If pinned
+content alone cannot fit, the request fails; saved history is never deleted.
+
+The window is not a session-wide quota and is not filled on every turn. Pricing,
+request reserves, cumulative financial caps and image budgeting remain separate.
 
 The `estimation` blocks are versioned operator planning assumptions. They are
 not an OpenAI tokenization rule. A quote records the actual serialized input

@@ -4,6 +4,11 @@ import { canonical } from '../ai/context';
 import { ProviderFailure } from '../ai/types';
 import { LIVE_TEXT } from './config';
 import {
+  assertTextContext,
+  measureTextContext,
+  TEXT_CONTEXT_TRANSPORT_BYTES,
+} from '../ai/text-context';
+import {
   estimateTextRequest,
   estimateFingerprint,
   type TextReserveSnapshot,
@@ -13,6 +18,7 @@ import type { PreparedTextRequest } from '../ai/types';
 export interface AuthoringTextProfile {
   model: string;
   contextTokens: number;
+  contextBudgetTokens?: number;
   maxOutputTokens: number;
   maxInputBytes: number;
   inputMicrosPerMillion: number;
@@ -59,6 +65,7 @@ export function buildAuthoringTextRequestBody(
   return JSON.stringify({
     model: profile.model,
     service_tier: 'default',
+    ...(profile.contextBudgetTokens !== undefined ? { truncation: 'disabled' } : {}),
     store: false,
     stream: false,
     reasoning: { effort: 'none' },
@@ -84,6 +91,8 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
     private transport: typeof fetch = fetch,
     readonly profile: AuthoringTextProfile = LIVE_TEXT,
   ) {
+    if (profile.contextBudgetTokens !== undefined)
+      profile = { ...profile, maxInputBytes: TEXT_CONTEXT_TRANSPORT_BYTES };
     if (
       !profile.model.trim() ||
       [
@@ -94,7 +103,7 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
         profile.outputMicrosPerMillion,
         profile.upperMicros,
       ].some((value) => !Number.isSafeInteger(value) || value <= 0) ||
-      profile.maxInputBytes > 64000 ||
+      profile.maxInputBytes > (profile.contextBudgetTokens !== undefined ? 4194304 : 64000) ||
       (!profile.estimation &&
         BigInt(profile.upperMicros) <
           (BigInt(profile.contextTokens) * BigInt(profile.inputMicrosPerMillion) +
@@ -154,6 +163,13 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
     )
       throw new ProviderFailure('GENERATION_PRICING_EXPIRED', false);
     const body = buildAuthoringTextRequestBody(this.definition, this.profile, request.context);
+    if (this.profile.contextBudgetTokens !== undefined) {
+      try {
+        assertTextContext(measureTextContext(body, this.profile));
+      } catch {
+        throw new ProviderFailure('TEXT_CONTEXT_WINDOW_EXCEEDED', false);
+      }
+    }
     if (Buffer.byteLength(body) > this.profile.maxInputBytes)
       throw new ProviderFailure('AUTHORING_CONTEXT_TOO_LARGE', false);
     let snapshot: TextReserveSnapshot | undefined;
@@ -258,6 +274,9 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
       failureCode,
     });
     if (
+      (this.profile.contextBudgetTokens !== undefined &&
+        value.usage.input_tokens + this.profile.maxOutputTokens >
+          Math.min(this.profile.contextBudgetTokens, this.profile.contextTokens)) ||
       value.usage.input_tokens > this.profile.contextTokens ||
       value.usage.output_tokens > this.profile.maxOutputTokens
     )

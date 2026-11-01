@@ -874,3 +874,60 @@ for (const variant of ['stale-policy', 'pricing-mismatch', 'broken-margin'] as c
     expect(f.policy.active!.revision).toBe(2);
     noPaidOrUnexpected(f);
   });
+
+for (const locale of ['uk', 'en', 'ru'] as const) {
+  test(`context and reply limits stay separate from money in ${locale}`, async ({ page }) => {
+    const f = await fixture(page, { locale });
+    const text = f.policy.proposed!.profile.text;
+    text.contextTokens = 128000;
+    text.contextBudgetTokens = 256000;
+    text.maxOutputTokens = 8192;
+    text.maxInputBytes = 4194304;
+    await page.goto('/admin');
+    const dialog = await openReview(page);
+    await expect(dialog).toContainText(
+      {
+        en: 'Available history may be shorter than the actual-token limit.',
+        ru: 'Доступная история может быть короче лимита фактических токенов.',
+        uk: 'Доступна історія може бути коротшою за межу фактичних токенів.',
+      }[locale],
+    );
+    const labels = {
+      en: [
+        'Model context capacity',
+        'Requested window per request, including reply',
+        'Effective window within model capacity',
+        'Separate reply limit, tokens',
+      ],
+      ru: [
+        'Ёмкость контекста модели',
+        'Выбранное окно на запрос, включая ответ',
+        'Доступное окно с учётом модели',
+        'Отдельный предел ответа, токенов',
+      ],
+      uk: [
+        'Місткість контексту моделі',
+        'Вибране вікно на запит, включно з відповіддю',
+        'Доступне вікно з урахуванням моделі',
+        'Окрема межа відповіді, токенів',
+      ],
+    }[locale];
+    for (const [index, value] of [128000, 256000, 128000, 8192].entries())
+      await expect(comparisonCells(dialog, labels[index]).nth(1)).toHaveText(String(value));
+    await dialog.getByRole('rowheader', { name: labels[0], exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: test.info().outputPath(`text-context-${locale}-desktop.png`) });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(dialog).toBeVisible();
+    await dialog
+      .getByRole('rowheader', { name: labels[3], exact: true })
+      .evaluate((element) => element.scrollIntoView({ block: 'center' }));
+    await expect(dialog.getByRole('rowheader', { name: labels[1], exact: true })).toBeInViewport();
+    await expect(dialog.getByRole('rowheader', { name: labels[3], exact: true })).toBeInViewport();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: test.info().outputPath(`text-context-${locale}-mobile.png`) });
+    expect(f.calls.apply).toHaveLength(0);
+    noPaidOrUnexpected(f);
+  });
+}

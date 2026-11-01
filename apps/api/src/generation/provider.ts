@@ -28,6 +28,12 @@ export class GenerationProvider implements NpcProvider {
   prepareTextRequest(purpose: AiPurpose, context: unknown) {
     return this.inner.prepareTextRequest?.(purpose, context);
   }
+  contextWindow() {
+    return this.inner.contextWindow?.();
+  }
+  contextFits(purpose: AiPurpose, context: unknown) {
+    return this.inner.contextFits?.(purpose, context) ?? true;
+  }
   contextBudgetBytes(max: number) {
     return this.inner.contextBudgetBytes?.(max) ?? 32000;
   }

@@ -10,6 +10,7 @@ import { ImageGenerationService } from '../image-generation/service';
 import { semanticGameProjection } from './projection-clock';
 import { pruneNpcMemory } from './npc-retention';
 import { recordNpcMetric } from './npc-telemetry';
+import { extendContextHistory, reuseFrozenContext } from './context-history';
 import { Inject, Injectable, OnModuleDestroy, Optional } from '@nestjs/common';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import type { Request } from 'express';
@@ -737,7 +738,15 @@ export class GameService implements OnModuleDestroy {
       }
       if (input.expectedCanonRevision !== canonRevision) fail(409, 'STALE_CANON', 'STALE_CANON');
       const replyLocale = resolveReplyLocale(req, input.replyLocale, a.user.settings.language);
-      const base = buildNarrativeContext(live.state, a.actorId, input.text, replyLocale);
+      const base = await extendContextHistory(
+        this.db,
+        this.ai,
+        id,
+        live.state,
+        a.actorId,
+        buildNarrativeContext(live.state, a.actorId, input.text, replyLocale),
+        'narrative',
+      );
       const scope = {
         campaignId: id,
         npcId: a.actorId,
@@ -769,7 +778,10 @@ export class GameService implements OnModuleDestroy {
             replyLocale,
           ),
         };
-      if (Buffer.byteLength(JSON.stringify(context)) > this.ai.contextBudgetBytes())
+      if (
+        Buffer.byteLength(JSON.stringify(context)) > this.ai.contextBudgetBytes() ||
+        !this.ai.contextFits('narrative', context)
+      )
         fail(413, 'CONTEXT_BUDGET_EXCEEDED', 'CONTEXT_BUDGET_EXCEEDED');
       await this.touch(id, live, a.actorId);
       await this.persist(id, live, live.state, 'narrative.requested', undefined, async (c) => {
@@ -1009,15 +1021,24 @@ export class GameService implements OnModuleDestroy {
               replyLocale,
             )
           : await this.decisionContext(id, live.state, input.npcId, input.purpose);
-      const context = {
-        ...base,
-        mockProposal:
-          input.purpose === 'speech'
-            ? createMockNpcPublicResponse(base as ReturnType<typeof buildNpcPublicSpeechContext>)
-            : input.purpose === 'summary'
-              ? createNpcMemorySummary(live.state, input.npcId)
-              : createMockNpcPlan(live.state, input.npcId),
-      };
+      const context = await extendContextHistory(
+        this.db,
+        this.ai,
+        id,
+        live.state,
+        a.actorId,
+        {
+          ...base,
+          mockProposal:
+            input.purpose === 'speech'
+              ? createMockNpcPublicResponse(base as ReturnType<typeof buildNpcPublicSpeechContext>)
+              : input.purpose === 'summary'
+                ? createNpcMemorySummary(live.state, input.npcId)
+                : createMockNpcPlan(live.state, input.npcId),
+        },
+        input.purpose,
+        input.npcId,
+      );
       if (context.budgetExceeded) fail(413, 'CONTEXT_BUDGET_EXCEEDED', 'CONTEXT_BUDGET_EXCEEDED');
       if (quote) return this.ai.quote(scope, context, a.user.id);
       if (!input.operationId) fail(400, 'INVALID_ACTION', 'INVALID_ACTION');
@@ -1038,6 +1059,17 @@ export class GameService implements OnModuleDestroy {
   private async decisionContext(id: string, state: GameState, npcId: string, purpose: string) {
     const raw = buildNpcDecisionContext(state, npcId);
     const base = { ...raw, ...(state.turnController ? { turnFence: turnFence(state) } : {}) };
+    if (this.ai.contextWindow())
+      return extendContextHistory(
+        this.db,
+        this.ai,
+        id,
+        state,
+        npcId,
+        base,
+        purpose as AiPurpose,
+        npcId,
+      );
     if (purpose !== 'plan') return packNpcContext(base, this.ai.contextBudgetBytes());
     const archivedEpisodes = await recallNpcEpisodes(this.db, id, state, npcId);
     return packNpcContext({ ...base, archivedEpisodes }, this.ai.contextBudgetBytes());
@@ -1629,20 +1661,26 @@ export class GameService implements OnModuleDestroy {
             r.context.deferredSpeechId,
             r.context.replyLocale,
           );
-          const context = {
-            ...current,
-            storyTurnId: r.context.storyTurnId,
-            segmentIndex: r.context.segmentIndex,
-            knowledgeRevision: r.context.knowledgeRevision,
-            deferredSpeechId: r.context.deferredSpeechId,
-            turnOrder: r.context.turnOrder,
-            mockProposal: createMockNpcPublicResponse(current),
-          };
-          await this.db.query(
-            "UPDATE game_npc_decision_requests SET context=$2 WHERE id=$1 AND status='queued'",
-            [r.id, JSON.stringify(context)],
+          const context = reuseFrozenContext(
+            r.context,
+            {
+              ...current,
+              storyTurnId: r.context.storyTurnId,
+              segmentIndex: r.context.segmentIndex,
+              knowledgeRevision: r.context.knowledgeRevision,
+              deferredSpeechId: r.context.deferredSpeechId,
+              turnOrder: r.context.turnOrder,
+              mockProposal: createMockNpcPublicResponse(current),
+            },
+            Boolean(this.ai.contextWindow()),
           );
-          r = { ...r, context };
+          if (context !== r.context) {
+            await this.db.query(
+              "UPDATE game_npc_decision_requests SET context=$2 WHERE id=$1 AND status='queued'",
+              [r.id, JSON.stringify(context)],
+            );
+            r = { ...r, context };
+          }
         } catch {
           await this.db.query(
             "UPDATE game_npc_decision_requests SET status='failed',result_code='STALE_DEFERRED_SPEECH',context='{}' WHERE id=$1 AND status='queued'",
@@ -1650,6 +1688,38 @@ export class GameService implements OnModuleDestroy {
           );
           continue;
         }
+      }
+      if (this.ai.contextWindow() && r.purpose === 'speech' && !r.context.historyPolicy) {
+        const extended = await extendContextHistory(
+          this.db,
+          this.ai,
+          id,
+          live.state,
+          r.context.recipientId ?? String(r.npc_id),
+          r.context,
+          'speech',
+          String(r.npc_id),
+        );
+        r.context = await this.db.tx(async (c) => {
+          const locked = (
+            await c.query(
+              "SELECT context FROM game_npc_decision_requests WHERE id=$1 AND status='queued' FOR UPDATE",
+              [r.id],
+            )
+          ).rows[0];
+          if (!locked) return r.context;
+          // A paid consent freezes the exact body. Never enrich/reprice an admitted request.
+          const admitted = await c.query(
+            "SELECT 1 FROM live_test_text_permits WHERE request_id=$1 AND state IN ('authorized','dispatched','settled','unknown') LIMIT 1",
+            [r.id],
+          );
+          if (admitted.rowCount || locked.context.historyPolicy) return locked.context;
+          await c.query('UPDATE game_npc_decision_requests SET context=$2 WHERE id=$1', [
+            r.id,
+            JSON.stringify(extended),
+          ]);
+          return extended;
+        });
       }
       // A real/manual request never becomes a fixture response when authorization or provider work fails.
       if (this.ai.manualLive() && r.purpose !== 'story_turn') {

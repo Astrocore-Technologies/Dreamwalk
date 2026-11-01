@@ -2,6 +2,13 @@ import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { canonical } from './context';
 import {
+  assertTextContext,
+  measureTextContext,
+  contextWindow,
+  type TextTokenCounter,
+  TEXT_CONTEXT_TRANSPORT_BYTES,
+} from './text-context';
+import {
   estimateTextRequest,
   estimateFingerprint,
   type TextReserveSnapshot,
@@ -31,6 +38,7 @@ export interface OpenAiNpcConfig {
   maxInputBytes: number;
   /** Model capability limit; never a per-request price guarantee. */
   maxModelInputTokens?: number;
+  contextBudgetTokens?: number;
   maxOutputTokens: number;
   maxResponseBytes: number;
   estimation?: {
@@ -299,7 +307,12 @@ export function openAiOutputSchema(purpose: ProviderRequest['purpose']): Record<
 export function buildOpenAiNpcRequestBody(
   config: Pick<
     OpenAiNpcConfig,
-    'model' | 'serviceTier' | 'reasoningEffort' | 'maxOutputTokens' | 'estimation'
+    | 'model'
+    | 'serviceTier'
+    | 'reasoningEffort'
+    | 'maxOutputTokens'
+    | 'estimation'
+    | 'contextBudgetTokens'
   >,
   purpose: ProviderRequest['purpose'],
   context: unknown,
@@ -342,6 +355,7 @@ export function buildOpenAiNpcRequestBody(
   return JSON.stringify({
     model: config.model,
     service_tier: config.serviceTier ?? 'default',
+    ...(config.contextBudgetTokens !== undefined ? { truncation: 'disabled' } : {}),
     ...(config.reasoningEffort ? { reasoning: { effort: config.reasoningEffort } } : {}),
     store: false,
     stream: false,
@@ -367,12 +381,16 @@ export function prepareOpenAiNpcTextRequest(
   purpose: ProviderRequest['purpose'],
   context: unknown,
   providerFingerprint: string,
+  counter?: TextTokenCounter,
 ): PreparedTextRequest {
   const body = buildOpenAiNpcRequestBody(config, purpose, context);
   const profile = {
     model: config.model,
     contextTokens:
       config.maxModelInputTokens ?? config.maxInputBytes + 4096 + config.maxOutputTokens,
+    ...(config.contextBudgetTokens !== undefined
+      ? { contextBudgetTokens: config.contextBudgetTokens }
+      : {}),
     maxInputBytes: config.maxInputBytes,
     maxOutputTokens: config.maxOutputTokens,
     inputMicrosPerMillion: config.inputMicrosPerMillion,
@@ -380,7 +398,7 @@ export function prepareOpenAiNpcTextRequest(
     ...(config.estimation ? { estimation: config.estimation } : {}),
     ...(config.pricing ? { pricing: config.pricing } : {}),
   };
-  return { body, snapshot: estimateTextRequest(body, profile, providerFingerprint) };
+  return { body, snapshot: estimateTextRequest(body, profile, providerFingerprint, counter) };
 }
 /** Actual Responses API protocol. Fixed official endpoint, no arbitrary origin or automatic retry. */
 export class OpenAiNpcProvider implements NpcProvider {
@@ -390,7 +408,10 @@ export class OpenAiNpcProvider implements NpcProvider {
   constructor(
     private config: OpenAiNpcConfig,
     private transport: typeof fetch = fetch,
+    private tokenCounter?: TextTokenCounter,
   ) {
+    if (config.contextBudgetTokens !== undefined)
+      config = { ...config, maxInputBytes: TEXT_CONTEXT_TRANSPORT_BYTES };
     if (!config.model?.trim() || !config.version?.trim()) throw new Error('OPENAI_MODEL_REQUIRED');
     for (const v of [
       config.maxInputBytes,
@@ -401,7 +422,7 @@ export class OpenAiNpcProvider implements NpcProvider {
     ])
       if (!Number.isSafeInteger(v) || v <= 0) throw new Error('INVALID_OPENAI_LIMITS');
     if (
-      config.maxInputBytes > 64000 ||
+      config.maxInputBytes > (config.contextBudgetTokens !== undefined ? 4194304 : 64000) ||
       config.maxOutputTokens > 32000 ||
       config.maxOutputTokens < 16 ||
       config.maxResponseBytes > 1000000
@@ -414,6 +435,10 @@ export class OpenAiNpcProvider implements NpcProvider {
         config.maxModelInputTokens > 1050000)
     )
       throw new Error('INVALID_OPENAI_LIMITS');
+    if (config.contextBudgetTokens !== undefined) {
+      if (!config.estimation) throw new Error('TEXT_CONTEXT_PLANNING_REQUIRED');
+      contextWindow({ ...config, contextTokens: config.maxModelInputTokens ?? 0 });
+    }
     this.config = Object.freeze({
       ...config,
       ...(config.estimation ? { estimation: Object.freeze({ ...config.estimation }) } : {}),
@@ -429,6 +454,12 @@ export class OpenAiNpcProvider implements NpcProvider {
             configuredVersion: config.version,
             maxInputBytes: config.maxInputBytes,
             maxModelInputTokens: config.maxModelInputTokens,
+            ...(config.contextBudgetTokens !== undefined
+              ? {
+                  contextBudgetTokens: config.contextBudgetTokens,
+                  counter: tokenCounter?.id ?? 'utf8-envelope-plus-protocol-v1',
+                }
+              : {}),
             maxOutputTokens: config.maxOutputTokens,
             maxResponseBytes: config.maxResponseBytes,
             inputMicrosPerMillion: config.inputMicrosPerMillion,
@@ -480,9 +511,39 @@ export class OpenAiNpcProvider implements NpcProvider {
     context: unknown,
   ): PreparedTextRequest | undefined {
     if (!this.config.estimation) return undefined;
-    return prepareOpenAiNpcTextRequest(this.config, purpose, context, this.version);
+    return prepareOpenAiNpcTextRequest(
+      this.config,
+      purpose,
+      context,
+      this.version,
+      this.tokenCounter,
+    );
+  }
+  contextWindow() {
+    return this.config.contextBudgetTokens === undefined
+      ? undefined
+      : {
+          ...contextWindow({ ...this.config, contextTokens: this.config.maxModelInputTokens! }),
+          counterId: this.tokenCounter?.supports(this.config.model)
+            ? this.tokenCounter.id
+            : 'utf8-envelope-plus-protocol-v1',
+          precision: this.tokenCounter?.supports(this.config.model)
+            ? this.tokenCounter.precision
+            : 'conservative_estimate',
+          transportLimitBytes: this.config.maxInputBytes,
+        };
+  }
+  contextFits(purpose: ProviderRequest['purpose'], context: unknown) {
+    if (this.config.contextBudgetTokens === undefined) return true;
+    const m = measureTextContext(
+      this.body(purpose, context),
+      { ...this.config, contextTokens: this.config.maxModelInputTokens! },
+      this.tokenCounter,
+    );
+    return m.serializedBytes <= m.transportLimitBytes && m.totalTokens <= m.effectiveContextTokens;
   }
   contextBudgetBytes(maxCostMicros: number): number {
+    if (this.config.contextBudgetTokens !== undefined) return this.config.maxInputBytes;
     if (!Number.isSafeInteger(maxCostMicros) || maxCostMicros < 0) return 0;
     const available =
       BigInt(maxCostMicros) * 1000000n -
@@ -563,6 +624,19 @@ export class OpenAiNpcProvider implements NpcProvider {
     const { mockProposal, ...context } = request.context;
     const body = this.body(request.purpose, context);
     const bytes = Buffer.byteLength(body);
+    if (this.config.contextBudgetTokens !== undefined) {
+      try {
+        assertTextContext(
+          measureTextContext(
+            body,
+            { ...this.config, contextTokens: this.config.maxModelInputTokens! },
+            this.tokenCounter,
+          ),
+        );
+      } catch {
+        throw new ProviderFailure('TEXT_CONTEXT_WINDOW_EXCEEDED', false);
+      }
+    }
     if (bytes > this.config.maxInputBytes) throw new ProviderFailure('CONTEXT_TOO_LARGE', false);
     let snapshot: TextReserveSnapshot | undefined;
     if (this.config.estimation) {
@@ -681,7 +755,13 @@ export class OpenAiNpcProvider implements NpcProvider {
       proposal: null,
       failureCode: code,
     });
-    if (usage.inputTokens > inputUpper || usage.outputTokens > this.config.maxOutputTokens)
+    if (
+      (this.config.contextBudgetTokens !== undefined &&
+        usage.inputTokens + this.config.maxOutputTokens >
+          Math.min(this.config.contextBudgetTokens, this.config.maxModelInputTokens!)) ||
+      usage.inputTokens > inputUpper ||
+      usage.outputTokens > this.config.maxOutputTokens
+    )
       return failed('PROVIDER_LIMIT_VIOLATION');
     if (snapshot && usage.costMicros > snapshot.reserveMicros)
       return failed('PROVIDER_RESERVE_EXCEEDED');

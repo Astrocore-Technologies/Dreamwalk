@@ -28,6 +28,9 @@ export function readNpcAiConfiguration(env: NodeJS.ProcessEnv = process.env): {
         version,
         maxInputBytes: profile.maxInputBytes,
         maxModelInputTokens: profile.contextTokens,
+        ...(profile.contextBudgetTokens !== undefined
+          ? { contextBudgetTokens: profile.contextBudgetTokens }
+          : {}),
         maxOutputTokens: profile.maxOutputTokens,
         maxResponseBytes: 128000,
         serviceTier: 'default',
@@ -37,6 +40,9 @@ export function readNpcAiConfiguration(env: NodeJS.ProcessEnv = process.env): {
         ...(profile.estimation ? { estimation: profile.estimation, pricing: profile.pricing } : {}),
       }),
       policy: {
+        ...(profile.contextBudgetTokens !== undefined
+          ? { maxContextBytes: profile.maxInputBytes }
+          : {}),
         externalApproved: true,
         killSwitch: env.NPC_AI_KILL_SWITCH === 'true',
         creditPrice: 0,

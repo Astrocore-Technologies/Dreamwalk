@@ -36,6 +36,9 @@ export function safeOwnerProfile(config: OwnerGenerationConfig) {
     text: {
       model: config.text.model,
       contextTokens: config.text.contextTokens,
+      ...(config.text.contextBudgetTokens !== undefined
+        ? { contextBudgetTokens: config.text.contextBudgetTokens }
+        : {}),
       maxOutputTokens: config.text.maxOutputTokens,
       maxInputBytes: config.text.maxInputBytes,
       inputMicrosPerMillion: config.text.inputMicrosPerMillion,

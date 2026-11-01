@@ -1,6 +1,41 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const liveMessages = {
+  contextModelCapacity: [
+    'Ёмкость контекста модели',
+    'Model context capacity',
+    'Місткість контексту моделі',
+  ],
+  contextRequested: [
+    'Выбранное окно на запрос, включая ответ',
+    'Requested window per request, including reply',
+    'Вибране вікно на запит, включно з відповіддю',
+  ],
+  contextEffective: [
+    'Доступное окно с учётом модели',
+    'Effective window within model capacity',
+    'Доступне вікно з урахуванням моделі',
+  ],
+  contextAnswer: [
+    'Отдельный предел ответа, токенов',
+    'Separate reply limit, tokens',
+    'Окрема межа відповіді, токенів',
+  ],
+  contextEstimate: [
+    'Консервативная оценка полного запроса; точный токенизатор для этой модели не подключён. Доступная история может быть короче лимита фактических токенов.',
+    'Conservative complete-request estimate; an exact tokenizer for this model is not connected. Available history may be shorter than the actual-token limit.',
+    'Консервативна оцінка повного запиту; точний токенізатор для цієї моделі не підключений. Доступна історія може бути коротшою за межу фактичних токенів.',
+  ],
+  contextExact: [
+    'Точный подсчёт полного запроса',
+    'Exact complete-request count',
+    'Точний підрахунок повного запиту',
+  ],
+  contextHistory: [
+    'Это окно одного запроса, не квота игры и не стоимость. История сохраняется; при переполнении выбираются целые разрешённые записи, существующая память, канон и последние события. Автоматических платных сводок нет.',
+    'This is a per-request window, not a game quota or a price. History stays saved; overflow selects whole permitted records, existing memory, canon and recent events. No automatic paid summaries.',
+    'Це вікно одного запиту, а не квота гри чи вартість. Історія зберігається; при переповненні відбираються цілі дозволені записи, наявна памʼять, канон і останні події. Автоматичних платних підсумків немає.',
+  ],
   policyClosePending: [
     'Закрыть просмотр; операция не отменяется',
     'Close review; the operation is not cancelled',
