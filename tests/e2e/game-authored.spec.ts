@@ -8,6 +8,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { createAuthoredDraft } from '@dreamwalk/game-core';
 import type { GameProjection } from '@dreamwalk/contracts';
+import { readProjection, reconfirmKnownStale } from './support/map-actions';
 
 /** Split coverage: removed legacy start control uses explicit API reconfirmation;
  * current planning/reload/end controls are still exercised through the browser. */
@@ -199,7 +200,33 @@ test('explicit realtime authored campaign retains coordination recovery and pers
   const planning = page.getByRole('region', { name: 'Планирование раунда', exact: true });
   await expect(planning.getByRole('heading', { name: 'Раунд 1', exact: true })).toBeVisible();
   await planning.getByRole('button', { name: 'Ждать', exact: true }).click();
-  await planning.getByRole('button', { name: 'Подтвердить намерение', exact: true }).click();
+  const beforeIntent = await readProjection(page, campaignId);
+  const encounter = beforeIntent.encounter!;
+  expect(encounter.round).toBe(1);
+  expect(encounter.intents[beforeIntent.actorId]).toBeUndefined();
+  const confirm = planning.getByRole('button', { name: 'Подтвердить намерение', exact: true });
+  // The keeper's normal tick-20 patrol can advance the world revision between
+  // planning and confirmation. Only a proven no-effect stale receipt permits a
+  // new visible decision; never retry an unknown outcome or a different round.
+  await reconfirmKnownStale(
+    page,
+    campaignId,
+    {
+      type: 'encounter.intent',
+      intent: {
+        encounterId: encounter.id,
+        generation: encounter.generation,
+        round: encounter.round,
+        intentRevision: 1,
+        action: { kind: 'wait' },
+        ready: true,
+      },
+    },
+    () => confirm.click(),
+    async () => {
+      await expect(confirm).toBeEnabled();
+    },
+  );
   await expect(planning.getByRole('heading', { name: 'Раунд 2', exact: true })).toBeVisible();
   await page.reload();
   await expect(planning.getByRole('heading', { name: 'Раунд 2', exact: true })).toBeVisible();
