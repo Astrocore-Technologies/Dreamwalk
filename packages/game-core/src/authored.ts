@@ -190,6 +190,7 @@ export function compilePlayableDraft(input: unknown): {
       y: n.y,
       revision: 0,
       inventory: [],
+      ...(n.itemStock ? { itemStock: structuredClone(n.itemStock) } : {}),
       movementGeneration: 0,
       lastInputSeq: 0,
     };
@@ -383,7 +384,15 @@ export function compilePlayableDraft(input: unknown): {
       !d.objectives?.some((objective) => objective.id === role.needObjectiveId)
     )
       errors.push(`supportingRole:${role.id}:missing-objective`);
+  for (const n of d.npcs)
+    for (const entry of n.itemStock ?? [])
+      if (!d.worldItemDefinitions?.some((def) => def.id === entry.definitionId))
+        errors.push('npc:' + n.id + ':unknown-stock-definition');
   const playable: PlayablePackage = {
+    ...(d.worldItemDefinitions
+      ? { worldItemDefinitions: structuredClone(d.worldItemDefinitions) }
+      : {}),
+    ...(d.worldItemRules ? { worldItemRules: structuredClone(d.worldItemRules) } : {}),
     ...(d.turnRules ? { turnRules: structuredClone(d.turnRules) } : {}),
     narrativePremise: { title: d.title, summary: '' },
     ...(d.narrativeConstraints
@@ -524,6 +533,12 @@ export function createStateFromPlayable(
   seed = 1,
 ): GameState {
   let state: GameState = {
+    ...(playable.worldItemDefinitions
+      ? { worldItemDefinitions: structuredClone(playable.worldItemDefinitions) }
+      : {}),
+    ...(playable.worldItemRules
+      ? { worldItemRules: structuredClone(playable.worldItemRules) }
+      : {}),
     ...(playable.narrativePremise
       ? { narrativePremise: structuredClone(playable.narrativePremise) }
       : {}),

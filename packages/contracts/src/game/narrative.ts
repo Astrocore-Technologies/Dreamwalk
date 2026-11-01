@@ -75,6 +75,7 @@ export const narrativeActionSchema = z
       'close',
       'unlock',
       'pick_up',
+      'consume',
       'give',
       'transition',
       'wait',

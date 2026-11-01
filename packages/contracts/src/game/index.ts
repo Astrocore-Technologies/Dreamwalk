@@ -1,4 +1,14 @@
 import {
+  worldItemDefinitionsSchema,
+  worldItemRulesSchema,
+  worldItemStateSchema,
+  npcItemStockSchema,
+  type WorldItemDefinition,
+  type WorldItemRules,
+  type WorldItemState,
+  type NpcItemStock,
+} from './world-items';
+import {
   turnRulesSchema,
   turnFenceSchema,
   turnProjectionSchema,
@@ -87,6 +97,7 @@ export const gameActionSchema = z
       'talk',
       'distract',
       'pick_up',
+      'consume',
       'give',
       'unlock',
       'open',
@@ -177,6 +188,9 @@ export const gameLabelTranslationsSchema = z
   .strict();
 export type GameLabelTranslations = z.infer<typeof gameLabelTranslationsSchema>;
 export interface GameEntity extends GamePoint {
+  item?: WorldItemState;
+  /** Private author-approved provisioning capability. */
+  itemStock?: NpcItemStock;
   vitality?: number;
   maxVitality?: number;
   movementTrace?: { sequence: number; points: GamePoint[] };
@@ -318,6 +332,8 @@ export const objectiveProjectionSchema = publicObjectiveCopySchema
 export type ObjectiveProjection = z.infer<typeof objectiveProjectionSchema>;
 
 export interface GameState {
+  worldItemDefinitions?: WorldItemDefinition[];
+  worldItemRules?: WorldItemRules;
   turnController?: TurnController;
   narrativePremise?: NarrativePremise;
   narrativeSource?: { versionId: string; checksum: string };
@@ -458,6 +474,7 @@ export const playableVersionSchema = z
 /** Wire entities deliberately exclude server-only path, memory, and inventory fields. */
 export const gamePublicEntitySchema = z
   .object({
+    item: worldItemStateSchema.optional(),
     id: gameIdSchema,
     vitality: z.number().int().min(0).max(100).optional(),
     maxVitality: z.number().int().min(1).max(100).optional(),
@@ -679,6 +696,8 @@ export const gameVisualSchema = z.enum(['key', 'token', 'journal', 'door', 'keep
 const authoredLabel = z.string().trim().min(1).max(120);
 export const authoredGameDraftSchema = z
   .object({
+    worldItemDefinitions: worldItemDefinitionsSchema.optional(),
+    worldItemRules: worldItemRulesSchema.optional(),
     turnRules: turnRulesSchema.optional(),
     narrativeConstraints: narrativeConstraintsSchema.optional(),
     supportingNpcPolicy: supportingNpcPolicySchema.optional(),
@@ -757,6 +776,7 @@ export const authoredGameDraftSchema = z
           .object({
             id: gameIdSchema,
             sourceNpcId: z.string().uuid().optional(),
+            itemStock: npcItemStockSchema.optional(),
             label: authoredLabel,
             labelTranslations: gameLabelTranslationsSchema.optional(),
             mapId: gameIdSchema,
@@ -823,6 +843,8 @@ export interface NpcBrain {
   generation: number;
 }
 export interface PlayablePackage {
+  worldItemDefinitions?: WorldItemDefinition[];
+  worldItemRules?: WorldItemRules;
   turnRules?: TurnRules;
   narrativePremise?: NarrativePremise;
   narrativeConstraints?: NarrativeConstraints;
@@ -856,3 +878,5 @@ export const npcPlanProposalSchema = z
   })
   .strict();
 export * from './story-turn';
+
+export * from './world-items';

@@ -7,6 +7,12 @@ export async function exportVisualAuthoring(c: PoolClient, owner: string) {
         [owner],
       )
     ).rows,
+    storyBuilds: (
+      await c.query(
+        'SELECT project_id,adventure_id,source_snapshot,status,proposal,draft,created_at,applied_at FROM story_playable_builds WHERE owner_id=$1',
+        [owner],
+      )
+    ).rows,
     spatialProposals: (
       await c.query(
         'SELECT id,project_id,job_id,project_revision,source_hash,layout,plan,status,created_at FROM visual_spatial_proposals WHERE owner_id=$1',
@@ -37,6 +43,7 @@ export async function eraseVisualAuthoring(c: PoolClient, owner: string) {
     ).rowCount
   )
     throw new Error('CONFIRMED_ERASURE_REQUIRED');
+  await c.query('DELETE FROM story_playable_builds WHERE owner_id=$1', [owner]);
   await c.query('DELETE FROM visual_spatial_proposals WHERE owner_id=$1', [owner]);
   await c.query(
     'DELETE FROM visual_authoring_stage_items WHERE project_id IN (SELECT id FROM visual_authoring_projects WHERE owner_id=$1)',

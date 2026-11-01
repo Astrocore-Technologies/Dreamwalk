@@ -19,6 +19,7 @@ import {
 } from '@dreamwalk/contracts';
 import {
   applyTurnAction,
+  recordNpcEvents,
   parsePlayerTextAction,
   turnFence,
   matchesTurnFence,
@@ -219,7 +220,16 @@ export class StoryTurnRuntime {
           text: segment.text,
           audienceIds: input.channel === 'whisper' ? [actorId] : listeners(next),
         });
-        if (!applied.error) next = applied.state;
+        if (!applied.error)
+          next =
+            action.kind === 'consume'
+              ? recordNpcEvents(
+                  next,
+                  applied.state,
+                  applied.events,
+                  `turn:${turnId}:${segment.index}`,
+                ).state
+              : applied.state;
         entries.push({
           ordinal: entries.length,
           tick: next.tick,

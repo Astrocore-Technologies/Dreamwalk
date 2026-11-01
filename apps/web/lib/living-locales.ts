@@ -1,5 +1,9 @@
 /** Living NPC UI only; never translates authored or private content. */
 export const livingMessages = {
+  'Предмет поставлен': { ru: 'Предмет поставлен', en: 'Item placed', uk: 'Предмет поставлено' },
+  'Предмет передан': { ru: 'Предмет передан', en: 'Item handed over', uk: 'Предмет передано' },
+  'Предмет съеден': { ru: 'Предмет съеден', en: 'Food eaten', uk: 'Їжу з’їдено' },
+  Поесть: { ru: 'Поесть', en: 'Eat', uk: 'Поїсти' },
   'Предложение устарело. Отправь новый запрос.': {
     ru: 'Предложение устарело. Отправь новый запрос.',
     en: 'The proposal expired. Send a new request.',

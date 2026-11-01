@@ -1,3 +1,6 @@
+import { StoryBuildService } from './game/story-build.service';
+import { StoryBuildController } from './game/story-build.controller';
+import { storyPlanDefinition } from './game/story-plan';
 import { SpatialPlannerService } from './visual-authoring/spatial-planner';
 import { spatialPlanDefinition } from './visual-authoring/spatial-plan';
 import { createAuthoringTextEngine } from './live-test/authoring-text';
@@ -59,6 +62,7 @@ class Health {
     Health,
     LiveTestController,
     VisualAuthoringController,
+    StoryBuildController,
     AccountController,
     ContentController,
     AdminController,
@@ -85,6 +89,13 @@ class Health {
     // Compatibility token only; ordinary mode uses the generic authority above.
     { provide: LiveTestService, useExisting: GenerationAuthority },
     VisualAuthoringService,
+    StoryBuildService,
+    {
+      provide: 'STORY_BUILD_ENGINE',
+      inject: [Db, GenerationAuthority],
+      useFactory: (db: Db, live: GenerationAuthority) =>
+        createAuthoringTextEngine(db, live, storyPlanDefinition),
+    },
     SpatialPlannerService,
     {
       provide: 'AUTHORING_TEXT_ENGINE',

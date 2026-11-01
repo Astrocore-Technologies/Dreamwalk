@@ -2,7 +2,7 @@
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { ArrowLeft, Compass, KeyRound, Moon, Radio, UsersRound } from 'lucide-react';
+import { ArrowLeft, Compass, Moon, Radio, UsersRound } from 'lucide-react';
 import type { GameAction, GameEntity, GamePoint } from '@dreamwalk/contracts';
 import { api, errorMessage, useClient, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
@@ -10,7 +10,6 @@ import { Button, ErrorBox, Field, Input, Loading, PageHeading } from '@/componen
 import { authorizedArt } from '../assets/art-visibility';
 import { useAssetText } from '../assets/messages';
 import { useCampaignArt } from '../assets/use-campaign-art';
-import { artPreviewUrl } from '../assets/types';
 import { HeroSelection, useHeroSelection, useHeroText, CampaignHero } from './hero-selection';
 import { useLaunchGate } from './use-launch-gate';
 import { localizedProjection } from './localized-projection';
@@ -21,7 +20,6 @@ import { useTurnText } from './turn-messages';
 import { playerControlsAvailable, projectionTurnFence } from './turn-ui';
 import { LiveTestPanel } from '../live-test/live-test-panel';
 import { UnifiedStory, type StoryRecipient } from './unified-story';
-import { useStoryText } from './story-messages';
 import { useAdvancedPlayLabel } from './play-messages';
 import { SponsorBudget } from './sponsor-budget';
 import { LivingAiPanel } from './living-ai-panel';
@@ -30,6 +28,7 @@ import { useGame, type CampaignSummary } from './use-game';
 import styles from './game.module.css';
 
 const actionKeys: Partial<Record<GameAction['kind'], string>> = {
+  consume: 'Поесть',
   move_to: 'Подойти',
   wait: 'Ждать',
   inspect: 'Осмотреть',
@@ -61,6 +60,9 @@ const errorKeys: Record<string, string> = {
     'У игрока нет доступа к исходной приватной истории. Сначала пригласи его в историю.',
 };
 const eventKeys: Record<string, string> = {
+  'item.placed': 'Предмет поставлен',
+  'item.given': 'Предмет передан',
+  'item.consumed': 'Предмет съеден',
   'action.pick_up': 'Предмет передан',
   'action.give': 'Предмет передан',
   'action.open': 'Дверь открыта',
@@ -215,7 +217,6 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
   const [inspectedNpcId, setInspectedNpcId] = useState<string | null>(null);
   const [storyBusy, setStoryBusy] = useState(false);
   const advancedPlayLabel = useAdvancedPlayLabel();
-  const storyText = useStoryText();
   const [recipient, setRecipient] = useState<StoryRecipient>(null);
   useEffect(() => setRecipient(null), [campaignId]);
   const { t, locale } = useT();
@@ -267,7 +268,6 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
       document.removeEventListener('visibilitychange', reloadIfVisible);
     };
   }, [connected, members.reload]);
-  const nearby = useMemo(() => p?.entities.filter((entity) => entity.id !== p.actorId) || [], [p]);
   useEffect(() => {
     setSelected((p && encounter?.intents[p.actorId]?.action) || { kind: 'wait' });
   }, [encounter?.id, encounter?.round, locked]);
@@ -472,6 +472,8 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             planning={!!encounter}
             onStop={game.stop}
             onInspectNpc={setInspectedNpcId}
+            onAction={act}
+            onApproach={approach}
             onSelectNpc={(npcId) => {
               const npc = p.entities.find((entity) => entity.id === npcId && entity.kind === 'npc');
               if (npc) setRecipient({ id: npc.id, label: npc.label || t('NPC') });
@@ -648,247 +650,9 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                 </Button>
               </section>
             ))}
-          <section className={styles.objects}>
-            <header>
-              <h2>{t('Предметы рядом')}</h2>
-              {!p.turn && (
-                <Button
-                  variant="ghost"
-                  disabled={!connected || !!encounter}
-                  busy={game.busy}
-                  onClick={() => void game.command({ type: 'encounter.begin' })}
-                >
-                  {t('Начать координацию')}
-                </Button>
-              )}
-            </header>
-            {!nearby.length && <p className={styles.muted}>{t('Видимых объектов нет')}</p>}
-            {nearby.map((entity) => (
-              <article
-                key={entity.id}
-                className={styles.object}
-                data-entity-id={entity.id}
-                data-x={entity.x}
-                data-y={entity.y}
-              >
-                <div>
-                  {entity.kind === 'npc' &&
-                    art.find((entry) => entry.slot === `entity:${entity.id}:portrait`) && (
-                      <img
-                        className={styles.artPortrait}
-                        loading="lazy"
-                        decoding="async"
-                        width={72}
-                        height={88}
-                        src={artPreviewUrl(
-                          art.find((entry) => entry.slot === `entity:${entity.id}:portrait`)!.url,
-                        )}
-                        alt={entity.label || t('NPC')}
-                      />
-                    )}
-                  <h3>{entity.label || t(entityKey(entity, p.actorId))}</h3>
-                  <small>
-                    {t('Координаты: {x}, {y}', { x: entity.x, y: entity.y })}
-                    {entity.kind === 'door'
-                      ? ` · ${t(entity.locked ? 'Заперто' : entity.open ? 'Открыто' : 'Закрыто')}`
-                      : ''}
-                  </small>
-                </div>
-                <div className={styles.actions}>
-                  {p.turn && (entity.kind === 'npc' || entity.kind === 'player') && (
-                    <>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={controlsDisabled || p.turn.resources.main < 1}
-                        onClick={() => act({ kind: 'push', targetId: entity.id })}
-                      >
-                        {turnText('push')}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="ghost"
-                        disabled={controlsDisabled || p.turn.resources.main < 1}
-                        onClick={() => act({ kind: 'hit', targetId: entity.id })}
-                      >
-                        {turnText('hit')}
-                      </Button>
-                    </>
-                  )}
-                  {entity.kind === 'npc' && (
-                    <Button
-                      type="button"
-                      variant="secondary"
-                      disabled={!connected}
-                      data-select-npc={entity.id}
-                      onClick={() =>
-                        setRecipient({ id: entity.id, label: entity.label || t('NPC') })
-                      }
-                    >
-                      {storyText('choose')}
-                    </Button>
-                  )}
-                  <Button
-                    variant="ghost"
-                    disabled={controlsDisabled}
-                    onClick={() => approach(entity)}
-                  >
-                    {t('Подойти')}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    disabled={entity.kind === 'npc' ? false : controlsDisabled}
-                    onClick={() =>
-                      entity.kind === 'npc'
-                        ? setInspectedNpcId(entity.id)
-                        : act({ kind: 'inspect', targetId: entity.id })
-                    }
-                  >
-                    {t('Осмотреть')}
-                  </Button>
-                  {entity.kind === 'item' && (
-                    <Button
-                      disabled={controlsDisabled}
-                      onClick={() => act({ kind: 'pick_up', targetId: entity.id })}
-                    >
-                      {t('Подобрать')}
-                    </Button>
-                  )}
-                  {entity.kind === 'door' && (
-                    <Button
-                      disabled={controlsDisabled}
-                      onClick={() =>
-                        act({
-                          kind: entity.locked ? 'unlock' : entity.open ? 'close' : 'open',
-                          targetId: entity.id,
-                          ...(entity.locked ? { itemId: entity.keyId } : {}),
-                        })
-                      }
-                    >
-                      {t(
-                        entity.locked
-                          ? 'Отпереть'
-                          : entity.open
-                            ? 'Закрыть дверь'
-                            : 'Открыть дверь',
-                      )}
-                    </Button>
-                  )}
-                  {entity.kind === 'door' && p.rulesetVersion === 'hybrid-v3' && (
-                    <>
-                      <Button
-                        variant="secondary"
-                        disabled={controlsDisabled}
-                        onClick={() => act({ kind: 'knock', targetId: entity.id })}
-                      >
-                        {t('Постучать')}
-                      </Button>
-                      {!entity.locked && !entity.open && entity.keyId && (
-                        <Button
-                          variant="secondary"
-                          disabled={controlsDisabled}
-                          onClick={() =>
-                            act({ kind: 'lock', targetId: entity.id, itemId: entity.keyId })
-                          }
-                        >
-                          {t('Запереть дверь')}
-                        </Button>
-                      )}
-                    </>
-                  )}
-                  {entity.kind === 'npc' && (
-                    <>
-                      <Button
-                        variant="secondary"
-                        disabled={controlsDisabled}
-                        onClick={() => act({ kind: 'talk', targetId: entity.id })}
-                      >
-                        {t(p.rulesetVersion === 'hybrid-v3' ? 'Попросить помощи' : 'Поговорить')}
-                      </Button>
-                      {p.rulesetVersion === 'hybrid-v3' && (
-                        <Button
-                          variant="secondary"
-                          disabled={controlsDisabled}
-                          onClick={() => act({ kind: 'distract', targetId: entity.id })}
-                        >
-                          {t('Отвлечь')}
-                        </Button>
-                      )}
-                      {p.rulesetVersion !== 'hybrid-v3' && (
-                        <Button
-                          disabled={!connected || !!encounter || !!p.turn}
-                          busy={game.busy}
-                          onClick={() =>
-                            void game.command({
-                              type: 'npc.request',
-                              action: { kind: 'talk', targetId: entity.id },
-                            })
-                          }
-                        >
-                          {t('Попросить NPC действовать')}
-                        </Button>
-                      )}
-                    </>
-                  )}
-                </div>
-              </article>
-            ))}
-            {p.map.exits.map((exit) => (
-              <article data-exit-id={exit.id} key={exit.id} className={styles.object}>
-                <div>
-                  <h3>
-                    {exit.label ||
-                      t(
-                        exit.destinationMapId === 'roof'
-                          ? 'Крыша'
-                          : exit.destinationMapId === 'observatory'
-                            ? 'Обсерватория'
-                            : 'Переход',
-                      )}
-                  </h3>
-                  <small>{t('Координаты: {x}, {y}', { x: exit.x, y: exit.y })}</small>
-                </div>
-                <div className={styles.actions}>
-                  <Button
-                    variant="ghost"
-                    disabled={controlsDisabled}
-                    onClick={() => approach(exit)}
-                  >
-                    {t('Подойти')}
-                  </Button>
-                  <Button
-                    variant="secondary"
-                    disabled={controlsDisabled}
-                    onClick={() => act({ kind: 'transition', targetId: exit.id })}
-                  >
-                    {t('Перейти')}
-                  </Button>
-                </div>
-              </article>
-            ))}
-          </section>
         </div>
         <aside className={styles.hud}>
           <CampaignHero campaignId={campaignId} />
-          <section>
-            <h2>
-              <KeyRound size={18} />
-              {t('Инвентарь героя')}
-            </h2>
-            {p.inventory.length ? (
-              <ul className={styles.inventory}>
-                {p.inventory.map((item) => (
-                  <li key={item.id} data-inventory-id={item.id}>
-                    <span>◇</span>
-                    {item.label || t(entityKey(item, p.actorId))}
-                  </li>
-                ))}
-              </ul>
-            ) : (
-              <p className={styles.muted}>{t('Пустой инвентарь')}</p>
-            )}
-            <small>{t('Предметы сохраняются сразу; движение — с контрольными точками.')}</small>
-          </section>
           <section>
             <h2>
               <UsersRound size={18} />
