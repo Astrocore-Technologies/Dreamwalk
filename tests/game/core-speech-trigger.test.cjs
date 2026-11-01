@@ -51,3 +51,51 @@ test('reply trigger never bypasses whole-audience whisper disclosure', () => {
   state.npcBrains.keeper.living.observations.find((o) => o.id === id).disclosure = 'private';
   assert.equal(g.npcReplyObservation(state, 'alice', 'keeper', id), undefined);
 });
+
+test('reply locale never changes reconstructible admitted speech identity', () => {
+  const inputs = [
+    { channel: 'say', text: 'A question in the original language.' },
+    { channel: 'whisper', text: 'A private original question.' },
+    { channel: 'say', claim: { kind: 'item_taken', actorId: 'bob', targetId: 'key' } },
+    {
+      channel: 'say',
+      text: 'Bob took the key.',
+      claim: { kind: 'item_taken', actorId: 'bob', targetId: 'key' },
+    },
+  ];
+  for (const input of inputs) {
+    for (const identity of [
+      undefined,
+      { turnId: '11111111-1111-4111-a111-111111111111', segmentIndex: 2 },
+    ]) {
+      let expected;
+      for (const replyLocale of [undefined, 'uk', 'en', 'ru']) {
+        const speech = { ...input, ...(replyLocale ? { replyLocale } : {}) };
+        const result = g.applyNpcSpeech(world(), 'alice', 'keeper', speech, {
+          suppressReply: true,
+          identity,
+        });
+        assert.equal(result.error, undefined);
+        const marker = g.admittedNpcSpeechObservationId(
+          result.state,
+          'alice',
+          'keeper',
+          speech,
+          identity,
+        );
+        assert.ok(marker, `exact admitted ${replyLocale ?? 'legacy'} input is reconstructible`);
+        expected ??= marker;
+        assert.equal(
+          marker,
+          expected,
+          'legacy and all reply locales have the same speech identity',
+        );
+        assert.ok(g.npcReplyObservation(result.state, 'alice', 'keeper', marker));
+        assert.equal(
+          g.admittedNpcSpeechObservationId(result.state, 'alice', 'keeper', input, identity),
+          marker,
+        );
+      }
+    }
+  }
+});

@@ -1,0 +1,6 @@
+* text=auto eol=lf
+
+# Pinned SVG fixtures are byte-addressed; never convert their line endings.
+assets/game/observatory-atlas.svg -text
+apps/web/public/game/observatory-atlas.svg -text
+apps/web/public/game/observatory-atlas.dbfdb127.svg -text

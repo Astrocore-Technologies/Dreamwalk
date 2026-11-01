@@ -1,6 +1,36 @@
 'use client';
 import { useT } from '@/lib/i18n';
 const rows = {
+  estimatedCost: ['Оценка полной стоимости', 'Estimated total cost', 'Оцінка повної вартості'],
+  reserveCost: ['Операционный резерв', 'Operational reserve', 'Операційний резерв'],
+  estimateNotice: [
+    'Оценка и резерв не гарантируют максимальный счёт провайдера.',
+    'The estimate and reserve do not guarantee a maximum provider invoice.',
+    'Оцінка й резерв не гарантують максимальний рахунок провайдера.',
+  ],
+  estimatePending: [
+    'Запуск по оценке выключен до отдельного согласия на этот риск.',
+    'Estimate-based dispatch is disabled pending separate risk approval.',
+    'Запуск за оцінкою вимкнений до окремої згоди на цей ризик.',
+  ],
+  usd: ['USD', 'USD', 'USD'],
+  httpStatus: ['Статус HTTP', 'HTTP status', 'Статус HTTP'],
+  diagnostics: ['Условия подключения API', 'API connection conditions', 'Умови підключення API'],
+  providerError: [
+    'Провайдер сообщил об ошибке. Списание не подтверждено; автоматического повтора нет.',
+    'The provider reported an error. Billing is unconfirmed; there is no automatic retry.',
+    'Провайдер повідомив про помилку. Списання не підтверджене; автоматичного повтору немає.',
+  ],
+  heldCost: ['Зарезервировано', 'Reserved', 'Зарезервовано'],
+  actualCost: ['Фактическая стоимость', 'Actual cost', 'Фактична вартість'],
+  mode: ['Режим создания', 'Creation mode', 'Режим створення'],
+  mockMode: ['Тест без API', 'Fixture without API', 'Тест без API'],
+  externalMode: ['OpenAI API', 'OpenAI API', 'OpenAI API'],
+  upperCost: [
+    'Подтверждённый потолок стоимости',
+    'Verified upper cost',
+    'Підтверджена межа вартості',
+  ],
   title: ['Подготовка изображения', 'Image preparation', 'Підготовка зображення'],
   source: [
     'Создание изображения доступно в графике конкретного приключения.',

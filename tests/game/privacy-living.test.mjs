@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import {
   purgeLivingNpcReferences,
+  redactGameHeroIdentity,
+  redactTurnControlState,
   redactGameOperationSpeech,
 } from '../../scripts/game-data-requests.mjs';
 import { forceMockNpcTestEnvironment } from '../../scripts/mock-npc-test-env.mjs';
@@ -366,4 +368,109 @@ test('retained other-player operation projections lose narrative text and genera
   assert.equal(JSON.stringify(clean).includes('PERSONAL_REPLAY_TEXT'), false);
   assert.equal(clean.projection.npcObligations[0].status, 'accepted');
   assert.equal(clean.projection.narrative.revision, 3);
+});
+
+test('confirmed erasure removes turn membership, pending reactions, deferred refs and private visual metadata', async () => {
+  const g = await import('@dreamwalk/game-core');
+  let state = g.initializeTurnController(g.createObservatoryState(['erased-player', 'other']), [
+    'erased-player',
+    'other',
+  ]).state;
+  Object.assign(state.entities['erased-player'], {
+    x: 2,
+    y: 3,
+    label: 'PRIVATE_HERO_NAME',
+    characterPackageVersionId: 'PRIVATE_PACK',
+    feedback: { kind: 'hit', sequence: 7, dx: 1, dy: 0 },
+    movementTrace: {
+      sequence: 6,
+      points: [
+        { x: 2, y: 2 },
+        { x: 2, y: 3 },
+      ],
+    },
+  });
+  Object.assign(state.entities.other, { x: 3, y: 3 });
+  state.turnController.resources.other.additional = 0;
+  state = g.applyTurnAction(
+    state,
+    'erased-player',
+    { kind: 'hit', targetId: 'other' },
+    g.turnFence(state),
+  ).state;
+  assert.equal(state.turnController.phase, 'reaction');
+  state.turnController.deferredSpeech = [
+    {
+      id: 'private-queue',
+      actorId: 'erased-player',
+      recipientId: 'keeper',
+      utteranceId: 'private-source',
+      channel: 'whisper',
+      audienceIds: ['erased-player', 'keeper'],
+      sequence: 1,
+      roundId: 'round-1',
+      phaseEpoch: 1,
+    },
+  ];
+  state.artBindings = [
+    { slot: 'entity:erased-player:sprite', revisionId: 'private-face' },
+    { slot: 'entity:other:sprite', revisionId: 'other-face' },
+  ];
+  const cleaned = redactGameHeroIdentity(state, 'erased-player');
+  assert.deepEqual(cleaned.turnController.actorOrder, ['other']);
+  assert.equal(cleaned.turnController.activeActorId, 'other');
+  assert.equal(cleaned.turnController.resources['erased-player'], undefined);
+  assert.equal(cleaned.turnController.resources.other.additional, 0);
+  assert.equal(cleaned.entities.other.x, 3);
+  assert.equal(cleaned.turnController.pendingResolution, undefined);
+  assert.equal(cleaned.turnController.reaction, undefined);
+  assert.deepEqual(cleaned.turnController.deferredSpeech, []);
+  assert.deepEqual(cleaned.artBindings, [
+    { slot: 'entity:other:sprite', revisionId: 'other-face' },
+  ]);
+  assert.equal(cleaned.entities['erased-player'].feedback, undefined);
+  assert.equal(cleaned.entities['erased-player'].movementTrace, undefined);
+  assert.equal(cleaned.entities['erased-player'].label, undefined);
+  assert.equal(cleaned.entities['erased-player'].characterPackageVersionId, undefined);
+});
+
+test('erasure cancels dangling deferred jobs and removes erased turn metadata from retained projections', async () => {
+  const g = await import('@dreamwalk/game-core');
+  const state = g.initializeTurnController(g.createObservatoryState(['erased-player', 'other']), [
+    'erased-player',
+    'other',
+  ]).state;
+  state.turnController.deferredSpeech = [
+    {
+      id: 'other-queue',
+      actorId: 'other',
+      recipientId: 'keeper',
+      utteranceId: 'safe-source',
+      channel: 'say',
+      audienceIds: ['other', 'keeper'],
+      sequence: 2,
+      roundId: 'round-1',
+      phaseEpoch: 1,
+    },
+  ];
+  const epoch = state.turnController.phaseEpoch;
+  redactTurnControlState(state, 'erased-player', { cancelAllDeferred: true });
+  assert.deepEqual(state.turnController.deferredSpeech, []);
+  assert.ok(state.turnController.phaseEpoch > epoch);
+  const retained = {
+    projection: {
+      actorId: 'other',
+      turn: {
+        activeActorId: 'erased-player',
+        actorOrder: ['erased-player', 'other'],
+        phase: 'player',
+      },
+      entities: [
+        { id: 'other', kind: 'player', feedback: { kind: 'push', sequence: 8, dx: 1, dy: 0 } },
+      ],
+    },
+  };
+  redactGameHeroIdentity(retained, 'erased-player');
+  assert.equal(retained.projection.turn, undefined);
+  assert.equal(retained.projection.entities[0].feedback, undefined);
 });

@@ -39,7 +39,7 @@ await test(
         outsider = await client().register();
       const source = await owner.request('/adventures/old-observatory?view=published');
       const ids = [];
-      for (let i = 0; i < 14; i++) {
+      for (let i = 0; i < 15; i++) {
         const { campaignId } = await owner.request('/game/campaigns', {
           playableVersionId: source.playableVersionId,
         });
@@ -182,6 +182,52 @@ await test(
         assert.equal(r.status, 'awaiting_confirmation');
         return { ...q, proposalHash: r.proposal_hash };
       }
+      await t.test(
+        'selected request languages persist through quote, changed confirmation headers and provider jobs',
+        async () => {
+          const id = ids[14];
+          await prepare(id);
+          for (const locale of ['uk', 'en', 'ru']) {
+            const preferred = {
+              headers: {
+                ...req.headers,
+                'accept-language': `${locale}-${locale.toUpperCase()}, en;q=0.5`,
+              },
+            };
+            const q = await quoted(id, input(id, 'Hello, remember this greeting.'), preferred);
+            const stored = await turn(q.quote.turnId);
+            assert.equal(stored.input.replyLocale, locale);
+            assert.equal(stored.context.replyLocale, locale);
+            assert.equal(stored.context.dialogues[0].replyLocale, locale);
+            const run = await queued(id, q, {
+              headers: { ...req.headers, 'accept-language': locale === 'en' ? 'uk' : 'en' },
+            });
+            assert.equal(run.p.request.context.replyLocale, locale);
+            assert.equal(run.p.request.context.dialogues[0].replyLocale, locale);
+            assert.equal((await complete(id, run)).status, 'committed');
+            const reply = (await feed(id)).entries.find(
+              (entry) => entry.turnId === run.id && entry.kind === 'npc_reply',
+            );
+            assert.ok(reply?.text);
+            assert.match(
+              reply.text,
+              {
+                uk: /^Латунний ключ на підлозі/,
+                en: /^The brass key on the floor/,
+                ru: /^Латунный ключ на полу/,
+              }[locale],
+            );
+            const sourceFact = game.live
+              .get(id)
+              .state.npcBrains.keeper.living.observations.find(
+                (observation) => observation.id === 'initial:keeper:fact:two-stairways',
+              );
+            assert.ok(sourceFact.definitionText.startsWith('The brass key on the floor'));
+          }
+          const fallback = await quoted(id, input(id, 'Account preference without a header.'));
+          assert.equal((await turn(fallback.quote.turnId)).input.replyLocale, 'ru');
+        },
+      );
       await t.test(
         'same quote and concurrent submit produce one job, ordered outcome before speech, replay once',
         async () => {
@@ -622,7 +668,7 @@ await test(
       await t.test(
         'private source revocation cancels delayed consent and denies feed despite accepted campaign membership',
         async () => {
-          const id = ids[14];
+          const id = privateCampaign.campaignId;
           await prepare(id);
           const q = await queued(
             id,

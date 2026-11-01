@@ -169,3 +169,22 @@ See [generation preparation and remaining live gates](docs/image-generation.md).
 
 Run `npm run test:images:integration` for the isolated PostgreSQL/fixture-provider checks.
 No test command above makes paid image requests or starts the user's separate installation.
+
+## Current local authoring and turn-based candidate
+
+The opt-in versioned Dreamwalk turn preset supports immediate mouse movement/actions,
+shared click/text budgets and ordered NPC replies on the world phase. Old immutable
+campaigns keep their compatibility rules. New Studio templates and newly applied visual
+packages choose the turn preset explicitly; author settings are pinned on freeze.
+See [turn runtime and limits](docs/turn-based-runtime.md).
+
+`/studio/visuals` provides the original drawn acceptance fixture: a full-body character
+concept, approval, portrait and four-direction idle/walk package; a layered atelier with
+validated furniture, a working door, preview and immutable free reuse. Text/photo briefs
+are private and separately consented. These are deterministic original fixtures, not
+AI-generated likenesses or final painted-art quality. No external generation is enabled.
+See [visual authoring](docs/visual-authoring.md).
+
+For project-scoped development storage, use `npm run local -- <command>` or `npm run dev:local`
+to keep process temp/cache/artifacts under `.local/workflow`. Existing authentication and
+user databases are independent. See [storage scope](docs/development-storage.md).

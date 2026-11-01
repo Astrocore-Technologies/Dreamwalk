@@ -9,6 +9,7 @@ import type {
 } from '@dreamwalk/contracts';
 import { gameEnvelopeSchema, type GameEnvelope } from '@dreamwalk/contracts';
 import { api, ApiError } from '@/lib/client';
+import { projectionTurnFence } from './turn-ui';
 import {
   canRetryEncounterBegin,
   encounterRetryContext,
@@ -38,12 +39,15 @@ export type CommandBody = {
     | 'encounter.end'
     | 'npc.request'
     | 'npc.speech'
-    | 'npc.promise';
+    | 'npc.promise'
+    | 'turn.end'
+    | 'turn.reaction';
   promiseId?: string;
-  decision?: 'accept' | 'decline';
+  decision?: 'accept' | 'decline' | 'defend';
+  turnFence?: { roundId: string; phaseEpoch: number; rulesetVersion: 1 };
   topicId?: string;
   npcId?: string;
-  speech?: { channel: 'say' | 'whisper'; text: string };
+  speech?: { channel: 'say' | 'whisper'; text: string; replyLocale?: 'uk' | 'en' | 'ru' };
   encounterId?: string;
   action?: GameAction;
   intent?: GameIntentInput;
@@ -75,6 +79,7 @@ export function useGame(campaignId: string) {
   const queuedTarget = useRef<GamePoint | null>(null);
   const alive = useRef(false);
   const commandInFlight = useRef(false);
+  const moveRetry = useRef<{ key: string; body: object } | null>(null);
   const retry = useRef<{
     key: string;
     body: CommandBody;
@@ -207,6 +212,64 @@ export function useGame(campaignId: string) {
         (entity) => entity.id === value.projection.actorId,
       );
       if (!value || !self || !alive.current) return;
+      const turnFence = projectionTurnFence(value.projection);
+      if (turnFence) {
+        if (
+          commandInFlight.current ||
+          !value.projection.turn?.ownTurn ||
+          value.projection.turn.phase !== 'player'
+        )
+          return;
+        commandInFlight.current = true;
+        const key = JSON.stringify({ target, turnFence });
+        const turnBody =
+          moveRetry.current?.key === key
+            ? moveRetry.current.body
+            : {
+                operationId: crypto.randomUUID(),
+                turnFence,
+                connectionEpoch: value.connectionEpoch,
+                inputSeq: ++seq.current,
+                movementGeneration: self.movementGeneration || 0,
+                target,
+              };
+        moveRetry.current = { key, body: turnBody };
+        setBusy(true);
+        setError('');
+        void api<
+          GameEnvelope & {
+            status: 'committed' | 'rejected';
+            code?: string;
+            operationId: string;
+            events: GameEvent[];
+          }
+        >(`${path}/move`, { method: 'POST', body: JSON.stringify(turnBody) })
+          .then(async (result) => {
+            moveRetry.current = null;
+            const {
+              status,
+              code,
+              operationId: _operationId,
+              events: _events,
+              ...snapshot
+            } = result;
+            if (alive.current) {
+              if (snapshot.projection) accept(snapshot);
+              if (status === 'rejected') setError(code || 'INVALID_ACTION');
+            }
+            await refresh();
+          })
+          .catch((err: unknown) => {
+            if (err instanceof ApiError && err.status >= 400 && err.status < 500)
+              moveRetry.current = null;
+            if (alive.current) setError(err instanceof ApiError ? err.code : 'NETWORK_ERROR');
+          })
+          .finally(() => {
+            commandInFlight.current = false;
+            if (alive.current) setBusy(false);
+          });
+        return;
+      }
       const body = {
         connectionEpoch: value.connectionEpoch,
         inputSeq: ++seq.current,
@@ -222,7 +285,7 @@ export function useGame(campaignId: string) {
             if (alive.current) setError(err instanceof ApiError ? err.code : 'NETWORK_ERROR');
           });
     },
-    [path, refresh],
+    [path, refresh, accept],
   );
   const move = useCallback(
     (target: GamePoint) => {
@@ -237,7 +300,13 @@ export function useGame(campaignId: string) {
   const stop = useCallback(() => {
     queuedTarget.current = null;
     const value = envelope.current;
-    if (!value || stopping.current || socket.current?.readyState !== WebSocket.OPEN) return;
+    if (
+      !value ||
+      value.projection.turn ||
+      stopping.current ||
+      socket.current?.readyState !== WebSocket.OPEN
+    )
+      return;
     stopping.current = true;
     void api<GameEnvelope>(`${path}/stop`, {
       method: 'POST',
@@ -268,6 +337,9 @@ export function useGame(campaignId: string) {
               protocolVersion: 1,
               operationId: crypto.randomUUID(),
               expectedRevision: envelope.current?.projection.revision,
+              ...(projectionTurnFence(envelope.current?.projection)
+                ? { turnFence: projectionTurnFence(envelope.current?.projection) }
+                : {}),
               ...body,
             };
       const encounterStart =

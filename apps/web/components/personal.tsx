@@ -1,4 +1,5 @@
 'use client';
+import { useVisualText } from './visual-authoring/messages';
 import { readStoryReturn, storyWithHero } from './story-return';
 import { StoryReturnLink } from './story-return-link';
 import { useHeroText } from './game/hero-selection';
@@ -260,6 +261,7 @@ export function LibraryPage() {
   );
 }
 export function HeroesPage() {
+  const visualText = useVisualText();
   const returnTo = readStoryReturn(useSearchParams());
   const heroText = useHeroText();
   const { t: tr } = useT();
@@ -289,6 +291,7 @@ export function HeroesPage() {
           </Button>
         }
       />
+      <ButtonLink href="/studio/visuals">{visualText('title')}</ButtonLink>
       <StoryReturnLink intent={returnTo} />
       <ErrorBox message={resource.error} retry={resource.reload} />
       {resource.loading ? (

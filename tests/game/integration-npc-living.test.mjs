@@ -287,6 +287,7 @@ await test(
             npcId: 'gardener',
             purpose: 'speech',
             channel: 'whisper',
+            replyLocale: 'uk',
             operationId: randomUUID(),
           };
           const j = await owner.request(path(cid, 'ai/jobs'), req);
@@ -313,7 +314,14 @@ await test(
             400,
           );
           await owner.request(path(cid, 'ai/jobs'), { ...req, channel: 'say' }, 'POST', 409);
-          assert.ok(JSON.stringify(await snapshot(owner, cid)).includes('acknowledged'));
+          assert.ok(
+            (await snapshot(owner, cid)).projection.npcUtterances.some(
+              (utterance) =>
+                utterance.speakerId === 'gardener' &&
+                utterance.text === 'Я вас чую. Продовжуйте, будь ласка.',
+            ),
+          );
+          assert.equal(row.context.replyLocale, 'uk');
         },
       );
       await t.test(
@@ -340,12 +348,15 @@ await test(
             () => owner.request(path(cid, 'ai')),
             (s) => s.jobs.some((x) => x.id === j.id && x.status === 'stale'),
           );
-          assert.ok(!(await stored(cid)).npcUtterances?.some((u) => u.code === 'acknowledged'));
+          assert.ok(
+            !(await stored(cid)).npcUtterances?.some((u) => u.speakerId === 'gardener'),
+            'A stale result must not emit any NPC reply, whether localized text or legacy code',
+          );
         },
       );
       await t.test(
         'cold personal episodes outlive hot truncation and enter only private bounded planner context',
-        async () => {
+        async (t) => {
           const f7 = await setup(owner),
             cid = f7.campaignId;
           await moveTo(owner, cid, { x: 3, y: 2 });
@@ -374,10 +385,42 @@ await test(
             hot = state.npcBrains.gardener.living.observations;
           assert.ok(hot.length <= 128);
           assert.ok(!hot.some((o) => o.text === 'COLD_EPISODE_0'));
+          const episodeTypes = (
+            await db.query(
+              `SELECT CASE WHEN actor_id=$2 THEN 'player' WHEN source_npc_id='gardener' THEN 'npc' ELSE 'other' END AS kind,
+              count(*)::int AS count,count(DISTINCT root_id)::int AS roots
+              FROM game_npc_episodes WHERE campaign_id=$1 GROUP BY 1 ORDER BY 1`,
+              [cid, `player-${owner.user.id}`],
+            )
+          ).rows;
+          assert.deepEqual(
+            episodeTypes.find((entry) => entry.kind === 'player'),
+            { kind: 'player', count: 140, roots: 140 },
+          );
+          assert.ok(!episodeTypes.some((entry) => entry.kind === 'other'));
+          const npcEpisodes = episodeTypes.find((entry) => entry.kind === 'npc');
+          assert.ok(npcEpisodes?.count > 0);
+          assert.equal(npcEpisodes.count, npcEpisodes.roots);
+          assert.equal(
+            (
+              await db.query(
+                "SELECT count(*)::int AS count FROM game_npc_episodes WHERE campaign_id=$1 AND source_npc_id='gardener' AND payload->>'text'=$2",
+                [cid, 'Я вас слышу. Продолжайте, пожалуйста.'],
+              )
+            ).rows[0].count,
+            npcEpisodes.count,
+          );
+          t.diagnostic(
+            `Archived original player episodes and generated NPC acknowledgements: ${JSON.stringify(episodeTypes)}`,
+          );
           assert.equal(
             Number(
-              (await db.query('SELECT count(*) FROM game_npc_episodes WHERE campaign_id=$1', [cid]))
-                .rows[0].count,
+              (
+                await db.query(
+                  "SELECT count(*) FROM game_npc_episodes WHERE campaign_id=$1 AND actor_id=$2 AND payload->>'text' ~ '^COLD_EPISODE_[0-9]+$'",
+                  [cid, `player-${owner.user.id}`],
+                )
+              ).rows[0].count,
             ),
             140,
           );
@@ -389,7 +432,27 @@ await test(
           const context = (await db.query('SELECT context FROM npc_ai_jobs WHERE id=$1', [j.id]))
             .rows[0].context;
           assert.ok(context.archivedEpisodes.length > 0 && context.archivedEpisodes.length <= 16);
-          assert.ok(context.archivedEpisodes.some((o) => o.text === 'COLD_EPISODE_0'));
+          // Text acknowledgements are also real NPC evidence. Count player
+          // statements separately and test bounded retrieval without assuming the
+          // oldest statement outranks every more recent permitted episode.
+          assert.equal(
+            (
+              await db.query(
+                "SELECT 1 FROM game_npc_episodes WHERE campaign_id=$1 AND actor_id=$2 AND payload->>'text'='COLD_EPISODE_0'",
+                [cid, `player-${owner.user.id}`],
+              )
+            ).rowCount,
+            1,
+          );
+          assert.ok(
+            context.archivedEpisodes.some(
+              (o) =>
+                o.actorId === `player-${owner.user.id}` &&
+                o.text?.startsWith('COLD_EPISODE_') &&
+                !hot.some((current) => current.id === o.id),
+            ),
+          );
+
           assert.ok(!JSON.stringify(await snapshot(owner, cid)).includes('archivedEpisodes'));
           await assert.rejects(
             db.query("UPDATE game_npc_episodes SET payload='{}' WHERE campaign_id=$1", [cid]),

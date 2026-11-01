@@ -1,0 +1,222 @@
+.workshop {
+  display: grid;
+  gap: 24px;
+}
+.layout {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.7fr) minmax(0, 1.3fr);
+  gap: 24px;
+  align-items: start;
+}
+.layout > *,
+.workshop fieldset {
+  min-width: 0;
+}
+.form {
+  display: grid;
+  gap: 16px;
+  padding: 24px;
+  border: 1px solid var(--border);
+  border-radius: 20px;
+  background: var(--panel);
+}
+.note {
+  padding: 16px 20px;
+  border: 1px solid #a48d5d66;
+  border-radius: 14px;
+  background: #a48d5d0b;
+  line-height: 1.6;
+}
+.concept {
+  min-height: 420px;
+  display: grid;
+  place-items: center;
+  border: 1px solid var(--border);
+  border-radius: 22px;
+  background: radial-gradient(ellipse at 50% 20%, #718d8060, transparent 70%), #242936;
+  overflow: hidden;
+}
+.concept img {
+  max-height: 560px;
+  max-width: 100%;
+  object-fit: contain;
+  filter: drop-shadow(0 18px 18px #10122270);
+}
+.parts {
+  display: flex;
+  gap: 24px;
+  align-items: center;
+  flex-wrap: wrap;
+}
+.parts img {
+  width: 160px;
+  border-radius: 12px;
+}
+.sprite {
+  width: 128px;
+  height: 192px;
+  background-repeat: no-repeat;
+  transform: scale(1.4);
+  margin: 40px;
+}
+.library {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(min(100%, 260px), 1fr));
+  gap: 18px;
+}
+.card {
+  padding: 20px;
+  border: 1px solid var(--border);
+  border-radius: 18px;
+  display: grid;
+  gap: 14px;
+}
+.coordinates {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 12px;
+}
+.toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  align-items: center;
+}
+.preview {
+  display: grid;
+  gap: 14px;
+  min-width: 0;
+}
+.preview :global(canvas) {
+  touch-action: manipulation;
+}
+.plan {
+  width: 100%;
+  aspect-ratio: 4/3;
+  image-rendering: auto;
+}
+.check {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  line-height: 1.6;
+}
+.check input {
+  margin-top: 6px;
+}
+.preview h2,
+.form h2 {
+  margin-top: 0;
+}
+@media (max-width: 850px) {
+  .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .form {
+    padding: 18px;
+  }
+  .concept {
+    min-height: 320px;
+  }
+  .concept img {
+    max-height: 400px;
+  }
+}
+
+.generation,
+.generationItem,
+.quote,
+.candidates {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.generation {
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.generationItem,
+.quote {
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+}
+.generation h3,
+.generation h4,
+.generation h5,
+.generation p {
+  margin: 0;
+}
+.generation small,
+.generation code {
+  overflow-wrap: anywhere;
+}
+.generationPreview {
+  max-width: 100%;
+  max-height: 480px;
+  object-fit: contain;
+  background: repeating-conic-gradient(#242936 0% 25%, #313746 0% 50%) 50% / 20px 20px;
+}
+.candidatePreview {
+  width: 100%;
+  max-height: 180px;
+  object-fit: contain;
+}
+
+.proposalSummary {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 18px;
+  margin: 0;
+}
+.proposalSummary dt {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+.proposalSummary dd {
+  margin: 4px 0 0;
+}
+
+.generation {
+  overflow-wrap: anywhere;
+}
+
+.proposalDetails {
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  padding: 12px;
+}
+.proposalDetails summary {
+  cursor: pointer;
+}
+.proposalDetails section {
+  margin-top: 14px;
+}
+.proposalDetails h5 {
+  margin-top: 16px;
+}
+
+.locationImage {
+  display: grid;
+  gap: 10px;
+  border-top: 1px solid var(--line);
+  padding-top: 16px;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.locationImage p,
+.locationImageStatus p {
+  margin: 0;
+  line-height: 1.5;
+}
+.locationImageStatus {
+  display: grid;
+  gap: 6px;
+  color: var(--muted);
+  font-size: 0.78rem;
+  overflow-wrap: anywhere;
+}
+.locationImageStatus small {
+  display: block;
+}

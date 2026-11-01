@@ -19,6 +19,7 @@ import {
   defaultImagePolicy,
   type ImagePolicy,
   type GenerationRequest,
+  type AuthoringContext,
 } from './contracts';
 import {
   FixtureImageProvider,
@@ -26,6 +27,12 @@ import {
   type ImageReference,
   type ImageResult,
 } from './provider';
+import { createImageRuntime, type ImageCapabilities } from './config';
+import {
+  prepareStudioLocationTx,
+  authorizeStudioLocationTx,
+  bindStudioLocationTx,
+} from './studio-location';
 import {
   reserveGenerationSpend,
   settleGenerationSpend,
@@ -48,13 +55,15 @@ const hash = (v: unknown) =>
 interface Job extends QueryResultRow {
   id: string;
   actor_id: string;
-  adventure_id: string;
+  adventure_id: string | null;
   operation_id: string;
   quote_id: string;
   request_hash: string;
   input: GenerationRequest;
   reference_hashes: Record<string, string>;
   mode: 'mock' | 'external';
+  cost_basis: 'legacy_unknown' | 'fixture' | 'verified_bound' | 'approved_estimate';
+  estimated_total_micros: string | null;
   policy_version: string;
   status: string;
   reservation_id: string;
@@ -76,6 +85,46 @@ interface Job extends QueryResultRow {
   created_at: Date;
 }
 export class ImageGenerationEngine {
+  async prepareStudioLocation(actorId: string, body: unknown) {
+    return this.db.tx((c) => prepareStudioLocationTx(c, this.assets, actorId, body));
+  }
+  async bindStudioLocation(actorId: string, body: unknown) {
+    return this.db.tx((c) => bindStudioLocationTx(c, this.assets, actorId, body));
+  }
+
+  private authoringValidator?: (
+    c: PoolClient,
+    owner: string,
+    context: AuthoringContext,
+    input: GenerationRequest,
+  ) => Promise<void>;
+  setAuthoringValidator(
+    validator: (
+      c: PoolClient,
+      owner: string,
+      context: AuthoringContext,
+      input: GenerationRequest,
+    ) => Promise<void>,
+  ) {
+    this.authoringValidator = validator;
+  }
+
+  private liveAuthorizer?: (
+    c: PoolClient,
+    owner: string,
+    sessionId: string,
+    input: GenerationRequest,
+  ) => Promise<ImagePolicy>;
+  setLiveAuthorizer(
+    authorizer: (
+      c: PoolClient,
+      owner: string,
+      sessionId: string,
+      input: GenerationRequest,
+    ) => Promise<ImagePolicy>,
+  ) {
+    this.liveAuthorizer = authorizer;
+  }
   private runtimeStateReader?: (
     campaignId: string,
   ) => { state: GameState; dbRevision: number } | undefined;
@@ -145,18 +194,35 @@ export class ImageGenerationEngine {
     protected assets: AssetReuseService,
     protected provider: ImageProvider = new FixtureImageProvider(),
     protected policy: ImagePolicy = defaultImagePolicy,
+    private capabilities?: ImageCapabilities,
   ) {}
   configuration() {
-    return {
-      mockAvailable: true,
-      externalEnabled: false,
-      externalBlockReasons: [
-        'VERIFIED_TOTAL_COST_BOUND_REQUIRED',
-        'EXPLICIT_PROVIDER_CONFIGURATION_REQUIRED',
-      ],
-      approvedImageMicros: 1000000,
-      approvedTextMicros: 1000000,
-    };
+    if (
+      this.capabilities &&
+      this.policy.externalExpiresAt &&
+      Date.parse(this.policy.externalExpiresAt) <= Date.now()
+    )
+      return {
+        ...this.capabilities,
+        externalEnabled: false,
+        externalBlockReasons: [
+          ...new Set([...this.capabilities.externalBlockReasons, 'EXTERNAL_CONFIGURATION_EXPIRED']),
+        ],
+      };
+    return (
+      this.capabilities ?? {
+        mockAvailable: true,
+        externalEnabled: this.policy.externalEnabled && this.policy.approved,
+        externalBlockReasons:
+          this.policy.externalEnabled && this.policy.approved
+            ? []
+            : ['VERIFIED_TOTAL_COST_BOUND_REQUIRED', 'EXPLICIT_PROVIDER_CONFIGURATION_REQUIRED'],
+        verifiedUpperMicros: this.policy.verifiedUpperMicros,
+        approvedTotalMicros: this.policy.totalCapMicros,
+        approvedImageMicros: this.policy.imageCapMicros,
+        approvedTextMicros: this.policy.textCapMicros,
+      }
+    );
   }
   protected async authorize(
     c: PoolClient,
@@ -173,7 +239,26 @@ export class ImageGenerationEngine {
       ).rowCount
     )
       fail(401, 'UNAUTHORIZED', 'UNAUTHORIZED');
-    if (input.campaignContext) await this.authorizeCampaign(c, actorId, input);
+    if (input.studioLocationContext)
+      await authorizeStudioLocationTx(c, this.assets, actorId, input);
+    else if (input.authoringContext) {
+      const p = (
+        await c.query(
+          'SELECT id,adventure_id,source_hash,status FROM visual_authoring_projects WHERE id=$1 AND owner_id=$2 FOR SHARE',
+          [input.authoringContext.projectId, actorId],
+        )
+      ).rows[0];
+      if (
+        !p ||
+        p.status === 'cancelled' ||
+        p.source_hash !== input.authoringContext.sourceHash ||
+        (p.adventure_id ?? undefined) !== input.adventureId
+      )
+        fail(409, 'AUTHORING_CONTEXT_STALE', 'AUTHORING_CONTEXT_STALE');
+      if (!this.authoringValidator)
+        fail(409, 'AUTHORING_VALIDATOR_REQUIRED', 'AUTHORING_VALIDATOR_REQUIRED');
+      await this.authoringValidator!(c, actorId, input.authoringContext, input);
+    } else if (input.campaignContext) await this.authorizeCampaign(c, actorId, input);
     else if (
       !(
         await c.query(
@@ -191,21 +276,67 @@ export class ImageGenerationEngine {
     ).rows;
     if (refs.length !== input.referenceRevisionIds.length)
       fail(403, 'DERIVATIVE_REFERENCE_FORBIDDEN', 'DERIVATIVE_REFERENCE_FORBIDDEN');
+    const privateRefs = input.privateReferenceAssetIds.length
+      ? (
+          await c.query(
+            `SELECT a.id,a.sha256,a.filename,a.mime FROM assets a WHERE a.id=ANY($1::uuid[]) AND a.owner_id=$2
+       AND NOT EXISTS(SELECT 1 FROM art_asset_revisions r JOIN art_asset_takedowns t ON t.revision_id=r.id WHERE r.upload_id=a.id) FOR SHARE OF a`,
+            [input.privateReferenceAssetIds, actorId],
+          )
+        ).rows
+      : [];
+    if (privateRefs.length !== input.privateReferenceAssetIds.length)
+      fail(403, 'PRIVATE_REFERENCE_FORBIDDEN', 'PRIVATE_REFERENCE_FORBIDDEN');
+    refs.push(...privateRefs);
+    const referenceOrder = [...input.referenceRevisionIds, ...input.privateReferenceAssetIds];
+    refs.sort((a, b) => referenceOrder.indexOf(a.id) - referenceOrder.indexOf(b.id));
     const hashes = Object.fromEntries(refs.map((r) => [r.id, r.sha256]));
     if (expected && hash(hashes) !== hash(expected))
       fail(409, 'REFERENCE_CHANGED', 'REFERENCE_CHANGED');
-    return { hashes, refs };
+    let livePolicy: ImagePolicy | undefined;
+    if (input.mode === 'external' && this.capabilities) {
+      if (!input.liveTestSessionId || !this.liveAuthorizer)
+        fail(409, 'MANUAL_LIVE_SESSION_REQUIRED', 'MANUAL_LIVE_SESSION_REQUIRED');
+      const authorized = await this.liveAuthorizer!(c, actorId, input.liveTestSessionId!, input);
+      livePolicy = {
+        ...authorized,
+        verifiedUpperMicros: this.policy.verifiedUpperMicros,
+        costBasis: this.policy.costBasis,
+        estimatedTotalMicros: this.policy.estimatedTotalMicros,
+        operationalReserveMicros: this.policy.operationalReserveMicros,
+        totalCapMicros: Math.min(authorized.totalCapMicros, this.policy.totalCapMicros),
+        imageCapMicros: Math.min(authorized.imageCapMicros, this.policy.imageCapMicros),
+        textCapMicros: Math.min(authorized.textCapMicros, this.policy.textCapMicros),
+      };
+    }
+    return { hashes, refs, livePolicy };
+  }
+  private reservationMicros(input: GenerationRequest) {
+    return input.mode === 'mock'
+      ? this.policy.mockUpperMicros
+      : this.policy.costBasis === 'approved_estimate'
+        ? this.policy.operationalReserveMicros!
+        : this.policy.verifiedUpperMicros!;
   }
   private liveGate(input: GenerationRequest) {
+    if (input.mode !== 'external') return;
+    const reserve = this.reservationMicros(input);
     if (
-      input.mode === 'external' &&
-      (!this.policy.externalEnabled ||
-        !this.policy.approved ||
-        this.policy.verifiedUpperMicros === null ||
-        this.policy.verifiedUpperMicros <= 0 ||
-        this.policy.verifiedUpperMicros > 1000000)
+      !this.policy.externalEnabled ||
+      !this.policy.approved ||
+      (!!this.policy.externalExpiresAt &&
+        Date.parse(this.policy.externalExpiresAt) <= Date.now()) ||
+      !Number.isSafeInteger(reserve) ||
+      reserve <= 0 ||
+      reserve > 1000000 ||
+      (this.policy.costBasis !== 'approved_estimate' && this.policy.verifiedUpperMicros === null)
     )
       fail(409, 'LIVE_COST_BOUND_REQUIRED', 'LIVE_COST_BOUND_REQUIRED');
+    if (
+      this.policy.costBasis === 'approved_estimate' &&
+      (input.referenceRevisionIds.length || input.privateReferenceAssetIds.length)
+    )
+      fail(409, 'IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE', 'IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE');
   }
   private assertQuotedProvider(row: {
     input: unknown;
@@ -249,8 +380,8 @@ export class ImageGenerationEngine {
       if (n >= 30) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
       const id = randomUUID(),
         expiresAt = new Date(Date.now() + this.policy.quoteTtlMs),
-        upper =
-          input.mode === 'mock' ? this.policy.mockUpperMicros : this.policy.verifiedUpperMicros!;
+        upper = this.reservationMicros(input),
+        costBasis = input.mode === 'mock' ? 'fixture' : (this.policy.costBasis ?? 'verified_bound');
       const requestHash = hash({
         input,
         refs: authorization.hashes,
@@ -259,11 +390,11 @@ export class ImageGenerationEngine {
         upper,
       });
       await c.query(
-        'INSERT INTO image_generation_quotes(id,actor_id,adventure_id,request_hash,input,reference_hashes,mode,policy_version,upper_micros,expires_at) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)',
+        'INSERT INTO image_generation_quotes(id,actor_id,adventure_id,request_hash,input,reference_hashes,mode,policy_version,upper_micros,expires_at,cost_basis,estimated_total_micros) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
         [
           id,
           actorId,
-          input.adventureId,
+          input.adventureId ?? null,
           requestHash,
           input,
           authorization.hashes,
@@ -271,6 +402,8 @@ export class ImageGenerationEngine {
           this.policy.version,
           upper,
           expiresAt,
+          costBasis,
+          costBasis === 'approved_estimate' ? this.policy.estimatedTotalMicros : null,
         ],
       );
       return {
@@ -278,7 +411,13 @@ export class ImageGenerationEngine {
         quote: {
           id,
           mode: input.mode,
-          upperMicros: upper,
+          upperMicros: costBasis === 'approved_estimate' ? null : upper,
+          costBasis,
+          reserveMicros: upper,
+          verifiedUpperMicros: costBasis === 'verified_bound' ? upper : null,
+          ...(costBasis === 'approved_estimate'
+            ? { estimatedTotalMicros: this.policy.estimatedTotalMicros }
+            : {}),
           expiresAt: expiresAt.toISOString(),
           rightsAttestationRequired: true,
         },
@@ -292,6 +431,13 @@ export class ImageGenerationEngine {
       operationId: j.operation_id,
       status: j.status,
       mode: j.mode,
+      studioLocationId: j.input.studioLocationContext?.locationId,
+      studioSourceHash: j.input.studioLocationContext?.sourceHash,
+      costBasis: j.cost_basis,
+      reserveMicros: Number(j.upper_micros),
+      verifiedUpperMicros: j.cost_basis === 'verified_bound' ? Number(j.upper_micros) : null,
+      estimatedTotalMicros:
+        j.estimated_total_micros === null ? undefined : Number(j.estimated_total_micros),
       revisionId: j.admitted_revision_id ?? undefined,
       errorCode: j.error_code ?? undefined,
       diagnostic: normalizeSafeImageDiagnostic(j.safe_diagnostic),
@@ -320,7 +466,7 @@ export class ImageGenerationEngine {
       ).rows[0];
       if (!q) fail(404, 'NOT_FOUND', 'NOT_FOUND');
       const input = generationRequestSchema.parse(q.input);
-      await this.authorize(c, actorId, input, q.reference_hashes);
+      const authorization = await this.authorize(c, actorId, input, q.reference_hashes);
       this.liveGate(input);
       const previous = (
         await c.query<Job>(
@@ -355,7 +501,7 @@ export class ImageGenerationEngine {
       const id = randomUUID(),
         reservation = await reserveGenerationSpend(
           c,
-          this.policy,
+          authorization.livePolicy ?? this.policy,
           actorId,
           'image',
           id,
@@ -364,11 +510,11 @@ export class ImageGenerationEngine {
         );
       const job = (
         await c.query<Job>(
-          "INSERT INTO image_generation_jobs(id,actor_id,adventure_id,operation_id,quote_id,request_hash,input,reference_hashes,mode,policy_version,status,reservation_id,upper_micros,expires_at,upload_id,family_id,revision_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',$11,$12,$13,$14,$15,$16) RETURNING *",
+          "INSERT INTO image_generation_jobs(id,actor_id,adventure_id,operation_id,quote_id,request_hash,input,reference_hashes,mode,policy_version,status,reservation_id,upper_micros,expires_at,upload_id,family_id,revision_id,cost_basis,estimated_total_micros) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *",
           [
             id,
             actorId,
-            input.adventureId,
+            input.adventureId ?? null,
             b.operationId,
             q.id,
             q.request_hash,
@@ -382,6 +528,8 @@ export class ImageGenerationEngine {
             randomUUID(),
             randomUUID(),
             randomUUID(),
+            q.cost_basis,
+            q.estimated_total_micros,
           ],
         )
       ).rows[0];
@@ -754,13 +902,17 @@ export class ImageGenerationEngine {
           Number(j.actual_micros) > Number(j.upper_micros)
         )
           fail(409, 'ADMISSION_EXPIRED', 'ADMISSION_EXPIRED');
+        const attempt = (
+          await c.query('SELECT provider FROM image_generation_attempts WHERE job_id=$1', [id])
+        ).rows[0];
+        if (!attempt) fail(409, 'NO_PROVIDER_ATTEMPT', 'NO_PROVIDER_ATTEMPT');
         const admitted = await admitGeneratedRaster(
           c,
           this.assets,
           j,
           input,
           raster,
-          this.provider.id,
+          String(attempt.provider),
         );
         await c.query(
           "UPDATE image_generation_jobs SET status='admitted',admitted_revision_id=$2,quota_reserved_bytes=0,error_code=NULL,updated_at=now() WHERE id=$1",
@@ -797,7 +949,13 @@ export class ImageGenerationService extends ImageGenerationEngine implements OnM
   private busy: Promise<void> | undefined;
   private stopped = false;
   constructor(@Inject(Db) db: Db, @Inject(AssetReuseService) assets: AssetReuseService) {
-    super(db, assets);
+    const runtime = createImageRuntime(process.env, {
+      resolveApiKey: () =>
+        process.env.LIVE_TEST_ENABLED === 'true'
+          ? process.env.NPC_AI_API_KEY
+          : process.env.OPENAI_API_KEY,
+    });
+    super(db, assets, runtime.provider, runtime.policy, runtime.capabilities);
     this.timer = setInterval(() => {
       if (this.busy || this.stopped) return;
       this.busy = this.workOnce()

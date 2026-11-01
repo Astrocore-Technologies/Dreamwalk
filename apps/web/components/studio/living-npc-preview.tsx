@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { NpcBrain } from '@dreamwalk/contracts';
 import { api, errorMessage } from '@/lib/client';
 import { useT } from '@/lib/i18n';
+import { useTurnText } from '../game/turn-messages';
 import { Button, ErrorBox, Field, Input } from '@/components/ui';
 
 type Preview = {
@@ -43,6 +44,7 @@ export function LivingNpcPreview({
   flush: () => Promise<number>;
 }) {
   const { t } = useT();
+  const turnText = useTurnText();
   const [result, setResult] = useState<Preview | null>(null),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
@@ -126,8 +128,10 @@ export function LivingNpcPreview({
               <ul>
                 {result.brain.living.observations.map((observation) => (
                   <li key={observation.id}>
-                    {t(observationLabels[observation.kind])} ·{' '}
-                    {t(channelLabels[observation.channel])}
+                    {observation.kind === 'harmed' || observation.kind === 'pushed'
+                      ? turnText('observedHarm')
+                      : t(observationLabels[observation.kind])}{' '}
+                    · {t(channelLabels[observation.channel])}
                   </li>
                 ))}
               </ul>

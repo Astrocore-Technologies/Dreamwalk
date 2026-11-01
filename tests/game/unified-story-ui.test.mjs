@@ -2,10 +2,56 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { sceneClick } from '../../apps/web/components/game/scene-input.ts';
+import { api } from '../../apps/web/lib/client.tsx';
 import {
   storyTargetValid,
   storyDraftKey,
+  storyRecipientLabel,
 } from '../../apps/web/components/game/story-turn-guards.ts';
+test('API sends the selected default locale without dropping headers, cookies or upload boundaries', async (t) => {
+  const calls = [];
+  t.mock.method(globalThis, 'fetch', async (path, options) => {
+    calls.push({ path, options });
+    return new Response(JSON.stringify({ ok: true }), {
+      headers: { 'Content-Type': 'application/json' },
+    });
+  });
+  await api('/locale-test', { method: 'POST', body: JSON.stringify({ text: 'hello' }) });
+  assert.equal(calls[0].path, '/api/v1/locale-test');
+  assert.equal(calls[0].options.headers.get('Accept-Language'), 'ru');
+  assert.equal(calls[0].options.headers.get('Content-Type'), 'application/json');
+  assert.equal(calls[0].options.credentials, 'include');
+  for (const locale of ['uk', 'en', 'ru']) {
+    const headers = new Headers({ 'Accept-Language': locale, 'X-Request-Test': 'retained' });
+    const body = new FormData();
+    body.set('name', 'plain text');
+    await api('/locale-test', { method: 'POST', headers, body });
+    const sent = calls.at(-1).options;
+    assert.equal(sent.headers.get('Accept-Language'), locale);
+    assert.equal(sent.headers.get('X-Request-Test'), 'retained');
+    assert.equal(sent.headers.has('Content-Type'), false);
+    assert.equal(headers.has('Content-Type'), false);
+    assert.notEqual(sent.headers, headers);
+    assert.equal(sent.body, body);
+  }
+});
+test('story quotes and uncertain resubmissions retain the captured reply locale, not a later UI preference', async () => {
+  const source = await readFile(
+    new URL('../../apps/web/components/game/unified-story.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /replyLocale: getLocale\(\)/);
+  assert.match(source, /setPrepared\(\{ input, result, mapId: projection.map.id, key \}\)/);
+  assert.match(source, /const sent = recover \? submitted.current : prepared/);
+  assert.match(source, /\.\.\.sent.input,/);
+  assert.match(source, /data-testid="story-reply-language"/);
+  assert.match(source, /prepared.input.replyLocale/);
+  const legacy = await readFile(
+    new URL('../../apps/web/components/game/living-conversation.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(legacy, /speech: \{ channel, text: sent.trim\(\), replyLocale: getLocale\(\) \}/);
+});
 test('visible NPC click selects only, free floor moves, walls and closed doors do neither', () => {
   const p = {
     map: { width: 8, height: 8, blocked: [{ x: 1, y: 1 }] },
@@ -81,6 +127,18 @@ test('private target loss is blocked and every consent-relevant draft change inv
   ])
     assert.notEqual(original, altered);
   assert.equal(original, storyDraftKey(' secret ', 'whisper', 'keeper', 'room'));
+});
+test('selected NPC display label updates with locale without changing the selected identity', () => {
+  const recipient = { id: 'keeper', label: 'Доглядач' };
+  for (const label of ['Доглядач', 'Keeper', 'Смотритель']) {
+    const projection = { entities: [{ id: 'keeper', kind: 'npc', label }] };
+    assert.equal(storyRecipientLabel(projection, recipient), label);
+    assert.equal(storyTargetValid(projection, 'whisper', recipient.id), true);
+  }
+  assert.equal(recipient.label, 'Доглядач');
+  assert.equal(storyRecipientLabel({ entities: [] }, recipient), 'Доглядач');
+  assert.equal(storyTargetValid({ entities: [] }, 'whisper', recipient.id), false);
+  assert.equal(storyRecipientLabel({ entities: [] }, null), null);
 });
 test('every unified interface message has explicit RU, EN and UK strings', async () => {
   const source = await readFile(

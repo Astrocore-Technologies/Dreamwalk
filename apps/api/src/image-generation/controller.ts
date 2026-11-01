@@ -13,6 +13,15 @@ export class ImageGenerationController {
     await this.auth.require(req);
     return this.images.configuration();
   }
+  @Post('studio-locations/prepare') async prepareLocation(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return this.images.prepareStudioLocation((await this.auth.require(req)).id, body);
+  }
+  @Post('studio-locations/bind') async bindLocation(@Req() req: Request, @Body() body: unknown) {
+    return this.images.bindStudioLocation((await this.auth.require(req)).id, body);
+  }
   @Post('quotes') async quote(@Req() req: Request, @Body() body: unknown) {
     return this.images.quote((await this.auth.require(req)).id, body);
   }

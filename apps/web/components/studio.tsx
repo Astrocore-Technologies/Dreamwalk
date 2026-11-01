@@ -64,6 +64,11 @@ import {
   Textarea,
   UploadField,
 } from './ui';
+import {
+  LocationImageAction,
+  LocationImageDialog,
+  useLocationImageConfiguration,
+} from './visual-authoring/location-image';
 import styles from './studio/studio.module.css';
 
 const statuses: Record<string, string> = {
@@ -371,6 +376,9 @@ function MediaPicker({
 }
 
 function AdventureEditor({ id }: { id: string }) {
+  const locationImages = useLocationImageConfiguration();
+  const [locationImageId, setLocationImageId] = useState<string | null>(null),
+    [locationArtEpoch, setLocationArtEpoch] = useState(0);
   const date = useDate();
   const { t, taxonomy, locale } = useT();
   const router = useRouter(),
@@ -441,6 +449,24 @@ function AdventureEditor({ id }: { id: string }) {
       reloadAllowed.current = true;
       resource.reload();
     }
+  }
+  function refreshArtModeration() {
+    // A loading reload unmounts the playable editor and loses its unsaved draft.
+    // Art binding changes moderation state, not narrative input or its CAS revision.
+    void api<Adventure>(`/studio/adventures/${id}`)
+      .then((fresh) => {
+        resource.setData((current) => {
+          if (!current || current.id !== fresh.id) return current;
+          const next = {
+            ...current,
+            status: fresh.status,
+            playableVersionId: fresh.playableVersionId,
+          };
+          acknowledged.current = next;
+          return next;
+        });
+      })
+      .catch((err) => setError(errorMessage(err)));
   }
   useDirtyWarning(dirty || playableDirty);
   const change = <K extends keyof AdventureDraft>(key: K, value: AdventureDraft[K]) => {
@@ -898,6 +924,13 @@ function AdventureEditor({ id }: { id: string }) {
                         }
                       />
                     </Field>
+                    <LocationImageAction
+                      settings={locationImages}
+                      locationId={location.id}
+                      saved={!isNew}
+                      disabled={busy}
+                      onOpen={() => setLocationImageId(location.id)}
+                    />
                   </div>
                 ))}
                 {!draft.content.locations.length && (
@@ -1337,6 +1370,20 @@ function AdventureEditor({ id }: { id: string }) {
           </div>
         </fieldset>
       </form>
+      {!isNew && locationImageId && (
+        <LocationImageDialog
+          adventureId={id}
+          locationId={locationImageId}
+          settings={locationImages}
+          beforePrepare={autosave.flush}
+          playableDirty={playableDirty}
+          onClose={() => setLocationImageId(null)}
+          onSaved={(mapAttached) => {
+            if (mapAttached) setLocationArtEpoch((value) => value + 1);
+            refreshArtModeration();
+          }}
+        />
+      )}
       <div hidden={step !== 2 && step !== 6}>
         <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           {isNew ? (
@@ -1346,28 +1393,13 @@ function AdventureEditor({ id }: { id: string }) {
           ) : (
             <PlayableMapEditor
               adventureId={id}
+              artEpoch={locationArtEpoch}
               title={draft.title}
               npcs={npcs.data || []}
               locations={draft.content.locations}
               onDirty={setPlayableDirty}
               flushRef={playableFlush}
-              onArtSaved={() => {
-                void api<Adventure>(`/studio/adventures/${id}`)
-                  .then((fresh) => {
-                    resource.setData((current) => {
-                      if (!current || current.id !== fresh.id) return current;
-                      // Refresh only moderation state: never overwrite unsaved narrative input or CAS revision.
-                      const next = {
-                        ...current,
-                        status: fresh.status,
-                        playableVersionId: fresh.playableVersionId,
-                      };
-                      acknowledged.current = next;
-                      return next;
-                    });
-                  })
-                  .catch((err) => setError(errorMessage(err)));
-              }}
+              onArtSaved={refreshArtModeration}
               preview={step === 6}
             />
           )}

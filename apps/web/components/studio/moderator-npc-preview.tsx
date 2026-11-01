@@ -4,6 +4,7 @@ import type { NpcBrain } from '@dreamwalk/contracts';
 import { api, errorMessage } from '@/lib/client';
 import { observationLabels } from './living-npc-preview';
 import { useT } from '@/lib/i18n';
+import { useTurnText } from '../game/turn-messages';
 import { Button, ErrorBox, Field, Input } from '@/components/ui';
 export function ModeratorNpcPreview({
   adventureId,
@@ -15,6 +16,7 @@ export function ModeratorNpcPreview({
   npcId: string;
 }) {
   const { t } = useT();
+  const turnText = useTurnText();
   const [ticks, setTicks] = useState(20),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
@@ -83,8 +85,11 @@ export function ModeratorNpcPreview({
           <ul>
             {result.brain.living?.observations.map((observation) => (
               <li key={observation.id}>
-                {observation.title || t(observationLabels[observation.kind])} ·{' '}
-                {t('Источник события')}: {observation.eventId}
+                {observation.title ||
+                  (observation.kind === 'harmed' || observation.kind === 'pushed'
+                    ? turnText('observedHarm')
+                    : t(observationLabels[observation.kind]))}{' '}
+                · {t('Источник события')}: {observation.eventId}
                 {observation.definitionText && <p>{observation.definitionText}</p>}
               </li>
             ))}

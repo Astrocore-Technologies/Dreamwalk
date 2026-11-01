@@ -39,10 +39,13 @@ test('two independent browser sessions share one key, preserve it on reload, and
   try {
     const ownerAccount = await register(owner),
       guestAccount = await register(guest);
-    await owner.goto('/game');
-    await owner.getByRole('button', { name: 'Новая кампания', exact: true }).click();
-    await expect(owner).toHaveURL(/\/game\/[a-f0-9-]+$/);
-    const campaignId = new URL(owner.url()).pathname.split('/').at(-1)!;
+    // This existing key/door scenario verifies the retained realtime compatibility save format.
+    const created = await owner.request.post('/api/v1/game/campaigns', {
+      data: { template: 'observatory-v1', turnBased: false },
+    });
+    expect(created.ok()).toBeTruthy();
+    const campaignId = (await created.json()).campaignId as string;
+    await owner.goto(`/game/${campaignId}`);
     await expect(owner.getByText('Подключено', { exact: true })).toBeVisible();
     await expect(owner.locator('canvas')).toBeVisible();
     await owner.getByLabel('Пригласить по имени пользователя').fill(guestAccount.handle);

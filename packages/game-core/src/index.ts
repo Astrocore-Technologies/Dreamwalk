@@ -1,3 +1,4 @@
+import { projectTurnController, applyTurnAction, applyWorldTurnAction, turnFence } from './turns';
 import { projectObjectives } from './objectives';
 import { projectVisibleArtBindings } from './art';
 import { chooseLivingNpcIntent, publicNpcFactTopics, communicateNpcObservations } from './living';
@@ -216,6 +217,7 @@ export function addPlayer(state: GameState, id: string): GameResult {
   return result(s, [{ kind: 'actor.joined', actorId: id, mapId }]);
 }
 export function moveInput(state: GameState, id: string, input: GameMove): GameResult {
+  if (state.turnController) return fail(state, 'WRONG_MODE');
   if (!gameMoveSchema.safeParse(input).success) return fail(state, 'INVALID_ACTION');
   const a = state.entities[id];
   if (!a || (a.kind !== 'player' && a.kind !== 'npc')) return fail(state, 'FORBIDDEN');
@@ -245,6 +247,7 @@ export function stopMovement(state: GameState, id: string): GameResult {
   return result(s);
 }
 export function tick(state: GameState, tickCount = 1): GameResult {
+  if (state.turnController) return result(state);
   const s = copy(state),
     events: GameEvent[] = [];
   for (let i = 0; i < Math.min(20, Math.max(0, tickCount)); i++) {
@@ -483,8 +486,20 @@ function actionInternal(
     },
   ]);
 }
-export const applyAction = (state: GameState, id: string, action: GameAction): GameResult =>
-  actionInternal(state, id, action);
+/** Trusted low-level mechanics used only after the turn reducer has checked phase and resources. */
+export const applyUnbudgetedAction = (
+  state: GameState,
+  id: string,
+  action: GameAction,
+): GameResult => actionInternal(state, id, action);
+/** Legacy callers cannot bypass a new campaign's shared action budget. */
+export const applyAction = (state: GameState, id: string, action: GameAction): GameResult => {
+  if (!state.turnController) return actionInternal(state, id, action);
+  const fence = turnFence(state)!;
+  return state.entities[id]?.kind === 'npc'
+    ? applyWorldTurnAction(state, id, action, fence)
+    : applyTurnAction(state, id, action, fence);
+};
 export function beginEncounter(state: GameState, id: string, nowMs = 0): GameResult {
   const actor = state.entities[id];
   if (!actor || actor.encounterId) return fail(state, 'WRONG_MODE');
@@ -719,6 +734,7 @@ export function projectState(s: GameState, id: string): GameProjection {
     delete c.knownIds;
     delete c.inventory;
     if (c.id !== id) {
+      delete c.movementTrace;
       delete c.lastInputSeq;
       delete c.movementGeneration;
     }
@@ -735,6 +751,7 @@ export function projectState(s: GameState, id: string): GameProjection {
     for (const [p, intent] of Object.entries(encounter.intents))
       if (p !== id) intent.action = { kind: 'wait' };
   return {
+    ...(s.turnController ? { turn: projectTurnController(s, id) } : {}),
     schemaVersion: 1,
     ...(s.narrativeCanon
       ? {
@@ -971,3 +988,5 @@ export * from './supporting';
 
 export * from './narrative';
 export * from './story-turn';
+
+export * from './turns';

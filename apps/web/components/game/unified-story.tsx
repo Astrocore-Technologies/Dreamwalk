@@ -10,14 +10,21 @@ import type {
   StoryTurnReceipt,
 } from '@dreamwalk/contracts';
 import { api, ApiError, errorMessage } from '@/lib/client';
-import { useT } from '@/lib/i18n';
+import { getLocale, useT } from '@/lib/i18n';
 import { Button, ErrorBox, Textarea } from '@/components/ui';
 import { noticeLabels } from './living-notices';
 import { PartyChat } from './party-chat';
 import { SceneMedia } from './scene-media';
 import { providerBoundKnown } from './narrative-guards';
-import { storyTargetVisible, storyTargetValid, storyDraftKey } from './story-turn-guards';
+import {
+  storyTargetVisible,
+  storyTargetValid,
+  storyDraftKey,
+  storyRecipientLabel,
+} from './story-turn-guards';
 import { useStoryText, type StoryMessageKey } from './story-messages';
+import { projectionTurnFence } from './turn-ui';
+import { useTurnText } from './turn-messages';
 import styles from './story-feed.module.css';
 export type StoryRecipient = { id: string; label: string } | null;
 type Prepared = {
@@ -51,15 +58,22 @@ export function UnifiedStory({
   recipient,
   onClearRecipient,
   disabled,
+  partyDisabled = disabled,
   onWorldRefresh,
+  onBusyChange,
 }: {
   campaignId: string;
   projection: GameProjection;
   recipient: StoryRecipient;
   onClearRecipient: () => void;
   disabled: boolean;
+  partyDisabled?: boolean;
   onWorldRefresh: () => void;
+  onBusyChange?: (busy: boolean) => void;
 }) {
+  const turnText = useTurnText();
+  const turnCopy = useRef(turnText);
+  turnCopy.current = turnText;
   const h = useStoryText(),
     { t } = useT(),
     hintId = useId();
@@ -87,7 +101,10 @@ export function UnifiedStory({
   const targetNpcId = recipient?.id;
   const targetVisible = storyTargetVisible(projection, targetNpcId);
   const targetValid = storyTargetValid(projection, channel, targetNpcId);
-  const draftKey = storyDraftKey(text, channel, targetNpcId, projection.map.id);
+  const turnFence = projectionTurnFence(projection);
+  const draftKey =
+    storyDraftKey(text, channel, targetNpcId, projection.map.id) +
+    JSON.stringify(turnFence ?? null);
   const currentDraft = useRef(draftKey);
   currentDraft.current = draftKey;
   const path = `/game/campaigns/${campaignId}/turns`;
@@ -109,6 +126,7 @@ export function UnifiedStory({
           submitted.current = null;
           if (receipt.status === 'committed') {
             if (currentDraft.current === sent.key) setText('');
+            if (receipt.code === 'NPC_REPLY_DEFERRED') setNotice(turnCopy.current('deferred'));
             callback.current();
           } else
             setNotice(
@@ -163,13 +181,21 @@ export function UnifiedStory({
   }, [lastEntry]);
   const available =
     !!feed?.canSubmit &&
-    feed.configuration.enabled &&
-    (feed.configuration.provider === 'mock' || feed.configuration.externalCallsEnabled);
+    (!!projection.turn ||
+      (feed.configuration.enabled &&
+        (feed.configuration.provider === 'mock' || feed.configuration.externalCallsEnabled)));
   const pendingTurns =
     feed?.turns.filter(
       (entry) => entry.status === 'queued' || entry.status === 'awaiting_confirmation',
     ) || [];
   const pending = !!submitted.current || pendingTurns.length > 0;
+  const awaitingMechanicalConfirmation = pendingTurns.some(
+    (entry) => entry.status === 'awaiting_confirmation',
+  );
+  useEffect(() => {
+    onBusyChange?.(busy || uncertain || awaitingMechanicalConfirmation);
+  }, [busy, uncertain, awaitingMechanicalConfirmation, onBusyChange]);
+  useEffect(() => () => onBusyChange?.(false), [onBusyChange]);
   async function prepare() {
     if (
       actionLock.current ||
@@ -193,8 +219,12 @@ export function UnifiedStory({
       operationId: crypto.randomUUID(),
       text: text.trim(),
       channel,
+      // A quote, its submission and any uncertain retry describe the same post,
+      // even if the interface language changes while it is being processed.
+      replyLocale: getLocale(),
       ...(targetNpcId ? { targetNpcId } : {}),
       expectedCanonRevision: feed.canonRevision,
+      ...(turnFence ? { turnFence } : {}),
     };
     try {
       const result = await api<StoryTurnQuoteResponse>(`${path}/quote`, {
@@ -305,6 +335,7 @@ export function UnifiedStory({
         body: JSON.stringify({
           operationId: confirmOperations.current.get(key),
           proposalHash: turn.proposalHash,
+          ...(turnFence ? { turnFence } : {}),
           decision,
         }),
       });
@@ -319,6 +350,10 @@ export function UnifiedStory({
       if (current === epoch.current) setBusy(false);
     }
   }
+  function actionLabel(kind: string) {
+    if (kind === 'hit' || kind === 'push') return turnText(kind);
+    return t(actionLabels[kind as keyof typeof actionLabels] || 'Ждать');
+  }
   function actionsPreview(actions: StoryActionPreview[]) {
     return (
       <ul>
@@ -331,7 +366,7 @@ export function UnifiedStory({
           )?.label;
           return (
             <li key={index}>
-              {t(actionLabels[entry.action.kind])}
+              {actionLabel(entry.action.kind)}
               {item ? ` · ${item}` : ''}
               {target ? ` → ${target}` : ''}
             </li>
@@ -348,7 +383,7 @@ export function UnifiedStory({
     const outcome = t(
       entry.code === 'ACTION_SUCCEEDED' ? 'Действие подтверждено' : 'Действие отклонено',
     );
-    if (entry.action) return `${t(actionLabels[entry.action.kind])} — ${outcome}`;
+    if (entry.action) return `${actionLabel(entry.action.kind)} — ${outcome}`;
     return outcome;
   }
   return (
@@ -377,7 +412,9 @@ export function UnifiedStory({
         </button>
         {feed && (
           <small className={styles.badge}>
-            {h(feed.configuration.provider === 'mock' ? 'mock' : 'external')}
+            {projection.turn
+              ? turnText('localInput')
+              : h(feed.configuration.provider === 'mock' ? 'mock' : 'external')}
           </small>
         )}
       </div>
@@ -453,7 +490,11 @@ export function UnifiedStory({
             }}
           >
             <div className={styles.recipient}>
-              <span>{recipient ? `${h('target')}: ${recipient.label}` : h('scene')}</span>
+              <span>
+                {recipient
+                  ? `${h('target')}: ${storyRecipientLabel(projection, recipient)}`
+                  : h('scene')}
+              </span>
               {recipient && (
                 <button
                   type="button"
@@ -564,6 +605,15 @@ export function UnifiedStory({
                   </>
                 )}
                 <p>{h('cost', { credits: prepared.result.quote.credits })}</p>
+                {prepared.input.replyLocale && (
+                  <p data-testid="story-reply-language">
+                    {h('replyLanguage', {
+                      language: { uk: 'Українська', en: 'English', ru: 'Русский' }[
+                        prepared.input.replyLocale
+                      ],
+                    })}
+                  </p>
+                )}
                 {prepared.result.quote.demo && <small>{h('demo')}</small>}
                 {prepared.result.quote.external && (
                   <p>
@@ -629,7 +679,7 @@ export function UnifiedStory({
         </div>
       </div>
       <div hidden={tab !== 'ooc'} className={styles.ooc}>
-        <PartyChat campaignId={campaignId} actorId={projection.actorId} disabled={disabled} />
+        <PartyChat campaignId={campaignId} actorId={projection.actorId} disabled={partyDisabled} />
       </div>
     </section>
   );

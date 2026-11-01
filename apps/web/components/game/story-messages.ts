@@ -35,6 +35,11 @@ export const storyMessages = {
   confirm: ['Подтвердить ход', 'Confirm turn', 'Підтвердити хід'],
   dismiss: ['Изменить', 'Edit', 'Змінити'],
   cost: ['Стоимость: {credits} искр', 'Price: {credits} Sparks', 'Вартість: {credits} іскор'],
+  replyLanguage: [
+    'Язык ответа: {language}',
+    'Reply language: {language}',
+    'Мова відповіді: {language}',
+  ],
   demo: ['DEMO · не реальные деньги', 'DEMO · not real money', 'DEMO · не справжні гроші'],
   ceiling: [
     'Предел внешних расходов: {amount} USD',

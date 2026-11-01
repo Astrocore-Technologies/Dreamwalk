@@ -64,6 +64,8 @@ test('living author version saves personality and reacts without manual NPC requ
     await editor
       .getByRole('button', { name: 'Шаблон: смотритель и помощник', exact: true })
       .click();
+    // Preserve the autonomous realtime compatibility scenario; sequential turns have their own suite.
+    await editor.getByLabel('Пошаговый режим Dreamwalk', { exact: true }).uncheck();
     await editor.getByLabel('Объект на карте', { exact: true }).selectOption('npc:keeper');
     await editor.getByLabel('Публичная манера речи', { exact: true }).selectOption('warm');
     await editor.getByLabel('Держать обещания', { exact: true }).check();

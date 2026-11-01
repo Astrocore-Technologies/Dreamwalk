@@ -20,8 +20,13 @@ export function visibleSceneArt(projection: ArtProjection, art: VisibleArtBindin
   return allowed.filter(
     (entry) =>
       entry.slot === `map:${projection.map.id}:background` ||
+      (entry.slot.startsWith(`map:${projection.map.id}:layer:`) &&
+        !!projection.map.composition?.layers.some(
+          (layer) => entry.slot === `map:${projection.map.id}:layer:${layer.id}`,
+        )) ||
       projection.entities.some((entity) => {
-        if (entity.kind === 'npc') return entry.slot === `entity:${entity.id}:sprite`;
+        if (entity.kind === 'npc' || entity.kind === 'player')
+          return entry.slot === `entity:${entity.id}:sprite`;
         if (entity.kind === 'item') return entry.slot === `entity:${entity.id}:object:default`;
         if (entity.kind === 'door') {
           const active = `entity:${entity.id}:object:${entity.open ? 'open' : 'closed'}`;

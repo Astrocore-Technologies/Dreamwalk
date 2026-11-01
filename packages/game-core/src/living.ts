@@ -1,5 +1,8 @@
+import { mockAcknowledgement, mockFactReply } from './mock-speech';
 import {
   npcSpeechSchema,
+  localeSchema,
+  type Locale,
   type GameAction,
   type GameEntity,
   type GameEvent,
@@ -218,11 +221,20 @@ function remember(memory: LivingNpcMemory, observation: NpcObservation): boolean
     memory.affect.alertness = Math.max(0, memory.affect.alertness - 10);
   }
   const kind = observation.kind;
-  if (['item_taken', 'item_missing', 'noise', 'addressed', 'claim'].includes(kind)) {
+  if (
+    ['item_taken', 'item_missing', 'noise', 'addressed', 'claim', 'harmed', 'pushed'].includes(kind)
+  ) {
     const c = {
       id: observation.id,
       observationId: observation.id,
-      priority: kind === 'addressed' ? 3 : kind === 'item_taken' ? 2 : 1,
+      priority:
+        kind === 'harmed'
+          ? 4
+          : kind === 'pushed' || kind === 'addressed'
+            ? 3
+            : kind === 'item_taken'
+              ? 2
+              : 1,
       notBeforeTick: observation.tick,
     };
     if (memory.causes.length >= 32) {
@@ -410,18 +422,22 @@ export function recordLivingNpcEvents(
       if (['action.open', 'action.close', 'action.unlock', 'action.lock'].includes(e.kind))
         kind = 'door_changed';
       if (e.kind === 'action.knock') kind = 'noise';
+      if (e.kind === 'action.hit') kind = 'harmed';
+      if (['action.push', 'action.push_blocked'].includes(e.kind)) kind = 'pushed';
       if (e.kind === 'action.talk' && e.targetId === npcId) kind = 'addressed';
       if (e.kind === 'action.give' && e.targetId === npcId) kind = 'helped';
       if (!kind || !actor) continue;
       const attentive =
         (m.distractedUntilTick <= before.tick && (m.affect?.attention ?? 100) >= 60) ||
         kind === 'addressed' ||
-        kind === 'helped';
+        kind === 'helped' ||
+        ((kind === 'harmed' || kind === 'pushed') && e.targetId === npcId);
       const seesActor = attentive && visible(before, npc, actor),
         seesTarget = target && attentive && visible(before, npc, target);
       const direct =
         e.actorId === npcId ||
-        ((kind === 'addressed' || kind === 'helped') && e.targetId === npcId) ||
+        ((kind === 'addressed' || kind === 'helped' || kind === 'harmed' || kind === 'pushed') &&
+          e.targetId === npcId) ||
         !!seesTarget;
       const heard = kind === 'noise' && canNpcHear(before, npc, actor);
       if (!direct && !heard) continue;
@@ -504,9 +520,15 @@ const speechRoot = (
   identity?: { turnId: string; segmentIndex: number },
 ) => {
   const parsed = npcSpeechSchema.safeParse(input);
-  return parsed.success
-    ? `speech-${hash(`${speakerId}:${identity ? `turn:${identity.turnId}:${identity.segmentIndex}` : tick}:${JSON.stringify(parsed.data)}`)}`
-    : undefined;
+  if (!parsed.success) return undefined;
+  // Locale controls the future reply, not what was actually said. Keep this
+  // reconstructible from the admitted observation and compatible with old roots.
+  const speech = {
+    channel: parsed.data.channel,
+    ...(parsed.data.text !== undefined ? { text: parsed.data.text } : {}),
+    ...(parsed.data.claim ? { claim: parsed.data.claim } : {}),
+  };
+  return `speech-${hash(`${speakerId}:${identity ? `turn:${identity.turnId}:${identity.segmentIndex}` : tick}:${JSON.stringify(speech)}`)}`;
 };
 /** Resolve only an original admitted speech observation, never a report or arbitrary evidence ID. */
 export function npcReplyObservation(
@@ -759,6 +781,7 @@ export function stepLivingNpcs(
   state: GameState,
   options: { deferredNpcIds?: string[] } = {},
 ): GameResult {
+  if (state.turnController && state.turnController.phase !== 'world') return result(state);
   if (state.rulesetVersion !== 'hybrid-v3') return result(state);
   const perception = refreshLivingPerception(state);
   let s = perception.state;
@@ -1187,18 +1210,36 @@ export function buildNpcPublicSpeechContext(
   audienceIds: string[],
   observationIds: string[],
   requestedFactIds: string[] = [],
+  deferredSpeechId?: string,
+  replyLocale: Locale = 'en',
 ) {
+  const locale = localeSchema.parse(replyLocale);
   const m = state.npcBrains?.[npcId]?.living,
     npc = state.entities[npcId];
   const audience = [...new Set(audienceIds)].sort();
-  if (!m || !npc) return { npcId, audienceIds: audience, claims: [] };
+  if (!m || !npc) return { npcId, replyLocale: locale, audienceIds: audience, claims: [] };
+  const deferred =
+    deferredSpeechId && state.turnController?.phase === 'world'
+      ? state.turnController.deferredSpeech.find(
+          (speech) =>
+            speech.id === deferredSpeechId &&
+            speech.recipientId === npcId &&
+            JSON.stringify([...speech.audienceIds].sort()) === JSON.stringify(audience) &&
+            observationIds.includes(speech.utteranceId) &&
+            !!npcReplyObservation(state, speech.actorId, npcId, speech.utteranceId),
+        )
+      : undefined;
   if (
     !audienceIds.length ||
-    audienceIds.some((id) => !state.entities[id] || !canNpcHear(state, state.entities[id], npc))
+    (deferredSpeechId && !deferred) ||
+    audienceIds.some(
+      (id) => !state.entities[id] || (!deferred && !canNpcHear(state, state.entities[id], npc)),
+    )
   )
-    return { npcId, audienceIds: audience, claims: [] };
+    return { npcId, replyLocale: locale, audienceIds: audience, claims: [] };
   return {
     npcId,
+    replyLocale: locale,
     audienceIds: audience,
     ...(npc.supportingNpc
       ? { publicIdentity: { name: npc.label, role: npc.supportingNpc.roleLabel } }
@@ -1292,17 +1333,36 @@ export function commitNpcPublicUtterance(
     observationIds: string[];
     requestedFactIds?: string[];
     contextHash: string;
+    deferredSpeechId?: string;
+    replyLocale?: Locale;
   },
 ): GameResult {
   const npc = state.entities[npcId],
     recipient = state.entities[input.recipientId];
+  const deferred =
+    input.deferredSpeechId && state.turnController?.phase === 'world'
+      ? state.turnController.deferredSpeech.find(
+          (speech) =>
+            speech.id === input.deferredSpeechId &&
+            speech.recipientId === npcId &&
+            speech.actorId === input.recipientId &&
+            speech.channel === input.channel,
+        )
+      : undefined;
+  if (
+    input.deferredSpeechId &&
+    (!deferred ||
+      !input.observationIds.includes(deferred.utteranceId) ||
+      !npcReplyObservation(state, deferred.actorId, npcId, deferred.utteranceId))
+  )
+    return result(state, [], 'STALE_STATE');
   if (
     state.rulesetVersion !== 'hybrid-v3' ||
     !npc ||
     npc.kind !== 'npc' ||
     !recipient ||
     !['player', 'npc'].includes(recipient.kind) ||
-    !near(npc, recipient) ||
+    (!deferred && !near(npc, recipient)) ||
     npc.encounterId ||
     recipient.encounterId
   )
@@ -1316,12 +1376,14 @@ export function commitNpcPublicUtterance(
       (input.code === 'acknowledged' && input.text === undefined)
     ) ||
     !['say', 'whisper'].includes(input.channel) ||
+    !localeSchema.safeParse(input.replyLocale ?? 'en').success ||
     !Array.isArray(input.observationIds) ||
     input.observationIds.length > 16
   )
     return result(state, [], 'INVALID_ACTION');
-  const listeners =
-    input.channel === 'whisper'
+  const listeners = deferred
+    ? [...deferred.audienceIds].sort()
+    : input.channel === 'whisper'
       ? [recipient.id, npcId]
       : Object.values(state.entities)
           .filter((e) => ['player', 'npc'].includes(e.kind) && canNpcHear(state, e, npc))
@@ -1333,6 +1395,8 @@ export function commitNpcPublicUtterance(
     listeners,
     input.observationIds,
     input.requestedFactIds,
+    input.deferredSpeechId,
+    input.replyLocale,
   );
   if (new Set(input.observationIds).size !== context.claims.length)
     return result(state, [], 'FORBIDDEN');
@@ -1547,8 +1611,13 @@ export function resolveNpcFactTopic(state: GameState, npcId: string, topicId: st
 export function createMockNpcPublicResponse(
   context: ReturnType<typeof buildNpcPublicSpeechContext>,
 ): { text: string } | { code: 'acknowledged' } {
-  const fact = context.claims.find((c) => 'authoredFact' in c && c.authoredFact)?.authoredFact;
-  return fact ? { text: fact.text } : { code: 'acknowledged' };
+  const claim = context.claims.find((c) => 'authoredFact' in c && c.authoredFact),
+    locale = context.replyLocale ?? 'en';
+  return {
+    text: claim?.authoredFact
+      ? mockFactReply(context.npcId, claim.observationId, claim.authoredFact, locale)
+      : mockAcknowledgement[locale],
+  };
 }
 
 function npcObservationImportance(m: LivingNpcMemory, o: NpcObservation): number {

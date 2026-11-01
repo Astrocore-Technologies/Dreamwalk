@@ -23,6 +23,8 @@ test('Studio mock image flow requires separate quote consent and never auto-bind
   await page.getByRole('button', { name: /Локации$/ }).click();
   const editor = page.getByRole('region', { name: 'Игровая карта', exact: true });
   await editor.getByRole('button', { name: 'Шаблон: внутренний двор', exact: true }).click();
+  // This regression intentionally covers the retained simultaneous compatibility rules.
+  await editor.getByLabel('Пошаговый режим Dreamwalk', { exact: true }).uncheck();
   const art = page.getByRole('region', { name: 'Графика приключения', exact: true });
   const slots = art.getByLabel('Место в сцене', { exact: true });
   await expect(slots).toBeVisible();

@@ -33,7 +33,8 @@ export function protectedNpcEvidence(value: unknown, result = new Set<string>())
       Array.isArray(child)
     )
       for (const id of child) if (typeof id === 'string') result.add(id);
-    if (key === 'observationId' && typeof child === 'string') result.add(child);
+    if ((key === 'observationId' || key === 'utteranceId') && typeof child === 'string')
+      result.add(child);
     protectedNpcEvidence(child, result);
   }
   return result;
@@ -60,6 +61,7 @@ export async function pruneNpcMemory(
     throw new Error('INVALID_NPC_RETENTION_POLICY');
   const protectedIds = protectedNpcEvidence(state.npcBrains ?? {});
   protectedNpcEvidence(state.npcUtterances ?? [], protectedIds);
+  protectedNpcEvidence(state.turnController?.deferredSpeech ?? [], protectedIds);
   const pending = await client.query(
     `SELECT context FROM npc_ai_jobs WHERE campaign_id=$1 AND status IN ('queued','reserved','running','result_received','validated')
      UNION ALL SELECT r.context FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id WHERE r.campaign_id=$1 AND (r.status='queued' OR (r.status='scheduled' AND j.status IN ('queued','reserved','running','result_received','validated')))`,

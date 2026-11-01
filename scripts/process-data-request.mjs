@@ -1,3 +1,8 @@
+import { exportManualLiveData, lockManualLiveData } from './manual-live-data-requests.mjs';
+import {
+  eraseVisualAuthoring,
+  exportVisualAuthoring,
+} from '../apps/api/dist/visual-authoring/data-requests.js';
 import {
   eraseImageGeneration,
   exportImageGeneration,
@@ -80,6 +85,18 @@ try {
     await audit(`operator.${request.kind}_started`, user.id);
     await c.query('COMMIT');
     await c.query('BEGIN ISOLATION LEVEL REPEATABLE READ');
+    if (request.kind === 'deletion') {
+      // Claim all new manual financial dependencies before filesystem cleanup. Busy work fails
+      // without waiting in an inverted job/session order; a later operator retry sends no AI call.
+      await c.query("SET LOCAL lock_timeout='1s'");
+      const ownerGate = (
+        await c.query('SELECT pg_try_advisory_xact_lock(hashtextextended($1,0)) AS locked', [
+          'art-owner:' + user.id,
+        ])
+      ).rows[0];
+      if (!ownerGate?.locked) throw new Error('DATA_REQUEST_BUSY');
+      await lockManualLiveData(c, user.id);
+    }
     const current = (
       await rows('SELECT deleted_at FROM users WHERE id=$1 FOR UPDATE', [user.id])
     )[0];
@@ -100,7 +117,9 @@ try {
         generatedAt: new Date().toISOString(),
         profile,
         game: await exportGameData(c, user.id),
+        manualLiveBudget: await exportManualLiveData(c, user.id),
         playable: await exportPlayableData(c, user.id),
+        visualAuthoring: await exportVisualAuthoring(c, user.id),
         reusableArt: await exportReusableAssets(c, user.id),
         imageGeneration: await exportImageGeneration(c, user.id),
         heroes: await rows('SELECT id,data,created_at,updated_at FROM heroes WHERE owner_id=$1', [
@@ -161,6 +180,7 @@ try {
         }
       await c.query("SET LOCAL dreamwalk.erasure='confirmed'");
       // Resolve contextual image provenance before membership/source records are purged.
+      await eraseVisualAuthoring(c, user.id);
       const imageCleanup = await eraseImageGeneration(c, user.id);
       await purgeGameData(c, user.id);
       // The deleted account cannot resume admission. Keep DB pointers on rollback so

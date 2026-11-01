@@ -1,3 +1,5 @@
+import { purgeManualLiveData } from './manual-live-data-requests.mjs';
+import { removeTurnParticipant } from '@dreamwalk/game-core';
 /** Game extension of the explicit account export/purge transaction. No external calls. */
 import { createHash, randomUUID } from 'node:crypto';
 import { redactNarrativeContent } from './narrative-data-requests.mjs';
@@ -23,6 +25,36 @@ export function replaceActor(value, previous, replacement) {
         k === previous ? replacement : k,
         replaceActor(v, previous, replacement),
       ]),
+    );
+  return value;
+}
+/** Remove private turn references, while preserving other players' committed resources and positions. */
+export function redactTurnControlState(value, actorId, { cancelAllDeferred = false } = {}) {
+  if (!value || typeof value !== 'object') return value;
+  if (value.turnController) {
+    const cleaned = removeTurnParticipant(value, actorId).state;
+    value.turnController = cleaned.turnController;
+    if (typeof value.revision === 'number') value.revision = cleaned.revision;
+    if (cancelAllDeferred && value.turnController.deferredSpeech.length) {
+      value.turnController.deferredSpeech = [];
+      value.turnController.phaseEpoch++;
+      if (typeof value.revision === 'number') value.revision++;
+    }
+  }
+  // A retained public projection is historical evidence, not an authority to invent a new active turn.
+  if (
+    value.turn &&
+    (value.turn.actorOrder?.includes(actorId) ||
+      value.turn.activeActorId === actorId ||
+      value.turn.reaction?.reactorId === actorId ||
+      value.turn.reaction?.causeActorId === actorId)
+  )
+    delete value.turn;
+  delete value.movementTrace;
+  delete value.feedback;
+  if (Array.isArray(value.artBindings))
+    value.artBindings = value.artBindings.filter(
+      (binding) => !binding.slot?.startsWith(`entity:${actorId}:`),
     );
   return value;
 }
@@ -210,10 +242,13 @@ export function redactGameOperationSpeech(value, actorId, erasedUtteranceIds) {
 /** Remove an erased player's public hero identity from retained projections/history. */
 export function redactGameHeroIdentity(value, actorId) {
   if (!value || typeof value !== 'object') return value;
+  redactTurnControlState(value, actorId);
   if (value.id === actorId && value.kind === 'player') {
     delete value.label;
     delete value.portraitUrl;
     delete value.portraitAssetId;
+    delete value.characterAnimation;
+    delete value.characterPackageVersionId;
   }
   for (const child of Object.values(value)) redactGameHeroIdentity(child, actorId);
   return value;
@@ -313,6 +348,7 @@ export async function purgeGameData(client, userId) {
       [userId],
     )
   ).rows;
+  await purgeManualLiveData(client, userId, campaigns);
   await purgeNpcAiData(client, userId, campaigns);
   for (const campaign of campaigns) {
     const hasStoryTurns = await purgeStoryTurnData(client, campaign.id, userId);
@@ -388,6 +424,8 @@ export async function purgeGameData(client, userId) {
       for (const root of roots) deletedReplyRoots.add(root);
     };
     const cleanPrivateState = (original) => {
+      // Erasure cancels all retained decision requests above. Their deferred queue must not strand world phase.
+      redactTurnControlState(original, actorId, { cancelAllDeferred: true });
       if (hasNarrative) redactNarrativeContent(original);
       const observations = [
         ...Object.values(original?.npcBrains ?? {}).flatMap((b) => b.living?.observations ?? []),

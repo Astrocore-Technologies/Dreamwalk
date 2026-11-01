@@ -1,3 +1,4 @@
+import { initializeTurnController } from './turns';
 import {
   authoredGameDraftSchema,
   bundledGameAssetManifest,
@@ -120,6 +121,20 @@ export function compilePlayableDraft(input: unknown): {
     maps[m.id] = { ...structuredClone(publicMap), revision: 0 };
   }
   if (!maps[d.startMapId]) errors.push('startMapId:missing');
+  for (const m of d.maps) {
+    const layers = m.composition?.layers ?? [];
+    if (new Set(layers.map((l) => l.id)).size !== layers.length)
+      errors.push(`map:${m.id}:duplicate-layer`);
+    for (const l of layers) {
+      if (l.x + l.width > m.width || l.y + l.height > m.height) errors.push(`layer:${l.id}:bounds`);
+      if (l.solid)
+        for (let y = l.y; y < l.y + l.height; y++)
+          for (let x = l.x; x < l.x + l.width; x++)
+            if (!m.blocked.some((p) => p.x === x && p.y === y))
+              errors.push(`layer:${l.id}:missing-collision`);
+    }
+  }
+
   const ids = new Set<string>();
   for (const o of [...d.objects, ...d.npcs]) {
     if (ids.has(o.id)) errors.push(`entity:${o.id}:duplicate`);
@@ -149,6 +164,7 @@ export function compilePlayableDraft(input: unknown): {
       label: o.label,
       ...(o.labelTranslations ? { labelTranslations: structuredClone(o.labelTranslations) } : {}),
       visual: o.visual,
+      ...(o.publicProfile ? { publicProfile: structuredClone(o.publicProfile) } : {}),
       mapId: o.mapId,
       x: o.x,
       y: o.y,
@@ -162,9 +178,13 @@ export function compilePlayableDraft(input: unknown): {
     entities[n.id] = {
       id: n.id,
       kind: 'npc',
+      ...(n.characterAnimation
+        ? { characterAnimation: structuredClone(n.characterAnimation) }
+        : {}),
       label: n.label,
       ...(n.labelTranslations ? { labelTranslations: structuredClone(n.labelTranslations) } : {}),
       visual: n.visual,
+      ...(n.publicProfile ? { publicProfile: structuredClone(n.publicProfile) } : {}),
       mapId: n.mapId,
       x: n.x,
       y: n.y,
@@ -364,6 +384,7 @@ export function compilePlayableDraft(input: unknown): {
     )
       errors.push(`supportingRole:${role.id}:missing-objective`);
   const playable: PlayablePackage = {
+    ...(d.turnRules ? { turnRules: structuredClone(d.turnRules) } : {}),
     narrativePremise: { title: d.title, summary: '' },
     ...(d.narrativeConstraints
       ? { narrativeConstraints: structuredClone(d.narrativeConstraints) }
@@ -537,6 +558,11 @@ export function createStateFromPlayable(
     const added = addPlayer(state, id);
     if (added.error) throw new Error(added.error);
     state = added.state;
+  }
+  if (playable.turnRules && actorIds.length) {
+    const initialized = initializeTurnController(state, actorIds, playable.turnRules);
+    if (initialized.error) throw new Error(initialized.error);
+    state = initialized.state;
   }
   return state.rulesetVersion === 'hybrid-v3' ? refreshLivingPerception(state).state : state;
 }

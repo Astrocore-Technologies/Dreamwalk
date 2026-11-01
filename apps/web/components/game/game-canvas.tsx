@@ -1,5 +1,6 @@
 'use client';
 import { sceneClick } from './scene-input';
+import { committedPathSample, spriteFeedback } from './turn-ui';
 import { useEffect, useRef, useState } from 'react';
 import { cameraAxis } from './camera-geometry';
 import { useObjectiveText } from './campaign-objectives';
@@ -20,6 +21,7 @@ export function GameCanvas({
   art = [],
   onMove,
   onSelectNpc,
+  onInspectNpc,
   onStop,
   disabled,
   reducedMotion,
@@ -29,6 +31,7 @@ export function GameCanvas({
   art?: VisibleArtBinding[];
   onMove: (point: GamePoint) => void;
   onSelectNpc: (npcId: string) => void;
+  onInspectNpc?: (npcId: string) => void;
   onStop: () => void;
   disabled: boolean;
   reducedMotion: boolean;
@@ -37,7 +40,15 @@ export function GameCanvas({
   const { t } = useT();
   const objectiveText = useObjectiveText();
   const host = useRef<HTMLDivElement>(null);
-  const latest = useRef({ projection, art, onMove, onSelectNpc, disabled, reducedMotion });
+  const latest = useRef({
+    projection,
+    art,
+    onMove,
+    onSelectNpc,
+    onInspectNpc,
+    disabled,
+    reducedMotion,
+  });
   const [failed, setFailed] = useState(false);
   const [systemReducedMotion, setSystemReducedMotion] = useState(false);
   useEffect(() => {
@@ -55,10 +66,20 @@ export function GameCanvas({
       art,
       onMove,
       onSelectNpc,
+      onInspectNpc,
       disabled,
       reducedMotion: reducedMotion || systemReducedMotion,
     };
-  }, [projection, art, onMove, onSelectNpc, disabled, reducedMotion, systemReducedMotion]);
+  }, [
+    projection,
+    art,
+    onMove,
+    onSelectNpc,
+    onInspectNpc,
+    disabled,
+    reducedMotion,
+    systemReducedMotion,
+  ]);
   useEffect(() => {
     zoomRef.current = zoom;
   }, [zoom]);
@@ -103,6 +124,22 @@ export function GameCanvas({
           new Texture({ source: atlas.source, frame: new Rectangle(index * 64, 0, 64, 64) }),
       );
       const world = new Container();
+      app.canvas.addEventListener('contextmenu', (event) => {
+        event.preventDefault();
+        const bounds = app.canvas.getBoundingClientRect();
+        const local = world.toLocal({
+          x: ((event.clientX - bounds.left) * app.screen.width) / bounds.width,
+          y: ((event.clientY - bounds.top) * app.screen.height) / bounds.height,
+        });
+        const npc = latest.current.projection.entities.find(
+          (e) =>
+            e.kind === 'npc' &&
+            e.x === Math.floor(local.x / 48) &&
+            e.y === Math.floor(local.y / 48),
+        );
+        if (npc) latest.current.onInspectNpc?.(npc.id);
+      });
+
       const artBackground = new Container();
       const terrain = new Container();
       const sceneDecoration = new Graphics();
@@ -112,9 +149,11 @@ export function GameCanvas({
       journalDrawing.destroy();
       const objects = new Container();
       const boundary = new Graphics();
-      const actors = new Container();
+      const actors = objects;
+      objects.sortableChildren = true;
+      const decorations: InstanceType<typeof Sprite>[] = [];
       const focus = new Graphics();
-      world.addChild(artBackground, terrain, sceneDecoration, objects, boundary, actors, focus);
+      world.addChild(artBackground, terrain, sceneDecoration, boundary, objects, focus);
       app.stage.addChild(world);
       const sprites = new Map<
         string,
@@ -126,6 +165,18 @@ export function GameCanvas({
           previousY: number;
           changedAt: number;
           mapId: string;
+          direction: number;
+          walkingUntil: number;
+          animatedTexture?: InstanceType<typeof Texture>;
+          animationBase?: InstanceType<typeof Texture>;
+          animationFrame?: number;
+          animated: boolean;
+          traceSequence: number;
+          trace?: GamePoint[];
+          traceStartedAt: number;
+          feedbackSequence: number;
+          feedbackStartedAt: number;
+          feedback?: { kind: 'hit' | 'push'; dx: number; dy: number };
         }
       >();
       const textureBudget = new TextureBudget();
@@ -234,9 +285,11 @@ export function GameCanvas({
               if (artRequests.get(entry.url) === controller) artRequests.delete(entry.url);
             });
         }
-        const key = visible
-          .map((entry) => `${entry.slot}:${entry.revisionId}:${artTextures.has(entry.url)}`)
-          .join('|');
+        const key =
+          JSON.stringify(state.projection.map.composition) +
+          visible
+            .map((entry) => `${entry.slot}:${entry.revisionId}:${artTextures.has(entry.url)}`)
+            .join('|');
         if (key !== artKey) {
           artKey = key;
           lastRevision = -1;
@@ -247,11 +300,28 @@ export function GameCanvas({
           const texture = background && artTextures.get(background.url);
           terrain.alpha = texture ? 0.28 : 1;
           sceneDecoration.visible = !texture;
+          terrain.visible = !texture || !state.projection.map.composition;
           if (texture) {
             const sprite = new Sprite(texture);
             sprite.width = state.projection.map.width * tile;
             sprite.height = state.projection.map.height * tile;
             artBackground.addChild(sprite);
+          }
+          for (const decoration of decorations) decoration.destroy();
+          decorations.length = 0;
+          for (const layer of state.projection.map.composition?.layers ?? []) {
+            const binding = visible.find(
+              (entry) => entry.slot === `map:${state.projection.map.id}:layer:${layer.id}`,
+            );
+            const layerTexture = binding && artTextures.get(binding.url);
+            if (!layerTexture) continue;
+            const sprite = new Sprite(layerTexture);
+            sprite.width = layer.width * tile;
+            sprite.height = (layer.height + (layer.solid ? 1 : 0)) * tile;
+            sprite.position.set(layer.x * tile, (layer.y - (layer.solid ? 1 : 0)) * tile);
+            sprite.zIndex = layer.solid ? (layer.y + layer.height) * tile - 1 : -100;
+            actors.addChild(sprite);
+            decorations.push(sprite);
           }
           element.dataset.artLoaded = String(artTextures.size);
         }
@@ -287,7 +357,7 @@ export function GameCanvas({
         const { projection: p, reducedMotion: reduced } = latest.current;
         app.ticker.maxFPS = reduced ? 30 : 60;
         synchronizeArt();
-        const key = `${p.map.id}:${p.map.revision}:${p.map.sceneProfile || ''}`;
+        const key = `${p.map.id}:${p.map.revision}:${p.map.sceneProfile || ''}:${JSON.stringify(p.map.composition)}`;
         if (key !== mapKey) {
           mapKey = key;
           lastRevision = -1;
@@ -340,11 +410,18 @@ export function GameCanvas({
                 previousY: entity.y * tile,
                 changedAt: now,
                 mapId: entity.mapId,
+                direction: 0,
+                walkingUntil: 0,
+                animated: false,
+                traceSequence: entity.movementTrace?.sequence ?? -1,
+                traceStartedAt: 0,
+                feedbackSequence: entity.feedback?.sequence ?? -1,
+                feedbackStartedAt: 0,
               };
               sprites.set(entity.id, record);
             }
             const suffix =
-              entity.kind === 'npc'
+              entity.kind === 'npc' || entity.kind === 'player'
                 ? 'sprite'
                 : `object:${entity.kind === 'door' ? (entity.open ? 'open' : 'closed') : 'default'}`;
             const binding =
@@ -352,9 +429,46 @@ export function GameCanvas({
               latest.current.art.find(
                 (entry) => entry.slot === `entity:${entity.id}:object:default`,
               );
-            record.sprite.texture =
-              (binding && artTextures.get(binding.url)) ||
-              (entity.visual === 'journal' ? journalTexture : frames[frame]);
+            const boundTexture = binding && artTextures.get(binding.url);
+            record.animated = !!(entity.characterAnimation && boundTexture);
+            if (record.animated && boundTexture) {
+              if (record.animationBase !== boundTexture) {
+                record.animatedTexture?.destroy(false);
+                record.animationBase = boundTexture;
+                record.animatedTexture = new Texture({
+                  source: boundTexture.source,
+                  dynamic: true,
+                  frame: new Rectangle(0, 0, boundTexture.width / 6, boundTexture.height / 4),
+                });
+                record.animationFrame = -1;
+              }
+              record.sprite.texture = record.animatedTexture!;
+              record.sprite.width = tile;
+              record.sprite.height = tile * 1.5;
+            } else {
+              record.animatedTexture?.destroy(false);
+              record.animatedTexture = undefined;
+              record.animationBase = undefined;
+              record.sprite.texture =
+                boundTexture || (entity.visual === 'journal' ? journalTexture : frames[frame]);
+              record.sprite.width = tile;
+              record.sprite.height = boundTexture && entity.kind === 'door' ? tile * 1.5 : tile;
+            }
+            if (entity.movementTrace && entity.movementTrace.sequence !== record.traceSequence) {
+              record.traceSequence = entity.movementTrace.sequence;
+              record.trace =
+                record.mapId === entity.mapId ? entity.movementTrace.points : undefined;
+              record.traceStartedAt = now;
+            }
+            if (entity.feedback && entity.feedback.sequence !== record.feedbackSequence) {
+              record.feedbackSequence = entity.feedback.sequence;
+              record.feedbackStartedAt = now;
+              record.feedback = {
+                kind: entity.feedback.kind,
+                dx: entity.feedback.dx,
+                dy: entity.feedback.dy,
+              };
+            }
             if (
               record.x !== entity.x * tile ||
               record.y !== entity.y * tile ||
@@ -365,8 +479,14 @@ export function GameCanvas({
                 record.mapId !== entity.mapId ||
                 Math.abs(record.x - entity.x * tile) + Math.abs(record.y - entity.y * tile) >
                   tile * 3;
+              const dx = entity.x * tile - record.x,
+                dy = entity.y * tile - record.y;
+              record.direction = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 1 : 2) : dy < 0 ? 3 : 0;
+              record.walkingUntil = snap ? 0 : now + 200;
               record.previousX = snap ? entity.x * tile : record.sprite.x;
-              record.previousY = snap ? entity.y * tile : record.sprite.y;
+              record.previousY = snap
+                ? entity.y * tile
+                : record.sprite.y + (record.animated ? tile * 0.5 : 0);
               record.x = entity.x * tile;
               record.y = entity.y * tile;
               record.changedAt = now;
@@ -376,6 +496,7 @@ export function GameCanvas({
           for (const [id, record] of sprites)
             if (!present.has(id)) {
               record.sprite.destroy();
+              record.animatedTexture?.destroy(false);
               sprites.delete(id);
             }
           boundary.clear();
@@ -389,11 +510,50 @@ export function GameCanvas({
         }
         for (const record of sprites.values()) {
           const fraction = reduced ? 1 : Math.min(1, (now - record.changedAt) / 130);
+          const trace =
+            !reduced && record.trace
+              ? committedPathSample(record.trace, now - record.traceStartedAt)
+              : null;
+          const feedback =
+            !reduced && record.feedback
+              ? spriteFeedback(
+                  record.feedback.kind,
+                  now - record.feedbackStartedAt,
+                  record.feedback.dx,
+                  record.feedback.dy,
+                )
+              : { x: 0, y: 0, rotation: 0 };
+          const x = trace
+            ? trace.x * tile
+            : record.previousX + (record.x - record.previousX) * fraction;
+          const y = trace
+            ? trace.y * tile
+            : record.previousY + (record.y - record.previousY) * fraction;
+          if (trace?.moving) {
+            record.direction = trace.direction;
+            record.walkingUntil = now + 130;
+          } else if (record.trace) record.trace = undefined;
           record.sprite.position.set(
-            record.previousX + (record.x - record.previousX) * fraction,
-            record.previousY + (record.y - record.previousY) * fraction,
+            x + feedback.x,
+            y + feedback.y - (record.animated || record.sprite.height > tile ? tile * 0.5 : 0),
           );
-          record.sprite.zIndex = record.sprite.y;
+          record.sprite.rotation = feedback.rotation;
+          record.sprite.zIndex = y + tile;
+          if (record.animated && record.animatedTexture && record.animationBase) {
+            const col = reduced
+              ? 0
+              : now < record.walkingUntil
+                ? 2 + (Math.floor(now / 125) % 4)
+                : Math.floor(now / 700) % 2;
+            const index = record.direction * 6 + col;
+            if (index !== record.animationFrame) {
+              record.animationFrame = index;
+              const base = record.animationBase;
+              record.animatedTexture.frame.x = (col * base.width) / 6;
+              record.animatedTexture.frame.y = (record.direction * base.height) / 4;
+              record.animatedTexture.updateUvs();
+            }
+          }
         }
         actors.sortableChildren = true;
         const own = sprites.get(p.actorId);
@@ -414,7 +574,12 @@ export function GameCanvas({
           }
           focus
             .clear()
-            .ellipse(own.sprite.x + tile / 2, own.sprite.y + tile * 0.85, tile * 0.37, tile * 0.15)
+            .ellipse(
+              own.sprite.x + tile / 2,
+              own.sprite.y + own.sprite.height - tile * 0.15,
+              tile * 0.37,
+              tile * 0.15,
+            )
             .stroke({ color: 0xf2d89b, width: 2 });
         }
       };

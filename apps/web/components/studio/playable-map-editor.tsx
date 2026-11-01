@@ -1,4 +1,8 @@
 'use client';
+import { TurnRulesetEditor } from './turn-ruleset-editor';
+import { NarrativeControls } from './narrative-controls';
+import { useVisualText } from '../visual-authoring/messages';
+import { ButtonLink } from '../ui';
 import { useEffect, useRef, useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { useObjectiveText } from '../game/campaign-objectives';
@@ -13,7 +17,7 @@ import {
   createAuthoredDraft,
   createCompleteObservatoryDraft,
 } from '@dreamwalk/game-core';
-import type { AuthoredGameDraft, Npc } from '@dreamwalk/contracts';
+import { turnRulesSchema, type AuthoredGameDraft, type Npc } from '@dreamwalk/contracts';
 import { api, ApiError, errorMessage, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Field, Input, Loading, Select } from '@/components/ui';
@@ -46,6 +50,7 @@ export function PlayableMapEditor({
   preview = false,
   flushRef,
   onArtSaved,
+  artEpoch = 0,
 }: {
   adventureId: string;
   title: string;
@@ -55,8 +60,10 @@ export function PlayableMapEditor({
   preview?: boolean;
   flushRef?: { current: (() => Promise<void>) | null };
   onArtSaved?: () => void;
+  artEpoch?: number;
 }) {
   const { t } = useT();
+  const visualText = useVisualText();
   const artText = useAssetText();
   const objectiveText = useObjectiveText();
   const heroSelection = useHeroSelection();
@@ -152,6 +159,7 @@ export function PlayableMapEditor({
         ? createCompleteObservatoryDraft()
         : createAuthoredDraft(template);
     next.title = title || t('Новая история');
+    next.turnRules = turnRulesSchema.parse({});
     if (reactive) {
       next.npcBehavior = 'reactive-v1';
       next.npcs[0] = {
@@ -407,6 +415,11 @@ export function PlayableMapEditor({
           reload={reloadDraft}
         />
         <ErrorBox message={error} />
+        {!preview && (
+          <ButtonLink href={`/studio/visuals?adventureId=${adventureId}`}>
+            {visualText('title')}
+          </ButtonLink>
+        )}
         {!draft || !map ? (
           <div className={styles.templates}>
             <p>{t('Игровая карта ещё не добавлена. Выбери начальный шаблон.')}</p>
@@ -475,6 +488,16 @@ export function PlayableMapEditor({
                 )}
               </p>
             </fieldset>
+            <TurnRulesetEditor
+              value={draft.turnRules}
+              disabled={preview}
+              onChange={(turnRules) => change({ ...draft, turnRules })}
+            />
+            <NarrativeControls
+              value={draft.narrativeConstraints}
+              disabled={preview}
+              onChange={(narrativeConstraints) => change({ ...draft, narrativeConstraints })}
+            />
             <div className={styles.mapNav}>
               {draft.maps.map((value) => (
                 <button
@@ -966,7 +989,7 @@ export function PlayableMapEditor({
       {draft && (
         <fieldset disabled={busy} style={{ border: 0, padding: 0, minWidth: 0 }}>
           <StoryArtBindings
-            key={adventureId}
+            key={`${adventureId}:${artEpoch}`}
             adventureId={adventureId}
             beforePersist={autosave.flush}
             onDirty={setArtDirty}

@@ -26,7 +26,11 @@ process.env.WEB_ORIGIN ||=
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 async function run(args) {
   await new Promise((resolve, reject) => {
-    const child = spawn(npm, args, { cwd: root, stdio: 'inherit', env: process.env });
+    const child = spawn(
+      process.platform === 'win32' ? process.execPath : npm,
+      process.platform === 'win32' ? [process.env.npm_execpath, ...args] : args,
+      { cwd: root, stdio: 'inherit', env: process.env },
+    );
     child.on('exit', (code) =>
       code === 0 ? resolve() : reject(new Error(`${args.join(' ')} exited ${code}`)),
     );
@@ -44,10 +48,9 @@ try {
     delete process.env.LOCAL_ADMIN_EMAIL;
   }
   const child = spawn(
-    process.platform === 'win32' ? 'npx.cmd' : 'npx',
+    process.execPath,
     [
-      '--no-install',
-      'concurrently',
+      path.join(root, 'node_modules/concurrently/dist/bin/concurrently.js'),
       '--kill-others',
       '-n',
       'api,web',

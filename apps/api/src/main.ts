@@ -1,3 +1,10 @@
+import { SpatialPlannerService } from './visual-authoring/spatial-planner';
+import { spatialPlanDefinition } from './visual-authoring/spatial-plan';
+import { createAuthoringTextEngine } from './live-test/authoring-text';
+import { LiveTestController } from './live-test/controller';
+import { LiveTestService } from './live-test/service';
+import { VisualAuthoringController } from './visual-authoring/controller';
+import { VisualAuthoringService } from './visual-authoring/service';
 import { ImageGenerationService } from './image-generation/service';
 import { ImageGenerationController } from './image-generation/controller';
 import 'reflect-metadata';
@@ -31,12 +38,19 @@ class Health {
   @Get('health')
   async health() {
     await this.db.query('SELECT 1');
-    return { status: 'ok', mode: 'platform', aiProvider: 'mock', paymentsEnabled: false };
+    return {
+      status: 'ok',
+      mode: 'platform',
+      aiProvider: process.env.LIVE_TEST_ENABLED === 'true' ? 'openai-manual' : 'mock',
+      paymentsEnabled: false,
+    };
   }
 }
 @Module({
   controllers: [
     Health,
+    LiveTestController,
+    VisualAuthoringController,
     AccountController,
     ContentController,
     AdminController,
@@ -50,6 +64,15 @@ class Health {
   ],
   providers: [
     Db,
+    LiveTestService,
+    VisualAuthoringService,
+    SpatialPlannerService,
+    {
+      provide: 'AUTHORING_TEXT_ENGINE',
+      inject: [Db, LiveTestService],
+      useFactory: (db: Db, live: LiveTestService) =>
+        createAuthoringTextEngine(db, live, spatialPlanDefinition),
+    },
     Auth,
     Content,
     AssetUploadGuard,
@@ -63,6 +86,11 @@ class Health {
 class AppModule {}
 async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bodyParser: false });
+  app
+    .get(ImageGenerationService)
+    .setLiveAuthorizer((client, owner, sessionId) =>
+      app.get(LiveTestService).authorizeImage(client, owner, sessionId),
+    );
   app.use(json({ limit: '256kb' }));
   app.useGlobalFilters(new Errors());
   const windows = new Map<

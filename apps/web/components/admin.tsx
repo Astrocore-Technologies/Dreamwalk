@@ -46,6 +46,8 @@ import {
   Textarea,
   Toggle,
 } from './ui';
+import { LiveTestPanel, useLiveTestStatus } from './live-test/live-test-panel';
+import { useLiveText } from './live-test/messages';
 import styles from './studio/admin.module.css';
 
 type Report = {
@@ -104,6 +106,8 @@ const links = [
 ];
 export function AdminPage({ path }: { path: string }) {
   const { t } = useT();
+  const liveText = useLiveText(),
+    live = useLiveTestStatus();
   const { user, loading } = useClient();
   if (loading) return <Loading />;
   if (user?.role !== 'admin')
@@ -136,10 +140,9 @@ export function AdminPage({ path }: { path: string }) {
       />
       <div className="notice">
         <LockKeyhole size={17} />
-        {t(
-          'Закрытый тест платформы · AI и реальные платежи отключены · Секретные ключи не вводятся через интерфейс',
-        )}
+        {liveText(live.status?.enabled ? 'adminLive' : 'adminProfiles')}
       </div>
+      <LiveTestPanel />
       {path === '/admin/users' ? (
         <AdminUsers />
       ) : path === '/admin/adventures' ? (
@@ -162,6 +165,7 @@ export function AdminPage({ path }: { path: string }) {
 }
 function AdminOverview() {
   const { t } = useT();
+  const liveText = useLiveText();
   const overview = useResource<{
     users: number;
     adventures: number;
@@ -233,11 +237,7 @@ function AdminOverview() {
             <Layers size={22} />
             <h2>{t('Стиль не равен модели')}</h2>
           </div>
-          <p className="muted">
-            {t(
-              'Green Apple и Cookie задают поведение. Runtime-профиль описывает техническую конфигурацию. В этой версии доступны только тестовые сценарии, без внешних вызовов.',
-            )}
-          </p>
+          <p className="muted">{liveText('adminProfiles')}</p>
           <Link className="text-link" href="/admin/models">
             {t('Каталог профилей')}
             <ArrowRight size={16} />

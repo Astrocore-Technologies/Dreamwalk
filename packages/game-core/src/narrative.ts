@@ -1,5 +1,7 @@
 import {
   narrativeConstraintsSchema,
+  localeSchema,
+  type Locale,
   narrativeProposalSchema,
   type GameState,
   type GameEntity,
@@ -65,12 +67,18 @@ function candidates(state: GameState, actorId: string) {
     )
     .slice(0, 32);
 }
-export function buildNarrativeContext(state: GameState, actorId: string, text: string) {
+export function buildNarrativeContext(
+  state: GameState,
+  actorId: string,
+  text: string,
+  replyLocale: Locale = 'en',
+) {
   const actor = state.entities[actorId],
     constraints = policy(state),
     canon = state.narrativeCanon;
   const context = {
     actorId,
+    replyLocale: localeSchema.parse(replyLocale),
     premise: state.narrativePremise ? structuredClone(state.narrativePremise) : null,
     sourceVersion: state.narrativeSource ? { ...state.narrativeSource } : null,
     intent: text,
@@ -80,8 +88,9 @@ export function buildNarrativeContext(state: GameState, actorId: string, text: s
       ? {
           id: actor.mapId,
           label: state.maps[actor.mapId]?.label,
-          description: canon?.turns.find((turn) => turn.sceneId === actor.mapId)?.introducedScene
-            ?.description,
+          description:
+            canon?.turns.find((turn) => turn.sceneId === actor.mapId)?.introducedScene
+              ?.description ?? state.maps[actor.mapId]?.description,
           actorPosition: { x: actor.x, y: actor.y },
         }
       : null,
@@ -171,6 +180,7 @@ export function applyNarrativeProposal(
   actorId: string,
   input: unknown,
   intent: string,
+  replyLocale: Locale = 'en',
 ): GameResult {
   const parsed = narrativeProposalSchema.safeParse(input);
   if (!parsed.success) return error(state, 'INVALID_ACTION');
@@ -187,7 +197,7 @@ export function applyNarrativeProposal(
   if (actor.encounterId) return error(state, 'WRONG_MODE');
   if (typeof intent !== 'string' || !intent.trim() || intent.length > 2000)
     return error(state, 'INVALID_ACTION');
-  const context = buildNarrativeContext(state, actorId, intent),
+  const context = buildNarrativeContext(state, actorId, intent, replyLocale),
     constraints = policy(state);
   if (context.contextHash !== p.contextHash) return error(state, 'STALE_STATE');
   if (!context.remainingTurns) return error(state, 'RATE_LIMITED');
@@ -381,18 +391,65 @@ export function createMockNarrativeProposal(
   actorId: string,
   text: string,
   turnId: string,
+  replyLocale: Locale = 'en',
 ): NarrativeProposal | null {
-  const c = buildNarrativeContext(state, actorId, text);
+  const c = buildNarrativeContext(state, actorId, text, replyLocale);
   if (!c.currentScene || !c.availableConnections.length || !c.remainingTurns) return null;
   const next = (state.narrativeCanon?.revision ?? 0) + 1,
     extend = c.constraints.allowNewScenes && c.remainingScenes > 0;
-  let name = `Mira ${next}`;
+  const copy = {
+    en: {
+      name: 'Mira',
+      annex: 'Maintenance annex',
+      room: 'Investigation room',
+      currentScene: 'the current scene',
+      scene: (label: string) =>
+        `A reachable extension of ${label}, following the shared investigation.`,
+      discovery: (label: string) =>
+        `A passage to ${label} is discovered as the investigation continues.`,
+      pause: 'The group pauses to consider the confirmed clues.',
+      role: 'Maintenance witness',
+      description: 'A secondary worker encountered during this investigation.',
+      appearance: 'Practical clothes and a notebook.',
+      personality: 'Curious and patient; does not know events they have not perceived.',
+    },
+    uk: {
+      name: 'Міра',
+      annex: 'Службова прибудова',
+      room: 'Кімната розслідування',
+      currentScene: 'поточної локації',
+      scene: (label: string) =>
+        `Доступне продовження локації «${label}», пов’язане зі спільним розслідуванням.`,
+      discovery: (label: string) => `Розслідування триває: відкрито прохід до локації «${label}».`,
+      pause: 'Група зупиняється, щоб обміркувати підтверджені зачіпки.',
+      role: 'Свідок із технічної служби',
+      description: 'Другорядний працівник, якого зустріли під час цього розслідування.',
+      appearance: 'Практичний одяг і записник.',
+      personality: 'Допитлива й терпляча людина; не знає подій, яких не спостерігала.',
+    },
+    ru: {
+      name: 'Мира',
+      annex: 'Служебная пристройка',
+      room: 'Комната расследования',
+      currentScene: 'текущей локации',
+      scene: (label: string) =>
+        `Доступное продолжение локации «${label}», связанное с общим расследованием.`,
+      discovery: (label: string) =>
+        `Расследование продолжается: найден проход в локацию «${label}».`,
+      pause: 'Группа останавливается, чтобы обдумать подтверждённые зацепки.',
+      role: 'Свидетель из технической службы',
+      description: 'Второстепенный работник, встреченный во время этого расследования.',
+      appearance: 'Практичная одежда и блокнот.',
+      personality: 'Любознательный и терпеливый человек; не знает событий, которых не наблюдал.',
+    },
+  }[c.replyLocale];
+  let name = `${copy.name} ${next}`;
   while (Object.values(state.entities).some((e) => normalize(e.label ?? '') === normalize(name)))
     name += 'a';
   const newScene = extend
     ? {
-        name: next === 1 ? 'Maintenance annex' : `Investigation room ${next}`,
-        description: `A reachable extension of ${c.currentScene.label ?? 'the current scene'}, following the shared investigation.`,
+        name: next === 1 ? copy.annex : `${copy.room} ${next}`,
+        description: copy.scene(c.currentScene.label ?? copy.currentScene),
         template: 'room' as const,
         connection: { fromMapId: c.currentScene.id, ...c.availableConnections[0] },
       }
@@ -400,19 +457,16 @@ export function createMockNarrativeProposal(
   return {
     turnId,
     contextHash: c.contextHash,
-    narration: extend
-      ? `A passage to ${newScene!.name} is discovered as the investigation continues.`
-      : 'The group pauses to consider the confirmed clues.',
+    narration: extend ? copy.discovery(newScene!.name) : copy.pause,
     newScene,
     newNpc:
       extend && c.constraints.allowNewNpcs && c.remainingNpcs > 0
         ? {
             name,
-            roleLabel: 'Maintenance witness',
-            description: 'A secondary worker encountered during this investigation.',
-            appearance: 'Practical clothes and a notebook.',
-            personalitySummary:
-              'Curious and patient; does not know events they have not perceived.',
+            roleLabel: copy.role,
+            description: copy.description,
+            appearance: copy.appearance,
+            personalitySummary: copy.personality,
             values: ['kindness'],
             publicSpeechStyle: 'warm',
             goal: 'help',

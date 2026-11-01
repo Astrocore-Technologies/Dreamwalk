@@ -49,11 +49,17 @@ export class FixtureImageProvider implements ImageProvider {
 export interface OpenAiImageOptions {
   enabled: boolean;
   apiKey?: string;
+  resolveApiKey?: () => string | undefined;
   verifiedUpperMicros: number | null;
+  costBasis?: 'verified_bound' | 'approved_estimate';
+  estimateRiskApproved?: boolean;
+  operationalReserveMicros?: number;
   networkApproved: boolean;
   model: string;
   fetchImpl?: typeof fetch;
   timeoutMs?: number;
+  approvedUntilMs?: number;
+  now?: () => number;
   inputTextMicrosPerMillion: number;
   inputImageMicrosPerMillion: number;
   outputImageMicrosPerMillion: number;
@@ -83,12 +89,16 @@ export class OpenAiImageProvider implements ImageProvider {
           inputImage: options.inputImageMicrosPerMillion,
           outputImage: options.outputImageMicrosPerMillion,
           upper: options.verifiedUpperMicros,
+          costBasis: options.costBasis,
+          reserve: options.operationalReserveMicros,
           timeout: options.timeoutMs ?? 60000,
           size: '1024x1024',
           quality: 'low',
           n: 1,
           format: 'png',
           moderation: 'auto',
+          stream: false,
+          partial_images: 0,
         }),
       )
       .digest('hex')}`;
@@ -102,26 +112,38 @@ export class OpenAiImageProvider implements ImageProvider {
     if (
       Buffer.byteLength(request.prompt, 'utf8') > 8000 ||
       refs.length > 2 ||
-      refs.length !== request.referenceRevisionIds.length ||
+      refs.length !==
+        request.referenceRevisionIds.length + request.privateReferenceAssetIds.length ||
       refs.some(
         (r) =>
-          !request.referenceRevisionIds.includes(r.revisionId) ||
+          ![...request.referenceRevisionIds, ...request.privateReferenceAssetIds].includes(
+            r.revisionId,
+          ) ||
           r.bytes.length > 5 * 1024 * 1024 ||
           !['image/png', 'image/webp'].includes(r.mime),
       )
     )
       throw new Error('INVALID_IMAGE_REQUEST');
     const o = this.options;
+    const estimated = o.costBasis === 'approved_estimate';
+    if (estimated && refs.length) throw new Error('IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE');
+    if (estimated) throw new Error('ESTIMATE_DISPATCH_APPROVAL_PENDING');
+    const reserve = estimated ? o.operationalReserveMicros : o.verifiedUpperMicros;
     if (
       !o.enabled ||
       !o.networkApproved ||
-      !o.apiKey ||
-      o.verifiedUpperMicros === null ||
-      !Number.isSafeInteger(o.verifiedUpperMicros) ||
-      o.verifiedUpperMicros <= 0 ||
-      o.verifiedUpperMicros > 1000000
+      (o.approvedUntilMs !== undefined && o.approvedUntilMs <= (o.now?.() ?? Date.now())) ||
+      (estimated && (!o.estimateRiskApproved || o.verifiedUpperMicros !== null)) ||
+      reserve === null ||
+      reserve === undefined ||
+      !Number.isSafeInteger(reserve) ||
+      reserve <= 0 ||
+      reserve > 1000000
     )
       throw new Error('LIVE_COST_BOUND_REQUIRED');
+    const apiKey = o.apiKey ?? o.resolveApiKey?.();
+    if (typeof apiKey !== 'string' || !/^[^\s]{1,1024}$/.test(apiKey))
+      throw new Error('IMAGE_CREDENTIAL_REQUIRED');
     const common = {
       model: o.model,
       prompt: request.prompt,
@@ -131,10 +153,12 @@ export class OpenAiImageProvider implements ImageProvider {
       background: request.background,
       output_format: 'png',
       moderation: 'auto',
+      stream: false,
+      partial_images: 0,
     };
     let body: BodyInit,
       headers: Record<string, string> = {
-        Authorization: `Bearer ${o.apiKey}`,
+        Authorization: `Bearer ${apiKey}`,
         'X-Client-Request-Id': dispatchId,
       };
     if (refs.length) {

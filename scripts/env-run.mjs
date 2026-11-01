@@ -10,10 +10,14 @@ for (const file of ['.env', '.local/preview-live/database.env']) {
 }
 const [command, ...args] = process.argv.slice(2);
 if (!command) throw new Error('A command is required.');
-const child = spawn(process.platform === 'win32' && command === 'npm' ? 'npm.cmd' : command, args, {
-  cwd: root,
-  stdio: 'inherit',
-  env: process.env,
-});
+const npmCommand = process.platform === 'win32' && ['npm', 'npm.cmd'].includes(command);
+const npmCli =
+  process.env.npm_execpath ||
+  path.join(path.dirname(process.execPath), 'node_modules/npm/bin/npm-cli.js');
+const child = spawn(
+  npmCommand ? process.execPath : command,
+  npmCommand ? [npmCli, ...args] : args,
+  { cwd: root, stdio: 'inherit', env: process.env, windowsHide: true },
+);
 child.on('exit', (code) => process.exit(code ?? 1));
 for (const signal of ['SIGINT', 'SIGTERM']) process.on(signal, () => child.kill(signal));

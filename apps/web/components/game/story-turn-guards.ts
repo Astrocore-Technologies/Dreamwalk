@@ -13,6 +13,17 @@ export function storyTargetValid(
 ) {
   return storyTargetVisible(projection, targetNpcId) && (channel !== 'whisper' || !!targetNpcId);
 }
+/** Selection keeps identity; its display name follows the current localized projection. */
+export function storyRecipientLabel(
+  projection: Pick<GameProjection, 'entities'>,
+  recipient: { id: string; label: string } | null,
+) {
+  if (!recipient) return null;
+  return (
+    projection.entities.find((entity) => entity.kind === 'npc' && entity.id === recipient.id)
+      ?.label || recipient.label
+  );
+}
 export function storyDraftKey(
   text: string,
   channel: 'say' | 'whisper',

@@ -66,7 +66,7 @@ test('named facts use deliberate public questions, opaque topic IDs, no title/se
   const allowed = g.buildNpcPublicSpeechContext(s, 'keeper', ['keeper', 'alice'], ids, ids);
   assert.equal(allowed.claims[0].authoredFact.text, 'The mayor took the brass key.');
   assert.deepEqual(g.createMockNpcPublicResponse(allowed), {
-    text: 'The mayor took the brass key.',
+    text: 'The authored description says (quoted in its original language): «The mayor took the brass key.»',
   });
   assert.deepEqual(g.resolveNpcFactTopic(s, 'keeper', 'killer_identity'), []);
 });
@@ -773,7 +773,13 @@ test('typed planner communication selects authorized evidence, not secret text o
   assert.equal(accepted.state.npcUtterances?.length ?? 0, 0);
   s = g.stepNpcPlan(accepted.state, 'keeper').state;
   assert.ok(
-    g.projectState(s, 'alice').npcUtterances.some((u) => u.text === 'Welcome to the observatory.'),
+    g
+      .projectState(s, 'alice')
+      .npcUtterances.some(
+        (u) =>
+          u.text ===
+          'The authored description says (quoted in its original language): «Welcome to the observatory.»',
+      ),
   );
   assert.equal(JSON.stringify(g.projectState(s, 'bob')).includes('Never disclose me'), false);
 });
@@ -797,7 +803,7 @@ test('communication rechecks whole audience at execution and preserves NPC repor
   const stopped = g.stepNpcPlan(s, 'keeper');
   assert.ok(stopped.events.some((e) => e.kind === 'npc.plan_stopped'));
   assert.equal(
-    stopped.state.npcUtterances?.some((u) => u.text === 'A trusted secret.') ?? false,
+    stopped.state.npcUtterances?.some((u) => u.text?.includes('A trusted secret.')) ?? false,
     false,
   );
   const d2 = draft();

@@ -16,6 +16,10 @@ import { useLaunchGate } from './use-launch-gate';
 import { localizedProjection } from './localized-projection';
 import { CampaignObjectives } from './campaign-objectives';
 import { GameCanvas } from './game-canvas';
+import { TurnControls } from './turn-controls';
+import { useTurnText } from './turn-messages';
+import { playerControlsAvailable, projectionTurnFence } from './turn-ui';
+import { LiveTestPanel } from '../live-test/live-test-panel';
 import { UnifiedStory, type StoryRecipient } from './unified-story';
 import { useStoryText } from './story-messages';
 import { useAdvancedPlayLabel } from './play-messages';
@@ -25,7 +29,7 @@ import { LivingNotices } from './living-notices';
 import { useGame, type CampaignSummary } from './use-game';
 import styles from './game.module.css';
 
-const actionKeys: Record<GameAction['kind'], string> = {
+const actionKeys: Partial<Record<GameAction['kind'], string>> = {
   move_to: 'Подойти',
   wait: 'Ждать',
   inspect: 'Осмотреть',
@@ -80,6 +84,7 @@ export function GamePage({ campaignId }: { campaignId?: string }) {
   return campaignId ? <CampaignRoom key={campaignId} campaignId={campaignId} /> : <CampaignLobby />;
 }
 function CampaignLobby() {
+  const turnText = useTurnText();
   const heroSelection = useHeroSelection();
   const heroText = useHeroText();
   const launchGate = useLaunchGate(heroSelection.heroId);
@@ -98,7 +103,11 @@ function CampaignLobby() {
     try {
       const result = await api<{ campaignId: string }>('/game/campaigns', {
         method: 'POST',
-        body: JSON.stringify({ template: 'observatory-v1', ...heroSelection.body }),
+        body: JSON.stringify({
+          template: 'observatory-v1',
+          turnBased: true,
+          ...heroSelection.body,
+        }),
       });
       if (launchGate.accepts(lease)) {
         router.push(`/game/${result.campaignId}`);
@@ -137,9 +146,7 @@ function CampaignLobby() {
       <PageHeading
         eyebrow={t('Игровой прототип')}
         title={t('Обсерватория')}
-        description={t(
-          'Настоящая ходьба, общие предметы и локальные раунды. Пока без платного AI.',
-        )}
+        description={turnText('lobbyIntro')}
       />
       <HeroSelection selection={heroSelection} disabled={busy} />
       <Link
@@ -204,6 +211,9 @@ function CampaignLobby() {
   );
 }
 function CampaignRoom({ campaignId }: { campaignId: string }) {
+  const turnText = useTurnText();
+  const [inspectedNpcId, setInspectedNpcId] = useState<string | null>(null);
+  const [storyBusy, setStoryBusy] = useState(false);
   const advancedPlayLabel = useAdvancedPlayLabel();
   const storyText = useStoryText();
   const [recipient, setRecipient] = useState<StoryRecipient>(null);
@@ -240,6 +250,8 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
       : undefined;
   const locked = !!(p && encounter?.intents[p.actorId]?.ready);
   const connected = game.connection === 'connected';
+  const playerAvailable = playerControlsAvailable(p);
+  const controlsDisabled = !connected || locked || game.busy || !playerAvailable;
   const membersLoading = useRef(members.loading);
   membersLoading.current = members.loading;
   useEffect(() => {
@@ -278,6 +290,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
     }
   }
   function act(action: GameAction) {
+    if (!playerAvailable) return;
     if (encounter) {
       setSelected(action);
       return;
@@ -285,7 +298,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
     void game.command({ type: 'action', action });
   }
   function approach(entity: GamePoint) {
-    if (!p || !own) return;
+    if (!p || !own || !playerAvailable) return;
     const blocked = new Set(p.map.blocked.map((point) => `${point.x},${point.y}`));
     for (const door of p.entities)
       if (door.kind === 'door' && !door.open) blocked.add(`${door.x},${door.y}`);
@@ -348,6 +361,21 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
         </Button>
       </div>
     );
+  const turnError =
+    p.turn && game.error === 'ROUND_LOCKED'
+      ? turnText('locked')
+      : p.turn && game.error === 'STALE_STATE'
+        ? turnText('stale')
+        : (p.turn && game.error === 'WRONG_MODE' && !p.turn.ownTurn) ||
+            game.error === 'TURN_NOT_ACTIVE' ||
+            game.error === 'OUT_OF_TURN'
+          ? turnText('outOfTurn')
+          : game.error === 'TURN_RESOURCE_EXHAUSTED' || game.error === 'NO_ACTION_RESOURCE'
+            ? turnText('exhausted')
+            : game.error === 'STALE_TURN'
+              ? turnText('stale')
+              : '';
+  const inspectedNpc = p.entities.find((e) => e.kind === 'npc' && e.id === inspectedNpcId);
   const selectedTarget = p.entities.find((entity) => entity.id === selected.targetId);
   return (
     <div className={styles.root}>
@@ -405,7 +433,10 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
       </div>
       {game.error && (
         <ErrorBox
-          message={t(errorKeys[game.error] || 'Не удалось выполнить запрос. Попробуйте ещё раз.')}
+          message={
+            turnError ||
+            t(errorKeys[game.error] || 'Не удалось выполнить запрос. Попробуйте ещё раз.')
+          }
         />
       )}
       {!connected && (
@@ -422,14 +453,25 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           )}
         </p>
       )}
+      <TurnControls
+        projection={p}
+        connected={connected}
+        busy={game.busy || storyBusy}
+        activeName={
+          members.data?.members.find((m) => m.actorId === p.turn?.activeActorId)?.username
+        }
+        onEnd={() => void game.command({ type: 'turn.end' })}
+        onReaction={(decision) => void game.command({ type: 'turn.reaction', decision })}
+      />
       <div className={styles.playGrid}>
         <div className={styles.sceneColumn}>
           <GameCanvas
             projection={p}
             art={art}
-            disabled={!connected || locked}
+            disabled={controlsDisabled}
             planning={!!encounter}
             onStop={game.stop}
+            onInspectNpc={setInspectedNpcId}
             onSelectNpc={(npcId) => {
               const npc = p.entities.find((entity) => entity.id === npcId && entity.kind === 'npc');
               if (npc) setRecipient({ id: npc.id, label: npc.label || t('NPC') });
@@ -440,6 +482,50 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             }}
             reducedMotion={!!user?.settings.reducedMotion}
           />
+          <p className={styles.inspectionHelp}>{turnText('inspectHint')}</p>
+          <div className={styles.inspectionButtons}>
+            {p.entities
+              .filter((e) => e.kind === 'npc')
+              .map((npc) => (
+                <Button
+                  key={npc.id}
+                  type="button"
+                  variant="ghost"
+                  onClick={() => setInspectedNpcId(npc.id)}
+                >
+                  {turnText('inspect')} · {npc.label || t('NPC')}
+                </Button>
+              ))}
+          </div>
+          {inspectedNpc && (
+            <section
+              className={styles.inspection}
+              aria-live="polite"
+              data-testid="npc-public-inspection"
+            >
+              <header>
+                <h2>{inspectedNpc.label || t('NPC')}</h2>
+                <Button
+                  type="button"
+                  variant="ghost"
+                  aria-label={turnText('close')}
+                  onClick={() => setInspectedNpcId(null)}
+                >
+                  ×
+                </Button>
+              </header>
+              <p>
+                {inspectedNpc.publicProfile?.description ||
+                  inspectedNpc.supportingNpc?.description ||
+                  turnText('noDescription')}
+              </p>
+              <p>
+                {inspectedNpc.publicProfile?.appearance ||
+                  inspectedNpc.supportingNpc?.appearance ||
+                  ''}
+              </p>
+            </section>
+          )}
           <CampaignObjectives objectives={p.objectives} />
         </div>
         <UnifiedStory
@@ -449,7 +535,9 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           recipient={recipient}
           onClearRecipient={() => setRecipient(null)}
           onWorldRefresh={() => void game.refresh()}
-          disabled={!connected || game.busy || locked}
+          onBusyChange={setStoryBusy}
+          disabled={controlsDisabled}
+          partyDisabled={!connected || game.busy}
         />
       </div>
       <div className={styles.roomGrid}>
@@ -489,7 +577,12 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                 )}
               </p>
               <p>
-                {t('Намерение: {action}', { action: t(actionKeys[selected.kind]) })}
+                {t('Намерение: {action}', {
+                  action:
+                    selected.kind === 'hit' || selected.kind === 'push'
+                      ? turnText(selected.kind)
+                      : t(actionKeys[selected.kind] || 'Ждать'),
+                })}
                 {selectedTarget
                   ? ` · ${selectedTarget.label || t(entityKey(selectedTarget, p.actorId))}`
                   : ''}
@@ -558,14 +651,16 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           <section className={styles.objects}>
             <header>
               <h2>{t('Предметы рядом')}</h2>
-              <Button
-                variant="ghost"
-                disabled={!connected || !!encounter}
-                busy={game.busy}
-                onClick={() => void game.command({ type: 'encounter.begin' })}
-              >
-                {t('Начать координацию')}
-              </Button>
+              {!p.turn && (
+                <Button
+                  variant="ghost"
+                  disabled={!connected || !!encounter}
+                  busy={game.busy}
+                  onClick={() => void game.command({ type: 'encounter.begin' })}
+                >
+                  {t('Начать координацию')}
+                </Button>
+              )}
             </header>
             {!nearby.length && <p className={styles.muted}>{t('Видимых объектов нет')}</p>}
             {nearby.map((entity) => (
@@ -600,6 +695,26 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                   </small>
                 </div>
                 <div className={styles.actions}>
+                  {p.turn && (entity.kind === 'npc' || entity.kind === 'player') && (
+                    <>
+                      <Button
+                        type="button"
+                        variant="secondary"
+                        disabled={controlsDisabled || p.turn.resources.main < 1}
+                        onClick={() => act({ kind: 'push', targetId: entity.id })}
+                      >
+                        {turnText('push')}
+                      </Button>
+                      <Button
+                        type="button"
+                        variant="ghost"
+                        disabled={controlsDisabled || p.turn.resources.main < 1}
+                        onClick={() => act({ kind: 'hit', targetId: entity.id })}
+                      >
+                        {turnText('hit')}
+                      </Button>
+                    </>
+                  )}
                   {entity.kind === 'npc' && (
                     <Button
                       type="button"
@@ -615,21 +730,25 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                   )}
                   <Button
                     variant="ghost"
-                    disabled={!connected || locked || game.busy}
+                    disabled={controlsDisabled}
                     onClick={() => approach(entity)}
                   >
                     {t('Подойти')}
                   </Button>
                   <Button
                     variant="secondary"
-                    disabled={!connected || locked || game.busy}
-                    onClick={() => act({ kind: 'inspect', targetId: entity.id })}
+                    disabled={entity.kind === 'npc' ? false : controlsDisabled}
+                    onClick={() =>
+                      entity.kind === 'npc'
+                        ? setInspectedNpcId(entity.id)
+                        : act({ kind: 'inspect', targetId: entity.id })
+                    }
                   >
                     {t('Осмотреть')}
                   </Button>
                   {entity.kind === 'item' && (
                     <Button
-                      disabled={!connected || locked || game.busy}
+                      disabled={controlsDisabled}
                       onClick={() => act({ kind: 'pick_up', targetId: entity.id })}
                     >
                       {t('Подобрать')}
@@ -637,7 +756,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                   )}
                   {entity.kind === 'door' && (
                     <Button
-                      disabled={!connected || locked || game.busy}
+                      disabled={controlsDisabled}
                       onClick={() =>
                         act({
                           kind: entity.locked ? 'unlock' : entity.open ? 'close' : 'open',
@@ -659,7 +778,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                     <>
                       <Button
                         variant="secondary"
-                        disabled={!connected || locked || game.busy}
+                        disabled={controlsDisabled}
                         onClick={() => act({ kind: 'knock', targetId: entity.id })}
                       >
                         {t('Постучать')}
@@ -667,7 +786,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                       {!entity.locked && !entity.open && entity.keyId && (
                         <Button
                           variant="secondary"
-                          disabled={!connected || locked || game.busy}
+                          disabled={controlsDisabled}
                           onClick={() =>
                             act({ kind: 'lock', targetId: entity.id, itemId: entity.keyId })
                           }
@@ -681,7 +800,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                     <>
                       <Button
                         variant="secondary"
-                        disabled={!connected || locked || game.busy}
+                        disabled={controlsDisabled}
                         onClick={() => act({ kind: 'talk', targetId: entity.id })}
                       >
                         {t(p.rulesetVersion === 'hybrid-v3' ? 'Попросить помощи' : 'Поговорить')}
@@ -689,7 +808,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                       {p.rulesetVersion === 'hybrid-v3' && (
                         <Button
                           variant="secondary"
-                          disabled={!connected || locked || game.busy}
+                          disabled={controlsDisabled}
                           onClick={() => act({ kind: 'distract', targetId: entity.id })}
                         >
                           {t('Отвлечь')}
@@ -697,7 +816,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                       )}
                       {p.rulesetVersion !== 'hybrid-v3' && (
                         <Button
-                          disabled={!connected || !!encounter}
+                          disabled={!connected || !!encounter || !!p.turn}
                           busy={game.busy}
                           onClick={() =>
                             void game.command({
@@ -732,14 +851,14 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                 <div className={styles.actions}>
                   <Button
                     variant="ghost"
-                    disabled={!connected || locked || game.busy}
+                    disabled={controlsDisabled}
                     onClick={() => approach(exit)}
                   >
                     {t('Подойти')}
                   </Button>
                   <Button
                     variant="secondary"
-                    disabled={!connected || locked || game.busy}
+                    disabled={controlsDisabled}
                     onClick={() => act({ kind: 'transition', targetId: exit.id })}
                   >
                     {t('Перейти')}
@@ -842,7 +961,12 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             showJournal={false}
             projection={p}
             command={game.command}
-            disabled={!connected || game.busy || locked}
+            disabled={controlsDisabled}
+          />
+          <LiveTestPanel
+            campaignId={campaignId}
+            turnFence={projectionTurnFence(p)}
+            worldPhase={p.turn?.phase === 'world'}
           />
           <details data-testid="game-advanced">
             <summary>{advancedPlayLabel}</summary>

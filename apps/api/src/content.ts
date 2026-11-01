@@ -1,3 +1,4 @@
+import { ownedCharacterPackage } from './visual-authoring/character-package';
 import {
   Body,
   Controller,
@@ -547,6 +548,12 @@ export class ContentController {
               translations: {},
             });
     await this.auth.ownedAsset(u.id, data.portraitAssetId);
+    if ('characterPackageVersionId' in data && data.characterPackageVersionId) {
+      const { manifest } = await this.db.tx((c) =>
+        ownedCharacterPackage(c, u.id, String(data.characterPackageVersionId)),
+      );
+      data.portraitAssetId = manifest.parts.find((p) => p.role === 'portrait')!.uploadId;
+    }
     if (
       'modelProfileId' in data &&
       data.modelProfileId &&
@@ -579,6 +586,12 @@ export class ContentController {
         ? heroSchema.parse({ ...old.data, ...patch })
         : npcSchema.parse({ ...old.data, ...patch });
     await this.auth.ownedAsset(u.id, data.portraitAssetId);
+    if ('characterPackageVersionId' in data && data.characterPackageVersionId) {
+      const { manifest } = await this.db.tx((c) =>
+        ownedCharacterPackage(c, u.id, String(data.characterPackageVersionId)),
+      );
+      data.portraitAssetId = manifest.parts.find((p) => p.role === 'portrait')!.uploadId;
+    }
     if (
       'modelProfileId' in data &&
       data.modelProfileId &&
@@ -619,6 +632,14 @@ export class ContentController {
           translations: original.translations,
           sourceRevision: original.sourceRevision,
         });
+      if (data.characterPackageVersionId) {
+        const { manifest } = await ownedCharacterPackage(
+          c,
+          user.id,
+          data.characterPackageVersionId,
+        );
+        data.portraitAssetId = manifest.parts.find((p) => p.role === 'portrait')!.uploadId;
+      }
       if (
         npcTextFields.some((f) => data[f] !== original[f]) ||
         data.sourceLanguage !== original.sourceLanguage

@@ -1,6 +1,7 @@
 import { StoryTurnRuntime } from './story-turn-runtime';
+import { resolveReplyLocale } from './reply-locale';
 import { mediaPreparationSchema, prepareSceneMedia } from './media-preparation';
-import { readOwnedHero, pinHero } from './hero-selection';
+import { readOwnedHero, pinHero, dressHero } from './hero-selection';
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
 import { config } from '../config';
@@ -14,6 +15,10 @@ import { createHash, randomInt, randomUUID } from 'node:crypto';
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
+  turnFenceSchema,
+  localeSchema,
+  type Locale,
+  type TurnFence,
   gameActionSchema,
   gameHeroSelectionSchema,
   gameIntentSchema,
@@ -24,6 +29,22 @@ import {
   type GameProjection,
 } from '@dreamwalk/contracts';
 import {
+  initializeTurnController,
+  registerTurnParticipant,
+  removeTurnParticipant,
+  applyTurnAction,
+  applyTurnMove,
+  endPlayerTurn,
+  resolveTurnReaction,
+  queueTurnSpeech,
+  markTurnSpeechResolved,
+  finishWorldPhase,
+  applyWorldTurnAction,
+  turnFence,
+  matchesTurnFence,
+  createStateFromPlayable,
+  compilePlayableDraft,
+  createCompleteObservatoryDraft,
   createObservatoryState,
   advanceObjectives,
   buildNarrativeContext,
@@ -87,6 +108,8 @@ export const commandSchema = z
       .optional(),
     type: z.enum([
       'action',
+      'turn.end',
+      'turn.reaction',
       'encounter.begin',
       'encounter.intent',
       'encounter.join',
@@ -110,12 +133,19 @@ export const commandSchema = z
       .optional(),
     proposalId: z.uuid().optional(),
     promiseId: z.string().min(1).max(200).optional(),
-    decision: z.enum(['accept', 'decline']).optional(),
+    decision: z.enum(['accept', 'decline', 'defend']).optional(),
+    turnFence: turnFenceSchema.optional(),
     intent: gameIntentSchema.optional(),
     expectedRevision: z.number().int().nonnegative().optional(),
   })
   .strict();
-export const moveSchema = gameMoveSchema.extend({ connectionEpoch: z.number().int() }).strict();
+export const moveSchema = gameMoveSchema
+  .extend({
+    connectionEpoch: z.number().int(),
+    operationId: z.uuid().optional(),
+    turnFence: turnFenceSchema.optional(),
+  })
+  .strict();
 type Command = z.infer<typeof commandSchema>;
 type RuntimeClock = {
   paused: boolean;
@@ -197,6 +227,8 @@ export class GameService implements OnModuleDestroy {
       persist: (id, live, state, kind, extra, preflight) =>
         this.persist(id, live as Live, state, kind, undefined, extra, undefined, preflight),
       dispatch: (id) => this.dispatchAi(id),
+      prepareTurnSpeech: (state, actorId, npcId, speech, requestId, userId, identity) =>
+        this.prepareTurnSpeech(state, actorId, npcId, speech, requestId, userId, identity),
     });
     this.art.attachRuntimeStateReader((id) => this.live.get(id)?.state);
     images?.attachRuntimeStateReader((id) => {
@@ -458,7 +490,17 @@ export class GameService implements OnModuleDestroy {
         label: state.entities[id]?.label,
         revision: state.entities[id]?.revision,
       })),
-      allowedActions: ['open', 'close', 'inspect', 'pick_up', 'knock', 'wait', 'give'],
+      allowedActions: [
+        'open',
+        'close',
+        'inspect',
+        'pick_up',
+        'knock',
+        'wait',
+        'give',
+        ...(state.turnController ? ['hit', 'push'] : []),
+      ],
+      ...(state.turnController ? { turnFence: turnFence(state) } : {}),
     };
     return packNpcContext(context, this.ai.contextBudgetBytes());
   }
@@ -663,6 +705,7 @@ export class GameService implements OnModuleDestroy {
           turns: rows.reverse().map((r) => this.narrativeDto(r)),
         };
       }
+      if (live.state.turnController) fail(409, 'USE_UNIFIED_TURN', 'USE_UNIFIED_TURN');
       if (live.state.rulesetVersion !== 'hybrid-v3')
         fail(409, 'NARRATIVE_RULESET_REQUIRED', 'NARRATIVE_RULESET_REQUIRED');
       const input = z
@@ -670,6 +713,7 @@ export class GameService implements OnModuleDestroy {
           text: z.string().trim().min(1).max(1000),
           expectedCanonRevision: z.number().int().nonnegative(),
           audience: z.literal('shared').default('shared'),
+          replyLocale: localeSchema.optional(),
           operationId: z.uuid().optional(),
           quoteId: z.uuid().optional(),
           sponsorId: z.uuid().optional(),
@@ -692,7 +736,8 @@ export class GameService implements OnModuleDestroy {
         }
       }
       if (input.expectedCanonRevision !== canonRevision) fail(409, 'STALE_CANON', 'STALE_CANON');
-      const base = buildNarrativeContext(live.state, a.actorId, input.text);
+      const replyLocale = resolveReplyLocale(req, input.replyLocale, a.user.settings.language);
+      const base = buildNarrativeContext(live.state, a.actorId, input.text, replyLocale);
       const scope = {
         campaignId: id,
         npcId: a.actorId,
@@ -716,7 +761,13 @@ export class GameService implements OnModuleDestroy {
           ...base,
           turnId,
           intent: input.text,
-          mockProposal: createMockNarrativeProposal(live.state, a.actorId, input.text, turnId),
+          mockProposal: createMockNarrativeProposal(
+            live.state,
+            a.actorId,
+            input.text,
+            turnId,
+            replyLocale,
+          ),
         };
       if (Buffer.byteLength(JSON.stringify(context)) > this.ai.contextBudgetBytes())
         fail(413, 'CONTEXT_BUDGET_EXCEEDED', 'CONTEXT_BUDGET_EXCEEDED');
@@ -900,6 +951,7 @@ export class GameService implements OnModuleDestroy {
           .regex(/^[\w-]+$/)
           .max(100),
         purpose: z.enum(['plan', 'summary', 'speech']).default('plan'),
+        replyLocale: localeSchema.optional(),
         channel: z.enum(['say', 'whisper']).default('say'),
         topicId: z
           .string()
@@ -915,6 +967,7 @@ export class GameService implements OnModuleDestroy {
     return this.serial(id, async () => {
       const a = await this.access(req, id),
         live = await this.load(id);
+      if (live.state.turnController) fail(409, 'TURN_WORLD_ONLY', 'TURN_WORLD_ONLY');
       if (live.state.rulesetVersion !== 'hybrid-v3' || !live.state.npcBrains?.[input.npcId]?.living)
         fail(404, 'NOT_FOUND', 'NOT_FOUND');
       const scope = {
@@ -924,9 +977,10 @@ export class GameService implements OnModuleDestroy {
         purpose: input.purpose,
         requesterUserId: a.user.id,
       };
+      const replyLocale = resolveReplyLocale(req, input.replyLocale, a.user.settings.language);
       const requestKey =
         input.purpose === 'speech'
-          ? `${input.channel}:${a.actorId}:${input.topicId ?? ''}`
+          ? `${input.channel}:${a.actorId}:${input.topicId ?? ''}:${replyLocale}`
           : input.purpose;
       if (!quote && input.operationId) {
         const previous = await this.ai.replay(
@@ -950,6 +1004,9 @@ export class GameService implements OnModuleDestroy {
               input.channel,
               undefined,
               input.topicId,
+              undefined,
+              undefined,
+              replyLocale,
             )
           : await this.decisionContext(id, live.state, input.npcId, input.purpose);
       const context = {
@@ -979,7 +1036,8 @@ export class GameService implements OnModuleDestroy {
     });
   }
   private async decisionContext(id: string, state: GameState, npcId: string, purpose: string) {
-    const base = buildNpcDecisionContext(state, npcId);
+    const raw = buildNpcDecisionContext(state, npcId);
+    const base = { ...raw, ...(state.turnController ? { turnFence: turnFence(state) } : {}) };
     if (purpose !== 'plan') return packNpcContext(base, this.ai.contextBudgetBytes());
     const archivedEpisodes = await recallNpcEpisodes(this.db, id, state, npcId);
     return packNpcContext({ ...base, archivedEpisodes }, this.ai.contextBudgetBytes());
@@ -992,20 +1050,36 @@ export class GameService implements OnModuleDestroy {
     selected?: string[],
     topicId?: string,
     replyToObservationId?: string,
+    deferredSpeechId?: string,
+    replyLocale?: Locale,
   ) {
     const npc = state.entities[npcId],
       recipient = state.entities[recipientId];
+    const deferred =
+      deferredSpeechId && state.turnController?.phase === 'world'
+        ? state.turnController.deferredSpeech.find(
+            (item) =>
+              item.id === deferredSpeechId &&
+              item.actorId === recipientId &&
+              item.recipientId === npcId &&
+              item.utteranceId === replyToObservationId &&
+              item.channel === channel,
+          )
+        : undefined;
+    if (deferredSpeechId && !deferred) fail(409, 'STALE_STATE', 'STALE_STATE');
     if (
       !npc ||
       !recipient ||
-      npc.mapId !== recipient.mapId ||
-      Math.abs(npc.x - recipient.x) + Math.abs(npc.y - recipient.y) > 1 ||
+      (!deferred &&
+        (npc.mapId !== recipient.mapId ||
+          Math.abs(npc.x - recipient.x) + Math.abs(npc.y - recipient.y) > 1)) ||
       npc.encounterId ||
       recipient.encounterId
     )
       fail(409, 'OUT_OF_RANGE', 'OUT_OF_RANGE');
-    const audience =
-      channel === 'whisper'
+    const audience = deferred
+      ? deferred.audienceIds
+      : channel === 'whisper'
         ? [recipientId, npcId]
         : Object.values(state.entities)
             .filter((e) => ['npc', 'player'].includes(e.kind) && canNpcHear(state, e, npc))
@@ -1052,6 +1126,8 @@ export class GameService implements OnModuleDestroy {
       audience,
       observations,
       requestedFactIds,
+      deferredSpeechId,
+      replyLocale,
     );
     const currentUtterance = replyToObservationId
       ? publicContext.claims.find((c) => c.observationId === replyToObservationId)
@@ -1067,8 +1143,12 @@ export class GameService implements OnModuleDestroy {
       topicId,
       requestedFactIds,
       speechHash: npcContextFingerprint(publicContext),
+      ...(deferredSpeechId ? { deferredSpeechId } : {}),
     };
-    return packNpcContext(safe, this.ai.contextBudgetBytes());
+    return packNpcContext(
+      { ...safe, ...(state.turnController ? { turnFence: turnFence(state) } : {}) },
+      this.ai.contextBudgetBytes(),
+    );
   }
   private dispatchAi(id: string) {
     // Network/provider work must never occupy the campaign writer or a DB transaction.
@@ -1078,6 +1158,7 @@ export class GameService implements OnModuleDestroy {
         if (
           !live ||
           live.paused ||
+          (live.state.turnController && live.state.turnController.phase !== 'world') ||
           ![...live.presence.values()].some((t) => Date.now() - t <= 5000)
         )
           return false;
@@ -1111,10 +1192,21 @@ export class GameService implements OnModuleDestroy {
       | undefined;
     let narrativeOutcome:
       { id: string; accepted: boolean; result: Record<string, unknown> | null } | undefined;
+    if (
+      state.turnController &&
+      (!job.context.turnFence ||
+        !matchesTurnFence(state, job.context.turnFence as TurnFence) ||
+        state.turnController.phase !== 'world')
+    )
+      return { next, accepted, intentOutcome, narrativeOutcome };
     const memory = state.npcBrains?.[job.npcId]?.living;
     if (job.purpose === 'narrative') {
       const metadata = z
-        .object({ turnId: z.uuid(), intent: z.string().min(1).max(1000) })
+        .object({
+          turnId: z.uuid(),
+          intent: z.string().min(1).max(1000),
+          replyLocale: localeSchema.optional(),
+        })
         .passthrough()
         .safeParse(job.context);
       if (metadata.success) {
@@ -1125,6 +1217,7 @@ export class GameService implements OnModuleDestroy {
             job.npcId,
             job.proposal,
             metadata.data.intent,
+            metadata.data.replyLocale,
           );
           if (!applied.error) {
             next = recordNpcEvents(
@@ -1222,6 +1315,8 @@ export class GameService implements OnModuleDestroy {
           observationIds: z.array(z.string()).max(16),
           topicId: z.string().optional(),
           replyToObservationId: z.string().max(200).optional(),
+          deferredSpeechId: z.uuid().optional(),
+          replyLocale: localeSchema.optional(),
         })
         .passthrough()
         .safeParse(job.context);
@@ -1242,6 +1337,8 @@ export class GameService implements OnModuleDestroy {
             request.data.observationIds,
             request.data.topicId,
             request.data.replyToObservationId,
+            request.data.deferredSpeechId,
+            request.data.replyLocale,
           );
         } catch {
           /* No longer nearby/in same phase: stale, never broadcast. */
@@ -1254,9 +1351,18 @@ export class GameService implements OnModuleDestroy {
             observationIds: context.observationIds,
             requestedFactIds: context.requestedFactIds,
             contextHash: context.speechHash,
+            replyLocale: request.data.replyLocale,
+            ...(request.data.deferredSpeechId
+              ? { deferredSpeechId: request.data.deferredSpeechId }
+              : {}),
           });
           if (!result.error) {
             next = result.state;
+            if (state.turnController) {
+              next = structuredClone(next);
+              next.tick++;
+              next.revision++;
+            }
             accepted = true;
           }
         }
@@ -1303,6 +1409,10 @@ export class GameService implements OnModuleDestroy {
     }
     if (!accepted)
       recordNpcMetric(job.purpose === 'summary' ? 'summaryRejected' : 'knowledgeRejected');
+    if (state.turnController && typeof job.context.deferredSpeechId === 'string') {
+      const resolved = markTurnSpeechResolved(next, job.context.deferredSpeechId, turnFence(next)!);
+      if (!resolved.error) next = resolved.state;
+    }
     return { next, accepted, intentOutcome, narrativeOutcome };
   }
   private async saveNarrativeOutcome(
@@ -1373,6 +1483,7 @@ export class GameService implements OnModuleDestroy {
     if (!updated.rowCount) fail(409, 'STALE_STATE', 'STALE_STATE');
   }
   private async scheduleAutonomousRequests(id: string, live: Live) {
+    if (live.state.turnController && live.state.turnController.phase !== 'world') return;
     if (
       !Object.values(live.state.npcBrains ?? {}).some((b) =>
         b.living?.causes.some((c) => c.priority >= 2 && c.notBeforeTick <= live.state.tick),
@@ -1392,6 +1503,18 @@ export class GameService implements OnModuleDestroy {
     for (const [npcId, b] of Object.entries(live.state.npcBrains ?? {})) {
       const npc = live.state.entities[npcId];
       if (!b.living || npc.encounterId || b.cursor < b.plan.length || npc.path?.length) continue;
+      const previousCauses = await this.db.query(
+        "SELECT cause_key,context FROM game_npc_decision_requests WHERE campaign_id=$1 AND npc_id=$2 AND purpose='plan'",
+        [id, npcId],
+      );
+      if (
+        live.state.turnController &&
+        previousCauses.some(
+          (row) => row.context?.turnFence?.roundId === live.state.turnController!.roundId,
+        )
+      )
+        continue;
+      const consumedCauses = new Set(previousCauses.map((row) => row.cause_key));
       const cause = b.living.causes
         .filter((c) => {
           const observation = b.living!.observations.find((o) => o.id === c.observationId);
@@ -1401,10 +1524,15 @@ export class GameService implements OnModuleDestroy {
             /^turn:[0-9a-f-]{36}:[0-5]:\d+$/i.test(observation?.eventId ?? '') ||
             /^turn:[0-9a-f-]{36}:[0-5]:\d+$/i.test(observation?.rootId ?? '');
           return (
+            !consumedCauses.has(`cause:${c.id}`) &&
             c.priority >= 2 &&
             c.notBeforeTick <= live.state.tick &&
-            !sameTurn &&
-            ['item_taken', 'item_missing', 'claim', 'noise'].includes(observation?.kind ?? '')
+            (!sameTurn ||
+              (live.state.turnController &&
+                ['harmed', 'pushed'].includes(observation?.kind ?? ''))) &&
+            ['item_taken', 'item_missing', 'claim', 'noise', 'harmed', 'pushed'].includes(
+              observation?.kind ?? '',
+            )
           );
         })
         .sort((a, b) => b.priority - a.priority || a.id.localeCompare(b.id))[0];
@@ -1434,13 +1562,30 @@ export class GameService implements OnModuleDestroy {
       live.deferredNpcIds = [...new Set([...live.deferredNpcIds, ...requests.map((r) => r.npcId)])];
     }
   }
+  private async failUnqueuedManualRequest(requestId: string, code: string) {
+    return this.db.tx(async (c) => {
+      const released = await this.ai.rejectManualUnqueuedRequest(c, requestId, code);
+      if (released)
+        await c.query(
+          "UPDATE game_npc_decision_requests SET status='failed',result_code=$2 WHERE id=$1 AND status='queued'",
+          [requestId, code],
+        );
+      else
+        await c.query(
+          "UPDATE game_npc_decision_requests SET result_code=$2 WHERE id=$1 AND status='queued'",
+          [requestId, code],
+        );
+      return released;
+    });
+  }
   private async processDecisionRequests(id: string, live: Live) {
+    if (live.state.turnController && live.state.turnController.phase !== 'world') return;
     await this.reconcileIntents(id, live.state.tick);
     const requests = await this.db.query(
-      "SELECT * FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' ORDER BY created_at,id LIMIT 8",
+      "SELECT * FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' ORDER BY CASE WHEN context ? 'turnOrder' THEN (context->>'turnOrder')::bigint ELSE 9223372036854775807 END,created_at,id LIMIT 8",
       [id],
     );
-    for (const r of requests) {
+    for (let r of requests) {
       const allowed = r.requester_user_id
         ? await this.db.query(
             `SELECT c.id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.user_id=$2 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('$2')}`,
@@ -1458,6 +1603,64 @@ export class GameService implements OnModuleDestroy {
           [r.id],
         );
         continue;
+      }
+      if (
+        live.state.turnController &&
+        r.purpose !== 'story_turn' &&
+        !(r.purpose === 'speech' && r.context.deferredSpeechId) &&
+        !matchesTurnFence(live.state, r.context.turnFence)
+      ) {
+        await this.db.query(
+          "UPDATE game_npc_decision_requests SET status='cancelled',result_code='TURN_PHASE_STALE' WHERE id=$1 AND status='queued'",
+          [r.id],
+        );
+        continue;
+      }
+      if (live.state.turnController && r.purpose === 'speech' && r.context.deferredSpeechId) {
+        try {
+          const current = this.speechContext(
+            live.state,
+            String(r.npc_id),
+            String(r.context.recipientId),
+            r.context.channel,
+            r.context.observationIds,
+            r.context.topicId,
+            r.context.replyToObservationId,
+            r.context.deferredSpeechId,
+            r.context.replyLocale,
+          );
+          const context = {
+            ...current,
+            storyTurnId: r.context.storyTurnId,
+            segmentIndex: r.context.segmentIndex,
+            knowledgeRevision: r.context.knowledgeRevision,
+            deferredSpeechId: r.context.deferredSpeechId,
+            turnOrder: r.context.turnOrder,
+            mockProposal: createMockNpcPublicResponse(current),
+          };
+          await this.db.query(
+            "UPDATE game_npc_decision_requests SET context=$2 WHERE id=$1 AND status='queued'",
+            [r.id, JSON.stringify(context)],
+          );
+          r = { ...r, context };
+        } catch {
+          await this.db.query(
+            "UPDATE game_npc_decision_requests SET status='failed',result_code='STALE_DEFERRED_SPEECH',context='{}' WHERE id=$1 AND status='queued'",
+            [r.id],
+          );
+          continue;
+        }
+      }
+      // A real/manual request never becomes a fixture response when authorization or provider work fails.
+      if (this.ai.manualLive() && r.purpose !== 'story_turn') {
+        if (r.context.budgetExceeded) {
+          await this.failUnqueuedManualRequest(String(r.id), 'CONTEXT_BUDGET_EXCEEDED');
+          continue;
+        }
+        if (!(await this.ai.manualRequestAuthorized(String(r.id), r.context))) {
+          await this.failUnqueuedManualRequest(String(r.id), 'MANUAL_AUTHORIZATION_UNAVAILABLE');
+          continue;
+        }
       }
       if (r.purpose === 'story_turn') {
         await this.story.schedule(id, live, r);
@@ -1491,8 +1694,12 @@ export class GameService implements OnModuleDestroy {
           continue;
         }
         if (
-          buildNarrativeContext(live.state, String(r.npc_id), String(turn.input_text))
-            .contextHash !== r.context.contextHash
+          buildNarrativeContext(
+            live.state,
+            String(r.npc_id),
+            String(turn.input_text),
+            r.context.replyLocale,
+          ).contextHash !== r.context.contextHash
         ) {
           await this.db.tx(async (c) => {
             await c.query(
@@ -1562,7 +1769,18 @@ export class GameService implements OnModuleDestroy {
         !busy &&
         !r.context.budgetExceeded &&
         ((configuration.provider === 'mock' && configuration.creditPrice === 0) ||
+          this.ai.manualLive() ||
           Boolean(sponsorId));
+      if (!useProvider && this.ai.manualLive()) {
+        // An operator kill switch pauses queued speech/decisions; the original consent and hold remain intact.
+        if (!configuration.enabled)
+          await this.db.query(
+            "UPDATE game_npc_decision_requests SET result_code='PROVIDER_DISABLED' WHERE id=$1 AND status='queued'",
+            [r.id],
+          );
+        else await this.failUnqueuedManualRequest(String(r.id), 'MANUAL_PROVIDER_UNAVAILABLE');
+        continue;
+      }
       if (!useProvider) {
         const decision = await this.evaluateDecision(id, live.state, {
           id: r.id,
@@ -1579,6 +1797,15 @@ export class GameService implements OnModuleDestroy {
           );
           if (!updated.rowCount) fail(409, 'STALE_STATE', 'STALE_STATE');
           await this.saveIntentOutcome(c, decision.intentOutcome);
+          if (decision.accepted && purpose === 'speech' && r.context.deferredSpeechId)
+            await this.story.writeDeferredReply(
+              c,
+              id,
+              live.state,
+              decision.next,
+              r.context,
+              live.eventSeq + 1,
+            );
         });
         continue;
       }
@@ -1614,6 +1841,11 @@ export class GameService implements OnModuleDestroy {
       } catch (error) {
         const message = error instanceof Error ? error.message : '';
         if (message.includes('RATE_LIMITED') || message.includes('NPC_AI_BUSY')) continue;
+        if (this.ai.manualLive()) {
+          const code = /^[A-Z0-9_]{1,80}$/.test(message) ? message : 'MANUAL_QUEUE_UNAVAILABLE';
+          await this.failUnqueuedManualRequest(String(r.id), code);
+          continue;
+        }
         const fallback = await this.evaluateDecision(id, live.state, {
           id: r.id,
           npcId: r.npc_id,
@@ -1674,6 +1906,15 @@ export class GameService implements OnModuleDestroy {
         undefined,
         async (c) => {
           await this.ai.finalize(c, job.id, accepted ? 'committed' : 'stale');
+          if (accepted && job.purpose === 'speech' && job.context.deferredSpeechId)
+            await this.story.writeDeferredReply(
+              c,
+              id,
+              live.state,
+              next,
+              job.context,
+              live.eventSeq + 1,
+            );
           await this.saveIntentOutcome(c, intentOutcome);
           await this.saveNarrativeOutcome(c, id, next, narrativeOutcome);
         },
@@ -1721,8 +1962,20 @@ export class GameService implements OnModuleDestroy {
   async create(req: Request, body: unknown) {
     const input = z
       .union([
-        z.object({ template: z.literal('observatory-v1'), heroId: z.uuid().optional() }).strict(),
-        z.object({ playableVersionId: z.uuid(), heroId: z.uuid().optional() }).strict(),
+        z
+          .object({
+            template: z.literal('observatory-v1'),
+            heroId: z.uuid().optional(),
+            turnBased: z.boolean().optional(),
+          })
+          .strict(),
+        z
+          .object({
+            playableVersionId: z.uuid(),
+            heroId: z.uuid().optional(),
+            turnBased: z.boolean().optional(),
+          })
+          .strict(),
       ])
       .parse(body);
     const u = await this.auth.require(req);
@@ -1742,7 +1995,20 @@ export class GameService implements OnModuleDestroy {
       const state = sourceVersion
         ? await this.playable.resolveForStart(c, u.id, sourceVersion, actorId, seed)
         : createObservatoryState([actorId], seed);
-      if (selectedHero) state.entities[actorId].label = selectedHero.name;
+      if (input.turnBased && !state.turnController) {
+        if (state.rulesetVersion !== 'hybrid-v3') {
+          if (sourceVersion)
+            fail(409, 'TURN_RULESET_UPGRADE_REQUIRED', 'TURN_RULESET_UPGRADE_REQUIRED');
+          const compiled = compilePlayableDraft(createCompleteObservatoryDraft());
+          if (!compiled.playable) fail(400, 'INVALID_MAP', 'INVALID_MAP');
+          const replacement = createStateFromPlayable(compiled.playable!, [actorId], seed);
+          Object.assign(state, replacement);
+        }
+        const initialized = initializeTurnController(state, [actorId]);
+        if (initialized.error) fail(409, initialized.error, initialized.error);
+        Object.assign(state, initialized.state);
+      }
+      dressHero(state, actorId, selectedHero);
       await c.query(
         'INSERT INTO game_campaigns(id,owner_id,playable_version,state,source_version_id) VALUES($1,$2,$3,$4,$5)',
         [id, u.id, sourceVersion ?? 'observatory-v1', JSON.stringify(state), sourceVersion],
@@ -1823,7 +2089,12 @@ export class GameService implements OnModuleDestroy {
         : await this.db.tx((c) => readOwnedHero(c, u.id, input.heroId));
       const result = addPlayer(structuredClone(live.state), String(rows[0].actor_id));
       if (result.error) fail(409, result.error, result.error);
-      if (selectedHero) result.state.entities[String(rows[0].actor_id)].label = selectedHero.name;
+      if (result.state.turnController) {
+        const registered = registerTurnParticipant(result.state, String(rows[0].actor_id));
+        if (registered.error) fail(409, registered.error, registered.error);
+        result.state = registered.state;
+      }
+      dressHero(result.state, String(rows[0].actor_id), selectedHero);
       await this.persist(id, live, result.state, 'member.accepted', undefined, async (c) => {
         const allowed = await c.query(
           `SELECT m.user_id FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id JOIN users u ON u.id=m.user_id WHERE m.campaign_id=$1 AND m.user_id=$2 AND m.status='pending' AND u.deleted_at IS NULL AND ${sourceAccessSql('$2')}`,
@@ -1896,7 +2167,12 @@ export class GameService implements OnModuleDestroy {
     return this.serial(id, async () => {
       await this.access(req, id);
       const live = await this.load(id);
-      const state = structuredClone(live.state);
+      let state = structuredClone(live.state);
+      if (state.turnController) {
+        const removed = removeTurnParticipant(state, `player-${userId}`);
+        if (removed.error) fail(409, removed.error, removed.error);
+        state = removed.state;
+      }
       const actor = state.entities[`player-${userId}`];
       if (actor) {
         actor.path = [];
@@ -1907,6 +2183,11 @@ export class GameService implements OnModuleDestroy {
           "UPDATE game_members SET status='revoked' WHERE campaign_id=$1 AND user_id=$2",
           [id, userId],
         );
+        if (state.turnController)
+          await c.query(
+            "UPDATE game_npc_decision_requests SET status='cancelled',result_code='TURN_PARTICIPANT_REVOKED' WHERE campaign_id=$1 AND status IN ('queued','scheduled')",
+            [id],
+          );
       });
       return { ok: true };
     });
@@ -2069,6 +2350,69 @@ export class GameService implements OnModuleDestroy {
       const a = await this.access(req, id);
       const live = await this.load(id);
       await this.touch(id, live, a.actorId);
+      if (live.state.turnController) {
+        if (!input.operationId || !input.turnFence)
+          fail(400, 'TURN_FENCE_REQUIRED', 'TURN_FENCE_REQUIRED');
+        const hash = digest({
+          type: 'turn.move',
+          target: input.target,
+          inputSeq: input.inputSeq,
+          movementGeneration: input.movementGeneration,
+          turnFence: input.turnFence,
+        });
+        const existing = (
+          await this.db.query(
+            'SELECT request_hash,result FROM game_operations WHERE campaign_id=$1 AND actor_id=$2 AND operation_id=$3',
+            [id, a.actorId, input.operationId],
+          )
+        )[0];
+        if (existing) {
+          if (existing.request_hash !== hash)
+            fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+          await this.refreshArt(id, live, true);
+          const replay = structuredClone(existing.result);
+          if (replay.projection?.artBindings) {
+            const visible = new Set(
+              (projectState(live.state, a.actorId).artBindings ?? []).map(
+                (binding) => `${binding.slot}:${binding.revisionId}`,
+              ),
+            );
+            replay.projection.artBindings = replay.projection.artBindings.filter(
+              (binding: { slot: string; revisionId: string }) =>
+                visible.has(`${binding.slot}:${binding.revisionId}`) &&
+                !this.unavailableArt.has(binding.revisionId),
+            );
+          }
+          return replay;
+        }
+        if (input.connectionEpoch !== (live.actorEpochs[a.actorId] ?? live.epoch))
+          fail(409, 'STALE_STATE', 'STALE_STATE');
+        const moved =
+          input.inputSeq <= (live.state.entities[a.actorId].lastInputSeq ?? -1) ||
+          input.movementGeneration !== (live.state.entities[a.actorId].movementGeneration ?? 0)
+            ? { state: live.state, events: [], error: 'STALE_STATE' as const }
+            : applyTurnMove(live.state, a.actorId, input.target, input.turnFence!);
+        const next = moved.error
+          ? live.state
+          : recordNpcEvents(live.state, moved.state, moved.events, input.operationId!).state;
+        if (!moved.error) next.entities[a.actorId].lastInputSeq = input.inputSeq;
+        const response = {
+          ...(await this.envelope(id, live, a.actorId)),
+          status: moved.error ? 'rejected' : 'committed',
+          code: moved.error,
+          operationId: input.operationId,
+          events: projectGameEvents(next, a.actorId, moved.events),
+          projection: this.project(next, a.actorId),
+        };
+        response.projectionRevision = response.projection.revision;
+        await this.persist(id, live, next, 'turn.move', {
+          actorId: a.actorId,
+          command: { operationId: input.operationId! },
+          hash,
+          response,
+        });
+        return response;
+      }
       if (input.connectionEpoch !== (live.actorEpochs[a.actorId] ?? live.epoch))
         fail(409, 'STALE_STATE', 'STALE_STATE');
       const result = moveInput(live.state, a.actorId, {
@@ -2092,6 +2436,7 @@ export class GameService implements OnModuleDestroy {
       await this.touch(id, live, a.actorId);
       if (input.connectionEpoch !== (live.actorEpochs[a.actorId] ?? live.epoch))
         fail(409, 'STALE_STATE', 'STALE_STATE');
+      if (live.state.turnController) return this.envelope(id, live, a.actorId);
       const result = stopMovement(live.state, a.actorId);
       if (result.error) fail(409, result.error, result.error);
       live.state = result.state;
@@ -2182,7 +2527,7 @@ export class GameService implements OnModuleDestroy {
           result = { state: live.state, events: [], error: 'RATE_LIMITED' };
         else job = { id: randomUUID(), proposal: createMockNpcPlan(result.state, npcId) };
       }
-      const next = result.error
+      let next = result.error
         ? live.state
         : recordNpcEvents(live.state, result.state, result.events, command.operationId).state;
       let decisionRequest: NpcDecisionRequest | undefined;
@@ -2207,6 +2552,7 @@ export class GameService implements OnModuleDestroy {
           a.actorId,
           command.npcId,
           command.speech,
+          next.turnController ? { turnId: command.operationId, segmentIndex: 0 } : undefined,
         );
         if (!replyToObservationId) fail(409, 'STALE_STATE', 'STALE_STATE');
         const context = this.speechContext(
@@ -2217,6 +2563,8 @@ export class GameService implements OnModuleDestroy {
           undefined,
           command.topicId,
           replyToObservationId,
+          undefined,
+          resolveReplyLocale(req, command.speech.replyLocale, a.user.settings.language),
         );
         decisionRequest = {
           id: randomUUID(),
@@ -2227,6 +2575,29 @@ export class GameService implements OnModuleDestroy {
           recipientActorId: a.actorId,
           context: { ...context, mockProposal: createMockNpcPublicResponse(context) },
         };
+        if (next.turnController) {
+          const queued = queueTurnSpeech(
+            next,
+            a.actorId,
+            {
+              id: decisionRequest.id,
+              recipientId: command.npcId,
+              utteranceId: replyToObservationId!,
+              channel: command.speech.channel,
+              audienceIds: context.audienceIds,
+            },
+            command.turnFence!,
+          );
+          if (queued.error) fail(409, queued.error, queued.error);
+          next = queued.state;
+          decisionRequest.context = {
+            ...decisionRequest.context,
+            deferredSpeechId: decisionRequest.id,
+            turnOrder: next.turnController!.deferredSpeech.find(
+              (item) => item.id === decisionRequest!.id,
+            )!.sequence,
+          };
+        }
       }
       const response = {
         ...(decisionRequest ? { decisionRequestId: decisionRequest.id } : {}),
@@ -2276,11 +2647,46 @@ export class GameService implements OnModuleDestroy {
     });
   }
   private execute(state: GameState, actorId: string, command: Command): GameResult {
+    if (state.turnController) {
+      const reject = (error: GameResult['error'] = 'INVALID_ACTION'): GameResult => ({
+        state,
+        events: [],
+        error,
+      });
+      if (!command.turnFence) return reject('STALE_STATE');
+      if (command.type === 'turn.end') return endPlayerTurn(state, actorId, command.turnFence);
+      if (
+        command.type === 'turn.reaction' &&
+        (command.decision === 'defend' || command.decision === 'decline')
+      )
+        return resolveTurnReaction(state, actorId, command.decision, command.turnFence);
+      if (command.type === 'action' && command.action)
+        return applyTurnAction(state, actorId, command.action, command.turnFence);
+      if (command.type !== 'npc.speech' && command.type !== 'npc.promise') return reject();
+      const fence = turnFence(state);
+      if (
+        !fence ||
+        !matchesTurnFence(state, command.turnFence) ||
+        state.turnController.phase !== 'player' ||
+        state.turnController.activeActorId !== actorId
+      )
+        return reject('STALE_STATE');
+    }
     if (command.type === 'action' && command.action)
       return applyAction(state, actorId, command.action);
     if (command.type === 'npc.speech' && command.npcId && command.speech)
-      return applyNpcSpeech(state, actorId, command.npcId, command.speech, { suppressReply: true });
-    if (command.type === 'npc.promise' && command.npcId && command.promiseId && command.decision)
+      return applyNpcSpeech(state, actorId, command.npcId, command.speech, {
+        suppressReply: true,
+        ...(state.turnController
+          ? { identity: { turnId: command.operationId, segmentIndex: 0 } }
+          : {}),
+      });
+    if (
+      command.type === 'npc.promise' &&
+      command.npcId &&
+      command.promiseId &&
+      (command.decision === 'accept' || command.decision === 'decline')
+    )
       return respondNpcObligation(
         state,
         actorId,
@@ -2443,6 +2849,154 @@ export class GameService implements OnModuleDestroy {
       releasePublication();
     }
   }
+  /** One admitted addressed message, kept distinct until the NPC/world phase. */
+  private prepareTurnSpeech(
+    state: GameState,
+    actorId: string,
+    npcId: string,
+    speech: z.infer<typeof npcSpeechSchema>,
+    requestId: string,
+    userId: string,
+    identity: { turnId: string; segmentIndex: number },
+  ) {
+    const applied = applyNpcSpeech(state, actorId, npcId, speech, {
+      suppressReply: true,
+      identity,
+    });
+    if (applied.error) fail(409, applied.error, applied.error);
+    let next = recordNpcEvents(
+      state,
+      applied.state,
+      applied.events,
+      `turn:${identity.turnId}:${identity.segmentIndex}`,
+    ).state;
+    const marker = admittedNpcSpeechObservationId(next, actorId, npcId, speech, identity);
+    if (!marker) fail(409, 'STALE_STATE', 'STALE_STATE');
+    const context = this.speechContext(
+      next,
+      npcId,
+      actorId,
+      speech.channel,
+      undefined,
+      undefined,
+      marker,
+      undefined,
+      speech.replyLocale,
+    );
+    const queued = queueTurnSpeech(
+      next,
+      actorId,
+      {
+        id: requestId,
+        recipientId: npcId,
+        utteranceId: marker!,
+        channel: speech.channel,
+        audienceIds: context.audienceIds,
+      },
+      turnFence(state)!,
+    );
+    if (queued.error) fail(409, queued.error, queued.error);
+    next = queued.state;
+    const ref = next.turnController!.deferredSpeech.find((item) => item.id === requestId)!;
+    const request: NpcDecisionRequest = {
+      id: requestId,
+      npcId,
+      purpose: 'speech',
+      causeKey: `turn-dialogue:${requestId}`,
+      requesterUserId: userId,
+      recipientActorId: actorId,
+      context: {
+        ...context,
+        storyTurnId: identity.turnId,
+        segmentIndex: identity.segmentIndex,
+        deferredSpeechId: requestId,
+        turnOrder: ref.sequence,
+        knowledgeRevision: next.npcBrains?.[npcId]?.living?.knowledgeRevision ?? 0,
+        mockProposal: createMockNpcPublicResponse(context),
+      },
+    };
+    return {
+      state: next,
+      events: [...applied.events, ...queued.events],
+      request,
+      audienceIds: context.audienceIds,
+      sourceId: next.npcUtterances?.find(
+        (item) =>
+          item.speakerId === actorId && !state.npcUtterances?.some((old) => old.id === item.id),
+      )?.id,
+    };
+  }
+  /** No wall-clock gameplay ticks. Finite ordered jobs/plans run only in the world phase. */
+  private async advanceTurnWorld(id: string, live: Live) {
+    const turn = live.state.turnController;
+    if (!turn || turn.phase !== 'world') return;
+    if (live.aiPending) await this.processAi(id, live);
+    await this.processDecisionRequests(id, live);
+    await this.scheduleAutonomousRequests(id, live);
+    // Unknown provider liability remains in its ledger. It does not strand the game phase.
+    await this.db.query(
+      `UPDATE game_npc_decision_requests r SET status='failed',result_code='PROVIDER_OUTCOME_UNKNOWN'
+      FROM npc_ai_jobs j WHERE r.campaign_id=$1 AND r.job_id=j.id AND r.status='scheduled' AND j.status='reconciling'`,
+      [id],
+    );
+    const refs = live.state.turnController!.deferredSpeech;
+    if (refs.length) {
+      const terminal = await this.db.query(
+        `SELECT r.id FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id
+        WHERE r.campaign_id=$1 AND r.id=ANY($2::uuid[]) AND (r.status NOT IN ('queued','scheduled') OR j.status IN ('stale','failed','cancelled','reconciling'))`,
+        [id, refs.map((ref) => ref.id)],
+      );
+      let state = live.state;
+      for (const row of terminal) {
+        const resolved = markTurnSpeechResolved(state, String(row.id), turnFence(state)!);
+        if (!resolved.error) state = resolved.state;
+      }
+      if (state !== live.state) await this.persist(id, live, state, 'turn.speech.drained');
+    }
+    const work = await this.db.query(
+      `SELECT 1 FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id
+      WHERE r.campaign_id=$1 AND (r.status='queued' OR (r.status='scheduled' AND (j.id IS NULL OR j.status IN ('queued','reserved','running','result_received','validated')))) LIMIT 1`,
+      [id],
+    );
+    if (work.length || live.state.turnController!.deferredSpeech.length) return;
+    // A provider chooses bounded plans. Applying their legal actions uses the same core.
+    let state = live.state;
+    for (const npcId of Object.keys(state.npcBrains ?? {}).sort()) {
+      const brain = state.npcBrains![npcId];
+      while (brain.cursor < brain.plan.length) {
+        const action = brain.plan[brain.cursor];
+        const applied = applyWorldTurnAction(state, npcId, action, turnFence(state)!);
+        if (applied.error) {
+          if (applied.error !== 'ROUND_LOCKED') {
+            state = structuredClone(state);
+            state.npcBrains![npcId].cursor = state.npcBrains![npcId].plan.length;
+          }
+          break;
+        }
+        state = recordNpcEvents(
+          state,
+          applied.state,
+          applied.events,
+          `world:${state.turnController!.roundId}:${npcId}:${brain.cursor}`,
+        ).state;
+        state.npcBrains![npcId].cursor++;
+        if (state.turnController!.phase !== 'world') {
+          await this.persist(id, live, state, 'turn.world.reaction');
+          return;
+        }
+        // Read the current immutable brain on each iteration, never a stale reference.
+        if (
+          state.npcBrains![npcId].cursor >= state.npcBrains![npcId].plan.length ||
+          state.turnController!.worldActions >= state.turnController!.ruleset.maxWorldActions
+        )
+          break;
+        break; // One action per actor per phase keeps the world step short and reviewable.
+      }
+    }
+    const finished = finishWorldPhase(state, turnFence(state)!);
+    if (!finished.error) await this.persist(id, live, finished.state, 'turn.world.completed');
+    else if (state !== live.state) await this.persist(id, live, state, 'turn.world.actions');
+  }
   private async advance(id: string) {
     const live = this.live.get(id);
     if (!live || this.stopping) return;
@@ -2460,6 +3014,10 @@ export class GameService implements OnModuleDestroy {
     }
     if (live.paused) return;
     await this.refreshArt(id, live);
+    if (live.state.turnController) {
+      await this.advanceTurnWorld(id, live);
+      return;
+    }
     // No catch-up based on user clocks or network packet volume: exactly one fixed simulation step.
     const before = live.state;
     const result = tick(before, 1);
