@@ -11,6 +11,7 @@ const require = createRequire(import.meta.url);
 const sharp = require('sharp');
 const { AssetReuseService } = require('../../apps/api/dist/assets/reuse.service.js');
 const { ImageGenerationEngine } = require('../../apps/api/dist/image-generation/service.js');
+const { generationRequestSchema } = require('../../apps/api/dist/image-generation/contracts.js');
 const { createOwnerImageRuntime } = require('../../apps/api/dist/image-generation/config.js');
 const { VisualAuthoringService } = require('../../apps/api/dist/visual-authoring/service.js');
 const { fixtureRaster } = require('../../apps/api/dist/visual-authoring/fixture-art.js');
@@ -322,11 +323,17 @@ await test(
           assert.equal(foreignImage.status, 'admitted');
           const directRequest = { ...request };
           delete directRequest.studioLocationContext;
+          delete directRequest.framingVersion;
+          delete directRequest.imageFraming;
+          const derivativeRequest = {
+            ...directRequest,
+            referenceRevisionIds: [foreignImage.revisionId],
+          };
+          // This is a valid direct image request: reach the ownership guard, not
+          // the map-framing context validator removed with the studio context.
+          generationRequestSchema.parse(derivativeRequest);
           await assert.rejects(
-            engine.quote(owner.user.id, {
-              ...directRequest,
-              referenceRevisionIds: [foreignImage.revisionId],
-            }),
+            engine.quote(owner.user.id, derivativeRequest),
             failureCode('DERIVATIVE_REFERENCE_FORBIDDEN'),
           );
           const reserved = (
@@ -511,6 +518,7 @@ await test(
         'late-known-before-maintenance',
         'overrun',
         'wrong-dimensions',
+        'legacy-wrong-dimensions',
         'revoked-before-dispatch',
         'revoked-at-admission',
       ]) {
@@ -543,9 +551,10 @@ await test(
                     JSON.stringify({
                       data: [
                         {
-                          b64_json: (outcome === 'wrong-dimensions' ? smallPng : png).toString(
-                            'base64',
-                          ),
+                          b64_json: (outcome.endsWith('wrong-dimensions')
+                            ? smallPng
+                            : png
+                          ).toString('base64'),
                         },
                       ],
                       ...(outcome === 'missing-usage'
@@ -569,7 +578,14 @@ await test(
                 scopedRuntime.capabilities,
               );
               scoped.setLiveAuthorizer((c, user, id) => authority.authorizeImage(c, user, id));
-              const quote = await scoped.quote(owner.user.id, request);
+              const outcomeRequest = { ...request };
+              if (outcome === 'legacy-wrong-dimensions') {
+                delete outcomeRequest.studioLocationContext;
+                delete outcomeRequest.framingVersion;
+                delete outcomeRequest.imageFraming;
+              }
+              generationRequestSchema.parse(outcomeRequest);
+              const quote = await scoped.quote(owner.user.id, outcomeRequest);
               const queued = await scoped.enqueue(owner.user.id, {
                 quoteId: quote.quote.id,
                 operationId: randomUUID(),
@@ -639,9 +655,15 @@ await test(
                     candidateFingerprint: configured.configFingerprint,
                   }),
                 );
-              } else if (outcome === 'wrong-dimensions') {
+              } else if (outcome.endsWith('wrong-dimensions')) {
                 assert.equal(row.status, 'rejected');
-                assert.equal(row.error_code, 'IMAGE_PROFILE_DIMENSIONS_MISMATCH');
+                assert.equal(
+                  row.error_code,
+                  outcome === 'legacy-wrong-dimensions'
+                    ? 'IMAGE_PROFILE_DIMENSIONS_MISMATCH'
+                    : 'IMAGE_FRAMING_DIMENSIONS_MISMATCH',
+                );
+                assert.equal(row.admitted_revision_id, null);
                 assert.equal(held.status, 'settled');
                 assert.equal(Number(held.actual_micros), 400);
                 assert.equal(scope.blocked, false);

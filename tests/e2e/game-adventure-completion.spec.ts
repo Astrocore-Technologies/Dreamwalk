@@ -11,13 +11,6 @@ import { exposeDiscoveryFixtures } from './support/discovery-fixtures';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
-// This one four-client scenario produced 900–953 continuous trace JPEGs (~54–57MB)
-// while ordinary clicks took 5–7s and game HTTP median stayed ~28ms. Causality is
-// not established: remove only duplicate filmstrip capture, retaining DOM/network/
-// source diagnostics, explicit room/ending captures and failure screenshots.
-test.use({
-  trace: { mode: 'retain-on-failure', screenshots: false, snapshots: true, sources: true },
-});
 async function account(page: Page, index: number) {
   const handle = `story_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const response = await page.request.post('/api/v1/auth/register', {
@@ -124,26 +117,30 @@ test('four players retain the legacy realtime Observatory ending with owned hero
       await expect(guest).toHaveURL(new RegExp(`/game/${id}$`));
       await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
     }
-    for (const [index, page] of pages.entries()) {
-      await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
-        'data-objective-status',
-        'active',
-      );
-      await expect(page.getByTestId('objective-epilogue')).toHaveCount(0);
-      for (let i = 1; i <= 4; i++) {
-        if (i !== index + 1)
-          await expect(page.getByText(`PRIVATE_HERO_${i}`, { exact: true })).toHaveCount(0);
-      }
-      const privateDetails = page.getByTestId('campaign-hero').locator('details');
-      const ownNote = privateDetails.getByText(`PRIVATE_HERO_${index + 1}`, { exact: true });
-      await expect(ownNote).toHaveCount(1);
-      await expect(privateDetails).not.toHaveAttribute('open', '');
-      await expect(ownNote).not.toBeVisible();
-      await privateDetails.locator('summary').click();
-      await expect(ownNote).toBeVisible();
-      await privateDetails.locator('summary').click();
-      await expect(ownNote).not.toBeVisible();
-    }
+    // Independent clients inspect only their own local disclosure state. Keep each
+    // page's full assertion/open/close order, without serializing unrelated clients.
+    await Promise.all(
+      pages.map(async (page, index) => {
+        await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
+          'data-objective-status',
+          'active',
+        );
+        await expect(page.getByTestId('objective-epilogue')).toHaveCount(0);
+        for (let i = 1; i <= 4; i++) {
+          if (i !== index + 1)
+            await expect(page.getByText(`PRIVATE_HERO_${i}`, { exact: true })).toHaveCount(0);
+        }
+        const privateDetails = page.getByTestId('campaign-hero').locator('details');
+        const ownNote = privateDetails.getByText(`PRIVATE_HERO_${index + 1}`, { exact: true });
+        await expect(ownNote).toHaveCount(1);
+        await expect(privateDetails).not.toHaveAttribute('open', '');
+        await expect(ownNote).not.toBeVisible();
+        await privateDetails.locator('summary').click();
+        await expect(ownNote).toBeVisible();
+        await privateDetails.locator('summary').click();
+        await expect(ownNote).not.toBeVisible();
+      }),
+    );
     await test.step(
       'Capture the initial rendered room',
       async () => {
@@ -242,25 +239,32 @@ test('four players retain the legacy realtime Observatory ending with owned hero
       },
       { timeout: 30000 },
     );
-    for (const page of pages) {
-      await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
-        'data-objective-status',
-        'achieved',
-      );
-      await expect(page.getByTestId('objective-epilogue')).toBeVisible();
-    }
-    for (const guest of guests) {
-      await expect(guest.locator('[data-scene-profile="observatory-interior-v1"]')).toBeVisible();
-      expect((await readProjection(guest, id)).entities.some((e) => e.id === 'journal')).toBe(
-        false,
-      );
-    }
+    await Promise.all(
+      pages.map(async (page) => {
+        await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
+          'data-objective-status',
+          'achieved',
+        );
+        await expect(page.getByTestId('objective-epilogue')).toBeVisible();
+      }),
+    );
+    await Promise.all(
+      guests.map(async (guest) => {
+        await expect(guest.locator('[data-scene-profile="observatory-interior-v1"]')).toBeVisible();
+        expect((await readProjection(guest, id)).entities.some((e) => e.id === 'journal')).toBe(
+          false,
+        );
+      }),
+    );
     await Promise.all(pages.map((p) => p.reload()));
-    for (const page of pages)
-      await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
-        'data-objective-status',
-        'achieved',
-      );
+    await Promise.all(
+      pages.map(async (page) => {
+        await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
+          'data-objective-status',
+          'achieved',
+        );
+      }),
+    );
     await expect((await inventory(owner)).locator('[data-inventory-id="journal"]')).toHaveCount(1);
     await capture(owner, 'sample-adventure-ending-desktop.png');
     await owner.setViewportSize({ width: 390, height: 844 });
