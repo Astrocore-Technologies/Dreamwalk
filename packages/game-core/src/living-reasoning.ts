@@ -1,3 +1,5 @@
+import { applyTurnAction, turnFence } from './turns';
+import type { TurnFence } from '@dreamwalk/contracts';
 import {
   npcBeliefRevisionSchema,
   gameActionSchema,
@@ -84,6 +86,7 @@ export function reviseNpcBelief(state: GameState, npcId: string, input: unknown)
   };
 }
 export interface PlayerTextIntent {
+  turnFence?: TurnFence;
   id: string;
   actorId: string;
   text: string;
@@ -105,6 +108,8 @@ export function parsePlayerTextAction(
     return null;
   const normalized = text.trim().toLowerCase(),
     patterns: [RegExp, GameAction['kind']][] = [
+      [/^(hit|strike|ударить|ударил|ударяю|вдарити|вдарив)\s+(.+)$/u, 'hit'],
+      [/^(push|shove|толкнуть|толкнул|толкаю|штовхнути|штовхнув|штовхаю)\s+(.+)$/u, 'push'],
       [/^(open|открой|открываю|відкрий|відкриваю)\s+(.+)$/u, 'open'],
       [/^(close|закрой|закрываю|закрий|закриваю)\s+(.+)$/u, 'close'],
       [/^(inspect|осмотри|осматриваю|оглянь|оглядаю)\s+(.+)$/u, 'inspect'],
@@ -176,7 +181,9 @@ export function confirmPlayerTextIntent(
     npcContextFingerprint(current) !== npcContextFingerprint(proposal)
   )
     return { state, events: [], error: 'STALE_STATE' };
-  return applyAction(state, actorId, current.action);
+  return state.turnController
+    ? applyTurnAction(state, actorId, current.action, proposal.turnFence!)
+    : applyAction(state, actorId, current.action);
 }
 
 /** Provider and deterministic grammar share the same strict server-side proposal/readset builder. */
@@ -200,6 +207,8 @@ export function proposePlayerActionIntent(
   if (
     ![
       'wait',
+      'hit',
+      'push',
       'move_to',
       'inspect',
       'open',
@@ -221,9 +230,12 @@ export function proposePlayerActionIntent(
     return null;
   if (action.itemId && state.entities[action.itemId]?.ownerId !== actorId) return null;
   // Dry-run pure reducer validates range, ownership and mode; its returned state is deliberately discarded.
-  const checked = applyAction(state, actorId, action);
+  const checked = state.turnController
+    ? applyTurnAction(state, actorId, action, turnFence(state)!)
+    : applyAction(state, actorId, action);
   if (checked.error) return null;
   const proposal = {
+    ...(state.turnController ? { turnFence: turnFence(state)! } : {}),
     actorId,
     text: text.trim(),
     action,

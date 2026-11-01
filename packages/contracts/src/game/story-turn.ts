@@ -1,3 +1,4 @@
+import { turnFenceSchema } from './turns';
 import { z } from 'zod';
 import { narrativeActionSchema, narrativeSceneSchema, narrativeNpcSchema } from './narrative';
 const id = z
@@ -7,6 +8,8 @@ const id = z
   .regex(/^[\w-]+$/);
 export const storyTurnInputSchema = z
   .object({
+    turnFence: turnFenceSchema.optional(),
+    replyLocale: z.enum(['uk', 'en', 'ru']).optional(),
     operationId: z.uuid(),
     text: z.string().trim().min(1).max(1000),
     channel: z.enum(['say', 'whisper']),
@@ -104,6 +107,7 @@ export const storyTurnSubmitSchema = storyTurnInputSchema
 export type StoryTurnSubmit = z.infer<typeof storyTurnSubmitSchema>;
 export const storyTurnConfirmSchema = z
   .object({
+    turnFence: turnFenceSchema.optional(),
     operationId: z.uuid(),
     decision: z.enum(['accept', 'decline']),
     proposalHash: z.string().min(1).max(160),

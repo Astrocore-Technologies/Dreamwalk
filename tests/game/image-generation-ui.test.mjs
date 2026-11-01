@@ -3,12 +3,21 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 const read = (path) =>
   readFile(new URL('../../apps/web/components/assets/' + path, import.meta.url), 'utf8');
-test('generation UI gates one mock job with fresh quote consent and stable retry identity', async () => {
+test('generation UI gates the selected mode with fresh quote consent and stable retry identity', async () => {
   const s = await read('image-generation.tsx');
-  assert.match(s, /mode: 'mock'/);
+  assert.match(s, /externalOnly \? 'external' : 'mock'/);
+  assert.match(s, /externalDispatchAllowed/);
+  assert.match(s, /studioSourceHash === preparedRequest.studioLocationContext.sourceHash/);
+  assert.match(s, /readOnly=\{!!preparedRequest\}/);
+  assert.match(s, /result.quote\?\.mode === mode/);
+  assert.match(s, /config.data\?\.verifiedUpperMicros/);
+  assert.match(s, /!config.data\?\.externalEnabled \|\| !liveTestSessionId/);
   assert.match(s, /result.quote.upperMicros === 0/);
   assert.match(s, /!valid \|\| !quote \|\| !consent/);
-  assert.match(s, /fingerprint/);
+  assert.match(s, /quotedFingerprint.current !== fingerprint/);
+  assert.match(s, /quote\?\.mode !== mode/);
+  assert.match(s, /quote.upperMicros === null/);
+  assert.match(s, /estimatePending/);
   assert.match(s, /setConsent\(false\)/);
   assert.match(s, /operation.current.id/);
   assert.match(s, /declineReuse: true/);

@@ -16,6 +16,11 @@ export const frozenArtBindingSchema = z
             ((parts[0] === 'map' && parts[2] === 'background') ||
               (parts[0] === 'entity' && ['sprite', 'portrait'].includes(parts[2])))) ||
           (parts.length === 4 &&
+            parts[0] === 'map' &&
+            parts[2] === 'layer' &&
+            /^[A-Za-z0-9_-]{1,80}$/.test(parts[3]) &&
+            !(parts[3] in Object.prototype)) ||
+          (parts.length === 4 &&
             parts[0] === 'entity' &&
             parts[2] === 'object' &&
             ['default', 'open', 'closed'].includes(parts[3]))

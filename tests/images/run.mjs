@@ -1,4 +1,4 @@
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 /** Real isolated PostgreSQL/game transport tests. Never uses the preview or external database. */
@@ -10,6 +10,10 @@ import { startLocalPostgres } from '../../scripts/postgres-local.mjs';
 import { forceMockNpcTestEnvironment } from '../../scripts/mock-npc-test-env.mjs';
 
 if (process.env.NODE_ENV === 'production') throw new Error('Game tests cannot run in production');
+const selectedTestFile = process.env.IMAGE_TEST_FILE;
+const skipBuild = process.argv.includes('--skip-build');
+if (process.argv.slice(2).some((arg) => arg !== '--skip-build'))
+  throw new Error('Unknown image runner option');
 forceMockNpcTestEnvironment();
 // Never propagate approved live-image configuration into synthetic acceptance.
 for (const key of Object.keys(process.env))
@@ -51,24 +55,32 @@ process.env.ASSET_DIR = assetDir;
 const database = await startLocalPostgres();
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 async function run(command, args) {
-  const child = spawn(command, args, { stdio: 'inherit', env: process.env });
+  const child = spawn(
+    command === npm && process.platform === 'win32' ? process.execPath : command,
+    command === npm && process.platform === 'win32' ? [process.env.npm_execpath, ...args] : args,
+    { stdio: 'inherit', env: process.env },
+  );
   const [code] = await once(child, 'exit');
   if (code !== 0) throw new Error(`Game test subprocess failed (${code})`);
 }
 try {
-  for (const workspace of ['@dreamwalk/contracts', '@dreamwalk/game-core', '@dreamwalk/api'])
-    await run(npm, ['run', 'build', '-w', workspace]);
+  if (skipBuild) await access(new URL('../../apps/api/dist/main.js', import.meta.url));
+  else
+    for (const workspace of ['@dreamwalk/contracts', '@dreamwalk/game-core', '@dreamwalk/api'])
+      await run(npm, ['run', 'build', '-w', workspace]);
   await run(process.execPath, ['apps/api/dist/migrate.js']);
   await run(process.execPath, ['apps/api/dist/seed.js']);
+  await run(process.execPath, ['--import', 'tsx', '--test', 'tests/images/config.test.mjs']);
   let files = [
     'integration-budget.test.mjs',
     'integration-diagnostics.test.mjs',
     'integration-generation.test.mjs',
     'integration-campaign.test.mjs',
+    'integration-studio-location.test.mjs',
   ];
-  if (process.env.IMAGE_TEST_FILE) {
-    if (!files.includes(process.env.IMAGE_TEST_FILE)) throw new Error('Unknown image test file');
-    files = [process.env.IMAGE_TEST_FILE];
+  if (selectedTestFile) {
+    if (!files.includes(selectedTestFile)) throw new Error('Unknown image test file');
+    files = [selectedTestFile];
   }
   await run(process.execPath, [
     '--test',

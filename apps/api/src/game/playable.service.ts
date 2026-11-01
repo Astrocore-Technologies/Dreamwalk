@@ -1,3 +1,4 @@
+import { ownedCharacterPackage } from '../visual-authoring/character-package';
 import { Inject, Injectable } from '@nestjs/common';
 import type { Request } from 'express';
 import type { PoolClient } from 'pg';
@@ -281,7 +282,63 @@ export class PlayableService {
         ).rows
       : [];
     const narrative = story.data as Record<string, unknown>;
+    const content = (narrative.content ?? {}) as {
+      rules?: string;
+      boundaries?: string[];
+      locations?: { id: string; description: string }[];
+      scenes?: { id: string; description: string }[];
+      startSceneId?: string;
+    };
+    for (const map of draft.maps) {
+      const description = content.locations?.find(
+        (l) => l.id === map.sourceLocationId,
+      )?.description;
+      if (description) compiled.playable!.maps[map.id].description = description;
+    }
+    const characterBindings: { slot: string; revisionId: string }[] = [];
+    for (const npc of draft.npcs) {
+      const source = npcDefinitions.find((row) => row.id === npc.sourceNpcId)?.data as
+        | {
+            role?: string;
+            description?: string;
+            appearance?: string;
+            personality?: string;
+            biography?: string;
+            characterPackageVersionId?: string;
+          }
+        | undefined;
+      if (!source) continue;
+      if (source.characterPackageVersionId) {
+        const { manifest } = await ownedCharacterPackage(
+          c,
+          String(story.owner_id),
+          source.characterPackageVersionId,
+        );
+        compiled.playable!.entities[npc.id].characterAnimation = manifest.animation;
+        for (const part of manifest.parts.filter((p) => ['sheet', 'portrait'].includes(p.role)))
+          characterBindings.push({
+            slot: `entity:${npc.id}:${part.role === 'sheet' ? 'sprite' : 'portrait'}`,
+            revisionId: part.revisionId,
+          });
+      }
+      compiled.playable!.entities[npc.id].publicProfile = {
+        role: (source.role ?? '').slice(0, 120),
+        description: (source.description ?? '').slice(0, 4000),
+        appearance: (source.appearance ?? '').slice(0, 4000),
+      };
+      const memory = compiled.playable!.npcBrains[npc.id].living;
+      if (memory)
+        memory.personality.biography = [source.personality, source.biography]
+          .filter(Boolean)
+          .join('\n')
+          .slice(0, 2000);
+    }
+
     compiled.playable!.narrativePremise = {
+      rules: content.rules ?? '',
+      boundaries: content.boundaries ?? [],
+      openingScene:
+        content.scenes?.find((scene) => scene.id === content.startSceneId)?.description ?? '',
       title: String(story.title),
       summary: String(story.synopsis ?? ''),
       world: String((narrative.content as { world?: unknown } | undefined)?.world ?? ''),
@@ -293,6 +350,7 @@ export class PlayableService {
       String(story.id),
       String(story.owner_id),
       compiled.playable!,
+      characterBindings,
     );
     if (expectedArtRevision !== undefined && preparedArt.draftRevision !== expectedArtRevision)
       fail(409, 'STALE_ART_REVISION', 'STALE_ART_REVISION');

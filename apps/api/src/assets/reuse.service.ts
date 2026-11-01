@@ -138,6 +138,10 @@ export class AssetReuseService {
       return result;
     });
   }
+  /** Internal owner/source transaction: use the existing grant/takedown locks rather than copying rights checks. */
+  async reusableRevisionTx(c: PoolClient, userId: string, revisionId: string) {
+    return this.reusable(c, userId, z.uuid().parse(revisionId), true);
+  }
   private async reusable(c: PoolClient, userId: string, revisionId: string, lock = false) {
     if (lock) {
       const owner = (
@@ -336,7 +340,15 @@ export class AssetReuseService {
         ],
       )
     ).rows;
-    return rows.map((r) => ({ ...this.dto(r, userId), canReuse: true }));
+    return rows.map((r) => ({
+      ...this.dto(r, userId),
+      canReuse: true,
+      relevance: {
+        compatibility: 'verified',
+        semantics: spec.tags.length ? 'authored-tag-match' : 'unassessed',
+        requiresHumanSelection: true,
+      },
+    }));
   }
   async resolve(userId: string, input: unknown) {
     const spec = assetSpecSchema.parse(input),
@@ -579,6 +591,7 @@ export class AssetReuseService {
     adventureId: string,
     userId: string,
     playable: PlayablePackage,
+    additionalBindings: AssetBinding[] = [],
   ) {
     await this.storyOwner(c, userId, adventureId, true);
     await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
@@ -590,7 +603,14 @@ export class AssetReuseService {
       ])
     ).rows[0];
     const pins = [];
-    for (const binding of (draft?.bindings ?? []) as AssetBinding[]) {
+    const selected = [...((draft?.bindings ?? []) as AssetBinding[])];
+    for (const binding of additionalBindings) {
+      const existing = selected.find((b) => b.slot === binding.slot);
+      if (existing && existing.revisionId !== binding.revisionId)
+        fail(409, 'CHARACTER_BINDING_CONFLICT', 'CHARACTER_BINDING_CONFLICT');
+      if (!existing) selected.push(binding);
+    }
+    for (const binding of selected) {
       const { row, grantId } = await this.reusable(c, userId, binding.revisionId, true);
       // Package-aware slot/kind/camera validation is supplied by the shared core helper.
       this.validateBinding(playable, binding.slot, row.metadata);

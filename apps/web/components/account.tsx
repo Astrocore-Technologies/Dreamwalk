@@ -1,6 +1,7 @@
 'use client';
 import { useT } from '@/lib/i18n';
 import { AccountExports } from './account-exports';
+import { localAuthMessages } from './local-auth-messages';
 import { EmailVerification } from './account-email';
 import Link from 'next/link';
 import { useRouter, useSearchParams } from 'next/navigation';
@@ -59,6 +60,11 @@ function AuthForm({
   const { t: tr, locale } = useT();
   const router = useRouter();
   const authGate = useLaunchGate(`auth:${signup}:${reset}:${returnTo}`);
+  const localPreview = useResource<{ localAdminAlias: boolean }>(
+    !signup && !reset ? '/auth/local-preview' : null,
+  );
+  const localAlias = !signup && !reset && localPreview.data?.localAdminAlias === true;
+  const localText = localAuthMessages[locale];
   const { setUser, toast } = useClient();
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
@@ -170,13 +176,17 @@ function AuthForm({
               </Field>
             </>
           )}
-          <Field label="Email">
+          <Field
+            label={localAlias ? localText.identifier : 'Email'}
+            hint={localAlias ? localText.hint : undefined}
+          >
             <Input
               name="email"
-              type="email"
-              autoComplete="email"
+              type={localAlias ? 'text' : 'email'}
+              autoComplete={localAlias ? 'username' : 'email'}
               required
-              placeholder="you@example.com"
+              maxLength={254}
+              placeholder={localAlias ? 'admin' : 'you@example.com'}
             />
           </Field>
           {!reset && (

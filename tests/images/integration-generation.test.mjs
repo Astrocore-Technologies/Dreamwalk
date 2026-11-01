@@ -152,6 +152,60 @@ await test(
         return { q, j };
       };
       await t.test(
+        'synthetic estimate persists its basis/reserve without advertising a verified ceiling',
+        async () => {
+          let calls = 0;
+          const provider = {
+            id: 'synthetic-estimate-only',
+            generate: async () => {
+              calls++;
+              return {
+                bytes: await fixturePng(),
+                mime: 'image/png',
+                actualMicros: 5000,
+                requestId: 'synthetic-estimate-result',
+              };
+            },
+          };
+          const e = engine(provider, {
+            approved: true,
+            externalEnabled: true,
+            costBasis: 'approved_estimate',
+            verifiedUpperMicros: null,
+            estimatedTotalMicros: 45880,
+            operationalReserveMicros: 100000,
+          });
+          const q = await e.quote(owner.user.id, input(stories[0].id, { mode: 'external' }));
+          assert.equal(q.quote.upperMicros, null);
+          assert.equal(q.quote.verifiedUpperMicros, null);
+          assert.equal(q.quote.reserveMicros, 100000);
+          assert.equal(q.quote.estimatedTotalMicros, 45880);
+          assert.equal(q.quote.costBasis, 'approved_estimate');
+          const body = { quoteId: q.quote.id, operationId: randomUUID(), consent: true };
+          const j = await e.enqueue(owner.user.id, body);
+          assert.equal((await e.enqueue(owner.user.id, body)).id, j.id);
+          assert.equal(j.verifiedUpperMicros, null);
+          assert.equal(j.costBasis, 'approved_estimate');
+          const stored = await row(j.id);
+          assert.equal(stored.cost_basis, 'approved_estimate');
+          assert.equal(Number(stored.estimated_total_micros), 45880);
+          await e.workOnce();
+          assert.equal(calls, 1);
+          const reconstructed = await engine().get(owner.user.id, j.id);
+          assert.equal(reconstructed.costBasis, 'approved_estimate');
+          assert.equal(reconstructed.verifiedUpperMicros, null);
+          assert.equal(reconstructed.actualMicros, 5000);
+          await assert.rejects(
+            () =>
+              e.quote(
+                owner.user.id,
+                input(stories[0].id, { mode: 'external', referenceRevisionIds: [ownArt.id] }),
+              ),
+            code('IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE'),
+          );
+        },
+      );
+      await t.test(
         'strict ownership, derivative reference rights and unknown live bound fail closed',
         async () => {
           const e = engine();
@@ -353,8 +407,22 @@ await test(
             requestId: 'synthetic-receipt',
           };
           await Promise.all([e.recordResult(j.id, receipt), e.recordResult(j.id, receipt)]);
-          await e.workOnce();
+          const replacement = engine({
+            id: 'synthetic-replacement-after-receipt',
+            generate: async () => {
+              throw new Error('Must never dispatch replacement');
+            },
+          });
+          await replacement.workOnce();
           const done = await e.get(owner.user.id, j.id);
+          assert.equal(
+            (
+              await db.query('SELECT metadata FROM art_asset_revisions WHERE id=$1', [
+                done.revisionId,
+              ])
+            ).rows[0].metadata.provenance.provider,
+            'synthetic-late',
+          );
           assert.equal(done.status, 'admitted');
           await e.recordResult(j.id, receipt);
           await e.workOnce();
@@ -575,12 +643,16 @@ await test(
               ],
               { env: process.env, timeout: 30000 },
             );
-          await assert.rejects(
-            run,
-            process.platform === 'win32'
-              ? /EPERM|EISDIR|illegal operation on a directory/
-              : /EISDIR|illegal operation on a directory/,
-          );
+          await assert.rejects(run, (error) => {
+            assert.match(
+              String(error),
+              process.platform === 'win32'
+                ? /EPERM|EISDIR|illegal operation on a directory/
+                : /EISDIR|illegal operation on a directory/,
+            );
+            assert.ok(String(error).includes(filename));
+            return true;
+          });
           assert.equal((await row(job.id)).quarantine_filename, filename);
           assert.notDeepEqual((await row(job.id)).input, {});
           assert.equal(

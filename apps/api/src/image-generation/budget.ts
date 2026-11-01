@@ -15,7 +15,14 @@ export async function reserveGenerationSpend(
   if (
     !Number.isSafeInteger(upperMicros) ||
     upperMicros < 0 ||
-    (!mock && (!policy.approved || !policy.externalEnabled || policy.verifiedUpperMicros === null))
+    (!mock &&
+      (!policy.approved ||
+        !policy.externalEnabled ||
+        (policy.verifiedUpperMicros === null &&
+          !(
+            policy.costBasis === 'approved_estimate' &&
+            policy.operationalReserveMicros === upperMicros
+          ))))
   )
     fail(409, 'LIVE_COST_BOUND_REQUIRED', 'LIVE_COST_BOUND_REQUIRED');
   await c.query(
@@ -48,6 +55,22 @@ export async function reserveGenerationSpend(
       fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
     return prior.id as string;
   }
+  if (policy.costBasis === 'approved_estimate' && !scope.serialize_outstanding) {
+    await c.query('UPDATE generation_budget_scopes SET serialize_outstanding=true WHERE id=$1', [
+      policy.scopeId,
+    ]);
+    scope.serialize_outstanding = true;
+  }
+  if (
+    scope.serialize_outstanding &&
+    (
+      await c.query(
+        "SELECT 1 FROM generation_budget_reservations WHERE scope_id=$1 AND status='held' LIMIT 1",
+        [policy.scopeId],
+      )
+    ).rowCount
+  )
+    fail(409, 'GENERATION_OUTSTANDING_REQUEST', 'GENERATION_OUTSTANDING_REQUEST');
   const usage = (
     await c.query(
       "SELECT COALESCE(sum(CASE WHEN status='held' THEN upper_micros WHEN status='settled' THEN actual_micros ELSE 0 END),0) AS total,COALESCE(sum(CASE WHEN kind=$2 THEN CASE WHEN status='held' THEN upper_micros WHEN status='settled' THEN actual_micros ELSE 0 END ELSE 0 END),0) AS purpose FROM generation_budget_reservations WHERE scope_id=$1",
@@ -55,8 +78,13 @@ export async function reserveGenerationSpend(
     )
   ).rows[0];
   if (
-    Number(usage.total) + upperMicros > Number(scope.total_cap_micros) ||
-    Number(usage.purpose) + upperMicros > Number(scope[`${kind}_cap_micros`])
+    Number(usage.total) + upperMicros >
+      Math.min(Number(scope.total_cap_micros), policy.totalCapMicros) ||
+    Number(usage.purpose) + upperMicros >
+      Math.min(
+        Number(scope[`${kind}_cap_micros`]),
+        kind === 'image' ? policy.imageCapMicros : policy.textCapMicros,
+      )
   )
     fail(409, 'GENERATION_BUDGET_EXCEEDED', 'GENERATION_BUDGET_EXCEEDED');
   const id = randomUUID();

@@ -148,6 +148,8 @@ test('Studio authored layout persists and launches its own pinned campaign', asy
   await page.getByRole('button', { name: /Локации$/ }).click();
   const editor = page.getByRole('region', { name: 'Игровая карта', exact: true });
   await editor.getByRole('button', { name: 'Шаблон: внутренний двор', exact: true }).click();
+  // This regression intentionally covers the retained simultaneous compatibility rules.
+  await editor.getByLabel('Пошаговый режим Dreamwalk', { exact: true }).uncheck();
   await editor.getByLabel('Название карты', { exact: true }).fill(mapName);
   await editor.getByLabel('Инструмент карты', { exact: true }).selectOption('spawn');
   await editor.getByRole('button', { name: /^Клетка 4, 2:/ }).click();

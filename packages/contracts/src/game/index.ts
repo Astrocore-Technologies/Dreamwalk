@@ -1,4 +1,22 @@
 import {
+  turnRulesSchema,
+  turnFenceSchema,
+  turnProjectionSchema,
+  movementTraceSchema,
+  actorFeedbackSchema,
+  type TurnRules,
+  type TurnController,
+  type TurnProjection,
+} from './turns';
+export * from './turns';
+import {
+  sceneCompositionSchema,
+  characterAnimationSchema,
+  type SceneComposition,
+  type CharacterAnimation,
+} from './visual-authoring';
+export * from './visual-authoring';
+import {
   narrativeConstraintsSchema,
   narrativePublicTurnSchema,
   type NarrativeConstraints,
@@ -62,6 +80,8 @@ export const gameActionSchema = z
   .object({
     kind: z.enum([
       'move_to',
+      'hit',
+      'push',
       'wait',
       'inspect',
       'talk',
@@ -120,6 +140,7 @@ export type GameAction = z.infer<typeof gameActionSchema>;
 export type GamePoint = z.infer<typeof gamePointSchema>;
 export const gameMoveSchema = z
   .object({
+    turnFence: turnFenceSchema.optional(),
     inputSeq: z.number().int().nonnegative(),
     movementGeneration: z.number().int().nonnegative(),
     target: gamePointSchema,
@@ -156,6 +177,12 @@ export const gameLabelTranslationsSchema = z
   .strict();
 export type GameLabelTranslations = z.infer<typeof gameLabelTranslationsSchema>;
 export interface GameEntity extends GamePoint {
+  vitality?: number;
+  maxVitality?: number;
+  movementTrace?: { sequence: number; points: GamePoint[] };
+  feedback?: { kind: 'hit' | 'push'; sequence: number; dx: number; dy: number };
+  publicProfile?: { role: string; description: string; appearance: string };
+  characterAnimation?: CharacterAnimation;
   supportingNpc?: SupportingNpcCard;
   id: string;
   kind: 'player' | 'npc' | 'item' | 'door';
@@ -177,6 +204,8 @@ export interface GameEntity extends GamePoint {
   knownIds?: string[];
 }
 export interface GameMap {
+  description?: string;
+  composition?: SceneComposition;
   sceneProfile?: 'observatory-interior-v1' | 'observatory-roof-v1';
   id: string;
   label?: string;
@@ -289,6 +318,7 @@ export const objectiveProjectionSchema = publicObjectiveCopySchema
 export type ObjectiveProjection = z.infer<typeof objectiveProjectionSchema>;
 
 export interface GameState {
+  turnController?: TurnController;
   narrativePremise?: NarrativePremise;
   narrativeSource?: { versionId: string; checksum: string };
   narrativeConstraints?: NarrativeConstraints;
@@ -327,6 +357,7 @@ export interface GameResult {
   error?: GameError;
 }
 export interface GameProjection {
+  turn?: TurnProjection;
   narrative?: { revision: number; turns: NarrativePublicTurn[] };
   objectives?: ObjectiveProjection[];
   artBindings?: FrozenArtBinding[];
@@ -375,9 +406,11 @@ export const npcProposalSchema = z
 export type NpcProposal = z.infer<typeof npcProposalSchema>;
 export const gameMapSchema = z
   .object({
+    description: z.string().trim().max(6000).optional(),
     id: gameIdSchema,
     label: z.string().trim().min(1).max(120).optional(),
     labelTranslations: gameLabelTranslationsSchema.optional(),
+    composition: sceneCompositionSchema.optional(),
     sceneProfile: z.enum(['observatory-interior-v1', 'observatory-roof-v1']).optional(),
     width: z.number().int().min(1).max(64),
     height: z.number().int().min(1).max(64),
@@ -426,10 +459,23 @@ export const playableVersionSchema = z
 export const gamePublicEntitySchema = z
   .object({
     id: gameIdSchema,
+    vitality: z.number().int().min(0).max(100).optional(),
+    maxVitality: z.number().int().min(1).max(100).optional(),
+    movementTrace: movementTraceSchema.optional(),
+    feedback: actorFeedbackSchema.optional(),
     kind: z.enum(['player', 'npc', 'item', 'door']),
     supportingNpc: supportingNpcCardSchema.optional(),
     label: z.string().trim().min(1).max(120).optional(),
     labelTranslations: gameLabelTranslationsSchema.optional(),
+    publicProfile: z
+      .object({
+        role: z.string().max(120),
+        description: z.string().max(4000),
+        appearance: z.string().max(4000),
+      })
+      .strict()
+      .optional(),
+    characterAnimation: characterAnimationSchema.optional(),
     visual: z.enum(['key', 'token', 'journal', 'door', 'keeper', 'traveler']).optional(),
     mapId: gameIdSchema,
     x: z.number().int().min(0).max(63),
@@ -487,6 +533,7 @@ export const gamePublicEncounterSchema = z
   .strict();
 export const gameProjectionSchema = z
   .object({
+    turn: turnProjectionSchema.optional(),
     narrative: z
       .object({
         revision: z.number().int().nonnegative(),
@@ -632,6 +679,7 @@ export const gameVisualSchema = z.enum(['key', 'token', 'journal', 'door', 'keep
 const authoredLabel = z.string().trim().min(1).max(120);
 export const authoredGameDraftSchema = z
   .object({
+    turnRules: turnRulesSchema.optional(),
     narrativeConstraints: narrativeConstraintsSchema.optional(),
     supportingNpcPolicy: supportingNpcPolicySchema.optional(),
     objectives: objectiveDefinitionsSchema.optional(),
@@ -646,7 +694,9 @@ export const authoredGameDraftSchema = z
             id: gameIdSchema,
             label: authoredLabel,
             labelTranslations: gameLabelTranslationsSchema.optional(),
+            composition: sceneCompositionSchema.optional(),
             sceneProfile: z.enum(['observatory-interior-v1', 'observatory-roof-v1']).optional(),
+            description: z.string().trim().max(6000).optional(),
             sourceLocationId: z.string().min(1).max(80).optional(),
             width: z.number().int().min(5).max(32),
             height: z.number().int().min(5).max(32),
@@ -685,6 +735,14 @@ export const authoredGameDraftSchema = z
             x: z.number().int().min(0).max(31),
             y: z.number().int().min(0).max(31),
             visual: z.enum(['key', 'token', 'journal', 'door']),
+            publicProfile: z
+              .object({
+                role: z.string().max(120),
+                description: z.string().max(4000),
+                appearance: z.string().max(4000),
+              })
+              .strict()
+              .optional(),
             locked: z.boolean().optional(),
             open: z.boolean().optional(),
             keyId: gameIdSchema.optional(),
@@ -705,6 +763,15 @@ export const authoredGameDraftSchema = z
             x: z.number().int().min(0).max(31),
             y: z.number().int().min(0).max(31),
             visual: z.enum(['keeper', 'traveler']),
+            publicProfile: z
+              .object({
+                role: z.string().max(120),
+                description: z.string().max(4000),
+                appearance: z.string().max(4000),
+              })
+              .strict()
+              .optional(),
+            characterAnimation: characterAnimationSchema.optional(),
             goal: z.enum(['patrol', 'help']),
             personality: npcPersonalitySchema.optional(),
             initialFacts: z.array(npcAuthoredFactSchema).max(16).optional(),
@@ -756,6 +823,7 @@ export interface NpcBrain {
   generation: number;
 }
 export interface PlayablePackage {
+  turnRules?: TurnRules;
   narrativePremise?: NarrativePremise;
   narrativeConstraints?: NarrativeConstraints;
   supportingNpcPolicy?: SupportingNpcPolicy;

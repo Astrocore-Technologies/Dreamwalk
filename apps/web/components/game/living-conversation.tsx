@@ -1,7 +1,7 @@
 'use client';
 import { useEffect, useState } from 'react';
 import type { GameProjection } from '@dreamwalk/contracts';
-import { useT } from '@/lib/i18n';
+import { getLocale, useT } from '@/lib/i18n';
 import { Button, Field, Select, Textarea } from '@/components/ui';
 import type { CommandBody } from './use-game';
 import styles from './game.module.css';
@@ -46,7 +46,7 @@ export function LivingConversation({
               type: 'npc.speech',
               npcId: recipient,
               topicId,
-              speech: { channel, text: sent.trim() },
+              speech: { channel, text: sent.trim(), replyLocale: getLocale() },
             })
           )
             setText((current) => (current === sent ? '' : current));

@@ -10,6 +10,8 @@ export async function eraseImageGeneration(c: PoolClient, userId: string) {
     ).rowCount
   )
     throw new Error('CONFIRMED_ERASURE_REQUIRED');
+  await c.query('DELETE FROM studio_location_image_operations WHERE owner_id=$1', [userId]);
+  await c.query('DELETE FROM studio_location_images WHERE owner_id=$1', [userId]);
   const campaignIds = (
     await c.query(
       `SELECT c.id FROM game_campaigns c
@@ -87,9 +89,15 @@ export async function eraseImageGeneration(c: PoolClient, userId: string) {
 }
 export async function exportImageGeneration(c: PoolClient, userId: string) {
   return {
+    locationImages: (
+      await c.query(
+        'SELECT adventure_id,location_id,revision_id,source_hash,map_id,updated_at FROM studio_location_images WHERE owner_id=$1',
+        [userId],
+      )
+    ).rows,
     quotes: (
       await c.query(
-        `SELECT q.id,q.adventure_id,q.input,q.mode,q.upper_micros,q.expires_at,q.created_at,
+        `SELECT q.id,q.adventure_id,q.input,q.mode,q.cost_basis,q.estimated_total_micros,q.upper_micros,q.expires_at,q.created_at,
        EXISTS(SELECT 1 FROM image_generation_jobs j WHERE j.quote_id=q.id) AS consumed
        FROM image_generation_quotes q WHERE q.actor_id=$1 ORDER BY q.created_at`,
         [userId],
@@ -97,7 +105,7 @@ export async function exportImageGeneration(c: PoolClient, userId: string) {
     ).rows,
     jobs: (
       await c.query(
-        'SELECT id,adventure_id,input,mode,status,upper_micros,actual_micros,admitted_revision_id,error_code,safe_diagnostic,created_at FROM image_generation_jobs WHERE actor_id=$1 ORDER BY created_at',
+        'SELECT id,adventure_id,input,mode,cost_basis,estimated_total_micros,status,upper_micros,actual_micros,admitted_revision_id,error_code,safe_diagnostic,created_at FROM image_generation_jobs WHERE actor_id=$1 ORDER BY created_at',
         [userId],
       )
     ).rows.map((row) => ({

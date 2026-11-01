@@ -29,7 +29,19 @@
     ".next/types/**/*.ts",
     ".next/dev/types/**/*.ts",
     ".next-dev/types/**/*.ts",
-    ".next-dev/dev/types/**/*.ts"
+    ".next-dev/dev/types/**/*.ts",
+    ".next-browser/types/**/*.ts",
+    ".next-browser/dev/types/**/*.ts",
+    ".next-live/types/**/*.ts",
+    ".next-live/dev/types/**/*.ts",
+    ".next-candidate/types/**/*.ts",
+    ".next-candidate/dev/types/**/*.ts",
+    ".next-planner/types/**/*.ts",
+    ".next-planner/dev/types/**/*.ts",
+    ".next-planner-final/types/**/*.ts",
+    ".next-planner-final/dev/types/**/*.ts",
+    ".next-map-images/types/**/*.ts",
+    ".next-map-images/dev/types/**/*.ts"
   ],
   "exclude": ["node_modules"]
 }

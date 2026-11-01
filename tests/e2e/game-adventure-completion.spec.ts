@@ -144,6 +144,8 @@ test('four independent players start the public Observatory with owned heroes an
         const key = owner.locator('[data-entity-id="key"]');
         await key.getByRole('button', { name: 'Подойти', exact: true }).click();
         await expect.poll(() => position(owner, id)).toEqual([4, 6]);
+        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-x', '4');
+        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-y', '6');
         await key.getByRole('button', { name: 'Подобрать', exact: true }).click();
         await expect(owner.locator('[data-inventory-id="key"]')).toHaveCount(1);
       },
@@ -155,6 +157,8 @@ test('four independent players start the public Observatory with owned heroes an
         const door = owner.locator('[data-entity-id="door"]');
         await door.getByRole('button', { name: 'Подойти', exact: true }).click();
         await expect.poll(() => position(owner, id)).toEqual([9, 5]);
+        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-x', '9');
+        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-y', '5');
         await door.getByRole('button', { name: 'Отпереть', exact: true }).click();
         await door.getByRole('button', { name: 'Открыть дверь', exact: true }).click();
         await expect(
@@ -169,6 +173,8 @@ test('four independent players start the public Observatory with owned heroes an
         const exit = owner.locator('[data-exit-id="roof-exit"]');
         await exit.getByRole('button', { name: 'Подойти', exact: true }).click();
         await expect.poll(() => position(owner, id)).toEqual([12, 5]);
+        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-x', '12');
+        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-y', '5');
         await exit.getByRole('button', { name: 'Перейти', exact: true }).click();
         await expect(owner.locator('[data-scene-profile="observatory-roof-v1"]')).toBeVisible();
       },
@@ -180,6 +186,8 @@ test('four independent players start the public Observatory with owned heroes an
         const journal = owner.locator('[data-entity-id="journal"]');
         await journal.getByRole('button', { name: 'Подойти', exact: true }).click();
         await expect.poll(() => position(owner, id)).toEqual([6, 4]);
+        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-x', '6');
+        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-y', '4');
         await journal.getByRole('button', { name: 'Подобрать', exact: true }).click();
       },
       { timeout: 30000 },

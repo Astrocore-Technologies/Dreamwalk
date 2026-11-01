@@ -1,7 +1,28 @@
 import { z } from 'zod';
+export const authoringContextSchema = z
+  .object({
+    projectId: z.uuid(),
+    expectedProjectRevision: z.number().int().min(0),
+    sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+    stage: z.enum(['concept', 'parts']),
+    role: z.string().regex(/^[a-z0-9_-]{1,80}$/),
+  })
+  .strict();
+export type AuthoringContext = z.infer<typeof authoringContextSchema>;
 export const generationRequestSchema = z
   .object({
-    adventureId: z.uuid(),
+    adventureId: z.uuid().optional(),
+    liveTestSessionId: z.uuid().optional(),
+    studioLocationContext: z
+      .object({
+        locationId: z.string().trim().min(1).max(80),
+        expectedEditRevision: z.number().int().positive(),
+        sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict()
+      .optional(),
+    authoringContext: authoringContextSchema.optional(),
+    privateReferenceAssetIds: z.array(z.uuid()).max(1).default([]),
     campaignContext: z
       .object({
         campaignId: z.uuid(),
@@ -36,6 +57,26 @@ export const generationRequestSchema = z
     declineReuse: z.boolean().optional(),
   })
   .strict()
+  .refine((v) => !v.studioLocationContext || !!v.adventureId)
+  .refine(
+    (v) =>
+      [v.authoringContext, v.campaignContext, v.studioLocationContext].filter(Boolean).length <= 1,
+  )
+  .refine((v) => !!v.adventureId || !!v.authoringContext, {
+    message: 'GENERATION_CONTEXT_REQUIRED',
+  })
+  .refine((v) => !(v.authoringContext && v.campaignContext), {
+    message: 'INVALID_GENERATION_CONTEXT',
+  })
+  .refine((v) => !v.privateReferenceAssetIds.length || !!v.authoringContext, {
+    message: 'PRIVATE_REFERENCE_CONTEXT_REQUIRED',
+  })
+  .refine((v) => v.referenceRevisionIds.length + v.privateReferenceAssetIds.length <= 2)
+  .refine(
+    (v) =>
+      new Set([...v.referenceRevisionIds, ...v.privateReferenceAssetIds]).size ===
+      v.referenceRevisionIds.length + v.privateReferenceAssetIds.length,
+  )
   .refine((v) => new Set(v.referenceRevisionIds).size === v.referenceRevisionIds.length)
   .refine((v) => !['sprite', 'object'].includes(v.kind) || v.background === 'transparent', {
     message: 'ALPHA_REQUIRED',
@@ -45,7 +86,11 @@ export interface ImagePolicy {
   version: string;
   scopeId: string;
   externalEnabled: boolean;
+  externalExpiresAt?: string;
   verifiedUpperMicros: number | null;
+  costBasis?: 'verified_bound' | 'approved_estimate';
+  estimatedTotalMicros?: number;
+  operationalReserveMicros?: number;
   mockUpperMicros: number;
   approved: boolean;
   totalCapMicros: number;

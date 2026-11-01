@@ -79,7 +79,18 @@ export function acceptNpcPlan(state: GameState, id: string, input: unknown): Gam
     if (
       !(
         state.rulesetVersion === 'hybrid-v3'
-          ? ['move_to', 'wait', 'inspect', 'give', 'open', 'close', 'lock', 'unlock', 'communicate']
+          ? [
+              'move_to',
+              'wait',
+              'inspect',
+              'give',
+              'open',
+              'close',
+              'lock',
+              'unlock',
+              'communicate',
+              ...(state.turnController?.phase === 'world' ? ['hit', 'push'] : []),
+            ]
           : ['move_to', 'wait', 'inspect', 'give']
       ).includes(a.kind)
     )
@@ -117,6 +128,7 @@ export function acceptNpcPlan(state: GameState, id: string, input: unknown): Gam
   return result(s, [{ kind: 'npc.plan_accepted', actorId: id, mapId: npc.mapId }]);
 }
 export function stepNpcPlan(state: GameState, id: string): GameResult {
+  if (state.turnController && state.turnController.phase !== 'world') return result(state);
   const npc = state.entities[id],
     brain = state.npcBrains?.[id];
   if (!npc || !brain || brain.cursor >= brain.plan.length) return result(state);

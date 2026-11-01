@@ -1,4 +1,5 @@
 'use client';
+import { VisualWorkshop } from '@/components/visual-authoring/workshop';
 import { GamePage } from '@/components/game/game-page';
 import { EmailActionPage } from '@/components/account-email';
 import { Suspense } from 'react';
@@ -53,6 +54,12 @@ function Router() {
     content = (
       <Protected>
         <HeroesPage />
+      </Protected>
+    );
+  else if (path === '/studio/visuals')
+    content = (
+      <Protected>
+        <VisualWorkshop />
       </Protected>
     );
   else if (path.startsWith('/studio'))

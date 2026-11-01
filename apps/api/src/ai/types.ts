@@ -72,6 +72,9 @@ export interface NpcProvider {
   readonly id: string;
   readonly version: string;
   readonly external: boolean;
+  readonly manualLive?: boolean;
+  canDispatchJob?(id: string): Promise<boolean>;
+  requestAuthorized?(id: string, context?: unknown): Promise<boolean>;
   generate(request: ProviderRequest): Promise<ProviderResult>;
   contextBudgetBytes?(maxCostMicros: number): number;
 }

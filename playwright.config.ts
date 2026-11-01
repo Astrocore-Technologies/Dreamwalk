@@ -10,6 +10,7 @@ export default defineConfig({
   reporter: [['list'], ['html', { open: 'never' }]],
   outputDir: 'test-results',
   use: {
+    ...(process.env.E2E_BROWSER_CHANNEL === 'chrome' ? { channel: 'chrome' as const } : {}),
     baseURL: process.env.E2E_BASE_URL || 'http://localhost:3000',
     trace: 'retain-on-failure',
     screenshot: 'only-on-failure',

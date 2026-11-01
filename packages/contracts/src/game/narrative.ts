@@ -8,6 +8,9 @@ const id = z
 const copy = (max: number) => z.string().trim().min(1).max(max);
 export const narrativePremiseSchema = z
   .object({
+    rules: z.string().trim().max(8000).optional(),
+    boundaries: z.array(z.string().trim().max(120)).max(20).optional(),
+    openingScene: z.string().trim().max(6000).optional(),
     title: copy(120),
     summary: z.string().trim().max(4000),
     world: z.string().trim().max(12000).optional(),
@@ -66,7 +69,18 @@ export const narrativeSceneSchema = z
   .strict();
 export const narrativeActionSchema = z
   .object({
-    kind: z.enum(['inspect', 'open', 'close', 'unlock', 'pick_up', 'give', 'transition', 'wait']),
+    kind: z.enum([
+      'inspect',
+      'open',
+      'close',
+      'unlock',
+      'pick_up',
+      'give',
+      'transition',
+      'wait',
+      'hit',
+      'push',
+    ]),
     targetId: id.optional(),
     itemId: id.optional(),
   })

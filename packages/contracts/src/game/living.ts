@@ -53,6 +53,8 @@ export const npcPersonalitySchema = z
   .strict();
 export type NpcPersonality = z.infer<typeof npcPersonalitySchema>;
 export type NpcObservationKind =
+  | 'harmed'
+  | 'pushed'
   | 'item_taken'
   | 'item_missing'
   | 'actor_seen'
@@ -192,6 +194,7 @@ export interface PrivateNpcNotice extends NpcNotice {
 }
 export const npcSpeechSchema = z
   .object({
+    replyLocale: z.enum(['uk', 'en', 'ru']).optional(),
     channel: z.enum(['say', 'whisper']),
     text: z.string().trim().min(1).max(1000).optional(),
     claim: z

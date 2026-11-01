@@ -150,7 +150,7 @@
   background: var(--surface);
 }
 .canvasWrap {
-  height: clamp(330px, 55vh, 600px);
+  height: clamp(380px, 62vh, 760px);
   position: relative;
   background: #171321;
   overflow: hidden;
@@ -481,7 +481,7 @@
 /* Main play stays scene + one story panel; tools are secondary below. */
 .playGrid {
   display: grid;
-  grid-template-columns: minmax(0, 1.1fr) minmax(340px, 0.9fr);
+  grid-template-columns: minmax(0, 1.8fr) minmax(300px, 0.7fr);
   gap: 20px;
   align-items: start;
   margin-bottom: 28px;
@@ -493,5 +493,93 @@
 @media (max-width: 1150px) {
   .playGrid {
     grid-template-columns: minmax(0, 1fr);
+  }
+}
+
+.turnPanel {
+  padding: 18px 22px;
+  margin-bottom: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+.turnPanel header,
+.inspection header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+}
+.turnPanel h2 {
+  margin: 4px 0;
+}
+.turnResources {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  margin: 14px 0;
+}
+.turnResources > div {
+  display: flex;
+  gap: 12px;
+  padding: 8px 12px;
+  border: 1px solid var(--line);
+  border-radius: 9px;
+  align-items: center;
+}
+.turnResources dt {
+  font-size: 0.73rem;
+  color: var(--muted);
+}
+.turnResources dd {
+  margin: 0;
+  color: var(--accent);
+  font-size: 1.05rem;
+  font-variant-numeric: tabular-nums;
+}
+.turnHint,
+.pendingReplies,
+.inspectionHelp {
+  font-size: 0.76rem;
+  line-height: 1.6;
+  color: var(--muted);
+  margin: 8px 0;
+}
+.pendingReplies {
+  color: var(--accent);
+}
+.inspectionButtons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin: 6px 0 14px;
+}
+.inspection {
+  padding: 16px 20px;
+  margin: 12px 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.inspection p {
+  white-space: pre-wrap;
+  line-height: 1.65;
+  font-size: 0.85rem;
+}
+@media (max-width: 700px) {
+  .turnPanel {
+    padding: 14px;
+  }
+  .turnPanel header {
+    align-items: flex-start;
+  }
+  .turnResources {
+    gap: 6px;
+  }
+  .turnResources > div {
+    padding: 7px 9px;
+  }
+  .canvasWrap {
+    height: clamp(320px, 55vh, 540px);
   }
 }

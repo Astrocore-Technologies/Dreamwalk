@@ -6,7 +6,7 @@ export default ts.config(
     ignores: [
       '**/node_modules/**',
       '**/.next/**',
-      '**/.next-dev/**',
+      '**/.next-*/**',
       '**/.local/**',
       '**/.npm-cache/**',
       '**/dist/**',

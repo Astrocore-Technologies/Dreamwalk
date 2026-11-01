@@ -44,7 +44,11 @@ process.env.ASSET_DIR = assetDir;
 const database = await startLocalPostgres();
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 async function run(command, args) {
-  const child = spawn(command, args, { stdio: 'inherit', env: process.env });
+  const child = spawn(
+    command === npm && process.platform === 'win32' ? process.execPath : command,
+    command === npm && process.platform === 'win32' ? [process.env.npm_execpath, ...args] : args,
+    { stdio: 'inherit', env: process.env },
+  );
   const [code] = await once(child, 'exit');
   if (code !== 0) throw new Error(`Game test subprocess failed (${code})`);
 }

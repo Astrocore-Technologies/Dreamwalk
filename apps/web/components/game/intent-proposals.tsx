@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { GameAction, GameProjection } from '@dreamwalk/contracts';
 import { api, errorMessage } from '@/lib/client';
 import { useT } from '@/lib/i18n';
+import { useTurnText } from './turn-messages';
 import { Button, ErrorBox, Field, Textarea } from '@/components/ui';
 type Proposal = {
   id: string;
@@ -15,6 +16,8 @@ type Proposal = {
   expiresAt: string;
 };
 const actionLabels: Record<GameAction['kind'], string> = {
+  hit: 'Ударить',
+  push: 'Толкнуть',
   move_to: 'Подойти',
   inspect: 'Осмотреть',
   pick_up: 'Подобрать',
@@ -42,6 +45,7 @@ export function IntentProposals({
   disabled: boolean;
 }) {
   const { t } = useT();
+  const turnText = useTurnText();
   const [text, setText] = useState(''),
     [proposal, setProposal] = useState<Proposal | null>(null),
     [busy, setBusy] = useState(false),
@@ -184,7 +188,10 @@ export function IntentProposals({
           ) : proposal.status === 'proposed' && action ? (
             <>
               <p>
-                {t('Предлагаемое действие')}: {t(actionLabels[action.kind])}
+                {t('Предлагаемое действие')}:{' '}
+                {action.kind === 'hit' || action.kind === 'push'
+                  ? turnText(action.kind)
+                  : t(actionLabels[action.kind])}
                 {target
                   ? ` · ${target.label || t('Предмет')}`
                   : action.targetId &&

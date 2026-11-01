@@ -3,6 +3,8 @@ import type { PoolClient, QueryResultRow } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Db } from '../db';
+import { LiveTestService } from '../live-test/service';
+import { ManualLiveProvider } from '../live-test/provider';
 import { fail } from '../errors';
 import { npcTelemetrySnapshot } from '../game/npc-telemetry';
 import { sourceAccessSql, sourceLiveSql } from '../game/playable.service';
@@ -136,6 +138,17 @@ export class NpcAiEngine {
         this.policy.maxContextBytes,
     );
   }
+  manualLive() {
+    return this.provider.manualLive === true;
+  }
+  manualRequestAuthorized(id: string, context?: unknown) {
+    return this.provider.requestAuthorized?.(id, context) ?? Promise.resolve(false);
+  }
+  async rejectManualUnqueuedRequest(c: PoolClient, requestId: string, code: string) {
+    return this.provider instanceof ManualLiveProvider
+      ? this.provider.session.rejectUndispatchedRequest(c, requestId, code)
+      : false;
+  }
   public configuration() {
     return {
       provider: this.provider.external ? 'external' : 'mock',
@@ -256,6 +269,21 @@ export class NpcAiEngine {
     };
     return client ? run(client) : this.db.tx(run);
   }
+  private async turnAuthorized(c: PoolClient, campaignId: string, context: DecisionContext) {
+    const row = (await c.query('SELECT state FROM game_campaigns WHERE id=$1', [campaignId]))
+      .rows[0];
+    const turn = row?.state?.turnController;
+    if (!turn) return true;
+    const fence = context.turnFence as
+      { roundId?: unknown; phaseEpoch?: unknown; rulesetVersion?: unknown } | undefined;
+    return (
+      turn.phase === 'world' &&
+      !!fence &&
+      fence.roundId === turn.roundId &&
+      fence.phaseEpoch === turn.phaseEpoch &&
+      fence.rulesetVersion === turn.ruleset.version
+    );
+  }
   private dto(job: Job) {
     return {
       id: job.id,
@@ -365,6 +393,8 @@ export class NpcAiEngine {
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
         return this.dto(previous);
       }
+      if (!(await this.turnAuthorized(c, scope.campaignId, context)))
+        fail(409, 'TURN_PHASE_STALE', 'TURN_PHASE_STALE');
       if (this.policy.killSwitch || (this.provider.external && !this.policy.externalApproved))
         fail(503, 'PROVIDER_DISABLED', 'PROVIDER_DISABLED');
       const count = Number(
@@ -577,6 +607,7 @@ export class NpcAiEngine {
   }
   async run(id: string, isActive: () => Promise<boolean>) {
     if (this.policy.killSwitch || !(await isActive())) return;
+    if (this.provider.canDispatchJob && !(await this.provider.canDispatchJob(id))) return;
     const claimed = await this.db.tx(async (c) => {
       const scopeRow = (await c.query('SELECT campaign_id FROM npc_ai_jobs WHERE id=$1', [id]))
         .rows[0];
@@ -612,6 +643,10 @@ export class NpcAiEngine {
         });
       } catch {
         await this.finalize(c, id, 'cancelled');
+        return null;
+      }
+      if (!(await this.turnAuthorized(c, j.campaign_id, j.context))) {
+        await this.finalize(c, id, 'stale');
         return null;
       }
       const key = cacheKey(
@@ -653,6 +688,10 @@ export class NpcAiEngine {
         "UPDATE npc_ai_jobs SET status='reserved',started_at=NULL,deadline_at=NULL WHERE id=$1 AND status='running' AND NOT cancel_requested",
         [id],
       );
+      return;
+    }
+    if (!(await this.db.tx((c) => this.turnAuthorized(c, claimed.campaign_id, claimed.context)))) {
+      await this.db.tx((c) => this.finalize(c, id, 'stale'));
       return;
     }
     const controller = new AbortController();
@@ -771,6 +810,8 @@ export class NpcAiEngine {
     }
   }
   private async settleProvider(c: PoolClient, j: Job, actual: number | null, unknown: boolean) {
+    if (this.provider instanceof ManualLiveProvider)
+      await this.provider.session.settleJob(c, j.id, actual, unknown);
     const upper = Number(j.provider_upper_micros);
     if (j.provider_budget_status === 'reserved') {
       await c.query(
@@ -1030,6 +1071,9 @@ export class NpcAiEngine {
             'UPDATE npc_ai_provider_budgets SET blocked=true,overrun_micros=overrun_micros+$2 WHERE provider_id=$1',
             [j.provider_id, nextOverrun - previousOverrun],
           );
+        // The shared ledger has no separate overrun column: retain the entire late bill.
+        if (this.provider instanceof ManualLiveProvider)
+          await this.provider.session.settleJob(c, j.id, actualMicros, false);
         await this.settleProvider(c, j, Math.min(actualMicros, upper), false);
         await c.query('UPDATE npc_ai_jobs SET provider_actual_micros=$2 WHERE id=$1', [
           id,
@@ -1086,8 +1130,12 @@ export class NpcAiService extends NpcAiEngine implements OnModuleInit, OnModuleD
       this.maintaining = false;
     }
   }
-  constructor(@Inject(Db) db: Db) {
+  constructor(@Inject(Db) db: Db, @Inject(LiveTestService) live: LiveTestService) {
     const configured = readNpcAiConfiguration();
-    super(db, configured.provider, configured.policy);
+    super(
+      db,
+      live.config.enabled ? new ManualLiveProvider(configured.provider, live) : configured.provider,
+      configured.policy,
+    );
   }
 }

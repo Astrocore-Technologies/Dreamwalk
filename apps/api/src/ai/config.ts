@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { LIVE_TEXT, readLiveTestConfig } from '../live-test/config';
 import { OpenAiNpcProvider } from './openai-provider';
 import { HttpJsonNpcProvider, MockNpcProvider } from './provider';
 import type { AiPolicy, NpcProvider } from './types';
@@ -11,6 +12,34 @@ export function readNpcAiConfiguration(env: NodeJS.ProcessEnv = process.env): {
   provider: NpcProvider;
   policy: Partial<AiPolicy>;
 } {
+  const live = readLiveTestConfig(env);
+  if (live.enabled) {
+    if (!env.NPC_AI_API_KEY) throw new Error('LIVE_TEST_AUTHORIZED_KEY_REQUIRED');
+    return {
+      provider: new OpenAiNpcProvider({
+        enabled: true,
+        apiKey: env.NPC_AI_API_KEY,
+        model: LIVE_TEXT.model,
+        version: 'manual-live-text-20261031-v1',
+        maxInputBytes: LIVE_TEXT.maxInputBytes,
+        maxModelInputTokens: LIVE_TEXT.contextTokens,
+        maxOutputTokens: LIVE_TEXT.maxOutputTokens,
+        maxResponseBytes: 128000,
+        reasoningEffort: 'none',
+        inputMicrosPerMillion: LIVE_TEXT.inputMicrosPerMillion,
+        outputMicrosPerMillion: LIVE_TEXT.outputMicrosPerMillion,
+      }),
+      policy: {
+        externalApproved: true,
+        killSwitch: env.NPC_AI_KILL_SWITCH === 'true',
+        creditPrice: 0,
+        providerUpperMicros: LIVE_TEXT.upperMicros,
+        providerCapMicros: LIVE_TEXT.capMicros,
+        timeoutMs: 60000,
+        version: 'manual-live-text-20261031-v1',
+      },
+    };
+  }
   const c = z
     .object({
       NPC_AI_PROVIDER: z.enum(['mock', 'http-json', 'openai-responses']).default('mock'),

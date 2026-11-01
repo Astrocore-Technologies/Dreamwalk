@@ -11,3 +11,5 @@ docs/source-spec.ru.md
 apps/web/next-env.d.ts
 
 .npm-cache
+
+.next-*

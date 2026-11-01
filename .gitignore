@@ -18,3 +18,11 @@ playwright-report/
 .next-dev/
 
 .npm-cache/
+
+# Independently built local preview refinement.
+apps/web/.next-browser/
+
+apps/web/.next-live/
+apps/web/.next-candidate/
+
+apps/web/.next-*/

@@ -1,3 +1,7 @@
+import net from 'node:net';
+import { mkdtemp, rm } from 'node:fs/promises';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 /** API/DB integration runner. All processes share one isolated local namespace. */
 import { startLocalPostgres } from './postgres-local.mjs';
 import { forceMockNpcTestEnvironment } from './mock-npc-test-env.mjs';
@@ -8,6 +12,24 @@ import { readdirSync } from 'node:fs';
 import pg from 'pg';
 import { setTimeout as delay } from 'node:timers/promises';
 forceMockNpcTestEnvironment();
+if (process.env.NODE_ENV === 'production') throw new Error('Disposable platform tests only');
+delete process.env.DATABASE_URL;
+
+async function freePort() {
+  const server = net.createServer();
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const port = server.address().port;
+  await new Promise((r) => server.close(r));
+  return port;
+}
+process.env.LOCAL_POSTGRES_PORT = String(await freePort());
+process.env.API_PORT = String(await freePort());
+process.env.TEST_API_URL = `http://127.0.0.1:${process.env.API_PORT}/api/v1`;
+process.env.TEST_WEB_ORIGIN = 'http://localhost:3000';
+process.env.WEB_ORIGIN = process.env.TEST_WEB_ORIGIN;
+const assetDir = await mkdtemp(join(tmpdir(), 'dreamwalk-platform-assets-'));
+process.env.ASSET_DIR = assetDir;
 process.env.LOCAL_POSTGRES_CLUSTER = `test-${Date.now()}`;
 const database = process.env.DATABASE_URL ? null : await startLocalPostgres();
 process.env.NODE_ENV = 'test';
@@ -15,7 +37,11 @@ process.env.WEB_ORIGIN ||= 'http://localhost:3000';
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
 async function run(command, args) {
   await new Promise((resolve, reject) => {
-    const child = spawn(command, args, { stdio: 'inherit', env: process.env });
+    const child = spawn(
+      command === npm && process.platform === 'win32' ? process.execPath : command,
+      command === npm && process.platform === 'win32' ? [process.env.npm_execpath, ...args] : args,
+      { stdio: 'inherit', env: process.env },
+    );
     child.on('exit', (code) =>
       code === 0 ? resolve() : reject(new Error(`${command} ${args.join(' ')} exited ${code}`)),
     );
@@ -23,19 +49,21 @@ async function run(command, args) {
 }
 let api;
 try {
-  await run(npm, ['run', 'build', '-w', '@dreamwalk/contracts']);
-  await run(npm, ['run', 'build', '-w', '@dreamwalk/game-core']);
-  await run(npm, ['run', 'build', '-w', '@dreamwalk/api']);
-  await run(npm, ['run', 'db:migrate']);
-  await run(npm, ['run', 'db:seed']);
+  if (!process.argv.includes('--skip-build')) {
+    await run(npm, ['run', 'build', '-w', '@dreamwalk/contracts']);
+    await run(npm, ['run', 'build', '-w', '@dreamwalk/game-core']);
+    await run(npm, ['run', 'build', '-w', '@dreamwalk/api']);
+  }
+  await run(process.execPath, ['apps/api/dist/migrate.js']);
+  await run(process.execPath, ['apps/api/dist/seed.js']);
   const checkDb = new pg.Client({ connectionString: process.env.DATABASE_URL });
   await checkDb.connect();
   const countSql =
     'SELECT (SELECT count(*) FROM users) AS users, (SELECT count(*) FROM adventures) AS adventures, (SELECT count(*) FROM npcs) AS npcs, (SELECT count(*) FROM model_profiles) AS models, (SELECT count(*) FROM adventure_versions) AS versions';
   try {
     const before = (await checkDb.query(countSql)).rows[0];
-    await run(npm, ['run', 'db:migrate']);
-    await run(npm, ['run', 'db:seed']);
+    await run(process.execPath, ['apps/api/dist/migrate.js']);
+    await run(process.execPath, ['apps/api/dist/seed.js']);
     assert.deepEqual(
       (await checkDb.query(countSql)).rows[0],
       before,
@@ -49,7 +77,7 @@ try {
   let ready = false;
   for (let attempt = 0; attempt < 60; attempt++) {
     try {
-      if ((await fetch('http://127.0.0.1:4000/api/v1/auth/me')).ok) {
+      if ((await fetch(process.env.TEST_API_URL + '/auth/me')).ok) {
         ready = true;
         break;
       }
@@ -80,4 +108,5 @@ try {
     }
   }
   if (database) await database.stop();
+  await rm(assetDir, { recursive: true, force: true });
 }

@@ -89,6 +89,7 @@ export function npcActionAllowed(s: GameState, npcId: string, a: GameAction): bo
     )
   )
     return false;
+  if (taboo.includes('harm') && ['hit', 'push'].includes(a.kind)) return false;
   if (taboo.includes('steal') && a.kind === 'pick_up') return false;
   if (taboo.includes('give_valuables') && a.kind === 'give') return false;
   if (taboo.includes('lock_doors') && a.kind === 'lock') return false;

@@ -1,0 +1,63 @@
+.panel {
+  display: grid;
+  gap: 14px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  min-width: 0;
+}
+.panel h2,
+.panel h3,
+.panel p {
+  margin: 0;
+}
+.budget {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 10px;
+  margin: 0;
+}
+.budget div {
+  min-width: 0;
+  padding: 10px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.budget dt,
+.note {
+  color: var(--muted);
+  font-size: 0.76rem;
+  line-height: 1.5;
+}
+.budget dd {
+  margin: 4px 0 0;
+  overflow-wrap: anywhere;
+}
+.check {
+  display: flex;
+  gap: 9px;
+  align-items: flex-start;
+  font-size: 0.8rem;
+  line-height: 1.5;
+}
+.check input {
+  flex: 0 0 auto;
+  margin-top: 5px;
+}
+.request {
+  display: grid;
+  gap: 10px;
+  padding: 12px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  min-width: 0;
+}
+.request code {
+  overflow-wrap: anywhere;
+}
+.actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}

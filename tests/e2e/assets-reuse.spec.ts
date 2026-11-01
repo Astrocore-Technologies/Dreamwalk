@@ -89,6 +89,8 @@ test('original raster reuse is authorized, autosaved and pinned in actual playab
     await page.getByRole('button', { name: /Локации$/ }).click();
     const editor = page.getByRole('region', { name: 'Игровая карта', exact: true });
     await editor.getByRole('button', { name: 'Шаблон: внутренний двор', exact: true }).click();
+    // This regression intentionally covers the retained simultaneous compatibility rules.
+    await editor.getByLabel('Пошаговый режим Dreamwalk', { exact: true }).uncheck();
     const art = page.getByRole('region', { name: 'Графика приключения', exact: true });
     await expect(art.getByLabel('Место в сцене', { exact: true })).toBeVisible();
     const slot = await art

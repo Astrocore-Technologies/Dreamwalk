@@ -3,6 +3,7 @@ import {
   storyTurnProposalSchema,
   narrativeActionSchema,
   type StoryTurnInput,
+  type Locale,
   type StorySegment,
   type StoryActionPreview,
   type StoryTurnProposal,
@@ -105,6 +106,7 @@ function safeSpeech(
   segment: StorySegment,
   turnId: string,
   selectedObservationIds?: string[],
+  replyLocale: Locale = 'en',
 ) {
   const identity = { turnId, segmentIndex: segment.index };
   const speech = { channel, text: segment.text };
@@ -132,7 +134,15 @@ function safeSpeech(
         ...(next.npcBrains?.[npcId]?.living?.observations ?? []).slice(-16).map((o) => o.id),
       ]),
     ].slice(0, 16);
-  const safe = buildNpcPublicSpeechContext(next, npcId, audience, ids, requested);
+  const safe = buildNpcPublicSpeechContext(
+    next,
+    npcId,
+    audience,
+    ids,
+    requested,
+    undefined,
+    replyLocale,
+  );
   const current = safe.claims.find((c) => c.observationId === marker);
   if (!current) throw new Error('FORBIDDEN');
   return {
@@ -209,7 +219,16 @@ export function buildStoryTurnContext(
           ).state;
       }
     } else if (input.targetNpcId) {
-      const r = safeSpeech(simulated, actorId, input.targetNpcId, input.channel, segment, turnId);
+      const r = safeSpeech(
+        simulated,
+        actorId,
+        input.targetNpcId,
+        input.channel,
+        segment,
+        turnId,
+        undefined,
+        input.replyLocale,
+      );
       simulated = r.state;
       dialogues.push(r.context);
     }
@@ -235,6 +254,7 @@ export function buildStoryTurnContext(
     actorId,
     mode,
     channel: input.channel,
+    replyLocale: input.replyLocale ?? 'en',
     targetNpcId: input.targetNpcId ?? null,
     segments: parsed.segments,
     mapId: actor.mapId,
@@ -243,7 +263,9 @@ export function buildStoryTurnContext(
     actionPreview,
     actionOutcomes,
     dialogues,
-    ...(mode === 'director' ? { director: buildNarrativeContext(state, actorId, input.text) } : {}),
+    ...(mode === 'director'
+      ? { director: buildNarrativeContext(state, actorId, input.text, input.replyLocale) }
+      : {}),
     allowedActions: ['inspect', 'open', 'close', 'unlock', 'pick_up', 'give', 'wait'],
   };
   const readset = {
@@ -289,7 +311,7 @@ export function createMockStoryTurnProposal(
     };
   const narrative =
     context.mode === 'director'
-      ? createMockNarrativeProposal(state, actorId, input.text, turnId)
+      ? createMockNarrativeProposal(state, actorId, input.text, turnId, input.replyLocale)
       : null;
   return {
     turnId,
@@ -418,12 +440,13 @@ export function applyStoryTurnProposal(
         });
       }
     }
-    const directorContext = buildNarrativeContext(next, actorId, input.text);
+    const directorContext = buildNarrativeContext(next, actorId, input.text, input.replyLocale);
     const r = applyNarrativeProposal(
       next,
       actorId,
       { turnId, contextHash: directorContext.contextHash, ...p.narrative!, actions: [] },
       input.text,
+      input.replyLocale,
     );
     if (r.error) return reject(r.error);
     next = recordNpcEvents(next, r.state, r.events, `story:${turnId}`).state;
@@ -477,6 +500,7 @@ export function applyStoryTurnProposal(
             segment,
             turnId,
             context.dialogues.find((d) => d.segmentIndex === segment.index)?.observationIds,
+            input.replyLocale,
           );
         } catch {
           return reject();
@@ -493,6 +517,7 @@ export function applyStoryTurnProposal(
           observationIds: spoken.context.observationIds,
           requestedFactIds: spoken.context.requestedFactIds,
           contextHash: spoken.context.speechHash,
+          replyLocale: input.replyLocale,
         });
         if (r.error) return reject(r.error);
         const sourceId = r.state.npcUtterances?.find(

@@ -158,6 +158,7 @@ export const profileSchema = z
   .strict();
 export const heroSchema = z
   .object({
+    characterPackageVersionId: z.uuid().nullable().optional(),
     name: text(80).min(2),
     portraitAssetId: idSchema.nullable().default(null),
     backstory: text(6000).default(''),
@@ -258,6 +259,7 @@ export function safeNpcMetadata(npc: NpcMetadata): NpcMetadata {
 }
 export const npcSchema = z
   .object({
+    characterPackageVersionId: z.uuid().nullable().optional(),
     description: text(4000).default(''),
     sourceLanguage: localeSchema.default('ru'),
     sourceRevision: z.number().int().min(1).default(1),
