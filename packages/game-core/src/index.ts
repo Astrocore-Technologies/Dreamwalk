@@ -1,3 +1,4 @@
+import { consumeWorldItem } from './world-items';
 import { projectTurnController, applyTurnAction, applyWorldTurnAction, turnFence } from './turns';
 import { projectObjectives } from './objectives';
 import { projectVisibleArtBindings } from './art';
@@ -309,6 +310,7 @@ function actionInternal(
   if (a.kind === 'npc' && !npcActionAllowed(state, id, action)) return fail(state, 'FORBIDDEN');
   if (a.encounterId && !inRound) return fail(state, 'WRONG_MODE');
   if (!gameActionSchema.safeParse(action).success) return fail(state, 'INVALID_ACTION');
+  if (action.kind === 'consume') return consumeWorldItem(state, id, action.targetId!);
   if (action.kind === 'communicate') return communicateNpcObservations(state, id, action);
   if (action.kind === 'move_to') {
     if (!action.target) return fail(state, 'INVALID_ACTION');
@@ -408,6 +410,15 @@ function actionInternal(
     return fail(state, 'INVALID_ACTION');
   switch (action.kind) {
     case 'pick_up':
+      if (
+        t.item?.portable === false ||
+        (actor.inventory?.length ?? 0) >= (s.worldItemRules?.inventoryCapacity ?? 128)
+      )
+        return fail(state, 'FORBIDDEN');
+      if (t.item) {
+        delete t.item.surfaceId;
+        delete t.item.surfaceSlot;
+      }
       if (t.kind !== 'item' || t.ownerId) return fail(state, 'TARGET_UNAVAILABLE');
       t.ownerId = id;
       (actor.inventory ??= []).push(t.id);
@@ -733,6 +744,7 @@ export function projectState(s: GameState, id: string): GameProjection {
     delete c.lastMoveTick;
     delete c.knownIds;
     delete c.inventory;
+    delete c.itemStock;
     if (c.id !== id) {
       delete c.movementTrace;
       delete c.lastInputSeq;
@@ -990,3 +1002,5 @@ export * from './narrative';
 export * from './story-turn';
 
 export * from './turns';
+
+export * from './world-items';

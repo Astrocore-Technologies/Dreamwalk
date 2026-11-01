@@ -14,12 +14,14 @@ export async function ownedCharacterPackage(c: PoolClient, userId: string, versi
   const manifest = row.manifest as VisualPackage;
   if (visualDigest({ manifest, plan: row.plan }) !== row.checksum)
     fail(409, 'ASSET_INTEGRITY_FAILED', 'ASSET_INTEGRITY_FAILED');
-  characterAnimationSchema.parse(manifest.animation);
+  if (manifest.representation !== 'static') characterAnimationSchema.parse(manifest.animation);
   if (
-    !['concept', 'portrait', 'sheet'].every((role) => manifest.parts.some((p) => p.role === role))
+    !(manifest.representation === 'static' ? ['sprite'] : ['concept', 'portrait', 'sheet']).every(
+      (role) => manifest.parts.some((p) => p.role === role),
+    )
   )
     fail(409, 'ART_UNAVAILABLE', 'ART_UNAVAILABLE');
-  const ids = manifest.parts.map((p) => p.revisionId);
+  const ids = [...new Set(manifest.parts.map((p) => p.revisionId))];
   const parts = (
     await c.query(
       `SELECT r.*,a.owner_id FROM art_asset_revisions r JOIN assets a ON a.id=r.upload_id

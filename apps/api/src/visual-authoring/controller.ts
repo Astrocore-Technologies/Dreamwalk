@@ -14,6 +14,12 @@ export class VisualAuthoringController {
     await this.auth.require(req);
     return this.visuals.configuration();
   }
+  @Post('character-sprite/prepare') async characterSprite(
+    @Req() req: Request,
+    @Body() body: unknown,
+  ) {
+    return this.visuals.prepareCharacterSprite((await this.auth.require(req)).id, body);
+  }
   @Get('projects') async list(@Req() req: Request) {
     return this.visuals.list((await this.auth.require(req)).id);
   }

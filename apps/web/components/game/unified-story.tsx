@@ -13,7 +13,6 @@ import { api, ApiError, errorMessage } from '@/lib/client';
 import { getLocale, useT } from '@/lib/i18n';
 import { Button, ErrorBox, Textarea } from '@/components/ui';
 import { noticeLabels } from './living-notices';
-import { PartyChat } from './party-chat';
 import { SceneMedia } from './scene-media';
 import { providerReserveKnown, providerBoundKnown } from './narrative-guards';
 import {
@@ -43,6 +42,7 @@ const clarificationKeys: Record<string, StoryMessageKey> = {
   TOO_MANY_SEGMENTS: 'segments',
 };
 const actionLabels = {
+  consume: 'Поесть',
   inspect: 'Осмотреть',
   open: 'Открыть дверь',
   close: 'Закрыть дверь',
@@ -58,7 +58,6 @@ export function UnifiedStory({
   recipient,
   onClearRecipient,
   disabled,
-  partyDisabled = disabled,
   onWorldRefresh,
   onBusyChange,
 }: {
@@ -77,7 +76,6 @@ export function UnifiedStory({
   const h = useStoryText(),
     { t } = useT(),
     hintId = useId();
-  const [tab, setTab] = useState<'story' | 'ooc'>('story');
   const [channel, setChannel] = useState<'say' | 'whisper'>('say');
   const [text, setText] = useState(''),
     [feed, setFeed] = useState<StoryTurnFeed | null>(null);
@@ -393,23 +391,8 @@ export function UnifiedStory({
       data-testid="unified-story"
       data-canon-revision={feed?.canonRevision}
     >
-      <div className={styles.tabs} role="tablist" aria-label={h('title')}>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'story'}
-          onClick={() => setTab('story')}
-        >
-          {h('title')}
-        </button>
-        <button
-          type="button"
-          role="tab"
-          aria-selected={tab === 'ooc'}
-          onClick={() => setTab('ooc')}
-        >
-          {h('ooc')}
-        </button>
+      <div className={styles.tabs}>
+        <strong>{h('title')}</strong>
         {feed && (
           <small className={styles.badge}>
             {projection.turn
@@ -418,7 +401,7 @@ export function UnifiedStory({
           </small>
         )}
       </div>
-      <div hidden={tab !== 'story'}>
+      <div>
         <div className={styles.story}>
           <div
             className={styles.feed}
@@ -685,9 +668,6 @@ export function UnifiedStory({
             />
           </div>
         </div>
-      </div>
-      <div hidden={tab !== 'ooc'} className={styles.ooc}>
-        <PartyChat campaignId={campaignId} actorId={projection.actorId} disabled={partyDisabled} />
       </div>
     </section>
   );

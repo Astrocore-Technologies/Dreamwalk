@@ -53,6 +53,8 @@ import { fail } from '../errors';
 import { createAuthorSandbox } from './sandbox';
 import { fixtureRaster } from './fixture-art';
 import { createLocationFixture } from './location-fixture';
+import { characterTargetSchema, readCharacterVisualSource } from './character-source';
+import { normalizeStaticSprite } from './static-sprite';
 import { ownedCharacterPackage } from './character-package';
 import { visualDigest as digest } from './fingerprint';
 import { authorizeSpatialPlan, spatialReadset, type SpatialAuthority } from './spatial-plan';
@@ -147,7 +149,7 @@ export class VisualAuthoringService {
   private artStage(p: Project, role: VisualGenerationRole) {
     if (
       p.generation_mode !== 'external' ||
-      !requiredArtRoles(p.kind, p.status, p.plan).includes(role) ||
+      !requiredArtRoles(p.kind, p.status, p.plan, p.brief).includes(role) ||
       !['concept', 'approved'].includes(p.status) ||
       (p.kind === 'location' &&
         (p.status !== 'approved' || !p.plan || p.plan_origin === 'ai-pending'))
@@ -360,7 +362,7 @@ export class VisualAuthoringService {
   async generation(owner: string, id: string) {
     return this.db.tx(async (c) => {
       const p = await this.own(c, owner, id),
-        roles = requiredArtRoles(p.kind, p.status, p.plan);
+        roles = requiredArtRoles(p.kind, p.status, p.plan, p.brief);
       const rows = (
         await c.query(
           `SELECT s.*,j.status AS job_status,j.admitted_revision_id,j.actual_micros,j.error_code
@@ -468,8 +470,12 @@ export class VisualAuthoringService {
         width: part.width,
         height: part.height,
       };
-      if (files && isSheet(role)) {
-        const raster = await normalizeArtAtlas(part.bytes),
+      const staticSprite =
+        p.kind === 'character' && p.brief.renderMode === 'static' && role === 'concept';
+      if (files && (isSheet(role) || staticSprite)) {
+        const raster = staticSprite
+            ? await normalizeStaticSprite(part.bytes)
+            : await normalizeArtAtlas(part.bytes),
           uploadId = randomUUID();
         files.push(uploadId);
         await storeRasterTx(c, owner, uploadId, raster);
@@ -482,10 +488,12 @@ export class VisualAuthoringService {
             style: 'drawn2D',
             camera: 'top-down',
             tags: ['authoring', 'normalized-atlas'],
-            variant: 'normalized-atlas-v1',
+            variant: staticSprite ? 'static-sprite-v1' : 'normalized-atlas-v1',
             provenance: {
               source: 'generated',
-              provider: 'deterministic-atlas-normalization',
+              provider: staticSprite
+                ? 'deterministic-alpha-crop'
+                : 'deterministic-atlas-normalization',
               reference: part.revisionId,
             },
             rights: {
@@ -498,7 +506,7 @@ export class VisualAuthoringService {
           },
         });
         output = {
-          role,
+          role: staticSprite ? 'sprite' : role,
           revisionId: revision.id,
           uploadId,
           sha256: raster.sha256,
@@ -669,6 +677,11 @@ export class VisualAuthoringService {
       fail(404, 'ASSET_NOT_FOUND', 'ASSET_NOT_FOUND');
   }
   private async fresh(c: PoolClient, owner: string, p: Project) {
+    if (p.brief.target) {
+      const source = await readCharacterVisualSource(c, owner, p.brief.target);
+      if (source.hash !== p.brief.target.sourceHash)
+        fail(409, 'MEDIA_CONTEXT_STALE', 'MEDIA_CONTEXT_STALE');
+    }
     if (p.adventure_id && (await this.source(c, owner, p.adventure_id)).hash !== p.source_hash)
       fail(409, 'STALE_STATE', 'STALE_STATE');
     await this.photo(c, owner, p);
@@ -743,9 +756,56 @@ export class VisualAuthoringService {
       height: raster.height,
     };
   }
+  async prepareCharacterSprite(owner: string, input: unknown) {
+    const b = z
+      .object({
+        operationId: z.uuid(),
+        target: characterTargetSchema,
+        appearance: z.string().trim().max(1500).optional(),
+        sourcePhotoPermission: z.boolean().default(false),
+        allowOutputReuse: z.boolean().default(false),
+      })
+      .strict()
+      .parse(input);
+    const source = await this.db.tx((c) => readCharacterVisualSource(c, owner, b.target));
+    const portraitId = b.sourcePhotoPermission ? source.portraitAssetId : null;
+    const appearance = (b.appearance ?? source.appearance).trim();
+    if (appearance.length < 10 && !portraitId)
+      fail(400, 'CHARACTER_APPEARANCE_REQUIRED', 'CHARACTER_APPEARANCE_REQUIRED');
+    return this.create(owner, {
+      operationId: b.operationId,
+      kind: 'character',
+      generationMode: 'external',
+      brief: {
+        name: source.name,
+        description: appearance || 'Use the owner-authorized portrait as the appearance reference.',
+        outfit: 'Preserve described or referenced clothing.',
+        appearance,
+        style: 'drawn2D',
+        renderMode: 'static',
+        target: { ...b.target, sourceHash: source.hash },
+        source: portraitId ? 'photo' : 'text',
+        ...(portraitId ? { sourcePhotoAssetId: portraitId } : {}),
+        sourcePhotoPermission: !!portraitId && b.sourcePhotoPermission,
+        allowOutputReuse: b.allowOutputReuse,
+      },
+    });
+  }
+
   async create(owner: string, input: unknown) {
     const b = visualAuthoringRequestSchema.parse(input);
+    if (
+      b.kind === 'character' &&
+      b.brief.renderMode === 'static' &&
+      b.generationMode !== 'external'
+    )
+      fail(400, 'EXTERNAL_MODE_REQUIRED', 'EXTERNAL_MODE_REQUIRED');
     return this.mutate(owner, b.operationId, { action: 'create', ...b }, async (c, files) => {
+      if (b.kind === 'character' && b.brief.target) {
+        const source = await readCharacterVisualSource(c, owner, b.brief.target);
+        if (source.hash !== b.brief.target.sourceHash)
+          fail(409, 'MEDIA_CONTEXT_STALE', 'MEDIA_CONTEXT_STALE');
+      }
       const count = (
         await c.query(
           'SELECT count(*)::int AS n FROM visual_authoring_projects WHERE owner_id=$1',
@@ -931,8 +991,10 @@ export class VisualAuthoringService {
           owner,
           p,
           p.kind === 'character'
-            ? ['concept', 'portrait', 'sheet']
-            : requiredArtRoles(p.kind, p.status, p.plan),
+            ? p.brief.renderMode === 'static'
+              ? ['concept']
+              : ['concept', 'portrait', 'sheet']
+            : requiredArtRoles(p.kind, p.status, p.plan, p.brief),
           files,
         );
         parts.push(...live.parts);
@@ -990,7 +1052,11 @@ export class VisualAuthoringService {
             }
           : {}),
         parts,
-        ...(p.kind === 'character' ? { animation: characterAnimation } : {}),
+        ...(p.kind === 'character'
+          ? p.brief.renderMode === 'static'
+            ? { representation: 'static' as const }
+            : { animation: characterAnimation }
+          : {}),
       };
       await c.query(
         'INSERT INTO visual_package_versions(id,project_id,owner_id,kind,manifest,plan,checksum) VALUES($1,$2,$3,$4,$5,$6,$7)',
@@ -1168,6 +1234,16 @@ export class VisualAuthoringService {
       .parse(input);
     return this.mutate(owner, b.operationId, { action: 'equip', id, ...b }, async (c) => {
       const { manifest } = await ownedCharacterPackage(c, owner, z.uuid().parse(id));
+      const project = await this.own(c, owner, manifest.projectId);
+      if (project.brief.target) {
+        if (
+          b.createTarget ||
+          b.targetType !== project.brief.target.kind ||
+          b.heroId !== project.brief.target.id
+        )
+          fail(403, 'FORBIDDEN', 'FORBIDDEN');
+        await this.fresh(c, owner, project);
+      }
       const table = b.targetType === 'npc' ? 'npcs' : 'heroes';
       const targetId = b.heroId ?? randomUUID();
       if (b.createTarget) {
@@ -1193,6 +1269,20 @@ export class VisualAuthoringService {
         ])
       ).rows[0];
       if (!hero) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      if (manifest.representation === 'static') {
+        await c.query(
+          `UPDATE ${table} SET ${table === 'npcs' ? 'edit_revision=edit_revision+1,' : ''}data=jsonb_set(data,'{characterPackageVersionId}',$3::jsonb),updated_at=now() WHERE id=$1 AND owner_id=$2`,
+          [targetId, owner, JSON.stringify(id)],
+        );
+        return {
+          equipped: true,
+          targetType: b.targetType,
+          heroId: targetId,
+          packageVersionId: id,
+          providerCalls: 0,
+          chargeMicros: 0,
+        };
+      }
       await c.query(
         `UPDATE ${table} SET ${table === 'npcs' ? 'edit_revision=edit_revision+1,' : ''}data=jsonb_set(jsonb_set(data,'{characterPackageVersionId}',$3::jsonb),'{portraitAssetId}',$4::jsonb),updated_at=now() WHERE id=$1 AND owner_id=$2`,
         [

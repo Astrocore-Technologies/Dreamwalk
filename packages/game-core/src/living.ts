@@ -1,3 +1,5 @@
+import { materializeNpcItems, npcItemContext } from './world-items';
+import type { NpcItemIntent } from '@dreamwalk/contracts';
 import { mockAcknowledgement, mockFactReply } from './mock-speech';
 import {
   npcSpeechSchema,
@@ -222,7 +224,18 @@ function remember(memory: LivingNpcMemory, observation: NpcObservation): boolean
   }
   const kind = observation.kind;
   if (
-    ['item_taken', 'item_missing', 'noise', 'addressed', 'claim', 'harmed', 'pushed'].includes(kind)
+    [
+      'item_taken',
+      'item_placed',
+      'item_given',
+      'item_consumed',
+      'item_missing',
+      'noise',
+      'addressed',
+      'claim',
+      'harmed',
+      'pushed',
+    ].includes(kind)
   ) {
     const c = {
       id: observation.id,
@@ -232,7 +245,7 @@ function remember(memory: LivingNpcMemory, observation: NpcObservation): boolean
           ? 4
           : kind === 'pushed' || kind === 'addressed'
             ? 3
-            : kind === 'item_taken'
+            : ['item_taken', 'item_placed', 'item_given', 'item_consumed'].includes(kind)
               ? 2
               : 1,
       notBeforeTick: observation.tick,
@@ -334,7 +347,19 @@ export function recordLivingNpcEvents(
     for (let index = 0; index < events.length; index++) {
       const e = events[index],
         actor = e.actorId ? before.entities[e.actorId] : undefined,
-        target = e.targetId ? before.entities[e.targetId] : undefined;
+        actualTarget = e.targetId
+          ? (before.entities[e.targetId] ?? after.entities[e.targetId])
+          : undefined,
+        target =
+          actualTarget && ['item.placed', 'item.given', 'item.consumed'].includes(e.kind)
+            ? {
+                ...actualTarget,
+                ownerId: undefined,
+                ...(actualTarget.ownerId && actor
+                  ? { x: actor.x, y: actor.y, mapId: actor.mapId }
+                  : {}),
+              }
+            : actualTarget;
       const eventId = `${operationId}:${index}`,
         rootId = eventId;
       if (
@@ -388,11 +413,14 @@ export function recordLivingNpcEvents(
           changed = true;
         }
       }
-      if (e.kind === 'action.give' && e.actorId === npcId) {
+      if (['action.give', 'item.given'].includes(e.kind) && e.actorId === npcId) {
         for (const o of m.obligations)
           if (
             o.status === 'accepted' &&
-            o.toActorId === e.targetId &&
+            o.toActorId ===
+              (e.kind === 'item.given' && e.targetId
+                ? s.entities[e.targetId]?.ownerId
+                : e.targetId) &&
             o.itemId &&
             s.entities[o.itemId]?.ownerId === o.toActorId
           ) {
@@ -419,6 +447,9 @@ export function recordLivingNpcEvents(
         }
       let kind: NpcObservation['kind'] | undefined;
       if (e.kind === 'action.pick_up') kind = 'item_taken';
+      if (e.kind === 'item.placed') kind = 'item_placed';
+      if (e.kind === 'item.given') kind = 'item_given';
+      if (e.kind === 'item.consumed') kind = 'item_consumed';
       if (['action.open', 'action.close', 'action.unlock', 'action.lock'].includes(e.kind))
         kind = 'door_changed';
       if (e.kind === 'action.knock') kind = 'noise';
@@ -1238,6 +1269,7 @@ export function buildNpcPublicSpeechContext(
   )
     return { npcId, replyLocale: locale, audienceIds: audience, claims: [] };
   return {
+    ...npcItemContext(state, npcId),
     npcId,
     replyLocale: locale,
     audienceIds: audience,
@@ -1327,6 +1359,7 @@ export function commitNpcPublicUtterance(
   npcId: string,
   input: {
     text?: string;
+    itemIntents?: NpcItemIntent[];
     code?: 'acknowledged';
     channel: 'say' | 'whisper';
     recipientId: string;
@@ -1401,9 +1434,11 @@ export function commitNpcPublicUtterance(
   if (new Set(input.observationIds).size !== context.claims.length)
     return result(state, [], 'FORBIDDEN');
   if (npcContextFingerprint(context) !== input.contextHash) return result(state, [], 'STALE_STATE');
-  const s = clone(state),
-    id = `utterance-${hash(`${npcId}:${input.contextHash}:${input.code ?? input.text}`)}`;
-  if (s.npcUtterances?.some((u) => u.id === id)) return result(state);
+  const id = `utterance-${hash(`${npcId}:${input.contextHash}:${input.code ?? input.text}`)}`;
+  if (state.npcUtterances?.some((u) => u.id === id)) return result(state);
+  const items = materializeNpcItems(state, npcId, input.recipientId, input.itemIntents ?? [], id);
+  if (items.error) return items;
+  const s = clone(items.state);
   (s.npcUtterances ??= []).push({
     id,
     speakerId: npcId,
@@ -1438,7 +1473,7 @@ export function commitNpcPublicUtterance(
       });
     }
   s.revision++;
-  return result(s, [{ kind: 'npc.spoke', actorId: npcId, mapId: npc.mapId }]);
+  return result(s, [...items.events, { kind: 'npc.spoke', actorId: npcId, mapId: npc.mapId }]);
 }
 
 /** Inspect remembered locations, never consult the hidden owner's identity. */

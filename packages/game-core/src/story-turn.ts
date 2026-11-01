@@ -93,7 +93,16 @@ function allowedAction(state: GameState, actorId: string, input: unknown): GameA
   if (actor?.kind !== 'player') return null;
   if (p.data.targetId) {
     const target = state.entities[p.data.targetId];
-    if (!target || !visible(state, actor, target)) return null;
+    if (
+      !target ||
+      !(
+        visible(state, actor, target) ||
+        (p.data.kind === 'consume' &&
+          target.ownerId === actorId &&
+          actor.inventory?.includes(target.id))
+      )
+    )
+      return null;
   }
   if (p.data.itemId && !(actor.inventory ?? []).includes(p.data.itemId)) return null;
   return p.data;
@@ -266,7 +275,7 @@ export function buildStoryTurnContext(
     ...(mode === 'director'
       ? { director: buildNarrativeContext(state, actorId, input.text, input.replyLocale) }
       : {}),
-    allowedActions: ['inspect', 'open', 'close', 'unlock', 'pick_up', 'give', 'wait'],
+    allowedActions: ['inspect', 'open', 'close', 'unlock', 'pick_up', 'consume', 'give', 'wait'],
   };
   const readset = {
     actor: { mapId: actor.mapId, x: actor.x, y: actor.y, inventory: actor.inventory ?? [] },

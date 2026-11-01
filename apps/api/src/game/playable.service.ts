@@ -315,9 +315,11 @@ export class PlayableService {
           source.characterPackageVersionId,
         );
         compiled.playable!.entities[npc.id].characterAnimation = manifest.animation;
-        for (const part of manifest.parts.filter((p) => ['sheet', 'portrait'].includes(p.role)))
+        for (const part of manifest.parts.filter((p) =>
+          ['sheet', 'sprite', 'portrait'].includes(p.role),
+        ))
           characterBindings.push({
-            slot: `entity:${npc.id}:${part.role === 'sheet' ? 'sprite' : 'portrait'}`,
+            slot: `entity:${npc.id}:${part.role === 'portrait' ? 'portrait' : 'sprite'}`,
             revisionId: part.revisionId,
           });
       }

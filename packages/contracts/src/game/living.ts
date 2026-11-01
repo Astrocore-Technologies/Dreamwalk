@@ -55,6 +55,9 @@ export type NpcPersonality = z.infer<typeof npcPersonalitySchema>;
 export type NpcObservationKind =
   | 'harmed'
   | 'pushed'
+  | 'item_placed'
+  | 'item_given'
+  | 'item_consumed'
   | 'item_taken'
   | 'item_missing'
   | 'actor_seen'

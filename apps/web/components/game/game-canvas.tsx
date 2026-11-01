@@ -1,5 +1,8 @@
 'use client';
 import { sceneClick } from './scene-input';
+import { entityLayout, containsScenePoint } from './scene-geometry';
+import { MapActions, InventoryPanel } from './map-actions';
+import { useItemText } from './item-messages';
 import { committedPathSample, spriteFeedback } from './turn-ui';
 import { useEffect, useRef, useState } from 'react';
 import { cameraAxis } from './camera-geometry';
@@ -10,7 +13,7 @@ import { decodeArt } from '../assets/decode-art';
 import { visibleSceneArt } from '../assets/art-visibility';
 import type { VisibleArtBinding } from '../assets/use-campaign-art';
 import { artPreviewUrl } from '../assets/types';
-import type { GamePoint, GameProjection } from '@dreamwalk/contracts';
+import type { GamePoint, GameProjection, GameAction } from '@dreamwalk/contracts';
 import { resolveGameAtlas } from '@/lib/game-assets';
 import { useT } from '@/lib/i18n';
 import styles from './game.module.css';
@@ -22,6 +25,8 @@ export function GameCanvas({
   onMove,
   onSelectNpc,
   onInspectNpc,
+  onAction,
+  onApproach,
   onStop,
   disabled,
   reducedMotion,
@@ -32,12 +37,19 @@ export function GameCanvas({
   onMove: (point: GamePoint) => void;
   onSelectNpc: (npcId: string) => void;
   onInspectNpc?: (npcId: string) => void;
+  onAction?: (action: GameAction) => void;
+  onApproach?: (point: GamePoint) => void;
   onStop: () => void;
   disabled: boolean;
   reducedMotion: boolean;
   planning?: boolean;
 }) {
   const { t } = useT();
+  const itemText = useItemText();
+  const [inventoryOpen, setInventoryOpen] = useState(false);
+  const [menu, setMenu] = useState<{ ids: string[]; x: number; y: number; mapId: string } | null>(
+    null,
+  );
   const objectiveText = useObjectiveText();
   const host = useRef<HTMLDivElement>(null);
   const latest = useRef({
@@ -124,20 +136,49 @@ export function GameCanvas({
           new Texture({ source: atlas.source, frame: new Rectangle(index * 64, 0, 64, 64) }),
       );
       const world = new Container();
+      const targetsAt = (point: { x: number; y: number }) => {
+        const p = latest.current.projection;
+        const ids = [...sprites.entries()]
+          .filter(
+            ([id, r]) =>
+              p.entities.some((e) => e.id === id && e.id !== p.actorId) &&
+              containsScenePoint(
+                { x: r.sprite.x, y: r.sprite.y, width: r.sprite.width, height: r.sprite.height },
+                point,
+              ),
+          )
+          .sort((a, b) => b[1].sprite.zIndex - a[1].sprite.zIndex)
+          .map(([id]) => id);
+        if (!ids.length)
+          for (const exit of p.map.exits)
+            if (
+              containsScenePoint({ x: exit.x * 48, y: exit.y * 48, width: 48, height: 48 }, point)
+            )
+              ids.push('exit:' + exit.id);
+        return ids;
+      };
+      const openMenu = (point: { x: number; y: number }, screen: { x: number; y: number }) => {
+        const ids = targetsAt(point),
+          p = latest.current.projection;
+        setMenu(
+          ids.length
+            ? {
+                ids,
+                x: Math.min(screen.x, Math.max(8, element.clientWidth - 250)),
+                y: Math.min(screen.y, Math.max(8, element.clientHeight - 240)),
+                mapId: p.map.id,
+              }
+            : null,
+        );
+      };
       app.canvas.addEventListener('contextmenu', (event) => {
         event.preventDefault();
         const bounds = app.canvas.getBoundingClientRect();
-        const local = world.toLocal({
+        const screen = {
           x: ((event.clientX - bounds.left) * app.screen.width) / bounds.width,
           y: ((event.clientY - bounds.top) * app.screen.height) / bounds.height,
-        });
-        const npc = latest.current.projection.entities.find(
-          (e) =>
-            e.kind === 'npc' &&
-            e.x === Math.floor(local.x / 48) &&
-            e.y === Math.floor(local.y / 48),
-        );
-        if (npc) latest.current.onInspectNpc?.(npc.id);
+        };
+        openMenu(world.toLocal(screen), screen);
       });
 
       const artBackground = new Container();
@@ -148,6 +189,45 @@ export function GameCanvas({
       const journalTexture = app.renderer.generateTexture(journalDrawing);
       journalDrawing.destroy();
       const objects = new Container();
+      const itemDrawing = new Graphics();
+      const itemTextures = new Map<string, InstanceType<typeof Texture>>();
+      for (const kind of ['food', 'cup', 'battery', 'object']) {
+        itemDrawing.clear();
+        if (kind === 'food') {
+          itemDrawing.ellipse(32, 37, 29, 21).fill(0xe8dfcd).stroke({ color: 0x8e7b68, width: 3 });
+          itemDrawing.ellipse(32, 34, 21, 14).fill(0xad5e30);
+          itemDrawing.ellipse(23, 30, 7, 6).fill(0xe6ba65);
+          itemDrawing.ellipse(41, 31, 8, 7).fill(0x698b49);
+        } else if (kind === 'cup') {
+          itemDrawing.ellipse(45, 29, 14, 15).stroke({ color: 0xe7d5c0, width: 7 });
+          itemDrawing
+            .roundRect(10, 14, 34, 39, 9)
+            .fill(0xd9c5a7)
+            .stroke({ color: 0x8e7866, width: 3 });
+          itemDrawing.ellipse(27, 17, 16, 6).fill(0x71513c);
+        } else if (kind === 'battery') {
+          itemDrawing
+            .roundRect(13, 10, 34, 45, 5)
+            .fill(0x62949b)
+            .stroke({ color: 0xb7d4cf, width: 3 });
+          itemDrawing.rect(23, 4, 14, 7).fill(0xa0acae);
+          itemDrawing
+            .moveTo(34, 20)
+            .lineTo(25, 34)
+            .lineTo(34, 34)
+            .lineTo(26, 46)
+            .stroke({ color: 0xf4dc92, width: 4 });
+        } else
+          itemDrawing
+            .roundRect(8, 12, 47, 43, 10)
+            .fill(0xc4a478)
+            .stroke({ color: 0x705c47, width: 3 });
+        itemTextures.set(
+          kind,
+          app.renderer.generateTexture({ target: itemDrawing, frame: new Rectangle(0, 0, 64, 64) }),
+        );
+      }
+      itemDrawing.destroy();
       const boundary = new Graphics();
       const actors = objects;
       objects.sortableChildren = true;
@@ -171,6 +251,8 @@ export function GameCanvas({
           animationBase?: InstanceType<typeof Texture>;
           animationFrame?: number;
           animated: boolean;
+          offsetX?: number;
+          offsetY?: number;
           traceSequence: number;
           trace?: GamePoint[];
           traceStartedAt: number;
@@ -192,6 +274,7 @@ export function GameCanvas({
         textureBudget.close();
         oldCleanup();
         journalTexture.destroy(true);
+        for (const texture of itemTextures.values()) texture.destroy(true);
         for (const texture of artTextures.values()) texture.destroy(true);
         artTextures.clear();
         for (const surface of artSurfaces.values()) {
@@ -344,11 +427,32 @@ export function GameCanvas({
       };
       world.eventMode = 'static';
       world.on('pointertap', (event) => {
+        if (event.button !== 0) return;
         const state = latest.current;
-        if (state.disabled) return;
         const local = world.toLocal(event.global);
+        const hits = targetsAt(local);
+        if (
+          hits.some(
+            (id) =>
+              state.projection.entities.find((e) => e.id === id)?.kind === 'item' ||
+              id.startsWith('exit:'),
+          ) ||
+          (event.pointerType === 'touch' && hits.length)
+        ) {
+          openMenu(local, event.global);
+          return;
+        }
+        setMenu(null);
+        if (state.disabled) return;
         const x = Math.floor(local.x / tile),
           y = Math.floor(local.y / tile);
+        const drawnNpc = hits.find((id) =>
+          state.projection.entities.some((e) => e.id === id && e.kind === 'npc'),
+        );
+        if (drawnNpc) {
+          state.onSelectNpc(drawnNpc);
+          return;
+        }
         const interaction = sceneClick(state.projection, x, y);
         if (interaction?.kind === 'npc') state.onSelectNpc(interaction.npcId);
         else if (interaction?.kind === 'move') state.onMove(interaction.target);
@@ -450,10 +554,27 @@ export function GameCanvas({
               record.animatedTexture = undefined;
               record.animationBase = undefined;
               record.sprite.texture =
-                boundTexture || (entity.visual === 'journal' ? journalTexture : frames[frame]);
+                boundTexture ||
+                (entity.item
+                  ? itemTextures.get(entity.item.visual)!
+                  : entity.visual === 'journal'
+                    ? journalTexture
+                    : frames[frame]);
               record.sprite.width = tile;
               record.sprite.height = boundTexture && entity.kind === 'door' ? tile * 1.5 : tile;
             }
+            const layout = entityLayout(
+              entity,
+              p.entities,
+              tile,
+              record.sprite.texture.width / record.sprite.texture.height,
+              record.animated ||
+                (!!boundTexture && (entity.kind === 'npc' || entity.kind === 'player')),
+            );
+            record.sprite.width = layout.width;
+            record.sprite.height = layout.height;
+            record.offsetX = layout.x - entity.x * tile;
+            record.offsetY = layout.y - entity.y * tile;
             if (entity.movementTrace && entity.movementTrace.sequence !== record.traceSequence) {
               record.traceSequence = entity.movementTrace.sequence;
               record.trace =
@@ -483,10 +604,8 @@ export function GameCanvas({
                 dy = entity.y * tile - record.y;
               record.direction = Math.abs(dx) > Math.abs(dy) ? (dx < 0 ? 1 : 2) : dy < 0 ? 3 : 0;
               record.walkingUntil = snap ? 0 : now + 200;
-              record.previousX = snap ? entity.x * tile : record.sprite.x;
-              record.previousY = snap
-                ? entity.y * tile
-                : record.sprite.y + (record.animated ? tile * 0.5 : 0);
+              record.previousX = snap ? entity.x * tile : record.sprite.x - (record.offsetX ?? 0);
+              record.previousY = snap ? entity.y * tile : record.sprite.y - (record.offsetY ?? 0);
               record.x = entity.x * tile;
               record.y = entity.y * tile;
               record.changedAt = now;
@@ -534,11 +653,11 @@ export function GameCanvas({
             record.walkingUntil = now + 130;
           } else if (record.trace) record.trace = undefined;
           record.sprite.position.set(
-            x + feedback.x,
-            y + feedback.y - (record.animated || record.sprite.height > tile ? tile * 0.5 : 0),
+            x + feedback.x + (record.offsetX ?? 0),
+            y + feedback.y + (record.offsetY ?? 0),
           );
           record.sprite.rotation = feedback.rotation;
-          record.sprite.zIndex = y + tile;
+          record.sprite.zIndex = y + tile + (record.offsetX ? 2 : 0);
           if (record.animated && record.animatedTexture && record.animationBase) {
             const col = reduced
               ? 0
@@ -612,9 +731,42 @@ export function GameCanvas({
         onBlur={explicitStop}
       >
         <div ref={host} className={styles.canvas} />
+        <button
+          className={styles.inventoryToggle}
+          type="button"
+          aria-expanded={inventoryOpen}
+          onClick={() => {
+            setInventoryOpen((v) => !v);
+            setMenu(null);
+          }}
+        >
+          {itemText('inventory')} · {projection.inventory.length}
+        </button>
+        {inventoryOpen && (
+          <InventoryPanel
+            projection={projection}
+            disabled={disabled}
+            onAction={(action) => onAction?.(action)}
+            onClose={() => setInventoryOpen(false)}
+          />
+        )}
+        {menu && menu.mapId === projection.map.id && (
+          <MapActions
+            projection={projection}
+            ids={menu.ids}
+            position={menu}
+            disabled={disabled}
+            onAction={(action) => onAction?.(action)}
+            onClose={() => setMenu(null)}
+            onSay={onSelectNpc}
+            onInspect={onInspectNpc}
+            onApproach={onApproach ?? onMove}
+          />
+        )}
+
         {failed && (
           <p className={styles.canvasFallback} role="status">
-            {t('Графика недоступна. Используй список объектов и управление ниже.')}
+            {itemText('unavailable')}{' '}
           </p>
         )}
         <div className={styles.mapTools}>
@@ -639,11 +791,7 @@ export function GameCanvas({
       </div>
       {projection.map.sceneProfile && <small>{objectiveText.art}</small>}
       <div className={styles.controls}>
-        <p id="game-controls-help">
-          {t(
-            'Нажми на свободную клетку, чтобы подойти. Нажми на NPC, чтобы выбрать собеседника. Кнопки объектов доступны с клавиатуры.',
-          )}
-        </p>
+        <p id="game-controls-help">{itemText('help')} </p>
         <div className={styles.dpad}>
           <button
             type="button"

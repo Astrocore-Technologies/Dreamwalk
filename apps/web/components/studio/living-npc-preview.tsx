@@ -20,6 +20,9 @@ const goalLabels = {
   warn: 'Предупредить',
 };
 export const observationLabels = {
+  item_placed: 'Предмет поставлен',
+  item_given: 'Предмет передан',
+  item_consumed: 'Предмет съеден',
   actor_seen: 'Персонаж появился в поле зрения',
   actor_departed: 'Персонаж покинул поле зрения',
   item_taken: 'Замечено перемещение предмета',

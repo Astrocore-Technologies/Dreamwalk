@@ -1,3 +1,4 @@
+import { npcPublicReplySchema } from '@dreamwalk/contracts';
 import { StoryTurnRuntime } from './story-turn-runtime';
 import { resolveReplyLocale } from './reply-locale';
 import { mediaPreparationSchema, prepareSceneMedia } from './media-preparation';
@@ -496,6 +497,7 @@ export class GameService implements OnModuleDestroy {
         'close',
         'inspect',
         'pick_up',
+        'consume',
         'knock',
         'wait',
         'give',
@@ -1353,12 +1355,7 @@ export class GameService implements OnModuleDestroy {
         })
         .passthrough()
         .safeParse(job.context);
-      const proposal = z
-        .union([
-          z.object({ text: z.string().trim().min(1).max(1000) }).strict(),
-          z.object({ code: z.literal('acknowledged') }).strict(),
-        ])
-        .safeParse(job.proposal);
+      const proposal = npcPublicReplySchema.safeParse(job.proposal);
       if (request.success && proposal.success) {
         let context: ReturnType<GameService['speechContext']> | undefined;
         try {
@@ -1390,7 +1387,7 @@ export class GameService implements OnModuleDestroy {
               : {}),
           });
           if (!result.error) {
-            next = result.state;
+            next = recordNpcEvents(state, result.state, result.events, 'ai-' + job.id).state;
             if (state.turnController) {
               next = structuredClone(next);
               next.tick++;

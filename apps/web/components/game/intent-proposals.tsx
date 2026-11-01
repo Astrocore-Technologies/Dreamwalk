@@ -3,6 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { GameAction, GameProjection } from '@dreamwalk/contracts';
 import { api, errorMessage } from '@/lib/client';
 import { useT } from '@/lib/i18n';
+import { useItemText } from './item-messages';
 import { useTurnText } from './turn-messages';
 import { Button, ErrorBox, Field, Textarea } from '@/components/ui';
 type Proposal = {
@@ -15,7 +16,7 @@ type Proposal = {
   funding?: 'session-budget' | 'personal' | 'free' | null;
   expiresAt: string;
 };
-const actionLabels: Record<GameAction['kind'], string> = {
+const actionLabels: Partial<Record<GameAction['kind'], string>> = {
   hit: 'Ударить',
   push: 'Толкнуть',
   move_to: 'Подойти',
@@ -46,6 +47,7 @@ export function IntentProposals({
 }) {
   const { t } = useT();
   const turnText = useTurnText();
+  const itemText = useItemText();
   const [text, setText] = useState(''),
     [proposal, setProposal] = useState<Proposal | null>(null),
     [busy, setBusy] = useState(false),
@@ -191,7 +193,9 @@ export function IntentProposals({
                 {t('Предлагаемое действие')}:{' '}
                 {action.kind === 'hit' || action.kind === 'push'
                   ? turnText(action.kind)
-                  : t(actionLabels[action.kind])}
+                  : action.kind === 'consume'
+                    ? itemText('eat')
+                    : t(actionLabels[action.kind] ?? action.kind)}
                 {target
                   ? ` · ${target.label || t('Предмет')}`
                   : action.targetId &&

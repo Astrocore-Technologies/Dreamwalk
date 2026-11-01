@@ -68,6 +68,15 @@ export const characterBriefSchema = z
     outfit: z.string().trim().min(1).max(500),
     appearance: z.string().trim().max(500).default(''),
     style: z.literal('drawn2D'),
+    renderMode: z.enum(['animated', 'static']).default('animated'),
+    target: z
+      .object({
+        kind: z.enum(['npc', 'hero']),
+        id: z.uuid(),
+        sourceHash: z.string().regex(/^[a-f0-9]{64}$/),
+      })
+      .strict()
+      .optional(),
     source: z.enum(['text', 'photo']),
     sourcePhotoAssetId: z.uuid().optional(),
     sourcePhotoPermission: z.boolean().default(false),
@@ -139,6 +148,7 @@ export type VisualPackage = {
     width: number;
     height: number;
   }[];
+  representation?: 'static';
   animation?: CharacterAnimation;
 };
 

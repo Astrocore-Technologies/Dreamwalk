@@ -108,6 +108,10 @@ export function parsePlayerTextAction(
     return null;
   const normalized = text.trim().toLowerCase(),
     patterns: [RegExp, GameAction['kind']][] = [
+      [
+        /^(eat|consume|съешь|съесть|съел|съела|поесть|ем|з'їсти|з’їсти|з'їж|з’їж|поїсти)\s+(.+)$/u,
+        'consume',
+      ],
       [/^(hit|strike|ударить|ударил|ударяю|вдарити|вдарив)\s+(.+)$/u, 'hit'],
       [/^(push|shove|толкнуть|толкнул|толкаю|штовхнути|штовхнув|штовхаю)\s+(.+)$/u, 'push'],
       [/^(open|открой|открываю|відкрий|відкриваю)\s+(.+)$/u, 'open'],
@@ -124,7 +128,10 @@ export function parsePlayerTextAction(
     if (!match) continue;
     const target = unique(
       Object.values(state.entities).filter(
-        (e) => visible(state, actor, e) && [e.id, e.label?.toLowerCase()].includes(match[2]),
+        (e) =>
+          (visible(state, actor, e) ||
+            (kind === 'consume' && e.ownerId === actorId && actor.inventory?.includes(e.id))) &&
+          [e.id, e.label?.toLowerCase()].includes(match[2]),
       ),
     );
     if (target) action = { kind, targetId: target.id };
@@ -216,6 +223,7 @@ export function proposePlayerActionIntent(
       'unlock',
       'lock',
       'pick_up',
+      'consume',
       'give',
       'knock',
       'talk',
@@ -225,7 +233,13 @@ export function proposePlayerActionIntent(
     return null;
   if (
     action.targetId &&
-    (!state.entities[action.targetId] || !visible(state, actor, state.entities[action.targetId]))
+    (!state.entities[action.targetId] ||
+      !(
+        visible(state, actor, state.entities[action.targetId]) ||
+        (action.kind === 'consume' &&
+          state.entities[action.targetId].ownerId === actorId &&
+          actor.inventory?.includes(action.targetId))
+      ))
   )
     return null;
   if (action.itemId && state.entities[action.itemId]?.ownerId !== actorId) return null;

@@ -20,6 +20,7 @@ export function requiredArtRoles(
   kind: 'character' | 'location',
   status: string,
   plan?: AuthoredGameDraft | null,
+  brief?: { renderMode?: string },
 ): VisualGenerationRole[] {
   if (
     kind === 'location' &&
@@ -40,7 +41,9 @@ export function requiredArtRoles(
     ? locationArtRoles
     : status === 'concept'
       ? ['concept']
-      : ['portrait', 'sheet'];
+      : brief?.renderMode === 'static'
+        ? []
+        : ['portrait', 'sheet'];
 }
 export function isSheet(role: string) {
   return ['sheet', 'sample-sheet', 'npc-sheet'].includes(role);
@@ -55,6 +58,8 @@ export type AuthoringArtSource = {
   concept_revision_id: string | null;
   brief: {
     name: string;
+    renderMode?: 'animated' | 'static';
+    target?: { kind: 'npc' | 'hero'; id: string; sourceHash: string };
     description?: string;
     outfit?: string;
     appearance?: string;
@@ -110,7 +115,9 @@ export function buildArtRequest(
     : portrait
       ? 'One head and shoulders portrait of the APPROVED reference character; preserve face, outfit and drawn style.'
       : role === 'concept'
-        ? 'One attractive adult full-body concept, entire body and boots visible, neutral stance, transparent background. Approval reference only; not a walking asset.'
+        ? p.brief.renderMode === 'static'
+          ? 'One full-body adult static playable character sprite in oblique top-down RPG perspective facing south. Entire body and boots, neutral standing pose, feet at bottom center, transparent background and clear margins, no ground or cast shadow, no text. Preserve the supplied appearance/reference identity. This single pose is not an animation atlas.'
+          : 'One attractive adult full-body concept, entire body and boots visible, neutral stance, transparent background. Approval reference only; not a walking asset.'
         : background
           ? spatial
           : `One separate ${role} object layer for that locked location, oblique top-down RPG perspective, transparent background, no room or floor; coherent palette and light. ${styleReferenceRevisionId ? 'Use the attached room image only as the palette, lighting and perspective reference.' : ''}`;

@@ -55,14 +55,16 @@ export async function pinHero(
         userId,
       ])
     ).rows[0];
-    for (const role of ['sheet', 'portrait']) {
+    for (const role of snapshot.visualPackage.representation === 'static'
+      ? ['sprite']
+      : ['sheet', 'portrait']) {
       const part = snapshot.visualPackage.parts.find((p) => p.role === role)!;
       const row = parts.find((p) => p.id === part.revisionId)!;
       await c.query(
         'INSERT INTO art_campaign_pins(campaign_id,slot,revision_id,rights_snapshot) VALUES($1,$2,$3,$4) ON CONFLICT DO NOTHING',
         [
           campaignId,
-          `entity:${actor.actor_id}:${role === 'sheet' ? 'sprite' : 'portrait'}`,
+          `entity:${actor.actor_id}:${role === 'portrait' ? 'portrait' : 'sprite'}`,
           part.revisionId,
           JSON.stringify(row.metadata.rights),
         ],
@@ -79,11 +81,13 @@ export function dressHero(state: GameState, actorId: string, snapshot: SelectedH
   if (!snapshot) return;
   state.entities[actorId].label = snapshot.name;
   if (!snapshot.visualPackage) return;
-  state.entities[actorId].characterAnimation = structuredClone(snapshot.visualPackage.animation!);
+  if (snapshot.visualPackage.animation)
+    state.entities[actorId].characterAnimation = structuredClone(snapshot.visualPackage.animation);
+  else delete state.entities[actorId].characterAnimation;
   const bindings: FrozenArtBinding[] = snapshot.visualPackage.parts
-    .filter((p) => ['sheet', 'portrait'].includes(p.role))
+    .filter((p) => ['sheet', 'sprite', 'portrait'].includes(p.role))
     .map((p) => ({
-      slot: `entity:${actorId}:${p.role === 'sheet' ? 'sprite' : 'portrait'}`,
+      slot: `entity:${actorId}:${p.role === 'portrait' ? 'portrait' : 'sprite'}`,
       revisionId: p.revisionId,
       sha256: p.sha256,
       mime: 'image/webp',

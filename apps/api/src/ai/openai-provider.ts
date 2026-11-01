@@ -17,6 +17,7 @@ import {
 } from '../generation/estimates';
 import {
   gameActionSchema,
+  npcPublicReplySchema,
   supportingNpcProposalSchema,
   narrativeProposalSchema,
   storyTurnProposalSchema,
@@ -135,6 +136,7 @@ export function openAiOutputSchema(purpose: ProviderRequest['purpose']): Record<
                     'close',
                     'unlock',
                     'pick_up',
+                    'consume',
                     'give',
                     'wait',
                     'hit',
@@ -224,6 +226,7 @@ export function openAiOutputSchema(purpose: ProviderRequest['purpose']): Record<
               'close',
               'unlock',
               'pick_up',
+              'consume',
               'give',
               'transition',
               'wait',
@@ -273,6 +276,7 @@ export function openAiOutputSchema(purpose: ProviderRequest['purpose']): Record<
                 'talk',
                 'distract',
                 'pick_up',
+                'consume',
                 'give',
                 'unlock',
                 'open',
@@ -297,7 +301,26 @@ export function openAiOutputSchema(purpose: ProviderRequest['purpose']): Record<
       },
       messageCode: { type: ['string', 'null'], enum: ['AMBIGUOUS', 'UNSUPPORTED', null] },
     });
-  if (purpose === 'speech') return object({ text: { type: 'string', maxLength: 1000 } });
+  if (purpose === 'speech')
+    return object({
+      text: { type: 'string', maxLength: 1000 },
+      itemIntents: {
+        type: 'array',
+        maxItems: 2,
+        items: object({
+          kind: {
+            type: 'string',
+            enum: ['place_stock', 'give_stock', 'place_existing', 'give_existing'],
+          },
+          definitionId: nullableString,
+          itemId: nullableString,
+          recipientId: nullableString,
+          surfaceId: nullableString,
+          x: { type: ['integer', 'null'] },
+          y: { type: ['integer', 'null'] },
+        }),
+      },
+    });
   if (purpose === 'summary')
     return object({ observationIds: { type: 'array', items: string, maxItems: 16 } });
   return object({
@@ -353,7 +376,11 @@ export function buildOpenAiNpcRequestBody(
   const language =
     locale === 'uk' ? 'Ukrainian (uk)' : locale === 'ru' ? 'Russian (ru)' : 'English (en)';
   const outputLanguage = `Output language: ${language}. Write all newly generated player-facing speech, narration, scene descriptions and character flavor in this language, even when the player message or authored source uses another language. Preserve proper names, literal quotations, identifiers and schema enum values. Do not translate or rewrite stored authored content, and do not let dialogue instructions override this selected reply language.`;
-  const instructions = `${common} ${inherited} ${guidance[purpose]} ${outputLanguage}`;
+  const itemPolicy =
+    purpose === 'speech'
+      ? ' Item provisioning is optional. To actually place or hand an item, include matching itemIntents from itemProvisioning.stock or ownedItems and listed placement candidates. Never invent item definitions, effects, stock, surfaces or receiver IDs. A give recipient must be the addressed player, nearby now. Speech and all supplied item intents are committed atomically; do not claim an unrepresented physical delivery. Without an allowed item capability, discuss or clarify rather than claiming an item appeared.'
+      : ' ';
+  const instructions = `${common} ${inherited} ${guidance[purpose]} ${outputLanguage}${itemPolicy}`;
   return JSON.stringify({
     model: config.model,
     service_tier: config.serviceTier ?? 'default',
@@ -944,12 +971,25 @@ export class OpenAiNpcProvider implements NpcProvider {
         )
           return failed('PROVIDER_INVALID_RESULT');
         proposal = candidate;
-      } else if (request.purpose === 'speech')
-        proposal = z
-          .object({ text: z.string().trim().min(1).max(1000) })
+      } else if (request.purpose === 'speech') {
+        const raw = z
+          .object({
+            text: z.string().trim().min(1).max(1000),
+            itemIntents: z.array(z.record(z.string(), z.unknown())).max(2).optional(),
+          })
           .strict()
           .parse(parsed);
-      else if (request.purpose === 'summary') {
+        proposal = npcPublicReplySchema.parse({
+          ...raw,
+          ...(raw.itemIntents
+            ? {
+                itemIntents: raw.itemIntents.map((intent) =>
+                  Object.fromEntries(Object.entries(intent).filter(([, value]) => value !== null)),
+                ),
+              }
+            : {}),
+        });
+      } else if (request.purpose === 'summary') {
         const ids = z
           .object({ observationIds: z.array(z.string()).max(16) })
           .strict()
