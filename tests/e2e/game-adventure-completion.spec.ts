@@ -256,46 +256,47 @@ test('four players retain the legacy realtime Observatory ending with owned hero
         );
       }),
     );
-    await Promise.all(pages.map((p) => p.reload()));
-    await Promise.all(
-      pages.map(async (page, index) => {
-        // A restored HTTP projection can show the ending before Pixi/socket startup.
-        // Use the existing 15s expectation bound for actual readiness on every client,
-        // not force-clicking a toolbar while reconnect banners still move its layout.
-        await expect
-          .poll(() =>
-            page.evaluate(
-              (expectedScene) => {
-                const host = document.querySelector<HTMLElement>('[data-camera-scale]');
-                const canvas = host?.querySelector('canvas');
-                const bounds = canvas?.getBoundingClientRect();
-                const scale = Number(host?.dataset.cameraScale);
-                return {
-                  connected:
-                    document.querySelector('[data-connected]')?.getAttribute('data-connected') ===
-                    'true',
-                  rendered:
-                    !!canvas &&
-                    canvas.width > 0 &&
-                    canvas.height > 0 &&
-                    !!bounds &&
-                    bounds.width > 0 &&
-                    bounds.height > 0 &&
-                    Number.isFinite(scale) &&
-                    scale > 0 &&
-                    host?.dataset.sceneProfile === expectedScene,
-                };
-              },
-              index === 0 ? 'observatory-roof-v1' : 'observatory-interior-v1',
-            ),
-          )
-          .toEqual({ connected: true, rendered: true });
-        await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
-          'data-objective-status',
-          'achieved',
-        );
-      }),
-    );
+    // Persistence is per-client, not a simultaneous four-WebGL cold-start benchmark.
+    // Keep all four contexts live, but let each real reload finish before starting
+    // the next; no reload retry, renderer bypass or additional timeout budget.
+    for (const [index, page] of pages.entries()) {
+      await page.reload();
+      // A restored HTTP projection can show the ending before Pixi/socket startup.
+      // Use the existing 15s expectation bound for actual readiness on every client,
+      // not force-clicking a toolbar while reconnect banners still move its layout.
+      await expect
+        .poll(() =>
+          page.evaluate(
+            (expectedScene) => {
+              const host = document.querySelector<HTMLElement>('[data-camera-scale]');
+              const canvas = host?.querySelector('canvas');
+              const bounds = canvas?.getBoundingClientRect();
+              const scale = Number(host?.dataset.cameraScale);
+              return {
+                connected:
+                  document.querySelector('[data-connected]')?.getAttribute('data-connected') ===
+                  'true',
+                rendered:
+                  !!canvas &&
+                  canvas.width > 0 &&
+                  canvas.height > 0 &&
+                  !!bounds &&
+                  bounds.width > 0 &&
+                  bounds.height > 0 &&
+                  Number.isFinite(scale) &&
+                  scale > 0 &&
+                  host?.dataset.sceneProfile === expectedScene,
+              };
+            },
+            index === 0 ? 'observatory-roof-v1' : 'observatory-interior-v1',
+          ),
+        )
+        .toEqual({ connected: true, rendered: true });
+      await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
+        'data-objective-status',
+        'achieved',
+      );
+    }
     await expect((await inventory(owner)).locator('[data-inventory-id="journal"]')).toHaveCount(1);
     await capture(owner, 'sample-adventure-ending-desktop.png');
     await owner.setViewportSize({ width: 390, height: 844 });
