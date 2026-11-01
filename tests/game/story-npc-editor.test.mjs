@@ -63,3 +63,7 @@ test('all NPC authoring fields retain validation and local copy has three comple
   assert.match(source, /Characters in this story/);
   assert.match(source, /Персонажи этой истории/);
 });
+
+test('optional template selector has a stable localized name independent of option text', () => {
+  assert.match(source, /<Select\s+aria-label=\{text\('library'\)\}\s+value=\{templateId\}/);
+});

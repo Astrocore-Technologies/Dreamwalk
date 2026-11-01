@@ -292,6 +292,7 @@ export function StoryNpcEditor({
           </Button>
           <Field label={text('library')}>
             <Select
+              aria-label={text('library')}
               value={templateId}
               disabled={busy}
               onChange={(event) => setTemplateId(event.target.value)}

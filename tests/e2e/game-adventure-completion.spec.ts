@@ -10,6 +10,14 @@ import {
 import { exposeDiscoveryFixtures } from './support/discovery-fixtures';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+
+// This one four-client scenario produced 900–953 continuous trace JPEGs (~54–57MB)
+// while ordinary clicks took 5–7s and game HTTP median stayed ~28ms. Causality is
+// not established: remove only duplicate filmstrip capture, retaining DOM/network/
+// source diagnostics, explicit room/ending captures and failure screenshots.
+test.use({
+  trace: { mode: 'retain-on-failure', screenshots: false, snapshots: true, sources: true },
+});
 async function account(page: Page, index: number) {
   const handle = `story_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const response = await page.request.post('/api/v1/auth/register', {
