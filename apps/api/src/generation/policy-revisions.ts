@@ -51,6 +51,7 @@ export function safeOwnerProfile(config: OwnerGenerationConfig) {
     image: {
       model: config.image.model,
       size: config.image.size,
+      ...(config.image.framingPolicy ? { framingPolicy: config.image.framingPolicy } : {}),
       quality: config.image.quality,
       outputs: config.image.outputs,
       format: config.image.format,

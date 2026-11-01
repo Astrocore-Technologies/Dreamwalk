@@ -1,3 +1,5 @@
+import { savePrivateFixture } from './support/private-authoring';
+import { createAuthoredDraft } from '@dreamwalk/game-core';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
@@ -90,11 +92,9 @@ test('author: NPC and complete adventure draft survive reload and submit confirm
   await page.getByRole('button', { name: /Просмотр$/ }).click();
   // Narrative-only, not-yet-created drafts cannot launch a playable campaign.
   await expect(
-    page.getByText('Сначала сохрани историю, затем добавь игровую карту.', { exact: true }),
+    page.getByText(/История без карты остаётся литературным черновиком\./),
   ).toBeVisible();
-  await expect(
-    page.getByRole('button', { name: 'Сохранить и проверить в игре', exact: true }),
-  ).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Подготовить план', exact: true })).toHaveCount(0);
   await page.getByRole('button', { name: /Публикация$/ }).click();
   await page
     .getByRole('combobox', { name: 'Режим публикации', exact: true })
@@ -172,7 +172,9 @@ test('interface locale switches and survives account login', async ({ page }) =>
   await expect(page.locator('html')).toHaveAttribute('lang', 'uk');
 });
 
-test('private adventure invitation accepts and revokes without publishing', async ({ browser }) => {
+test('explicit private playable release invitation accepts and revokes without public catalog publication', async ({
+  browser,
+}) => {
   const ownerContext = await browser.newContext({ baseURL: test.info().project.use.baseURL });
   const guestContext = await browser.newContext({ baseURL: test.info().project.use.baseURL });
   const ownerPage = await ownerContext.newPage();
@@ -192,7 +194,19 @@ test('private adventure invitation accepts and revokes without publishing', asyn
     ).toHaveValue('private');
     await ownerPage.getByRole('button', { name: 'Сохранить приватное приключение' }).click();
     await expect(ownerPage).toHaveURL(/\/studio\/adventures\/[a-f0-9-]+$/);
+    const storyId = new URL(ownerPage.url()).pathname.split('/').at(-1)!;
+    await savePrivateFixture(ownerPage, storyId, createAuthoredDraft('courtyard'));
+    await ownerPage.reload();
     await ownerPage.getByRole('button', { name: /Публикация$/ }).click();
+    await ownerPage
+      .getByLabel('Опубликовать эту готовую версию приватно, без общего каталога', { exact: true })
+      .check();
+    await ownerPage
+      .getByRole('button', { name: 'Опубликовать в моей библиотеке', exact: true })
+      .click();
+    await expect(
+      ownerPage.getByRole('link', { name: 'Открыть историю и выбрать героя', exact: true }),
+    ).toBeVisible();
     await ownerPage.getByLabel('Пригласить по handle').fill(guest.handle);
     await ownerPage.getByRole('button', { name: 'Пригласить', exact: true }).click();
     await expect(

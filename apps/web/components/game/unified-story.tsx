@@ -1,4 +1,10 @@
 'use client';
+import {
+  SparkQuotePrice,
+  SparkQuoteNotice,
+  ProviderSparkReserve,
+  SparkReceiptCost,
+} from '../visual-authoring/sparks-cost';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type {
   GameProjection,
@@ -14,7 +20,7 @@ import { getLocale, useT } from '@/lib/i18n';
 import { Button, ErrorBox, Textarea } from '@/components/ui';
 import { noticeLabels } from './living-notices';
 import { SceneMedia } from './scene-media';
-import { providerReserveKnown, providerBoundKnown } from './narrative-guards';
+import { providerBoundKnown } from './narrative-guards';
 import {
   storyTargetVisible,
   storyTargetValid,
@@ -554,7 +560,7 @@ export function UnifiedStory({
                     <p>{h('actionHint')}</p>
                     {actionsPreview(turn.actions || [])}
                     <p className={styles.hint}>
-                      {h('generationCost', { credits: turn.generationCost ?? '—' })}
+                      <SparkReceiptCost receipt={turn} />
                     </p>
                     <div className={styles.actions}>
                       <Button
@@ -587,7 +593,8 @@ export function UnifiedStory({
                     {actionsPreview(prepared.result.actionPreview)}
                   </>
                 )}
-                <p>{h('cost', { credits: prepared.result.quote.credits })}</p>
+                <SparkQuotePrice quote={prepared.result.quote} />
+                <SparkQuoteNotice quote={prepared.result.quote} />
                 {prepared.input.replyLocale && (
                   <p data-testid="story-reply-language">
                     {h('replyLanguage', {
@@ -599,21 +606,7 @@ export function UnifiedStory({
                 )}
                 {prepared.result.quote.demo && <small>{h('demo')}</small>}
                 {prepared.result.quote.external && (
-                  <p>
-                    {providerReserveKnown(prepared.result.quote)
-                      ? h('requestReserve', {
-                          amount: (prepared.result.quote.providerReserveMicros! / 1000000).toFixed(
-                            6,
-                          ),
-                        })
-                      : providerBoundKnown(prepared.result.quote, true)
-                        ? h('ceiling', {
-                            amount: (prepared.result.quote.providerUpperMicros! / 1000000).toFixed(
-                              6,
-                            ),
-                          })
-                        : h('noBound')}
-                  </p>
+                  <ProviderSparkReserve quote={prepared.result.quote} />
                 )}
                 <div className={styles.actions}>
                   <Button

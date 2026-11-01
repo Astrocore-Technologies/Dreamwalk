@@ -10,7 +10,7 @@ import { Db } from './db';
 import { Auth } from './auth';
 import { Content } from './content';
 import { fail } from './errors';
-const select = `SELECT i.*,a.slug AS adventure_slug,a.title AS adventure_title,a.synopsis AS adventure_synopsis,a.data AS adventure_data,o.name AS owner_name,o.handle AS owner_handle,r.name AS recipient_name,r.handle AS recipient_handle FROM adventure_invitations i JOIN adventures a ON a.id=i.adventure_id JOIN users o ON o.id=i.owner_id JOIN users r ON r.id=i.recipient_id`;
+const select = `SELECT i.*,a.slug AS adventure_slug,COALESCE(pr.snapshot->>'title','') AS adventure_title,COALESCE(pr.snapshot->>'synopsis','') AS adventure_synopsis,COALESCE(pr.snapshot,'{}'::jsonb) AS adventure_data,o.name AS owner_name,o.handle AS owner_handle,r.name AS recipient_name,r.handle AS recipient_handle FROM adventure_invitations i JOIN adventures a ON a.id=i.adventure_id JOIN users o ON o.id=i.owner_id JOIN users r ON r.id=i.recipient_id LEFT JOIN adventure_private_releases pr ON pr.id=a.private_release_id`;
 function view(r: Record<string, unknown>): Invitation {
   return {
     id: r.id as string,
@@ -64,7 +64,7 @@ export class InvitationsController {
       .strict()
       .parse(body);
     const row = await this.content.own(id, u.id);
-    if (row.visibility !== 'private' || row.status === 'archived')
+    if (row.visibility !== 'private' || !row.private_release_id || row.status === 'archived')
       fail(409, 'STATE_CONFLICT', 'Приглашения доступны только для приватного приключения.');
     const recipient = (
       await this.db.query('SELECT id FROM users WHERE handle=$1 AND deleted_at IS NULL', [b.handle])
@@ -74,11 +74,16 @@ export class InvitationsController {
     const inviteId = await this.db.tx(async (c) => {
       const current = (
         await c.query(
-          'SELECT visibility,status FROM adventures WHERE id=$1 AND owner_id=$2 FOR UPDATE',
+          'SELECT visibility,status,private_release_id FROM adventures WHERE id=$1 AND owner_id=$2 FOR UPDATE',
           [id, u.id],
         )
       ).rows[0];
-      if (!current || current.visibility !== 'private' || current.status === 'archived')
+      if (
+        !current ||
+        current.visibility !== 'private' ||
+        !current.private_release_id ||
+        current.status === 'archived'
+      )
         fail(409, 'STATE_CONFLICT', 'Приключение больше не доступно для приглашения.');
       const existing = (
         await c.query(
@@ -114,12 +119,10 @@ export class InvitationsController {
             recipient.id,
             JSON.stringify({
               adventureId: id,
-              adventureTitle: row.title,
+              adventureTitle: (row.private_snapshot as AdventureMetadata).title,
               inviter: u.name,
               adventureMetadata: safeAdventureMetadata({
-                ...(row.data as AdventureMetadata),
-                title: row.title as string,
-                synopsis: row.synopsis as string,
+                ...(row.private_snapshot as AdventureMetadata),
               }),
             }),
           ],
@@ -157,7 +160,7 @@ export class InvitationsController {
     return (
       await this.db.query(
         select +
-          " WHERE i.recipient_id=$1 AND i.status IN('pending','accepted') AND a.visibility='private' AND a.status<>'archived' ORDER BY i.created_at DESC LIMIT 100",
+          " WHERE i.recipient_id=$1 AND i.status IN('pending','accepted') AND a.visibility='private' AND a.private_release_id IS NOT NULL AND a.status<>'archived' ORDER BY i.created_at DESC LIMIT 100",
         [u.id],
       )
     ).map(view);
@@ -181,11 +184,17 @@ export class InvitationsController {
     if (!existing) fail(404, 'NOT_FOUND', 'Приглашение не найдено.');
     await this.db.tx(async (c) => {
       const adventure = (
-        await c.query('SELECT visibility,status FROM adventures WHERE id=$1 FOR UPDATE', [
-          existing.adventure_id,
-        ])
+        await c.query(
+          'SELECT visibility,status,private_release_id FROM adventures WHERE id=$1 FOR UPDATE',
+          [existing.adventure_id],
+        )
       ).rows[0];
-      if (!adventure || adventure.visibility !== 'private' || adventure.status === 'archived')
+      if (
+        !adventure ||
+        adventure.visibility !== 'private' ||
+        !adventure.private_release_id ||
+        adventure.status === 'archived'
+      )
         fail(409, 'STATE_CONFLICT', 'Приглашение больше не действует.');
       const result = await c.query(
         "UPDATE adventure_invitations SET status=$3,updated_at=now() WHERE id=$1 AND recipient_id=$2 AND status IN('pending','accepted') RETURNING id",

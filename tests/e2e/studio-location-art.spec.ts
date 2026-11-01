@@ -153,6 +153,7 @@ async function setup(page: Page, approved = false, existing = false, mapped = fa
     binding: null | { revisionId: string; sourceHash: string; stale: boolean; mapId?: string } =
       null,
     jobs: object[] = [];
+  // Admin presentation fixture only; the registered account's server role is unchanged.
   await page.route('**/api/v1/auth/me', async (route) => {
     const response = await route.fetch(),
       body = await response.json();
@@ -323,7 +324,7 @@ test('Studio Locations visibly shows the real-image control, model and plain blo
     path: test.info().outputPath('actual-config-location-image-control-mobile.png'),
     fullPage: false,
   });
-  await control.getByRole('button', { name: 'Budget and library settings', exact: true }).click();
+  await control.getByRole('button', { name: 'Choose an image from library', exact: true }).click();
   const dialog = page.getByTestId('location-image-dialog');
   await expect(
     dialog.getByRole('textbox', { name: 'Saved generation description', exact: true }),
@@ -349,7 +350,7 @@ test('synthetic canonical location image requires quote consent and separate fre
     .fill('Updated saved skylight description for this location.');
   await page
     .locator(`[data-location-art="${mock.locationId}"]`)
-    .getByRole('button', { name: 'Budget and library settings', exact: true })
+    .getByRole('button', { name: 'Choose an image from library', exact: true })
     .click();
   const dialog = page.getByTestId('location-image-dialog'),
     generation = dialog.getByRole('region', { name: 'Image preparation', exact: true });
@@ -397,7 +398,9 @@ test('a permitted library image can be stored and recovered for a location witho
 }) => {
   const mock = await setup(page, false, true);
   const control = () => page.locator(`[data-location-art="${mock.locationId}"]`);
-  await control().getByRole('button', { name: 'Budget and library settings', exact: true }).click();
+  await control()
+    .getByRole('button', { name: 'Choose an image from library', exact: true })
+    .click();
   const dialog = page.getByTestId('location-image-dialog');
   await dialog
     .getByRole('button', { name: 'Choose an existing image for free', exact: true })
@@ -426,7 +429,9 @@ test('a permitted library image can be stored and recovered for a location witho
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   await page.reload();
   await page.getByRole('button', { name: /Locations$/ }).click();
-  await control().getByRole('button', { name: 'Budget and library settings', exact: true }).click();
+  await control()
+    .getByRole('button', { name: 'Choose an image from library', exact: true })
+    .click();
   await expect(dialog.getByRole('heading', { name: 'Saved image', exact: true })).toBeVisible();
   expect(mock.calls.quote).toBe(0);
   expect(mock.calls.jobs).toBe(0);
@@ -446,7 +451,7 @@ test('a previously map-bound illustration still saves separately while the playa
   await expect(page.getByRole('button', { name: 'Tile 0, 0: Wall', exact: true })).toBeVisible();
   await page
     .locator(`[data-location-art="${mock.locationId}"]`)
-    .getByRole('button', { name: 'Budget and library settings', exact: true })
+    .getByRole('button', { name: 'Choose an image from library', exact: true })
     .click();
   const dialog = page.getByTestId('location-image-dialog');
   await dialog.getByRole('button', { name: 'Use the saved revision', exact: true }).click();
@@ -480,7 +485,7 @@ test('a previously map-bound illustration still saves separately while the playa
   await expect(page.getByRole('button', { name: 'Tile 0, 0: Wall', exact: true })).toBeVisible();
   await page
     .locator(`[data-location-art="${mock.locationId}"]`)
-    .getByRole('button', { name: 'Budget and library settings', exact: true })
+    .getByRole('button', { name: 'Choose an image from library', exact: true })
     .click();
   await dialog.getByRole('button', { name: 'Use the saved revision', exact: true }).click();
   await expect(attachment).toHaveValue('');

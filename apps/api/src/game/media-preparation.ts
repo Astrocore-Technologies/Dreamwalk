@@ -2,7 +2,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { projectState } from '@dreamwalk/game-core';
-import type { GameState } from '@dreamwalk/contracts';
+import { deriveMapImageFraming, type GameState } from '@dreamwalk/contracts';
 import { fail } from '../errors';
 export const mediaPreparationSchema = z
   .object({
@@ -19,6 +19,7 @@ export function prepareSceneMedia(
   actorId: string,
   sourceVersionId: string,
   input: z.infer<typeof mediaPreparationSchema>,
+  framingVersion: 0 | 1 = 1,
 ) {
   const view = projectState(state, actorId),
     map = view.map;
@@ -69,6 +70,10 @@ export function prepareSceneMedia(
       : {}),
     separateRuntimeLayers: visible,
   };
+  const imageFraming =
+    framingVersion === 1 && input.kind === 'background'
+      ? deriveMapImageFraming(map.id, map.width, map.height)
+      : undefined;
   const instructions =
     input.kind === 'background'
       ? 'Draw a 2D illustrated floor-only background for this existing game map. Use its dimensions as framing reference. Walls and blocked geometry, characters, collectible items, doors, exits, labels and UI are separate engine overlays: do not bake them into this image. The image never defines collision or interactions. Never invent an interactable or mechanism.'
@@ -107,6 +112,9 @@ export function prepareSceneMedia(
     tags: [],
     background: 'opaque' as const,
     referenceRevisionIds: [] as string[],
+    ...(framingVersion === 1
+      ? { framingVersion: 1 as const, ...(imageFraming ? { imageFraming } : {}) }
+      : {}),
   };
   // Runtime overlays are returned for inspection, but are not image inputs.
   // Movement/ticks must not invalidate a floor or portrait quote. Geometry,

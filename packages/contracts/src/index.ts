@@ -1,4 +1,6 @@
 import { z } from 'zod';
+import { mapIntentSchema } from './game/map-intent';
+export * from './game/map-intent';
 export const idSchema = z.string().uuid();
 const text = (max = 1000) => z.string().trim().max(max);
 export const localeSchema = z.enum(['uk', 'en', 'ru']);
@@ -284,6 +286,7 @@ export type Npc = z.infer<typeof npcSchema> & {
   updatedAt: string;
 };
 export const locationSchema = z.object({
+  mapIntent: mapIntentSchema.optional(),
   id: text(80).min(1),
   name: text(120).min(1),
   description: text(6000).default(''),
@@ -431,3 +434,6 @@ export interface Invitation {
 }
 
 export * from './game';
+
+export * from './sparks';
+export * from './image-framing';

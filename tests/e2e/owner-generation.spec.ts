@@ -19,6 +19,7 @@ async function fixture(
   page: Page,
   options: {
     locale?: Locale;
+    adminPresentation?: boolean;
     maxReferenceImages?: 0 | 1 | 2;
     forbidden?: boolean;
     stalePricing?: boolean;
@@ -45,6 +46,14 @@ async function fixture(
     (language) => localStorage.setItem('dreamwalk-language', language),
     locale,
   );
+  // Presentation-only role fixture for technical admin controls. The registered server
+  // account remains ordinary; this mock does not assert or grant server administrator access.
+  if (options.adminPresentation !== false)
+    await page.route('**/api/v1/auth/me', async (route) => {
+      const response = await route.fetch(),
+        body = await response.json();
+      await route.fulfill({ response, json: { ...body, user: { ...body.user, role: 'admin' } } });
+    });
   const authorizationId = randomUUID(),
     locationId = randomUUID(),
     revisionId = randomUUID(),
@@ -375,7 +384,7 @@ async function openLocation(page: Page, f: Awaited<ReturnType<typeof fixture>>) 
   await page.getByRole('button', { name: /Locations$/ }).click();
   await page
     .locator(`[data-location-art="${f.locationId}"]`)
-    .getByRole('button', { name: 'Budget and library settings', exact: true })
+    .getByRole('button', { name: 'Choose an image from library', exact: true })
     .click();
   return page.getByTestId('location-image-dialog');
 }
@@ -402,13 +411,13 @@ async function prepare(page: Page) {
   await generation
     .getByRole('button', { name: 'Check library and prepare quote', exact: true })
     .click();
-  await expect(generation).toContainText('Estimated total cost');
-  await expect(generation).toContainText('Operational reserve');
+  await expect(generation).toContainText('Estimated Sparks equivalent');
+  await expect(generation).toContainText('Provider reserve in Sparks');
   await expect(generation).toContainText('do not guarantee a maximum provider invoice');
   return generation;
 }
 for (const locale of ['uk', 'en', 'ru'] as const)
-  test(`owner configuration is localized (${locale}), available to a non-admin and has no temporary session expiry`, async ({
+  test(`technical owner configuration is localized (${locale}) on the admin presentation surface and has no temporary session expiry`, async ({
     page,
   }) => {
     const f = await fixture(page, { locale });
@@ -432,6 +441,26 @@ for (const locale of ['uk', 'en', 'ru'] as const)
     expect(f.calls.dispatch).toBe(0);
     expect(f.calls.legacy).toBe(0);
   });
+test('ordinary author sees no technical budget controls and cannot dispatch without owner authorization', async ({
+  page,
+}) => {
+  const f = await fixture(page, { adminPresentation: false });
+  await page.goto('/studio/visuals');
+  await expect(page.getByTestId('live-test-panel')).toHaveCount(0);
+  await expect(page.getByTestId('owner-policy-review')).toHaveCount(0);
+  const dialog = await openLocation(page, f);
+  await expect(dialog.getByTestId('live-test-panel')).toHaveCount(0);
+  await expect(
+    dialog.getByRole('button', { name: 'Authorize owner budget', exact: true }),
+  ).toHaveCount(0);
+  await expect(
+    dialog.getByRole('button', { name: 'Check library and prepare quote', exact: true }),
+  ).toBeDisabled();
+  expect(f.calls.claim).toBe(0);
+  expect(f.calls.dispatch).toBe(0);
+  expect(f.calls.legacy).toBe(0);
+  expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
+});
 test('synthetic owner image has separate budget, request and estimate-risk consent, then explicit library/map binding', async ({
   page,
 }) => {
@@ -451,7 +480,7 @@ test('synthetic owner image has separate budget, request and estimate-risk conse
   expect(f.calls.dispatch).toBe(0);
   await page
     .locator(`[data-location-art="${f.locationId}"]`)
-    .getByRole('button', { name: 'Budget and library settings', exact: true })
+    .getByRole('button', { name: 'Choose an image from library', exact: true })
     .click();
   const fresh = await prepare(page);
   await expect(fresh.getByLabel(risk, { exact: true })).not.toBeChecked();
@@ -475,7 +504,7 @@ test('synthetic owner image has separate budget, request and estimate-risk conse
   await page.getByRole('button', { name: /Locations$/ }).click();
   await page
     .locator(`[data-location-art="${f.locationId}"]`)
-    .getByRole('button', { name: 'Budget and library settings', exact: true })
+    .getByRole('button', { name: 'Choose an image from library', exact: true })
     .click();
   await expect(dialog.getByRole('heading', { name: 'Saved image', exact: true })).toBeVisible();
   expect(f.calls.claim).toBe(1);
@@ -515,7 +544,9 @@ for (const outcome of ['unknown', 'response-lost'] as const)
     await expect(
       control.getByRole('button', { name: 'Generate image', exact: true }),
     ).toBeDisabled();
-    await control.getByRole('button', { name: 'Budget and library settings', exact: true }).click();
+    await control
+      .getByRole('button', { name: 'Choose an image from library', exact: true })
+      .click();
     await expect(
       page.getByTestId('location-image-dialog').locator('[data-image-job-status="unknown"]'),
     ).toBeVisible();

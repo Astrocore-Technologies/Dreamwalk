@@ -17,6 +17,15 @@ export async function lockManualLiveData(client, userId, campaigns) {
     'SELECT id FROM npc_ai_jobs WHERE campaign_id=ANY($1::uuid[]) OR requester_user_id=$2 OR payer_user_id=$2 ORDER BY id FOR UPDATE NOWAIT',
     [campaignIds, userId],
   );
+  // Erasure later updates these provider aggregates. Preserve terminal receipt order:
+  // job -> provider budget -> authorization/scope, retaining fail-fast operator semantics.
+  await client.query(
+    `SELECT b.provider_id FROM npc_ai_provider_budgets b
+     WHERE EXISTS(SELECT 1 FROM npc_ai_jobs j WHERE j.provider_id=b.provider_id
+       AND (j.campaign_id=ANY($1::uuid[]) OR j.requester_user_id=$2 OR j.payer_user_id=$2))
+     ORDER BY b.provider_id FOR UPDATE OF b NOWAIT`,
+    [campaignIds, userId],
+  );
   const sessions = (
     await client.query(
       'SELECT s.id,s.scope_id,s.owner_id FROM live_test_sessions s WHERE s.owner_id=$1 OR EXISTS(SELECT 1 FROM live_test_text_permits p WHERE p.session_id=s.id AND p.campaign_id=ANY($2::uuid[])) ORDER BY s.id FOR UPDATE NOWAIT',

@@ -1,3 +1,4 @@
+import type { ImageFraming } from '@dreamwalk/contracts';
 import type { ArtRevision } from '../assets/types';
 import type { LiveTestStatus } from '../live-test/types';
 import type {
@@ -8,6 +9,7 @@ export type ImageConfiguration = {
   requestEstimationEnabled?: boolean;
   pricingProfileId?: string;
   pricingProfileHash?: string;
+
   providerFingerprint?: string;
   generationMode?: 'owner' | 'manual';
   ownerEstimateEnabled?: boolean;
@@ -23,14 +25,26 @@ export type ImageConfiguration = {
     provider?: string;
     model: string;
     size: string;
+    framingPolicy?: {
+      mode: string;
+      minPixels: number;
+      maxPixels: number;
+      maxEdge: number;
+      maxAspectRatio: number;
+    };
     quality: string;
     outputs: number;
     maxReferenceImages?: number;
   };
 };
 export type GenerationQuote = {
+  framingVersion?: 1;
+  imageFraming?: ImageFraming | null;
+  sparks?: { quoteId: string; reserveSubunits: string; rateVersion: string; walletCharging: true };
   pricingProfileId?: string;
   pricingProfileHash?: string;
+  basePricingProfileId?: string;
+  basePricingProfileHash?: string;
   estimateSnapshot?: RequestEstimateSnapshot;
   pricingProfileSnapshot?: RequestPricingProfileSnapshot;
   estimateSnapshotId?: string;
@@ -56,6 +70,10 @@ export type GenerationItem = {
   status: string;
   quote?: { decision: 'reuse' | 'quote'; matches: ArtRevision[]; quote?: GenerationQuote } | null;
   job?: {
+    sparkStatus?: string;
+    sparkReservedSubunits?: string;
+    sparkCapturedSubunits?: string | null;
+
     id: string;
     operationId: string;
     status: string;
@@ -133,6 +151,8 @@ export const ownerImageQuoteMatches = (
         estimateSnapshotHash?: string;
         pricingProfileId?: string;
         pricingProfileHash?: string;
+        basePricingProfileId?: string;
+        basePricingProfileHash?: string;
         policyRevision?: number;
         policyHash?: string;
       }
@@ -178,8 +198,11 @@ export const ownerImageQuoteMatches = (
       pricing.fingerprint !== quote.pricingProfileHash ||
       estimate.pricingProfileId !== pricing.id ||
       estimate.pricingProfileHash !== pricing.fingerprint ||
-      pricing.id !== config?.pricingProfileId ||
-      pricing.fingerprint !== config?.pricingProfileHash ||
+      (config?.requestProfile?.framingPolicy?.mode === 'map_aspect_reviewed_range'
+        ? quote.basePricingProfileId !== config.pricingProfileId ||
+          quote.basePricingProfileHash !== config.pricingProfileHash
+        : pricing.id !== config?.pricingProfileId ||
+          pricing.fingerprint !== config?.pricingProfileHash) ||
       (config?.providerFingerprint !== undefined &&
         estimate.providerFingerprint !== config.providerFingerprint) ||
       !nonnegativeInteger(estimate.promptUtf8Bytes) ||

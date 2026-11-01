@@ -1,15 +1,15 @@
 'use client';
+import {
+  SparkQuotePrice,
+  SparkQuoteNotice,
+  ProviderSparkReserve,
+} from '../visual-authoring/sparks-cost';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type { GameProjection } from '@dreamwalk/contracts';
 import { SceneMedia } from './scene-media';
 import { api, ApiError, errorMessage } from '@/lib/client';
 import { Button, ErrorBox, Field, Textarea } from '@/components/ui';
-import {
-  providerReserveKnown,
-  providerBoundKnown,
-  samePreparedTurn,
-  type ProviderCostQuote,
-} from './narrative-guards';
+import { providerBoundKnown, samePreparedTurn, type ProviderCostQuote } from './narrative-guards';
 import { useNarrativeText } from './narrative-messages';
 type Turn = {
   id: string;
@@ -39,6 +39,8 @@ type Quote = ProviderCostQuote & {
   external?: boolean;
   provider?: string;
   id: string;
+  chargeUnit?: 'sparks' | 'credits';
+  sparkReservedSubunits?: string | null;
   credits: number;
   expiresAt: string;
   demo: boolean;
@@ -271,20 +273,11 @@ export function NarrativeDirector({
       </form>
       {prepared && !uncertain && (
         <div data-testid="narrative-quote" className="stack">
-          <p>{h('cost', { credits: prepared.quote.credits })}</p>
+          <SparkQuotePrice quote={prepared.quote} />
+          <SparkQuoteNotice quote={prepared.quote} />
           {prepared.quote.demo && <small>{h('demo')}</small>}
           {(prepared.quote.external ?? status?.configuration.provider === 'external') && (
-            <p>
-              {providerReserveKnown(prepared.quote)
-                ? h('requestReserve', {
-                    amount: (prepared.quote.providerReserveMicros! / 1000000).toFixed(6),
-                  })
-                : providerBoundKnown(prepared.quote, true)
-                  ? h('providerBound', {
-                      amount: ((prepared.quote.providerUpperMicros ?? 0) / 1000000).toFixed(6),
-                    })
-                  : h('missingBound')}
-            </p>
+            <ProviderSparkReserve quote={prepared.quote} />
           )}
           <p>{h('expires', { time: new Date(prepared.quote.expiresAt).toLocaleTimeString() })}</p>
           <Button

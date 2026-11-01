@@ -1,5 +1,7 @@
+import { resolveOwnerImageProfile } from '../generation/config';
 import { estimateImageRequest } from '../generation/estimates';
 import sharp from 'sharp';
+import { imageFramingMatchesProfile } from '@dreamwalk/contracts';
 import { ownerPricingIsCurrent, type OwnerGenerationConfig } from '../generation/config';
 import { ImageProviderFailure, safeImageErrorDiagnostic } from './error-diagnostics';
 import { createHash } from 'node:crypto';
@@ -14,6 +16,8 @@ export interface ImageResult {
   bytes: Buffer;
   mime: 'image/png' | 'image/webp';
   actualMicros?: number;
+  /** False when receipt contains cache categories absent from the frozen pricing profile. */
+  costVerifiedForSparks?: boolean;
   requestId: string;
 }
 export interface ImageProvider {
@@ -28,10 +32,12 @@ export interface ImageProvider {
 export class FixtureImageProvider implements ImageProvider {
   readonly id = 'mock-raster-fixture-v1';
   async generate(request: GenerationRequest, dispatchId: string): Promise<ImageResult> {
-    const raw = Buffer.alloc(64 * 64 * 4);
-    for (let y = 0; y < 64; y++)
-      for (let x = 0; x < 64; x++) {
-        const i = (y * 64 + x) * 4;
+    const width = request.imageFraming?.width ?? 64,
+      height = request.imageFraming?.height ?? 64;
+    const raw = Buffer.alloc(width * height * 4);
+    for (let y = 0; y < height; y++)
+      for (let x = 0; x < width; x++) {
+        const i = (y * width + x) * 4;
         raw[i] = 112;
         raw[i + 1] = 76;
         raw[i + 2] = 135;
@@ -39,7 +45,7 @@ export class FixtureImageProvider implements ImageProvider {
           request.background === 'opaque' || (x >= 12 && x < 52 && y >= 12 && y < 52) ? 255 : 0;
       }
     return {
-      bytes: await sharp(raw, { raw: { width: 64, height: 64, channels: 4 } })
+      bytes: await sharp(raw, { raw: { width, height, channels: 4 } })
         .png()
         .toBuffer(),
       mime: 'image/png',
@@ -126,6 +132,8 @@ export class OpenAiImageProvider implements ImageProvider {
       )
     )
       throw new Error('INVALID_IMAGE_REQUEST');
+    if (!imageFramingMatchesProfile(request.imageFraming, '1024x1024'))
+      throw new Error('IMAGE_SIZE_POLICY_REVIEW_REQUIRED');
     const o = this.options;
     const estimated = o.costBasis === 'approved_estimate';
     if (estimated && refs.length) throw new Error('IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE');
@@ -211,7 +219,7 @@ export class OwnerOpenAiImageProvider implements ImageProvider {
     refs: ImageReference[],
   ): Promise<ImageResult> {
     request = generationRequestSchema.parse(request);
-    const p = this.config.image;
+    const p = resolveOwnerImageProfile(this.config.image, request.imageFraming);
     if (
       request.mode !== 'external' ||
       Buffer.byteLength(request.prompt, 'utf8') > p.maxPromptUtf8Bytes
@@ -257,6 +265,8 @@ export class OwnerOpenAiImageProvider implements ImageProvider {
     // Freshness is independent of owner authorization; recheck just before key resolution/network.
     if (!ownerPricingIsCurrent(p.pricing, this.dependencies.now?.() ?? Date.now()))
       throw new Error('OWNER_GENERATION_CURRENT_PRICING_REQUIRED');
+    if (!imageFramingMatchesProfile(request.imageFraming, p.size, p.framingPolicy))
+      throw new Error('IMAGE_SIZE_POLICY_REVIEW_REQUIRED');
     const requestEstimate = estimateImageRequest(request.prompt, referenceIds.length, p, this.id);
     if (
       !p.estimateRiskAccepted ||
@@ -321,6 +331,18 @@ export class OwnerOpenAiImageProvider implements ImageProvider {
     );
     return readImageResult(response, dispatchId, p);
   }
+}
+// Cache rates are not present in existing image quote profiles. A positive, malformed,
+// or future cache category must not become a user charge at a guessed full-input rate.
+function unpricedCacheEvidence(value: unknown, inCache = false): boolean {
+  if (value && typeof value === 'object' && !Array.isArray(value)) {
+    const entries = Object.entries(value);
+    return (
+      (inCache && entries.length === 0) ||
+      entries.some(([key, item]) => unpricedCacheEvidence(item, inCache || /cach/i.test(key)))
+    );
+  }
+  return inCache && (!Number.isSafeInteger(value) || value !== 0);
 }
 async function readImageResult(
   response: Response,
@@ -397,6 +419,7 @@ async function readImageResult(
     bytes,
     mime: 'image/png',
     actualMicros,
+    costVerifiedForSparks: actualMicros !== undefined && !unpricedCacheEvidence(u),
     requestId: (response.headers.get('x-request-id') ?? dispatchId).slice(0, 200),
   };
 }

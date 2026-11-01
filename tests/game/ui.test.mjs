@@ -150,7 +150,7 @@ test('the renderer only resolves the pinned bundled atlas and its immutable file
   assert.equal(manifest.immutableRuntimePath, prototypeAtlas.path);
 });
 
-test('Studio wiring preserves explicit playable opt-in, revision saves, private version pinning and publication guard', async () => {
+test('Studio retains standalone editor safeguards and uses reviewed builder plus explicit private publication', async () => {
   // Wiring assertions complement API/core/browser acceptance; not browser execution evidence.
   const editor = await readFile(
     new URL('../../apps/web/components/studio/playable-map-editor.tsx', import.meta.url),
@@ -166,10 +166,12 @@ test('Studio wiring preserves explicit playable opt-in, revision saves, private 
   assert.match(editor, /useDraftAutosave<AuthoredGameDraft \| null, DraftResponse>/);
   assert.match(editor, /playableVersionId: version.versionId/);
   assert.doesNotMatch(editor, /dangerouslySetInnerHTML|JSON\.parse|<Textarea/);
-  assert.match(studio, /if \(playableFlush.current\) await playableFlush.current\(\)/);
-  assert.match(studio, /useDirtyWarning\(dirty \|\| playableDirty\)/);
-  assert.match(studio, /dirty \|\| playableDirty \? setConfirm\('leave'\)/);
-  assert.match(studio, /hidden=\{step !== 2 && step !== 6\}/);
+  assert.match(studio, /useDirtyWarning\(dirty\)/);
+  assert.match(studio, /dirty \? setConfirm\('leave'\)/);
+  assert.match(studio, /step === 2 \|\| step === 6/);
+  assert.match(studio, /<StoryPlayableBuilder[\s\S]*?beforePrepare=\{autosave.flush\}/);
+  assert.match(studio, /<PrivateRelease[\s\S]*?beforePublish=\{autosave.flush\}/);
+  assert.doesNotMatch(studio, /<PlayableMapEditor/);
 });
 
 test('moderation map inspector is read-only and approval waits for review of the submitted version', async () => {

@@ -1,4 +1,6 @@
 'use client';
+import { imageFramingEvidenceMatches, type ImageFraming } from '@dreamwalk/contracts';
+import { ImageFramingNotice } from '../visual-authoring/image-framing-notice';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, errorMessage } from '@/lib/client';
 import { Button, ErrorBox, Field, Input } from '@/components/ui';
@@ -13,6 +15,8 @@ export type GroundedPreparation = {
   prompt: string;
   grounding: { map: { label: string }; subject?: { label: string } };
   spec: {
+    framingVersion?: 1;
+    imageFraming?: ImageFraming;
     kind: 'background' | 'portrait';
     camera: 'top-down' | 'portrait';
     tags: string[];
@@ -20,7 +24,14 @@ export type GroundedPreparation = {
     referenceRevisionIds: string[];
   };
 };
-type Quote = { id: string; mode: 'mock' | 'external'; upperMicros: number; expiresAt: string };
+type Quote = {
+  framingVersion?: 1;
+  imageFraming?: ImageFraming | null;
+  id: string;
+  mode: 'mock' | 'external';
+  upperMicros: number;
+  expiresAt: string;
+};
 type Job = {
   id: string;
   operationId: string;
@@ -68,7 +79,13 @@ export function GroundedImage({
     seen = useRef(new Set<string>()),
     callback = useRef(onRevision);
   callback.current = onRevision;
-  const rightsKey = JSON.stringify([license, attribution, attested]);
+  const rightsKey = JSON.stringify([
+    license,
+    attribution,
+    attested,
+    preparation.groundingHash,
+    preparation.spec.imageFraming,
+  ]);
   useEffect(() => {
     setQuote(null);
     setConsent(false);
@@ -118,7 +135,13 @@ export function GroundedImage({
       epoch.current++;
       clearInterval(timer);
     };
-  }, [campaignId, preparation.adventureId, preparation.spec.kind, preparation.spec.camera]);
+  }, [
+    campaignId,
+    preparation.adventureId,
+    preparation.spec.kind,
+    preparation.spec.camera,
+    preparation.groundingHash,
+  ]);
   async function estimate(declineReuse = false) {
     if (lock.current || !attested || !license.trim() || disabled) return;
     lock.current = true;
@@ -141,6 +164,8 @@ export function GroundedImage({
             0,
             120,
           ),
+          framingVersion: preparation.spec.framingVersion,
+          imageFraming: preparation.spec.imageFraming,
           kind: preparation.spec.kind,
           camera: preparation.spec.camera,
           tags: preparation.spec.tags,
@@ -176,6 +201,7 @@ export function GroundedImage({
       if (
         result.decision === 'quote' &&
         result.quote?.mode === 'mock' &&
+        imageFramingEvidenceMatches(preparation.spec, result.quote) &&
         result.quote.upperMicros === 0
       ) {
         setQuote(result.quote);
@@ -195,6 +221,7 @@ export function GroundedImage({
       !consent ||
       !attested ||
       !quote ||
+      !imageFramingEvidenceMatches(preparation.spec, quote) ||
       operation.current?.quoteId !== quote.id ||
       uncertain
     )
@@ -231,6 +258,7 @@ export function GroundedImage({
   }
   return (
     <details data-testid="grounded-image">
+      {preparation.spec.kind === 'background' && <ImageFramingNotice {...preparation.spec} />}
       <summary>{h('testArt')}</summary>
       <div className="stack">
         <p>{g('mock')}</p>

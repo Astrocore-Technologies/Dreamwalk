@@ -77,7 +77,10 @@ export class GenerationProvider implements NpcProvider {
       await this.session.complete(
         permit,
         result.usage.costMicros,
-        result.failureCode ?? 'PROVIDER_RESULT',
+        result.failureCode ??
+          (result.usage.costVerifiedForSparks === false
+            ? 'SPARK_COST_UNVERIFIED'
+            : 'PROVIDER_RESULT'),
         result.requestId,
       );
       return result;

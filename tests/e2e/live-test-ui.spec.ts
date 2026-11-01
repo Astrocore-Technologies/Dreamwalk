@@ -302,7 +302,9 @@ test('synthetic external stages require separate image consent and human review;
   await expect(approve).toBeDisabled();
   const concept = page.locator('[data-generation-role="concept"]');
   await concept.getByRole('button', { name: 'Estimate this image', exact: true }).click();
-  await expect(concept.getByText('Upper estimate: $0.10', { exact: true })).toBeVisible();
+  await expect(
+    concept.getByText('Upper estimate in Sparks: 10.00 Sparks', { exact: true }),
+  ).toBeVisible();
   const dispatch = concept.getByRole('button', { name: 'Dispatch one request', exact: true });
   await expect(dispatch).toBeDisabled();
   expect(mock.calls.dispatch).toBe(0);
@@ -356,9 +358,15 @@ test('synthetic planning estimate is never shown as a free hard cap and cannot d
   const concept = page.locator('[data-generation-role="concept"]');
   await concept.getByRole('button', { name: 'Estimate this image', exact: true }).click();
   await expect(
-    concept.getByText('Planning estimate, not an invoice cap: $0.04588', { exact: true }),
+    concept.getByText('Estimated Sparks equivalent: 4.59 Sparks', { exact: true }),
   ).toBeVisible();
-  await expect(concept.getByText('Operational reserve: $0.10', { exact: true })).toBeVisible();
+  await expect(
+    concept.getByText('Provider reserve in Sparks: 10.00 Sparks', { exact: true }),
+  ).toBeVisible();
+  await expect(concept.getByTitle('4.5880 Sparks', { exact: true })).toBeVisible();
+  await expect(concept.locator('[data-sparks-equivalent-only]')).toContainText(
+    'not wallet charges or wallet holds',
+  );
   await expect(concept.getByLabel(/I have rights to the specified references/)).toBeDisabled();
   await expect(
     concept.getByRole('button', { name: 'Dispatch one request', exact: true }),

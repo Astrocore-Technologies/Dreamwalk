@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { publishPrivateFixture } from './private-release-fixture.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
@@ -322,6 +323,13 @@ await test('public snapshots, media visibility and taxonomy regressions', async 
           (await request('GET', `/adventures?q=Private-${suffix}`, undefined, 200, false)).length,
           0,
         );
+        await request(
+          'POST',
+          `/studio/adventures/${story.id}/invitations`,
+          { handle: recipient.handle },
+          409,
+        );
+        await publishPrivateFixture(request, story.id);
         const invitation = await request(
           'POST',
           `/studio/adventures/${story.id}/invitations`,
@@ -382,6 +390,26 @@ await test('public snapshots, media visibility and taxonomy regressions', async 
         await request('GET', `/studio/adventures/${story.id}`, undefined, 404);
         await request('GET', `/studio/adventures/${story.id}/versions`, undefined, 404);
         await request('PATCH', `/studio/adventures/${story.id}`, { title: 'Not allowed' }, 404);
+        cookie = ownerCookie;
+        await request('PATCH', `/studio/adventures/${story.id}`, {
+          title: `Private-draft-${suffix}`,
+        });
+        const frozen = detail.npcs.find((n) => n.id === privateNpc.id);
+        await request('PATCH', `/npcs/${privateNpc.id}`, { name: `Unreleased-NPC-${suffix}` });
+        cookie = recipientCookie;
+        const unchanged = await request('GET', `/adventures/${story.slug}`);
+        assert.equal(unchanged.title, story.title);
+        assert.equal(unchanged.npcs.find((n) => n.id === privateNpc.id).name, frozen.name);
+        assert.ok(!JSON.stringify(unchanged).includes(`Unreleased-NPC-${suffix}`));
+        cookie = ownerCookie;
+        await publishPrivateFixture(request, story.id);
+        cookie = recipientCookie;
+        const republished = await request('GET', `/adventures/${story.slug}`);
+        assert.equal(republished.title, `Private-draft-${suffix}`);
+        assert.equal(
+          republished.npcs.find((n) => n.id === privateNpc.id).name,
+          `Unreleased-NPC-${suffix}`,
+        );
         await request('GET', `/npcs/${privateNpc.id}`, undefined, 404);
         await request('PUT', `/favorites/${story.id}`, {});
         assert.ok((await request('GET', '/library')).shared.some((a) => a.id === story.id));

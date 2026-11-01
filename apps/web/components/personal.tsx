@@ -1,4 +1,5 @@
 'use client';
+import { CharacterSpriteControl } from './visual-authoring/character-sprite-control';
 import { useVisualText } from './visual-authoring/messages';
 import { readStoryReturn, storyWithHero } from './story-return';
 import { StoryReturnLink } from './story-return-link';
@@ -19,7 +20,7 @@ import {
   type Hero,
 } from '@/lib/client';
 import type { Wallet, Invitation } from '@dreamwalk/contracts';
-import { selectAdventureText } from '@dreamwalk/contracts';
+import { formatSparkSubunits, selectAdventureText } from '@dreamwalk/contracts';
 import { AdventureCard } from './public';
 import {
   Badge,
@@ -44,6 +45,7 @@ export function LibraryPage() {
   const { data, loading, error, reload } = useResource<{
     favorites: Adventure[];
     drafts: Adventure[];
+    privatePublished: Adventure[];
     heroes: Hero[];
     shared: Adventure[];
   }>('/library');
@@ -102,6 +104,15 @@ export function LibraryPage() {
             'invitations',
             tr('Приглашения'),
             invitations.data?.filter((i) => i.status === 'pending').length,
+          ],
+          [
+            'playable',
+            locale === 'ru'
+              ? 'Мои игровые публикации'
+              : locale === 'uk'
+                ? 'Мої ігрові публікації'
+                : 'My playable releases',
+            data?.privatePublished?.length,
           ],
           ['drafts', tr('Мои истории'), data?.drafts.length],
           ['history', tr('Прохождения'), 0],
@@ -195,6 +206,21 @@ export function LibraryPage() {
           )}
           action={<ButtonLink href="/my-characters">{tr('Создать героя')}</ButtonLink>}
         />
+      ) : tab === 'playable' ? (
+        <div className="adventure-grid">
+          {data?.privatePublished?.map((a) => (
+            <AdventureCard key={a.id} adventure={a} />
+          ))}
+          {!data?.privatePublished?.length && (
+            <p>
+              {locale === 'ru'
+                ? 'Сначала подготовьте игровой план и опубликуйте историю приватно в мастерской.'
+                : locale === 'uk'
+                  ? 'Спочатку підготуйте ігровий план та опублікуйте історію приватно в майстерні.'
+                  : 'Build a playable plan and publish your story privately in Studio first.'}
+            </p>
+          )}
+        </div>
       ) : tab === 'shared' ? (
         <>
           <div className="notice">
@@ -317,6 +343,10 @@ export function HeroesPage() {
               >
                 {heroText('play')}
               </ButtonLink>
+              <CharacterSpriteControl
+                target={{ kind: 'hero', id: hero.id }}
+                onSaved={resource.reload}
+              />
               <p>{hero.backstory || tr('История этого героя ещё не рассказана.')}</p>
               <div className="filter-chips">
                 {hero.traits.map((t) => (
@@ -491,10 +521,36 @@ export function WalletPage() {
   const date = useDate();
   const { t: tr, locale } = useT();
   const wallet = useResource<Wallet & { available?: number; reserved?: number }>('/wallet');
-  const packages =
-    useResource<{ id: string; name: string; credits: number; available: boolean }[]>(
-      '/store/packages',
-    );
+  const sparks = useResource<{
+    enabled: boolean;
+    availableSubunits: string;
+    heldSubunits: string;
+    ledger: { id: string; kind: string; amountSubunits: string; createdAt: string }[];
+  }>('/sparks/wallet');
+  const pricing =
+    locale === 'ru'
+      ? [
+          'Искры за использование AI',
+          'Доступно',
+          'Удерживается',
+          'Учёт подготовлен, но платный кошелёк не активирован. Демонстрационный баланс ниже не конвертируется.',
+          'Выбранная схема: $5 = 200 искр; 1 цент расходов API = 1 искра. Наценка уже включена. Покупки пока недоступны.',
+        ]
+      : locale === 'uk'
+        ? [
+            'Іскри за використання AI',
+            'Доступно',
+            'Утримується',
+            'Облік підготовлено, але платний гаманець не активовано. Демонстраційний баланс нижче не конвертується.',
+            'Обрана схема: $5 = 200 іскор; 1 цент витрат API = 1 іскра. Націнку вже включено. Покупки поки недоступні.',
+          ]
+        : [
+            'AI usage Sparks',
+            'Available',
+            'Held',
+            'Accounting is prepared but the paid wallet is not active. The demo balance below is not converted.',
+            'Selected design: $5 = 200 Sparks; 1 API-cost cent = 1 Spark. Markup is already included. Purchases are unavailable.',
+          ];
   return (
     <>
       <PageHeading
@@ -504,6 +560,47 @@ export function WalletPage() {
           'Искры — валюта будущих AI-приключений. Сейчас здесь только тестовый баланс.',
         )}
       />
+      <Panel>
+        <h2>{pricing[0]}</h2>
+        <p>
+          {pricing[1]}: {formatSparkSubunits(sparks.data?.availableSubunits ?? '0', locale)} ✦ ·{' '}
+          {pricing[2]}: {formatSparkSubunits(sparks.data?.heldSubunits ?? '0', locale)} ✦
+        </p>
+        <p>
+          {sparks.data?.enabled
+            ? locale === 'ru'
+              ? 'Оплата из этого кошелька включена отдельной политикой. Демонстрационный баланс остаётся отдельно.'
+              : locale === 'uk'
+                ? 'Оплату з цього гаманця ввімкнено окремою політикою. Демонстраційний баланс залишається окремо.'
+                : 'This wallet is enabled by a separate charging policy. Demo balances remain separate.'
+            : pricing[3]}
+        </p>
+        <p>{pricing[4]}</p>
+        {!!sparks.data?.ledger?.length && (
+          <ul>
+            {sparks.data.ledger.map((entry) => (
+              <li key={entry.id}>
+                {(
+                  {
+                    reserve: locale === 'ru' ? 'Резерв' : locale === 'uk' ? 'Резерв' : 'Reserved',
+                    capture: locale === 'ru' ? 'Списано' : locale === 'uk' ? 'Списано' : 'Captured',
+                    release:
+                      locale === 'ru' ? 'Освобождено' : locale === 'uk' ? 'Звільнено' : 'Released',
+                    pending:
+                      locale === 'ru'
+                        ? 'На сверке'
+                        : locale === 'uk'
+                          ? 'На звірці'
+                          : 'Pending reconciliation',
+                  } as Record<string, string>
+                )[entry.kind] ?? entry.kind}
+                : {formatSparkSubunits(entry.amountSubunits, locale)} ✦ · {date(entry.createdAt)}
+              </li>
+            ))}
+          </ul>
+        )}
+        <ErrorBox message={sparks.error} retry={sparks.reload} />
+      </Panel>
       <div className="wallet-layout">
         <section className="balance-card">
           <div className="row">
@@ -542,29 +639,13 @@ export function WalletPage() {
             </li>
           </ul>
           <p className="muted">
-            {tr(
-              'Цены будущих операций будут опубликованы после измерений. Сейчас AI-вызовы не выполняются.',
-            )}
+            {locale === 'ru'
+              ? 'Генерация требует отдельной цены и согласия; доступность зависит от настроек владельца и защитных лимитов.'
+              : locale === 'uk'
+                ? 'Генерація потребує окремої ціни та згоди; доступність залежить від налаштувань власника й захисних лімітів.'
+                : 'Generation requires a quote and consent; availability depends on owner configuration and safety limits.'}
           </p>
         </Panel>
-      </div>
-      <div className="section-heading">
-        <h2>{tr('Пакеты искр')}</h2>
-        <Badge>{tr('ДЕМОНСТРАЦИЯ')}</Badge>
-      </div>
-      <div className="packages-grid">
-        {(packages.data || []).map((p) => (
-          <Panel key={p.id}>
-            <Sparkles size={25} />
-            <h3>{p.name}</h3>
-            <div className="package-number">
-              {p.credits.toLocaleString(locale)} <small>{tr('искр')}</small>
-            </div>
-            <Button disabled variant="secondary">
-              {tr('Покупки пока недоступны')}
-            </Button>
-          </Panel>
-        ))}
       </div>
       <Panel>
         <h2>{tr('История операций')}</h2>

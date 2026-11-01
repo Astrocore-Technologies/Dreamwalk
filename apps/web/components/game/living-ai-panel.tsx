@@ -1,4 +1,5 @@
 'use client';
+import { SparkQuotePrice, SparkQuoteNotice } from '../visual-authoring/sparks-cost';
 import { useEffect, useRef, useState } from 'react';
 import type { GameProjection } from '@dreamwalk/contracts';
 import { api, errorMessage } from '@/lib/client';
@@ -6,6 +7,8 @@ import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Field, Select } from '@/components/ui';
 type Quote = {
   id: string;
+  chargeUnit?: 'sparks' | 'credits';
+  sparkReservedSubunits?: string | null;
   credits: number;
   expiresAt: string;
   demo: boolean;
@@ -234,7 +237,8 @@ export function LivingAiPanel({
       </Button>
       {quote && (
         <div>
-          <p>{t('Стоимость: {credits} искр', { credits: quote.credits })}</p>
+          <SparkQuotePrice quote={quote} />
+          <SparkQuoteNotice quote={quote} />
           <p>
             {t('Предложение действует до {time}', {
               time: new Date(quote.expiresAt).toLocaleTimeString(),

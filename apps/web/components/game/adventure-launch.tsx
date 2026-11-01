@@ -25,7 +25,12 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
     }[];
   }>(user && privateAccess ? `/game/adventures/${adventure.id}/playable-versions` : null);
   const versionId = privateAccess
-    ? versions.data?.versions.find((version) => version.audience === 'private')?.id
+    ? versions.data?.versions.find(
+        (version) =>
+          version.audience === 'private' &&
+          version.approved &&
+          version.id === adventure.playableVersionId,
+      )?.id
     : adventure.playableVersionId;
   const gate = useLaunchGate(`${user?.id}:${adventure.id}:${versionId}:${heroSelection.heroId}`);
   const [busy, setBusy] = useState(false),

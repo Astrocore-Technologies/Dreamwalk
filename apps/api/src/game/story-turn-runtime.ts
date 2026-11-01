@@ -129,7 +129,7 @@ export class StoryTurnRuntime {
   private async row(id: string, turnId: string, userId?: string) {
     return (
       await this.db.query(
-        `SELECT t.*,r.status AS request_status,j.status AS job_status,j.credits AS job_credits FROM game_story_turns t LEFT JOIN game_npc_decision_requests r ON r.id=t.decision_request_id LEFT JOIN npc_ai_jobs j ON j.id=r.job_id WHERE t.campaign_id=$1 AND t.id=$2 ${userId ? 'AND t.requester_user_id=$3' : ''}`,
+        `SELECT t.*,r.status AS request_status,j.status AS job_status,j.credits AS job_credits,sh.status AS spark_status,sh.reserved_subunits AS spark_reserved,sh.captured_subunits AS spark_captured FROM game_story_turns t LEFT JOIN game_npc_decision_requests r ON r.id=t.decision_request_id LEFT JOIN npc_ai_jobs j ON j.id=r.job_id LEFT JOIN spark_holds sh ON sh.id=COALESCE(j.spark_hold_id,(SELECT br.spark_quote_id FROM live_test_text_permits p JOIN generation_budget_reservations br ON br.id=p.reservation_id WHERE p.job_id=j.id OR p.request_id::text=j.request_meta->>'runtimeRequestId' LIMIT 1)) WHERE t.campaign_id=$1 AND t.id=$2 ${userId ? 'AND t.requester_user_id=$3' : ''}`,
         [id, turnId, ...(userId ? [userId] : [])],
       )
     )[0];
@@ -154,6 +154,13 @@ export class StoryTurnRuntime {
           }
         : {}),
       ...(r.status === 'committed' ? { sceneId: r.result?.sceneId, npcId: r.result?.npcId } : {}),
+      ...(r.spark_status
+        ? {
+            sparkStatus: r.spark_status,
+            sparkReservedSubunits: String(r.spark_reserved),
+            sparkCapturedSubunits: r.spark_captured === null ? null : String(r.spark_captured),
+          }
+        : {}),
       generationCost:
         r.job_status === 'committed'
           ? Number(r.job_credits ?? 0)
@@ -1184,7 +1191,7 @@ export class StoryTurnRuntime {
         )
         .slice(-300);
       const turns = await this.db.query(
-        `SELECT t.*,j.status AS job_status,j.credits AS job_credits FROM game_story_turns t LEFT JOIN game_npc_decision_requests r ON r.id=t.decision_request_id LEFT JOIN npc_ai_jobs j ON j.id=r.job_id WHERE t.campaign_id=$1 AND t.requester_user_id=$2 AND t.erased_at IS NULL AND t.status<>'quoted' ORDER BY t.created_at DESC LIMIT 40`,
+        `SELECT t.*,j.status AS job_status,j.credits AS job_credits,sh.status AS spark_status,sh.reserved_subunits AS spark_reserved,sh.captured_subunits AS spark_captured FROM game_story_turns t LEFT JOIN game_npc_decision_requests r ON r.id=t.decision_request_id LEFT JOIN npc_ai_jobs j ON j.id=r.job_id LEFT JOIN spark_holds sh ON sh.id=COALESCE(j.spark_hold_id,(SELECT br.spark_quote_id FROM live_test_text_permits p JOIN generation_budget_reservations br ON br.id=p.reservation_id WHERE p.job_id=j.id OR p.request_id::text=j.request_meta->>'runtimeRequestId' LIMIT 1)) WHERE t.campaign_id=$1 AND t.requester_user_id=$2 AND t.erased_at IS NULL AND t.status<>'quoted' ORDER BY t.created_at DESC LIMIT 40`,
         [id, a.user.id],
       );
       return {

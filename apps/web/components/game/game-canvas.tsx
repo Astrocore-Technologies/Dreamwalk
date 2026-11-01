@@ -5,7 +5,7 @@ import { MapActions, InventoryPanel } from './map-actions';
 import { useItemText } from './item-messages';
 import { committedPathSample, spriteFeedback } from './turn-ui';
 import { useEffect, useRef, useState } from 'react';
-import { cameraAxis } from './camera-geometry';
+import { mapCamera, mapRasterBounds, MIN_MAP_ZOOM, MAX_MAP_ZOOM } from './map-camera';
 import { useObjectiveText } from './campaign-objectives';
 import { drawBundledScene, drawJournal } from './bundled-scene';
 import { TextureBudget, textureDimensions } from '../assets/texture-budget';
@@ -369,9 +369,13 @@ export function GameCanvas({
             });
         }
         const key =
+          `${state.projection.map.id}:${state.projection.map.width}:${state.projection.map.height}:` +
           JSON.stringify(state.projection.map.composition) +
           visible
-            .map((entry) => `${entry.slot}:${entry.revisionId}:${artTextures.has(entry.url)}`)
+            .map(
+              (entry) =>
+                `${entry.slot}:${entry.revisionId}:${artTextures.has(entry.url)}:${JSON.stringify(entry.imageFraming ?? null)}`,
+            )
             .join('|');
         if (key !== artKey) {
           artKey = key;
@@ -386,8 +390,17 @@ export function GameCanvas({
           terrain.visible = !texture || !state.projection.map.composition;
           if (texture) {
             const sprite = new Sprite(texture);
-            sprite.width = state.projection.map.width * tile;
-            sprite.height = state.projection.map.height * tile;
+            const framing = mapRasterBounds(
+              background?.width ?? texture.width,
+              background?.height ?? texture.height,
+              state.projection.map.width * tile,
+              state.projection.map.height * tile,
+              background?.imageFraming,
+              state.projection.map,
+            );
+            sprite.position.set(framing.x, framing.y);
+            sprite.width = framing.width;
+            sprite.height = framing.height;
             artBackground.addChild(sprite);
           }
           for (const decoration of decorations) decoration.destroy();
@@ -461,7 +474,7 @@ export function GameCanvas({
         const { projection: p, reducedMotion: reduced } = latest.current;
         app.ticker.maxFPS = reduced ? 30 : 60;
         synchronizeArt();
-        const key = `${p.map.id}:${p.map.revision}:${p.map.sceneProfile || ''}:${JSON.stringify(p.map.composition)}`;
+        const key = `${p.map.id}:${p.map.revision}:${p.map.width}:${p.map.height}:${p.map.sceneProfile || ''}:${JSON.stringify(p.map.composition)}`;
         if (key !== mapKey) {
           mapKey = key;
           lastRevision = -1;
@@ -676,25 +689,33 @@ export function GameCanvas({
         }
         actors.sortableChildren = true;
         const own = sprites.get(p.actorId);
+        const camera = mapCamera({
+          viewportWidth: app.screen.width,
+          viewportHeight: app.screen.height,
+          worldWidth: p.map.width * tile,
+          worldHeight: p.map.height * tile,
+          zoom: zoomRef.current,
+          // Follow the animated world-cell center, not a tall/narrow sprite's top corner.
+          focusX: own ? own.sprite.x - (own.offsetX ?? 0) + tile / 2 : undefined,
+          focusY: own ? own.sprite.y - (own.offsetY ?? 0) + tile / 2 : undefined,
+        });
+        world.scale.set(camera.scale);
+        world.position.set(camera.x, camera.y);
+        for (const [key, value] of Object.entries({
+          cameraX: camera.x,
+          cameraY: camera.y,
+          cameraScale: camera.scale,
+          cameraFitScale: camera.fitScale,
+          cameraZoom: zoomRef.current,
+        })) {
+          const text = value.toFixed(3);
+          if (element.dataset[key] !== text) element.dataset[key] = text;
+        }
         if (own) {
-          const scale = zoomRef.current;
-          world.scale.set(scale);
-          world.position.set(
-            cameraAxis(app.screen.width, p.map.width * tile, own.sprite.x + tile / 2, scale),
-            cameraAxis(app.screen.height, p.map.height * tile, own.sprite.y + tile / 2, scale),
-          );
-          for (const [key, value] of Object.entries({
-            cameraX: world.x,
-            cameraY: world.y,
-            cameraScale: scale,
-          })) {
-            const text = value.toFixed(3);
-            if (element.dataset[key] !== text) element.dataset[key] = text;
-          }
           focus
             .clear()
             .ellipse(
-              own.sprite.x + tile / 2,
+              own.sprite.x + own.sprite.width / 2,
               own.sprite.y + own.sprite.height - tile * 0.15,
               tile * 0.37,
               tile * 0.15,
@@ -776,14 +797,16 @@ export function GameCanvas({
         <div className={styles.mapTools}>
           <button
             type="button"
-            onClick={() => setZoom((value) => Math.min(1.5, value + 0.2))}
+            onClick={() => setZoom((value) => Math.min(MAX_MAP_ZOOM, value + 0.2))}
+            disabled={zoom >= MAX_MAP_ZOOM}
             aria-label={t('Увеличить карту')}
           >
             +
           </button>
           <button
             type="button"
-            onClick={() => setZoom((value) => Math.max(0.6, value - 0.2))}
+            onClick={() => setZoom((value) => Math.max(MIN_MAP_ZOOM, value - 0.2))}
+            disabled={zoom <= MIN_MAP_ZOOM}
             aria-label={t('Уменьшить карту')}
           >
             −

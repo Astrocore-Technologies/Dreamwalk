@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import {
   contentSchema,
+  mapMatchesIntent,
   worldItemDefinitionsSchema,
   npcItemStockSchema,
   authoredGameDraftSchema,
@@ -67,6 +68,7 @@ export const storyPlanSchema = z
   .strict();
 export type StoryPlanSource = {
   title: string;
+  synopsis?: string;
   content: z.infer<typeof contentSchema>;
   npcs: { id: string; name: string; role: string; description: string; appearance: string }[];
   priorDraft?: AuthoredGameDraft | null;
@@ -105,6 +107,8 @@ export function compileStoryPlan(source: StoryPlanSource, value: unknown) {
     startMapId: start,
     maps: proposal.rooms.map((r) => {
       const l = content.locations.find((l) => l.id === r.locationId)!;
+      if (!mapMatchesIntent(l.mapIntent, r.width, r.height))
+        throw Error('STORY_MAP_INTENT_MISMATCH');
       const blocked = [...r.blocked];
       for (const f of r.surfaces)
         if (f.solid)
@@ -205,9 +209,9 @@ export function removeNullFields(v: unknown): unknown {
       : v;
 }
 export const storyPlanDefinition: AuthoringTextDefinition = {
-  version: 'authored-story-plan-v1',
+  version: 'authored-story-plan-v2-map-intent',
   schema: nullableStrict(z.toJSONSchema(storyPlanSchema)),
   instructions:
-    'Create the opening playable spatial plan from this author story, not a new story. Output only JSON. Preserve EXACTLY all supplied source location and NPC IDs, names and identities. Place every source NPC once, choose its location from story/context; do not replace it with a helper or add NPCs or quests. Connect all source locations bidirectionally. Every spawn, NPC and passage must be reachable on walkable interior floor. Solid furniture adds collision, keep passages clear. Use table/counter/shelf surfaces when the story calls for them. Choose only plausible benign physical item definitions and finite NPC stock supported by the story; no arbitrary powers, private facts or executable code. Item restoreVitality is bounded 0..3, nonedible items restore 0. The AI only proposes; author review and server validation are required. Four spawns must be distinct; rooms 8..24 cells, at most four locations/eight NPCs. Do not narrate success, add fetch quests, rename source characters or create pixel art. Opening and constraints describe an ongoing story, not a fixed script.',
+    'Create the opening playable spatial plan from this author story, not a new story. Output only JSON. Preserve EXACTLY all supplied source location and NPC IDs, names and identities. Place every source NPC once, choose its location from story/context; do not replace it with a helper or add NPCs or quests. Connect all source locations bidirectionally. Every spawn, NPC and passage must be reachable on walkable interior floor. Solid furniture adds collision, keep passages clear. Use table/counter/shelf surfaces when the story calls for them. Choose only plausible benign physical item definitions and finite NPC stock supported by the story; no arbitrary powers, private facts or executable code. Item restoreVitality is bounded 0..3, nonedible items restore 0. The AI only proposes; author review and server validation are required. Honor geometry described in the synopsis, world, rules and each location description. Do not turn every room into the minimum 8x8 square: choose dimensions and orientation appropriate to the author intent. Explicit location.mapIntent is authoritative: dimensions requires exactly its width and height; aspect requires that exact width:height ratio, choosing feasible integer dimensions within 8..24. These constraints override priorDraft geometry. With no explicit intent, infer suitable proportions from the description; do not invent a fixed widescreen ratio. Prior drafts are continuity context, not permission to ignore new geometry intent. Four spawns must be distinct; rooms 8..24 cells, at most four locations/eight NPCs. Do not narrate success, add fetch quests, rename source characters or create pixel art. Opening and constraints describe an ongoing story, not a fixed script.',
   validateProposal: (v) => storyPlanSchema.parse(removeNullFields(v)),
 };

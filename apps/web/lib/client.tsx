@@ -5,6 +5,14 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import type { User, Adventure } from '@dreamwalk/contracts';
 export type { User, Adventure, Hero, Asset, Settings } from '@dreamwalk/contracts';
 const errorKeys: Record<string, string> = {
+  STORY_MAP_INTENT_MISMATCH:
+    'План не соответствует заданным размерам или пропорциям локации и не применён. Проверь описание и форму, затем при необходимости подготовь новый план.',
+  IMAGE_SIZE_POLICY_REVIEW_REQUIRED:
+    'Размер изображения подготовлен по карте, но ещё не разрешён правилами генерации. Администратору нужно проверить размер и оценку стоимости.',
+  MAP_IMAGE_FRAMING_AMBIGUOUS:
+    'Не удалось однозначно определить размеры карты. Выбери нужную карту и подготовь изображение снова.',
+  IMAGE_FRAMING_DIMENSIONS_MISMATCH:
+    'Размер полученного изображения не совпал с подтверждённым. Оно не применено к карте; проверь результат перед новым запросом.',
   TOKEN_INVALID: 'Ссылка недействительна или уже использована. Запроси новую.',
   ASSET_QUOTA_EXCEEDED: 'Достигнут лимит медиатеки: 200 изображений или 100 МБ.',
   UNAUTHORIZED: 'Войди в аккаунт, чтобы продолжить.',

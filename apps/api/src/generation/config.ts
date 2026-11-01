@@ -2,6 +2,7 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { estimateTextRequest, estimateImageRequest, type ImageEstimateProfile } from './estimates';
+import { imageFramingMatchesProfile, type ImageFraming } from '@dreamwalk/contracts';
 import { TEXT_CONTEXT_TRANSPORT_BYTES } from '../ai/text-context';
 
 const positiveMicros = z.number().int().positive().max(1_000_000_000_000);
@@ -79,10 +80,25 @@ const textSchema = z
     maxInputBytes:
       value.contextBudgetTokens !== undefined ? TEXT_CONTEXT_TRANSPORT_BYTES : value.maxInputBytes!,
   }));
+const customFramingPolicySchema = z
+  .object({
+    version: z.literal(1),
+    mode: z.literal('map_aspect_reviewed_range'),
+    assumptionKind: z.literal('operator_range_ceiling_estimate'),
+    maxAspectRatio: z.number().min(1).max(3),
+    quality: z.enum(['low', 'medium', 'high']),
+    minPixels: z.number().int().min(655360).max(8294400),
+    maxPixels: z.number().int().min(655360).max(8294400),
+    maxEdge: z.number().int().min(16).max(3840),
+    reviewedOutputImageTokens: z.number().int().min(1).max(1048576),
+    pricing: pricingSchema,
+  })
+  .strict();
 const imageSchema = z
   .object({
     model,
-    size: z.enum(['1024x1024', '1024x1536', '1536x1024']),
+    size: z.string().regex(/^\d+x\d+$/),
+    framingPolicy: customFramingPolicySchema.optional(),
     quality: z.enum(['low', 'medium', 'high']),
     outputs: z.literal(1),
     format: z.literal('png'),
@@ -109,13 +125,38 @@ const imageSchema = z
         value.reserveMicros !== undefined &&
         value.reserveMicros >= value.estimatedTotalMicros,
   );
+// Omitted policy preserves the old exact profile serialization and allowed sizes.
+const reviewedImageSchema = imageSchema.refine(
+  (value) => {
+    const policy = value.framingPolicy;
+    if (!policy) return ['1024x1024', '1024x1536', '1536x1024'].includes(value.size);
+    const [w, h] = value.size.split('x').map(Number);
+    return (
+      value.model === 'gpt-image-2.5-sunburst-2026-09-08' &&
+      w > 0 &&
+      h > 0 &&
+      w % 16 === 0 &&
+      h % 16 === 0 &&
+      Math.max(w, h) <= policy.maxEdge &&
+      Math.max(w, h) <= policy.maxAspectRatio * Math.min(w, h) &&
+      value.quality === policy.quality &&
+      w * h >= policy.minPixels &&
+      w * h <= policy.maxPixels &&
+      policy.minPixels <= policy.maxPixels &&
+      !!value.estimation &&
+      value.estimation.outputImageTokens === policy.reviewedOutputImageTokens &&
+      JSON.stringify(policy.pricing) === JSON.stringify(value.pricing)
+    );
+  },
+  { message: 'CUSTOM_IMAGE_SIZE_REQUIRES_REVIEWED_POLICY_AND_COST_EVIDENCE' },
+);
 const profileSchema = z
   .object({
     totalCapMicros: positiveMicros,
     textCapMicros: positiveMicros,
     imageCapMicros: positiveMicros,
     text: textSchema,
-    image: imageSchema,
+    image: reviewedImageSchema,
   })
   .strict();
 
@@ -236,6 +277,14 @@ export function readOwnerGenerationConfig(
   });
   const image: OwnerImageProfile = Object.freeze({
     ...profile.image,
+    ...(profile.image.framingPolicy
+      ? {
+          framingPolicy: Object.freeze({
+            ...profile.image.framingPolicy,
+            pricing: Object.freeze(profile.image.framingPolicy.pricing),
+          }),
+        }
+      : {}),
     estimatedTotalMicros: profile.image.estimatedTotalMicros ?? imageBaseline.estimatedTotalMicros,
     reserveMicros: profile.image.reserveMicros ?? imageBaseline.reserveMicros,
     ...(profile.image.estimation ? { estimation: Object.freeze(profile.image.estimation) } : {}),
@@ -259,4 +308,17 @@ export function readOwnerGenerationConfig(
     ...configured,
     configFingerprint: createHash('sha256').update(JSON.stringify(configured)).digest('hex'),
   });
+}
+
+/** Resolve only inside an explicitly reviewed range; the SAME conservative token assumption
+ * is used for every size, not a guessed per-pixel formula or provider-enforced guarantee. */
+export function resolveOwnerImageProfile(
+  profile: OwnerImageProfile,
+  framing?: ImageFraming,
+): OwnerImageProfile {
+  if (!imageFramingMatchesProfile(framing, profile.size, profile.framingPolicy))
+    throw new Error('IMAGE_SIZE_POLICY_REVIEW_REQUIRED');
+  return framing && profile.framingPolicy?.mode === 'map_aspect_reviewed_range'
+    ? { ...profile, size: framing.size }
+    : profile;
 }

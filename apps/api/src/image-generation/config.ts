@@ -108,6 +108,7 @@ export interface ImageCapabilities {
     provider: string;
     model: string;
     size: string;
+    framingPolicy?: OwnerGenerationConfig['image']['framingPolicy'];
     quality: string;
     outputs: number;
     format: string;
@@ -411,6 +412,7 @@ export function createOwnerImageRuntime(
         provider: 'openai',
         model: p.model,
         size: p.size,
+        ...(p.framingPolicy ? { framingPolicy: p.framingPolicy } : {}),
         quality: p.quality,
         outputs: p.outputs,
         format: p.format,

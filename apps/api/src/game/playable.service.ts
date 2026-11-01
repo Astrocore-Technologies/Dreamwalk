@@ -199,7 +199,7 @@ export class PlayableService {
         ])
       ).rows[0];
       if (!story) fail(404, 'NOT_FOUND', 'NOT_FOUND');
-      await this.validateNpcReferences(c, user.id, input.draft);
+      await this.validateNpcReferences(c, user.id, input.draft, id);
       this.validateLocations(story, input.draft);
       const current = (
         await c.query(
@@ -239,13 +239,14 @@ export class PlayableService {
     c: PoolClient,
     ownerId: string,
     draft: z.infer<typeof authoredGameDraftSchema>,
+    storyId: string,
   ) {
     const ids = [...new Set(draft.npcs.flatMap((n) => (n.sourceNpcId ? [n.sourceNpcId] : [])))];
     if (!ids.length) return;
-    const rows = await c.query('SELECT id FROM npcs WHERE owner_id=$1 AND id=ANY($2::uuid[])', [
-      ownerId,
-      ids,
-    ]);
+    const rows = await c.query(
+      'SELECT id FROM npcs WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND (story_id IS NULL OR story_id=$3)',
+      [ownerId, ids, storyId],
+    );
     if (rows.rowCount !== ids.length) fail(403, 'FORBIDDEN', 'FORBIDDEN');
   }
   async freeze(
@@ -270,7 +271,7 @@ export class PlayableService {
     const draft = authoredGameDraftSchema.parse(row.draft),
       compiled = compilePlayableDraft(draft);
     if (!compiled.playable) fail(400, 'INVALID_MAP', compiled.errors.join(';'));
-    await this.validateNpcReferences(c, String(story.owner_id), draft);
+    await this.validateNpcReferences(c, String(story.owner_id), draft, String(story.id));
     this.validateLocations(story, draft);
     const ids = draft.npcs.flatMap((n) => (n.sourceNpcId ? [n.sourceNpcId] : []));
     const npcDefinitions = ids.length
@@ -417,7 +418,12 @@ export class PlayableService {
   }
   async versions(req: Request, id: string, ownerOnly = false) {
     const user = await this.auth.require(req),
-      story = (await this.db.query('SELECT * FROM adventures WHERE id=$1', [id]))[0];
+      story = (
+        await this.db.query(
+          'SELECT a.*,(SELECT playable_version_id FROM adventure_private_releases r WHERE r.id=a.private_release_id) AS private_playable_id FROM adventures a WHERE a.id=$1',
+          [id],
+        )
+      )[0];
     if (!story || (ownerOnly && story.owner_id !== user.id)) fail(404, 'NOT_FOUND', 'NOT_FOUND');
     const invited =
       (
@@ -432,7 +438,7 @@ export class PlayableService {
         : story.status === 'archived'
           ? null
           : story.visibility === 'private'
-            ? invited
+            ? invited && story.private_release_id
               ? 'invited'
               : null
             : story.published_snapshot
@@ -450,7 +456,7 @@ export class PlayableService {
         .filter(
           (r) =>
             story.owner_id === user.id ||
-            (access === 'invited' && r.audience === 'private') ||
+            (access === 'invited' && r.id === story.private_playable_id) ||
             (access === 'public' && r.id === published),
         )
         .map((r) => ({
@@ -458,7 +464,7 @@ export class PlayableService {
           sourceRevision: r.source_revision,
           audience: r.audience,
           createdAt: r.created_at,
-          approved: r.id === published,
+          approved: r.id === published || r.id === story.private_playable_id,
         })),
     };
   }
@@ -532,7 +538,7 @@ export class PlayableService {
   ) {
     const row = (
       await c.query(
-        'SELECT v.*,a.owner_id,a.visibility,a.status,a.published_snapshot FROM game_playable_versions v JOIN adventures a ON a.id=v.adventure_id JOIN users u ON u.id=a.owner_id WHERE v.id=$1 AND u.deleted_at IS NULL FOR SHARE OF a',
+        'SELECT v.*,a.owner_id,a.visibility,a.status,a.published_snapshot,a.private_release_id,EXISTS(SELECT 1 FROM adventure_private_releases pr WHERE pr.playable_version_id=v.id AND pr.id=a.private_release_id) AS privately_released FROM game_playable_versions v JOIN adventures a ON a.id=v.adventure_id JOIN users u ON u.id=a.owner_id WHERE v.id=$1 AND u.deleted_at IS NULL FOR SHARE OF a',
         [versionId],
       )
     ).rows[0];
@@ -543,7 +549,12 @@ export class PlayableService {
           "SELECT id FROM adventure_invitations WHERE adventure_id=$1 AND recipient_id=$2 AND status='accepted'",
           [row.adventure_id, userId],
         );
-        if (row.visibility !== 'private' || !invitation.rowCount)
+        if (
+          row.visibility !== 'private' ||
+          !row.private_release_id ||
+          !row.privately_released ||
+          !invitation.rowCount
+        )
           fail(403, 'FORBIDDEN', 'FORBIDDEN');
       }
     } else {

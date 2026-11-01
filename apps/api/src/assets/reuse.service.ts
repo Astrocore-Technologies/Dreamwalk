@@ -4,12 +4,15 @@ import type { PoolClient, QueryResultRow } from 'pg';
 import { z } from 'zod';
 import {
   frozenArtBindingsSchema,
+  imageFramingSchema,
+  type ImageFraming,
   type PlayablePackage,
   type GameState,
   type FrozenArtBinding,
 } from '@dreamwalk/contracts';
 import {
   validateArtBindingSlot,
+  parseArtSlot,
   projectVisibleArtBindings,
   compilePlayableDraft,
 } from '@dreamwalk/game-core';
@@ -815,21 +818,77 @@ export class AssetReuseService {
       [sourceVersionId, bindings.map((b) => b.revisionId), campaignId],
     );
     const rights = new Map(pins.map((p) => [`${p.slot}:${p.revision_id}`, p.rights_snapshot]));
+    const visible = bindings.filter(
+      (b) => !missing.has(b.revisionId) && rights.has(`${b.slot}:${b.revisionId}`),
+    );
+    // Geometry evidence is read only after audience/pin filtering. Never return job input,
+    // prompt, source hashes, actor IDs or other private authoring metadata.
+    const backgroundIds = [
+      ...new Set(
+        visible
+          .filter((b) => {
+            const slot = parseArtSlot(b.slot);
+            return slot?.scope === 'map' && slot.variant === 'background';
+          })
+          .map((b) => b.revisionId),
+      ),
+    ].slice(0, 128);
+    const evidence = backgroundIds.length
+      ? await this.db.query<{
+          revision_id: string;
+          framing_version: unknown;
+          image_framing: unknown;
+          kind: unknown;
+          width: number;
+          height: number;
+        }>(
+          `SELECT j.admitted_revision_id AS revision_id,j.input->'framingVersion' AS framing_version,
+        j.input->'imageFraming' AS image_framing,j.input->>'kind' AS kind,r.width,r.height
+       FROM image_generation_jobs j JOIN art_asset_revisions r ON r.id=j.admitted_revision_id
+       WHERE j.status='admitted' AND j.admitted_revision_id=ANY($1::uuid[])
+         AND j.input->'framingVersion'='1'::jsonb AND j.input->>'kind'='background'`,
+          [backgroundIds],
+        )
+      : [];
+    const framing = new Map<string, ImageFraming>();
+    for (const b of visible) {
+      const slot = parseArtSlot(b.slot);
+      if (slot?.scope !== 'map' || slot.variant !== 'background') continue;
+      const map = state.maps[slot.id];
+      const rows = evidence.filter((e) => e.revision_id === b.revisionId);
+      if (!map || rows.length !== 1) continue;
+      const row = rows[0],
+        parsed = imageFramingSchema.safeParse(row.image_framing);
+      if (row.framing_version !== 1 || row.kind !== 'background' || !parsed.success) continue;
+      const f = parsed.data;
+      if (
+        f.mapId !== slot.id ||
+        f.mapWidth !== map.width ||
+        f.mapHeight !== map.height ||
+        f.width !== b.width ||
+        f.height !== b.height ||
+        f.width !== Number(row.width) ||
+        f.height !== Number(row.height)
+      )
+        continue;
+      framing.set(`${b.slot}:${b.revisionId}`, f);
+    }
     return {
-      bindings: bindings
-        .filter((b) => !missing.has(b.revisionId) && rights.has(`${b.slot}:${b.revisionId}`))
-        .map((b) => ({
-          ...b,
-          attribution: String(rights.get(`${b.slot}:${b.revisionId}`)?.attribution ?? '').slice(
-            0,
-            240,
-          ),
-          licenseLabel: String(rights.get(`${b.slot}:${b.revisionId}`)?.licenseLabel ?? '').slice(
-            0,
-            120,
-          ),
-          url: `/api/v1/asset-library/revisions/${b.revisionId}/file?campaignId=${campaignId}`,
-        })),
+      bindings: visible.map((b) => ({
+        ...(framing.get(`${b.slot}:${b.revisionId}`)
+          ? { imageFraming: framing.get(`${b.slot}:${b.revisionId}`) }
+          : {}),
+        ...b,
+        attribution: String(rights.get(`${b.slot}:${b.revisionId}`)?.attribution ?? '').slice(
+          0,
+          240,
+        ),
+        licenseLabel: String(rights.get(`${b.slot}:${b.revisionId}`)?.licenseLabel ?? '').slice(
+          0,
+          120,
+        ),
+        url: `/api/v1/asset-library/revisions/${b.revisionId}/file?campaignId=${campaignId}`,
+      })),
       refreshAfterMs: 5000,
     };
   }

@@ -1,16 +1,12 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, ApiError } from '@/lib/client';
+import { api, ApiError, useClient } from '@/lib/client';
 import { useT } from '@/lib/i18n';
+import { useSparkCosts, SparkQuotePrice, SparkQuoteNotice, SparkReceiptCost } from './sparks-cost';
 import { Button, ErrorBox } from '../ui';
 import { RequestReserve } from '../live-test/request-reserve';
 import { artPreviewUrl } from '../assets/types';
-import {
-  generationRemaining,
-  formatUsd,
-  liveSessionActive,
-  type LiveTestStatus,
-} from '../live-test/types';
+import { generationRemaining, liveSessionActive, type LiveTestStatus } from '../live-test/types';
 import {
   useGenerationText,
   generationMessages,
@@ -37,7 +33,9 @@ export function ExternalGeneration({
   onBusyChange: (value: boolean) => void;
 }) {
   const g = useGenerationText(),
-    { locale } = useT();
+    { s, amount: money } = useSparkCosts(),
+    { locale } = useT(),
+    { user } = useClient();
   const [state, setState] = useState<GenerationState | null>(null),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
@@ -122,7 +120,6 @@ export function ExternalGeneration({
   const ownerReferencesUnavailable =
     session?.mode === 'owner' && config?.requestProfile?.maxReferenceImages === 0;
   const label = (key: string) => (key in generationMessages ? g(key as GenerationMessage) : key);
-  const money = (value: number) => formatUsd(value, locale);
   const roles = [
     ...new Set([...(state?.requiredRoles ?? []), ...(state?.items.map((item) => item.role) ?? [])]),
   ];
@@ -136,7 +133,7 @@ export function ExternalGeneration({
       <p>{g('manual')}</p>
       {ownerReferencesUnavailable && <p role="status">{g('ownerReferencesUnavailable')}</p>}
       {!allowed && <p role="status">{g(session?.mode === 'owner' ? 'ownerBlocked' : 'blocked')}</p>}
-      {config?.requestProfile && (
+      {user?.role === 'admin' && config?.requestProfile && (
         <small>
           {config.requestProfile.provider} · {config.requestProfile.model} ·{' '}
           {config.requestProfile.size} · {config.requestProfile.quality}
@@ -207,12 +204,17 @@ export function ExternalGeneration({
             )}
             {job && (
               <>
+                {job.sparkStatus && (
+                  <p>
+                    <SparkReceiptCost receipt={{ ...job, generationCost: null }} />
+                  </p>
+                )}
                 <p>
-                  {g('held')}: {money(job.heldMicros)}
+                  {s('reserve')}: {money(job.heldMicros)}
                 </p>
                 {typeof job.actualMicros === 'number' && (
                   <p>
-                    {g('actual')}: {money(job.actualMicros)}
+                    {s('actual')}: {money(job.actualMicros)}
                   </p>
                 )}
                 {job.errorCode && <code>{job.errorCode}</code>}
@@ -326,9 +328,13 @@ export function ExternalGeneration({
             )}
             {quote && !immutable && (
               <div className={styles.quote}>
-                {quote.estimateSnapshot && <RequestReserve snapshot={quote.estimateSnapshot} />}
+                {quote.sparks && <SparkQuotePrice quote={quote} />}
+                <SparkQuoteNotice quote={quote} />
+                {user?.role === 'admin' && quote.estimateSnapshot && (
+                  <RequestReserve snapshot={quote.estimateSnapshot} />
+                )}
                 <p>
-                  {g(validBound ? 'upper' : 'planningEstimate')}:{' '}
+                  {s(validBound ? 'upper' : 'estimate')}:{' '}
                   {typeof quote.upperMicros === 'number'
                     ? money(quote.upperMicros)
                     : typeof quote.estimatedTotalMicros === 'number'
@@ -340,7 +346,7 @@ export function ExternalGeneration({
                     <p>{g(estimatedQuote ? 'estimateNotice' : 'noInvoiceCap')}</p>
                     {typeof quote.reserveMicros === 'number' && (
                       <p>
-                        {g('operationalReserve')}: {money(quote.reserveMicros)}
+                        {s('reserve')}: {money(quote.reserveMicros)}
                       </p>
                     )}
                   </>

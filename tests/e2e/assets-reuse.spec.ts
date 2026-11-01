@@ -1,3 +1,9 @@
+import {
+  savePrivateFixture,
+  launchPrivateFixture,
+  authoringRequest,
+} from './support/private-authoring';
+import { createAuthoredDraft } from '@dreamwalk/game-core';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import path from 'node:path';
@@ -33,7 +39,7 @@ async function registerArt(page: Page, title: string, revision = false) {
   expect(result.ok()).toBeTruthy();
   return result.json() as Promise<{ id: string; familyId: string }>;
 }
-test('original raster reuse is authorized, autosaved and pinned in actual playable canvas', async ({
+test('original raster reuse grant UI, API binding fixture and pinned actual playable canvas', async ({
   page,
   browser,
 }) => {
@@ -86,38 +92,26 @@ test('original raster reuse is authorized, autosaved and pinned in actual playab
     await page.getByRole('button', { name: 'Сохранить черновик', exact: true }).click();
     await expect(page).toHaveURL(/\/studio\/adventures\/[0-9a-f-]+$/);
     const storyUrl = page.url();
-    await page.getByRole('button', { name: /Локации$/ }).click();
-    const editor = page.getByRole('region', { name: 'Игровая карта', exact: true });
-    await editor.getByRole('button', { name: 'Шаблон: внутренний двор', exact: true }).click();
-    // This regression intentionally covers the retained simultaneous compatibility rules.
-    await editor.getByLabel('Пошаговый режим Dreamwalk', { exact: true }).uncheck();
-    const art = page.getByRole('region', { name: 'Графика приключения', exact: true });
-    await expect(art.getByLabel('Место в сцене', { exact: true })).toBeVisible();
-    const slot = await art
-      .getByLabel('Место в сцене', { exact: true })
-      .locator('option')
-      .evaluateAll((options) =>
-        options
-          .map((option) => (option as HTMLOptionElement).value)
-          .find((value) => value.startsWith('map:') && value.endsWith(':background')),
-      );
-    expect(slot).toBeTruthy();
-    await art.getByLabel('Место в сцене', { exact: true }).selectOption(slot!);
-    const saved = page.waitForResponse(
-      (r) =>
-        /\/asset-library\/stories\/[^/]+\/draft$/.test(new URL(r.url()).pathname) &&
-        r.request().method() === 'PUT',
+    const storyId = new URL(storyUrl).pathname.split('/').at(-1)!;
+    const fixture = await savePrivateFixture(page, storyId, createAuthoredDraft('courtyard'));
+    // The removed manual-map art editor is API fixture coverage; grant/revision/canvas stay browser-driven.
+    const slot = `map:${fixture.draft.startMapId}:background`;
+    const priorArt = await authoringRequest(page, `/asset-library/stories/${storyId}/draft`);
+    await authoringRequest(
+      page,
+      `/asset-library/stories/${storyId}/draft`,
+      {
+        operationId: randomUUID(),
+        expectedRevision: priorArt.revision,
+        bindings: [{ slot, revisionId: original.id }],
+      },
+      'PUT',
     );
-    await art
-      .locator(`[data-art-revision="${original.id}"]`)
-      .getByRole('button', { name: 'Использовать ревизию', exact: true })
-      .click();
-    expect((await saved).ok()).toBeTruthy();
     await page.reload();
-    await page.getByRole('button', { name: /Локации$/ }).click();
-    await expect(art).toContainText(original.id);
-    await editor.getByRole('button', { name: 'Сохранить и проверить в игре', exact: true }).click();
-    await expect(page).toHaveURL(/\/game\/[0-9a-f-]+$/);
+    expect(
+      (await authoringRequest(page, `/asset-library/stories/${storyId}/draft`)).bindings,
+    ).toContainEqual({ slot, revisionId: original.id });
+    await launchPrivateFixture(page, storyId, false);
     const campaignUrl = page.url(),
       campaignId = campaignUrl.split('/').at(-1)!;
     await expect(page.locator('[data-art-loaded]')).toHaveAttribute('data-art-loaded', '1');
@@ -156,8 +150,11 @@ test('original raster reuse is authorized, autosaved and pinned in actual playab
       pinnedBody.bindings.some((b: { revisionId: string }) => b.revisionId === second.id),
     ).toBeFalsy();
     await page.goto(storyUrl);
-    await page.getByRole('button', { name: /Локации$/ }).click();
-    await expect(art).toContainText(original.id);
+    expect(
+      (await authoringRequest(page, `/asset-library/stories/${storyId}/draft`)).bindings.some(
+        (binding: { revisionId: string }) => binding.revisionId === original.id,
+      ),
+    ).toBe(true);
     await page.goto(campaignUrl);
     await expect(page.locator('[data-art-loaded]')).toHaveAttribute('data-art-loaded', '1');
     const management = await page.context().newPage();

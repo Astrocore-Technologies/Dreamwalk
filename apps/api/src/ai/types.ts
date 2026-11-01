@@ -70,6 +70,11 @@ export interface ProviderResult {
   usage: {
     inputTokens: number;
     outputTokens: number;
+    /** Provider input-cache evidence, included within inputTokens, never extra tokens. */
+    cachedInputTokens?: number;
+    cacheWriteInputTokens?: number;
+    /** False when a reported billing category lacks immutable matching pricing. */
+    costVerifiedForSparks?: boolean;
     costMicros: number;
     costEvidence?: 'reported' | 'configured_rates';
   };

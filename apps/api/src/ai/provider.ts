@@ -20,11 +20,19 @@ const resultSchema = z
     usage: z
       .object({
         inputTokens: z.number().int().nonnegative().max(10000000),
+        cachedInputTokens: z.number().int().nonnegative().max(10000000).optional(),
+        cacheWriteInputTokens: z.number().int().nonnegative().max(10000000).optional(),
+        costVerifiedForSparks: z.boolean().optional(),
         outputTokens: z.number().int().nonnegative().max(10000000),
         costMicros: z.number().int().nonnegative().safe(),
         costEvidence: z.enum(['reported', 'configured_rates']).optional(),
       })
-      .strict(),
+      .strict()
+      .refine(
+        (usage) =>
+          (usage.cachedInputTokens ?? 0) + (usage.cacheWriteInputTokens ?? 0) <= usage.inputTokens,
+        'Cached input exceeds input',
+      ),
   })
   .strict();
 export function validateProviderResult(value: unknown): ProviderResult {
