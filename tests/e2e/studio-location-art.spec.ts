@@ -146,10 +146,19 @@ async function setup(page: Page, approved = false, existing = false, mapped = fa
     owned: true,
     canReuse: true,
   };
-  const calls = { prepare: 0, quote: 0, jobs: 0, bind: 0, mapWrites: 0, unexpected: 0 };
+  const calls = {
+    prepare: 0,
+    quote: 0,
+    jobs: 0,
+    bind: 0,
+    mapWrites: 0,
+    storyWrites: 0,
+    unexpected: 0,
+  };
   let quotedBody: Record<string, unknown> | null = null,
     bindBody: Record<string, unknown> | null = null,
     sourceHash = '',
+    preparedSource: { name: string; revision: number; hash: string } | null = null,
     binding: null | { revisionId: string; sourceHash: string; stale: boolean; mapId?: string } =
       null,
     jobs: object[] = [];
@@ -191,6 +200,7 @@ async function setup(page: Page, approved = false, existing = false, mapped = fa
       sourceHash = createHash('sha256')
         .update(JSON.stringify([location.name, location.description, saved.editRevision]))
         .digest('hex');
+      preparedSource = { name: location.name, revision: saved.editRevision, hash: sourceHash };
       if (mapped && !binding) binding = { revisionId, sourceHash, stale: false, mapId: 'room' };
       return route.fulfill({
         json: {
@@ -287,6 +297,11 @@ async function setup(page: Page, approved = false, existing = false, mapped = fa
   });
   page.on('request', (request) => {
     if (request.method() === 'PUT' && request.url().includes('/playable-draft')) calls.mapWrites++;
+    if (
+      request.method() === 'PATCH' &&
+      new URL(request.url()).pathname === `/api/v1/studio/adventures/${adventureId}`
+    )
+      calls.storyWrites++;
   });
   await page.goto(`/studio/adventures/${adventureId}`);
   await page.getByRole('button', { name: /Locations$/ }).click();
@@ -301,6 +316,9 @@ async function setup(page: Page, approved = false, existing = false, mapped = fa
     get bindBody() {
       return bindBody;
     },
+    get preparedSource() {
+      return preparedSource;
+    },
   };
 }
 test('Studio Locations visibly shows the real-image control, model and plain blocker before any geometry', async ({
@@ -312,7 +330,9 @@ test('Studio Locations visibly shows the real-image control, model and plain blo
   await expect(control.getByRole('button', { name: 'Generate image', exact: true })).toBeVisible();
   await expect(control.getByRole('button', { name: 'Generate image', exact: true })).toBeDisabled();
   await expect(control).toContainText(mock.config.requestProfile.model);
-  await expect(control).toContainText('Owner budget approval is required.');
+  await expect(control).toContainText(
+    'Generation is unavailable until a limit is authorized. An administrator can review the safeguards.',
+  );
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await control.screenshot({
     path: test.info().outputPath('actual-config-location-image-control-desktop.png'),
@@ -439,39 +459,108 @@ test('a permitted library image can be stored and recovered for a location witho
   expect(mock.calls.mapWrites).toBe(0);
   expect(mock.calls.unexpected).toBe(0);
 });
-test('a previously map-bound illustration still saves separately while the playable draft is dirty', async ({
+test('ordinary author invalid source edits block image work; explicit illustration-only reuse preserves saved geometry', async ({
   page,
 }) => {
   const mock = await setup(page, false, true, true);
-  // Empty map label is an invalid local draft, so autosave must preserve it in memory.
-  // The image operation must neither flush that draft nor attach its stale map choice.
-  await page.getByRole('textbox', { name: 'Map name', exact: true }).fill('');
-  await page.getByRole('combobox', { name: 'Map tool', exact: true }).selectOption('wall');
-  await page.getByRole('button', { name: 'Tile 0, 0: Floor', exact: true }).click();
-  await expect(page.getByRole('button', { name: 'Tile 0, 0: Wall', exact: true })).toBeVisible();
-  await page
-    .locator(`[data-location-art="${mock.locationId}"]`)
-    .getByRole('button', { name: 'Choose an image from library', exact: true })
-    .click();
+  const control = page.locator(`[data-location-art="${mock.locationId}"]`);
+  await expect(
+    control.getByRole('img', { name: 'Library skylight illustration', exact: true }),
+  ).toBeVisible();
+  const geometry = await page.request.get(
+    `/api/v1/studio/adventures/${mock.adventureId}/playable-draft`,
+  );
+  expect(geometry.ok()).toBeTruthy();
+  const savedGeometry = await geometry.json();
+  const locationName = page.getByRole('textbox', { name: 'Location name', exact: true });
+  // Manual geometry editing was removed. The current ordinary source form must
+  // retain invalid input and prevent its shared writer from starting image work.
+  await locationName.fill('');
+  await expect(page.locator('[data-autosave-status="invalid"]')).toBeVisible();
+  const prepareBeforeInvalid = mock.calls.prepare;
   const dialog = page.getByTestId('location-image-dialog');
+  for (let attempt = 0; attempt < 2; attempt++) {
+    await control
+      .getByRole('button', { name: 'Choose an image from library', exact: true })
+      .click();
+    await expect(dialog.getByRole('alert').filter({ hasText: 'INVALID_DRAFT' })).toBeVisible();
+    await expect(dialog.getByTestId('location-image-selection')).toHaveCount(0);
+    expect(mock.calls.prepare).toBe(prepareBeforeInvalid);
+    expect(mock.calls.bind).toBe(0);
+    expect(mock.calls.quote).toBe(0);
+    expect(mock.calls.jobs).toBe(0);
+    expect(mock.calls.mapWrites).toBe(0);
+    expect(mock.calls.storyWrites).toBe(0);
+    await page.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(locationName).toHaveValue('');
+  }
+  // Hold a valid source save in flight: preparation must await its acknowledgement
+  // and read the persisted new description rather than props captured before flush.
+  const revisedName = 'Quiet library revised';
+  let releaseSave!: () => void;
+  const saveGate = new Promise<void>((resolve) => {
+    releaseSave = resolve;
+  });
+  let patchCompleted = false;
+  await page.route(`**/api/v1/studio/adventures/${mock.adventureId}`, async (route) => {
+    if (route.request().method() !== 'PATCH') return route.fallback();
+    await saveGate;
+    const response = await route.fetch();
+    expect(response.ok()).toBeTruthy();
+    patchCompleted = true;
+    await route.fulfill({ response });
+  });
+  const saving = page.waitForRequest(
+    (request) =>
+      request.method() === 'PATCH' &&
+      new URL(request.url()).pathname === `/api/v1/studio/adventures/${mock.adventureId}`,
+  );
+  try {
+    await locationName.fill(revisedName);
+    await control
+      .getByRole('button', { name: 'Choose an image from library', exact: true })
+      .click();
+    await saving;
+    expect(patchCompleted).toBe(false);
+    expect(mock.calls.prepare).toBe(prepareBeforeInvalid);
+    expect(mock.calls.bind).toBe(0);
+    await expect(
+      dialog.getByRole('textbox', { name: 'Saved generation description', exact: true }),
+    ).toHaveCount(0);
+  } finally {
+    releaseSave();
+  }
+  await expect(
+    dialog.getByRole('textbox', { name: 'Saved generation description', exact: true }),
+  ).toHaveValue(new RegExp(revisedName));
+  expect(patchCompleted).toBe(true);
+  const persistedStory = await page.request.get(`/api/v1/studio/adventures/${mock.adventureId}`);
+  expect(persistedStory.ok()).toBeTruthy();
+  const acknowledged = await persistedStory.json();
+  expect(mock.preparedSource).toMatchObject({
+    name: revisedName,
+    revision: acknowledged.editRevision,
+  });
+  // Select illustration-only explicitly; an old saved map binding must not be reused implicitly.
   await dialog.getByRole('button', { name: 'Use the saved revision', exact: true }).click();
   const selected = dialog.getByTestId('location-image-selection');
   const attachment = selected.getByRole('combobox', { name: 'Image attachment', exact: true });
-  await expect(attachment).toHaveValue('');
-  await expect(attachment).toBeDisabled();
-  await expect(selected).toContainText('the illustration can still be saved separately.');
+  await expect(attachment).toHaveValue('room');
+  await expect(attachment).toBeEnabled();
+  await attachment.selectOption('');
+  const save = selected.getByRole('button', { name: 'Save image for location', exact: true });
+  await expect(save).toBeDisabled();
   await selected
     .getByLabel(
       'I reviewed this image against the saved location description and want to use this revision.',
       { exact: true },
     )
     .check();
-  const save = selected.getByRole('button', { name: 'Save image for location', exact: true });
-  await expect(save).toBeEnabled();
   await save.click();
   await expect(
     dialog.getByText('The image was saved for this location.', { exact: true }),
   ).toBeVisible();
+  expect(mock.bindBody).toMatchObject({ expectedSourceHash: mock.preparedSource?.hash });
   expect(mock.bindBody).not.toHaveProperty('mapId');
   expect(mock.bindBody).not.toHaveProperty('expectedPlayableRevision');
   expect(mock.bindBody).not.toHaveProperty('expectedArtRevision');
@@ -479,18 +568,31 @@ test('a previously map-bound illustration still saves separately while the playa
   expect(mock.calls.quote).toBe(0);
   expect(mock.calls.jobs).toBe(0);
   expect(mock.calls.mapWrites).toBe(0);
+  expect(mock.calls.storyWrites).toBe(1);
   expect(mock.calls.unexpected).toBe(0);
   await page.getByRole('button', { name: 'Close', exact: true }).click();
-  await expect(page.getByRole('textbox', { name: 'Map name', exact: true })).toHaveValue('');
-  await expect(page.getByRole('button', { name: 'Tile 0, 0: Wall', exact: true })).toBeVisible();
-  await page
-    .locator(`[data-location-art="${mock.locationId}"]`)
-    .getByRole('button', { name: 'Choose an image from library', exact: true })
-    .click();
+  await expect(locationName).toHaveValue(revisedName);
+  await control.getByRole('button', { name: 'Choose an image from library', exact: true }).click();
   await dialog.getByRole('button', { name: 'Use the saved revision', exact: true }).click();
   await expect(attachment).toHaveValue('');
-  await expect(attachment).toBeDisabled();
-  await page.getByRole('button', { name: 'Close', exact: true }).click();
-  await expect(page.getByRole('textbox', { name: 'Map name', exact: true })).toHaveValue('');
-  await expect(page.getByRole('button', { name: 'Tile 0, 0: Wall', exact: true })).toBeVisible();
+  expect(
+    await (
+      await page.request.get(`/api/v1/studio/adventures/${mock.adventureId}/playable-draft`)
+    ).json(),
+  ).toEqual(savedGeometry);
+  expect(mock.calls.bind).toBe(1);
+  expect(mock.calls.mapWrites).toBe(0);
+});
+
+// The ordinary author path has no editable geometry panel. This is deliberately
+// source-contract coverage for the retained standalone component, not browser UI coverage.
+test('retained standalone dirty-geometry attachment fence (source contract only)', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile('apps/web/components/visual-authoring/location-image.tsx', 'utf8');
+  expect(source).toContain("const attachmentMapId = playableDirty ? '' : mapId;");
+  expect(source).toContain('value={attachmentMapId}');
+  expect(source).toContain('disabled={busy || playableDirty}');
+  expect(source).toMatch(
+    /\.\.\.\(attachmentMapId\s*\?\s*\{\s*mapId: attachmentMapId,\s*expectedPlayableRevision: prepared\.playable\.revision,\s*expectedArtRevision: prepared\.playable\.artRevision,\s*\}\s*:\s*\{\}\)/,
+  );
 });

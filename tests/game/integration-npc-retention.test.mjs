@@ -1,3 +1,4 @@
+import { releasePrivateFixture } from './support-authored.mjs';
 /** Real disposable-PG retention/erasure acceptance. Never touches preview or external providers. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -47,10 +48,7 @@ await test(
         { expectedRevision: 0, draft },
         'PUT',
       );
-      const { versionId } = await owner.request(
-        `/studio/adventures/${story.id}/playable-versions`,
-        { expectedRevision: 1 },
-      );
+      const { playableVersionId: versionId } = await releasePrivateFixture(owner, story.id);
       const { campaignId } = await owner.request('/game/campaigns', {
         turnBased: false,
         playableVersionId: versionId,

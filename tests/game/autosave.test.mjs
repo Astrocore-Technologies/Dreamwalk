@@ -179,14 +179,18 @@ test('invalid edits made during an active save are retained and block the queued
   saver.dispose();
 });
 
-test('editor manual lifecycle actions flush the shared writer and never send an uncaptured full draft', async () => {
+test('Studio lifecycle and builder actions flush the shared CAS writer before using saved state', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(
     new URL('../../apps/web/components/studio.tsx', import.meta.url),
     'utf8',
   );
-  const section = (from, to) =>
-    source.slice(source.indexOf(from), source.indexOf(to, source.indexOf(from)));
+  const section = (from, to) => {
+    const start = source.indexOf(from),
+      end = source.indexOf(to, start);
+    assert.ok(start >= 0 && end > start, `Missing source boundaries: ${from} / ${to}`);
+    return source.slice(start, end);
+  };
   const archive = section(
     "async function setStatus(status: 'draft' | 'archived')",
     '  const savedOriginal',
@@ -197,9 +201,75 @@ test('editor manual lifecycle actions flush the shared writer and never send an 
   const duplicate = section('async function duplicate()', 'async function setStatus(status:');
   assert.ok(duplicate.indexOf('await autosave.flush()') < duplicate.indexOf('/duplicate'));
   const publish = section('async function publish()', 'async function duplicate()');
-  assert.match(publish, /await playableFlush.current\(\)/);
-  assert.ok(publish.indexOf('await playableFlush.current()') < publish.indexOf('/submit'));
+  const save = section('async function save()', 'async function publish()');
+  assert.match(save, /if \(!isNew\) \{\s*const saved = await autosave.flush\(\)/);
+  assert.match(save, /catch \(e\) \{[\s\S]*return null;/);
+  assert.match(publish, /const saved = await save\(\);\s*if \(!saved\) return;/);
+  assert.match(publish, /studio\/adventures\/\$\{saved.id\}\/submit/);
+  assert.ok(publish.indexOf('if (!saved) return;') < publish.indexOf('/submit'));
+  assert.doesNotMatch(publish, /JSON.stringify\(draft\)|\.\.\.draft/);
+  assert.match(source, /JSON.stringify\(\{ \.\.\.value, expectedEditRevision: revision \}\)/);
+  assert.match(
+    source,
+    /<StoryPlayableBuilder\b[^>]*beforePrepare=\{autosave.flush\}[^>]*onApplied=\{refreshArtModeration\}/,
+  );
+  assert.match(source, /<PrivateRelease\b[^>]*beforePublish=\{autosave.flush\}/);
   assert.match(source, /resource.data !== acknowledged.current/);
   assert.match(source, /enabled: !isNew && hydration > 0/);
   assert.match(source, /document.addEventListener\('click', navigate, true\)/);
+});
+
+test('actual Studio publish waits for save, aborts failed save and submits only the acknowledged ID', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { default: ts } = await import('typescript');
+  const source = await readFile(
+    new URL('../../apps/web/components/studio.tsx', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf('async function publish()');
+  const end = source.indexOf('async function duplicate()', start);
+  assert.ok(start >= 0 && end > start);
+  // Execute the real handler in memory with inert UI/API dependencies, not a reimplementation.
+  const code = ts.transpileModule(source.slice(start, end), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const makePublish = (save, calls) =>
+    new Function(
+      'save',
+      'api',
+      'setConfirm',
+      'setBusy',
+      'resource',
+      'toast',
+      't',
+      'setError',
+      'errorMessage',
+      `${code}; return publish;`,
+    )(
+      save,
+      async (path, options) => {
+        calls.push({ path, options });
+        return { id: 'acknowledged-id' };
+      },
+      () => {},
+      () => {},
+      { setData: () => {} },
+      () => {},
+      (value) => value,
+      () => {},
+      (value) => value,
+    );
+  const pendingSave = deferred(),
+    calls = [];
+  const pendingPublish = makePublish(() => pendingSave.promise, calls)();
+  await Promise.resolve();
+  assert.deepEqual(calls, [], 'Submission cannot race an in-flight save');
+  pendingSave.resolve({ id: 'acknowledged-id', editRevision: 7 });
+  await pendingPublish;
+  assert.deepEqual(calls, [
+    { path: '/studio/adventures/acknowledged-id/submit', options: { method: 'POST', body: '{}' } },
+  ]);
+  const blocked = [];
+  await makePublish(async () => null, blocked)();
+  assert.deepEqual(blocked, [], 'Invalid/conflicted/interrupted save must not submit stale state');
 });

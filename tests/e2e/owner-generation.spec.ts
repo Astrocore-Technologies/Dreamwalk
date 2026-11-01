@@ -190,6 +190,7 @@ async function fixture(
     bind: 0,
     mapWrites: 0,
     storyDraftReads: 0,
+    libraryReads: 0,
     unexpected: 0,
     unexpectedRequests: [] as string[],
     legacy: 0,
@@ -230,17 +231,19 @@ async function fixture(
     const req = route.request(),
       path = new URL(req.url()).pathname;
     if (req.method() === 'GET' && path === `/api/v1/asset-library/stories/${adventureId}/draft`) {
-      // The playable editor reads its independent art draft on mount and after
-      // binding. Keep this exact owned read on the real local API, including ACL.
+      // Keep an explicitly requested owned art-draft read on the real API.
+      // The ordinary builder no longer mounts the removed manual map editor.
       calls.storyDraftReads++;
       return route.fallback();
     }
     if (path.endsWith('/file')) return route.fulfill({ contentType: 'image/png', body: png });
     if (path.endsWith('/' + revisionId)) return route.fulfill({ json: revision });
-    if (path.endsWith('/asset-library'))
+    if (path.endsWith('/asset-library') && req.method() === 'GET') {
+      calls.libraryReads++;
       return route.fulfill({
         json: jobs.length && (options.outcome ?? 'success') === 'success' ? [revision] : [],
       });
+    }
     calls.unexpected++;
     calls.unexpectedRequests.push(`${req.method()} ${path}`);
     await route.abort();
@@ -388,6 +391,21 @@ async function openLocation(page: Page, f: Awaited<ReturnType<typeof fixture>>) 
     .click();
   return page.getByTestId('location-image-dialog');
 }
+async function explicitlyOpenLibrary(page: Page, f: Awaited<ReturnType<typeof fixture>>) {
+  const dialog = page.getByTestId('location-image-dialog');
+  expect(f.calls.libraryReads).toBe(0);
+  const response = page.waitForResponse(
+    (r) => new URL(r.url()).pathname === '/api/v1/asset-library' && r.request().method() === 'GET',
+  );
+  await dialog
+    .getByRole('button', { name: 'Choose an existing image for free', exact: true })
+    .click();
+  expect((await response).ok()).toBeTruthy();
+  await expect(dialog.getByRole('heading', { name: 'Art library', exact: true })).toBeVisible();
+  // CI runs Next dev: StrictMode may probe the mounted resource effect once more.
+  // No polling/retry loop or generation may be triggered by this explicit free lookup.
+  expect([1, 2]).toContain(f.calls.libraryReads);
+}
 async function claim(page: Page) {
   const panel = page.getByTestId('live-test-panel');
   await expect(panel).toHaveAttribute('data-generation-mode', 'owner');
@@ -512,7 +530,9 @@ test('synthetic owner image has separate budget, request and estimate-risk conse
   expect(f.calls.dispatch).toBe(1);
   expect(f.calls.bind).toBe(1);
   expect(f.calls.mapWrites).toBe(0);
-  expect(f.calls.storyDraftReads).toBeGreaterThan(0);
+  await explicitlyOpenLibrary(page, f);
+  expect(f.calls.dispatch).toBe(1);
+  expect(f.calls.bind).toBe(1);
   expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
   expect(f.calls.legacy).toBe(0);
 });
@@ -552,7 +572,10 @@ for (const outcome of ['unknown', 'response-lost'] as const)
     ).toBeVisible();
     expect(f.calls.dispatch).toBe(1);
     expect(f.calls.bind).toBe(0);
-    expect(f.calls.storyDraftReads).toBeGreaterThan(0);
+    await explicitlyOpenLibrary(page, f);
+    expect(f.calls.dispatch).toBe(1);
+    expect(f.calls.bind).toBe(0);
+    await expect(page.getByTestId('live-test-panel')).toContainText('Generation stopped');
     expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
     expect(f.calls.legacy).toBe(0);
   });

@@ -1,3 +1,4 @@
+import { releasePrivateFixture } from './support-authored.mjs';
 /** Evolving shared narrative crosses actual auth, durable provider queue and world transaction. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -67,17 +68,15 @@ await test(
         { expectedRevision: 0, draft },
         'PUT',
       );
-      const version = await owner.request(`/studio/adventures/${story.id}/playable-versions`, {
-        expectedRevision: 1,
-      });
+      const version = await releasePrivateFixture(owner, story.id);
       const sourceBefore = (
         await db.query('SELECT checksum,package FROM game_playable_versions WHERE id=$1', [
-          version.versionId,
+          version.playableVersionId,
         ])
       ).rows[0];
       const { campaignId: id } = await owner.request('/game/campaigns', {
         turnBased: false,
-        playableVersionId: version.versionId,
+        playableVersionId: version.playableVersionId,
       });
       const invitation = await owner.request(`/studio/adventures/${story.id}/invitations`, {
         handle: guest.handle,
@@ -125,7 +124,7 @@ await test(
           assert.deepEqual(
             (
               await db.query('SELECT checksum,package FROM game_playable_versions WHERE id=$1', [
-                version.versionId,
+                version.playableVersionId,
               ])
             ).rows[0],
             sourceBefore,
@@ -204,7 +203,7 @@ await test(
           assert.equal(job.context.premise.summary, storyInput().synopsis);
           assert.equal(job.context.premise.world, storyInput().content.world);
           assert.deepEqual(job.context.sourceVersion, {
-            versionId: version.versionId,
+            versionId: version.playableVersionId,
             checksum: sourceBefore.checksum,
           });
           assert.ok(!JSON.stringify(job.context).includes('UNPUBLISHED_NEW'));
@@ -244,7 +243,7 @@ await test(
           assert.deepEqual(
             (
               await db.query('SELECT checksum,package FROM game_playable_versions WHERE id=$1', [
-                version.versionId,
+                version.playableVersionId,
               ])
             ).rows[0],
             sourceBefore,
@@ -261,7 +260,7 @@ await test(
             kind: 'background',
           });
           assert.equal(prepared.grounding.mapId, firstTurn.sceneId);
-          assert.equal(prepared.grounding.sourceVersionId, version.versionId);
+          assert.equal(prepared.grounding.sourceVersionId, version.playableVersionId);
           assert.equal(prepared.canonRevision, 2);
           assert.equal(prepared.automaticDispatch, false);
           assert.equal(prepared.createsGameEntities, false);

@@ -1,3 +1,4 @@
+import { releasePrivateFixture } from './support-authored.mjs';
 /** Stage B: persistent authored multi-round encounters use normal API and real deadlines. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -53,9 +54,7 @@ await test(
         { expectedRevision: 0, draft },
         'PUT',
       );
-      const { versionId } = await a.request(`/studio/adventures/${story.id}/playable-versions`, {
-        expectedRevision: 1,
-      });
+      const { playableVersionId: versionId } = await releasePrivateFixture(a, story.id);
       const { campaignId: id } = await a.request('/game/campaigns', {
         turnBased: false,
         playableVersionId: versionId,

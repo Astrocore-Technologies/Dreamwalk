@@ -117,10 +117,28 @@ export async function reconfirmKnownStale(
   campaignId: string,
   expected: ExpectedCommand,
   perform: () => Promise<void>,
+  prepare?: () => Promise<void>,
 ) {
   const operations = new Set<string>();
   let intended: unknown;
   for (let attempt = 0; attempt < 3; attempt++) {
+    const unexpectedStops: string[] = [];
+    const watchStop = (request: import('@playwright/test').Request) => {
+      if (
+        request.method() === 'POST' &&
+        new URL(request.url()).pathname === `/api/v1/game/campaigns/${campaignId}/stop`
+      )
+        unexpectedStops.push(request.url());
+    };
+    if (expected.type === 'action') page.on('request', watchStop);
+    // UI readiness is a separate bounded phase. Do not consume the command's
+    // existing response timeout while opening/observing a four-player canvas menu.
+    try {
+      await prepare?.();
+    } catch (error) {
+      page.off('request', watchStop);
+      throw error;
+    }
     let observedCommandResponse = false;
     const responsePromise = page.waitForResponse((response) => {
       const request = response.request();
@@ -150,15 +168,6 @@ export async function reconfirmKnownStale(
     // unhandled rejection noise if the visible interaction itself fails.
     void responsePromise.catch(() => undefined);
     void refreshed.catch(() => undefined);
-    const unexpectedStops: string[] = [];
-    const watchStop = (request: import('@playwright/test').Request) => {
-      if (
-        request.method() === 'POST' &&
-        new URL(request.url()).pathname === `/api/v1/game/campaigns/${campaignId}/stop`
-      )
-        unexpectedStops.push(request.url());
-    };
-    if (expected.type === 'action') page.on('request', watchStop);
     let response: import('@playwright/test').Response;
     try {
       await perform();
@@ -207,14 +216,15 @@ export async function mapAction(
   name: string,
   exit = false,
 ) {
-  const perform = async () => {
-    const button = (await mapMenu(page, campaignId, id, exit)).getByRole('button', {
+  let button: import('@playwright/test').Locator;
+  const prepare = async () => {
+    button = (await mapMenu(page, campaignId, id, exit)).getByRole('button', {
       name,
       exact: true,
     });
     await expect(button).toBeEnabled();
-    await button.click();
   };
+  const perform = () => button.click();
   const kinds: Record<string, string> = {
     Взять: 'pick_up',
     Отпереть: 'unlock',
@@ -229,6 +239,10 @@ export async function mapAction(
       campaignId,
       { type: 'action', action: { kind: kinds[name], targetId: id } },
       perform,
+      prepare,
     );
-  else await perform();
+  else {
+    await prepare();
+    await perform();
+  }
 }

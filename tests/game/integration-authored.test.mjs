@@ -18,7 +18,7 @@ import {
   command,
   operation,
 } from './support-runtime.mjs';
-import { authoredDraft, storyInput } from './support-authored.mjs';
+import { authoredDraft, storyInput, releasePrivateFixture } from './support-authored.mjs';
 import {
   exportGameData,
   exportPlayableData,
@@ -45,7 +45,7 @@ await test(
         description: 'A patient gardener.',
         secrets: 'AUTHORED_PRIVATE_NPC_SECRET',
       });
-      const story = await author.request('/studio/adventures', storyInput());
+      const story = await author.request('/studio/adventures', storyInput('private', [npc.id]));
       const draft = authoredDraft(npc.id);
       let versionId, campaignId, invitation;
       await t.test(
@@ -112,6 +112,19 @@ await test(
             'POST',
             403,
           );
+          await author.request(
+            `/studio/adventures/${story.id}/invitations`,
+            { handle: guest.handle },
+            'POST',
+            409,
+          );
+          const released = await releasePrivateFixture(author, story.id);
+          assert.equal(
+            released.playableVersionId,
+            versionId,
+            'Explicitly release the already-tested immutable version',
+          );
+          versionId = released.playableVersionId;
           invitation = await author.request(`/studio/adventures/${story.id}/invitations`, {
             handle: guest.handle,
           });

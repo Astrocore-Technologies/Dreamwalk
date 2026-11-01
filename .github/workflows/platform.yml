@@ -44,7 +44,7 @@ jobs:
       - name: Game rules, UI projection and autosave controller tests
         run: npm run test:game
       - name: Private authoring, provisional legal copy and Sparks UI contracts
-        run: node --import tsx --test tests/game/private-authoring-privacy.test.mjs tests/game/story-builder-authoring.test.mjs tests/game/story-npc-editor.test.mjs tests/game/closed-test-legal.test.mjs tests/game/sparks-receipts-ui.test.mjs tests/game/map-camera.test.mjs
+        run: node --import tsx --test tests/game/private-authoring-privacy.test.mjs tests/game/story-builder-authoring.test.mjs tests/game/story-npc-editor.test.mjs tests/game/closed-test-legal.test.mjs tests/game/sparks-receipts-ui.test.mjs tests/game/map-camera.test.mjs tests/game/map-actions-harness.test.mjs
       - name: Map-shaped image quotes and reviewed range policy (synthetic transports)
         run: node --test tests/game/image-framing.test.cjs tests/game/story-map-intent.test.cjs tests/game/manifest-framing.test.cjs
       - name: Deterministic NPC behavior rubric and bounded local benchmark
