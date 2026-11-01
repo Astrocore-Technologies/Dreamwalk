@@ -109,7 +109,6 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       DATABASE_URL: postgresql://dreamwalk:${{ github.run_id }}-${{ github.run_attempt }}-browser-1-ephemeral@127.0.0.1:55432/dreamwalk_test
-      ASSET_DIR: ${{ runner.temp }}/dreamwalk-browser-1-assets
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -120,6 +119,8 @@ jobs:
       - name: Browser dependencies
         run: npx playwright install --with-deps chromium
       - name: Browser end-to-end tests (shard 1 of 2)
+        env:
+          ASSET_DIR: ${{ runner.temp }}/dreamwalk-browser-1-assets
         run: |
           # The existing dev launcher builds dependencies/API, migrates and seeds
           # this shard's database before starting the same application as before.
@@ -215,7 +216,6 @@ jobs:
           --health-interval 5s --health-timeout 5s --health-retries 10
     env:
       DATABASE_URL: postgresql://dreamwalk:${{ github.run_id }}-${{ github.run_attempt }}-browser-2-ephemeral@127.0.0.1:55432/dreamwalk_test
-      ASSET_DIR: ${{ runner.temp }}/dreamwalk-browser-2-assets
     steps:
       - uses: actions/checkout@v4
       - uses: actions/setup-node@v4
@@ -226,6 +226,8 @@ jobs:
       - name: Browser dependencies
         run: npx playwright install --with-deps chromium
       - name: Browser end-to-end tests (shard 2 of 2)
+        env:
+          ASSET_DIR: ${{ runner.temp }}/dreamwalk-browser-2-assets
         run: |
           # The existing dev launcher builds dependencies/API, migrates and seeds
           # this shard's database before starting the same application as before.
