@@ -10,6 +10,15 @@ export class GenerationController {
     @Inject(GenerationAuthority) private live: GenerationAuthority,
     @Inject(ImageGenerationService) private images: ImageGenerationService,
   ) {}
+  @Post('bounded-authoring-tests') async createBounded(@Req() req: Request, @Body() body: unknown) {
+    return this.live.createBoundedAuthoringTest((await this.auth.require(req)).id, body);
+  }
+  @Get('bounded-authoring-tests/:id') async boundedStatus(
+    @Req() req: Request,
+    @Param('id') id: string,
+  ) {
+    return this.live.boundedAuthoringStatus((await this.auth.require(req)).id, id);
+  }
   @Get('status') async status(@Req() req: Request) {
     return this.effectiveStatus((await this.auth.require(req)).id);
   }

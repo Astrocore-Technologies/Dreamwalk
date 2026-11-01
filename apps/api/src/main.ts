@@ -118,8 +118,8 @@ async function bootstrap() {
   const app = await NestFactory.create(AppModule, { bodyParser: false });
   app
     .get(ImageGenerationService)
-    .setLiveAuthorizer((client, owner, sessionId) =>
-      app.get(GenerationAuthority).authorizeImage(client, owner, sessionId),
+    .setLiveAuthorizer((client, owner, sessionId, input) =>
+      app.get(GenerationAuthority).authorizeImage(client, owner, sessionId, input),
     );
   app.use(json({ limit: '256kb' }));
   app.useGlobalFilters(new Errors());

@@ -1,3 +1,4 @@
+import { assertBoundedTextSource } from '../generation/bounded-test';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient, QueryResultRow } from 'pg';
 import { z } from 'zod';
@@ -190,6 +191,7 @@ export class AuthoringTextEngine {
     });
     return this.db.tx(async (c) => {
       await this.lockSource(c, ownerId);
+      await assertBoundedTextSource(c, binding.sessionId, binding.projectId);
       await this.live.authorizeText(c, ownerId, binding.sessionId);
       const activePolicy = await this.activePolicy(c, binding.sessionId);
       await validateFence(c, binding);
@@ -279,6 +281,7 @@ export class AuthoringTextEngine {
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
         return this.dto(serializedPrevious);
       }
+      await assertBoundedTextSource(c, binding.sessionId, binding.projectId);
       const policy = await this.live.authorizeText(c, ownerId, binding.sessionId, true);
       const activePolicy = await this.activePolicy(c, binding.sessionId);
       await validateFence(c, binding);
@@ -458,6 +461,7 @@ export class AuthoringTextEngine {
           )
         ).rows[0];
         if (!serialized || serialized.status !== 'queued') return null;
+        await assertBoundedTextSource(c, row.session_id, row.project_id);
         await this.live.authorizeText(c, ownerId, row.session_id, true);
         const activePolicy = await this.activePolicy(c, row.session_id);
         await validateFence(c, this.binding(row));
@@ -621,6 +625,7 @@ export class AuthoringTextEngine {
     try {
       await this.db.tx(async (c) => {
         await this.lockSource(c, current.actor_id);
+        await assertBoundedTextSource(c, current.session_id, current.project_id);
         await this.live.authorizeText(c, current.actor_id, current.session_id);
         const activePolicy = await this.activePolicy(c, current.session_id);
         await validateFence(c, this.binding(current));

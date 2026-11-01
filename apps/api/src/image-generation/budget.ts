@@ -1,3 +1,4 @@
+import { boundedTest, checkBoundedAdmission } from '../generation/bounded-test';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { fail } from '../errors';
@@ -40,14 +41,29 @@ export async function reserveGenerationSpend(
   const scope = (
     await c.query('SELECT * FROM generation_budget_scopes WHERE id=$1 FOR UPDATE', [policy.scopeId])
   ).rows[0];
+  const extension = !mock ? await boundedTest(c, policy.generationAuthorizationId) : undefined;
   if (!mock) {
     await fenceGenerationAdmission(c);
+    const admittedExtension = (
+      await c.query('SELECT scope_id FROM bounded_authoring_tests LIMIT 1')
+    ).rows[0];
+    if (admittedExtension && (!extension || extension.scope_id !== policy.scopeId))
+      fail(409, 'BOUNDED_TEST_SESSION_REQUIRED', 'BOUNDED_TEST_SESSION_REQUIRED');
+    if (
+      extension &&
+      (extension.scope_id !== policy.scopeId ||
+        extension.owner_id !== actorId ||
+        policy.generationPolicyHash !== extension.policy_hash ||
+        policy.generationPolicyRevision !== 1)
+    )
+      fail(409, 'GENERATION_AUTHORIZATION_MISMATCH', 'GENERATION_AUTHORIZATION_MISMATCH');
     // A pre-existing ordinary authority prevents reviving a legacy allowance under
     // another scope, actor or provider mode. This read takes no foreign row locks.
     const owner = (
       await c.query("SELECT * FROM live_test_sessions WHERE mode='owner' ORDER BY id LIMIT 1")
     ).rows[0];
     if (
+      !extension &&
       owner &&
       (owner.scope_id !== policy.scopeId ||
         owner.owner_id !== actorId ||
@@ -95,6 +111,7 @@ export async function reserveGenerationSpend(
       fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
     return prior.id as string;
   }
+  if (extension) await checkBoundedAdmission(c, extension, actorId, upperMicros, kind);
   if (policy.costBasis === 'approved_estimate' && !scope.serialize_outstanding) {
     await c.query('UPDATE generation_budget_scopes SET serialize_outstanding=true WHERE id=$1', [
       policy.scopeId,
@@ -142,6 +159,8 @@ export async function settleGenerationSpend(c: PoolClient, id: string, actualMic
   await c.query('SELECT id FROM generation_budget_scopes WHERE id=$1 FOR UPDATE', [
     initial.scope_id,
   ]);
+  // Serialize late actual liabilities with all cross-scope admissions.
+  await fenceGenerationAdmission(c);
   const row = (
     await c.query('SELECT * FROM generation_budget_reservations WHERE id=$1 FOR UPDATE', [id])
   ).rows[0];

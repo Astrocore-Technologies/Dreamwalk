@@ -1,3 +1,4 @@
+import { boundedTest, boundedPolicy, createBoundedTest } from './bounded-test';
 import { retainedModelRejectionAdmission } from '../image-generation/retained-rejections';
 import {
   bodyHash,
@@ -23,7 +24,11 @@ import {
 import { Db } from '../db';
 import { fail } from '../errors';
 import { reserveGenerationSpend, settleGenerationSpend } from '../image-generation/budget';
-import { defaultImagePolicy, type ImagePolicy } from '../image-generation/contracts';
+import {
+  defaultImagePolicy,
+  type ImagePolicy,
+  type GenerationRequest,
+} from '../image-generation/contracts';
 import { sourceAccessSql } from '../game/playable.service';
 import { LIVE_TEXT, type LiveTestConfig } from '../live-test/config';
 import { ownerPricingIsCurrent, type OwnerGenerationConfig } from './config';
@@ -929,6 +934,62 @@ export class GenerationAuthority {
   async requireOwner(userId: string) {
     await this.owner(userId);
   }
+  async createBoundedAuthoringTest(userId: string, body: unknown) {
+    await this.owner(userId);
+    if (!this.ownerConfig)
+      fail(409, 'GENERATION_OWNER_MODE_REQUIRED', 'GENERATION_OWNER_MODE_REQUIRED');
+    return this.db.tx(async (c) => {
+      const result = await createBoundedTest(c, userId, body, this.ownerConfig!);
+      return {
+        authorizationId: result.authorization_id,
+        adventureId: result.adventure_id,
+        capMicros: Number(result.cap_micros),
+        aggregateCapMicros: Number(result.aggregate_cap_micros),
+        retainedMicros: 66900,
+        expiresAt: result.expires_at,
+        policyHash: result.policy_hash,
+        policyRevision: 1,
+        automaticallyDispatched: false,
+      };
+    });
+  }
+  async boundedAuthoringStatus(userId: string, id: string) {
+    await this.owner(userId);
+    z.uuid().parse(id);
+    return this.db.tx(async (c) => {
+      const test = await boundedTest(c, id);
+      if (!test || test.owner_id !== userId) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      const session = await this.lockAuthorization(c, id);
+      await fenceGenerationAdmission(c);
+      const amounts = (
+        await c.query(
+          "SELECT COALESCE(sum(CASE WHEN status='held' THEN upper_micros WHEN status='settled' THEN actual_micros ELSE 0 END),0) used,COALESCE(sum(CASE WHEN status='held' THEN upper_micros ELSE 0 END),0) held FROM generation_budget_reservations WHERE scope_id=$1",
+          [test!.scope_id],
+        )
+      ).rows[0];
+      let blockCode: string | null = null;
+      try {
+        await boundedPolicy(c, test!, userId, this.ownerConfig!);
+      } catch (e) {
+        blockCode = e instanceof Error ? e.message : 'BOUNDED_TEST_BLOCKED';
+      }
+      return {
+        authorizationId: id,
+        adventureId: test!.adventure_id,
+        state: blockCode ? 'stopped' : session?.state,
+        capMicros: Number(test!.cap_micros),
+        usedMicros: Number(amounts.used),
+        heldMicros: Number(amounts.held),
+        remainingMicros: Math.max(0, Number(test!.cap_micros) - Number(amounts.used)),
+        retainedMicros: 66900,
+        aggregateCapMicros: Number(test!.aggregate_cap_micros),
+        expiresAt: test!.expires_at,
+        policyRevision: 1,
+        policyHash: test!.policy_hash,
+        blockCode,
+      };
+    });
+  }
   async authorizeText(
     c: PoolClient,
     userId: string,
@@ -936,6 +997,11 @@ export class GenerationAuthority {
     singleOutstanding = false,
   ): Promise<ImagePolicy> {
     await this.owner(userId);
+    const test = await boundedTest(c, sessionId);
+    if (test) {
+      await this.lockAuthorization(c, test.authorization_id);
+      return boundedPolicy(c, test, userId, this.ownerConfig!);
+    }
     if (
       !(
         await c.query('SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE', [userId])
@@ -1014,8 +1080,22 @@ export class GenerationAuthority {
       ]);
     }
   }
-  async authorizeImage(c: PoolClient, userId: string, sessionId?: string): Promise<ImagePolicy> {
+  async authorizeImage(
+    c: PoolClient,
+    userId: string,
+    sessionId?: string,
+    imageInput?: GenerationRequest,
+  ): Promise<ImagePolicy> {
     await this.owner(userId);
+    const test = await boundedTest(c, sessionId);
+    if (test) {
+      if (!imageInput) fail(403, 'BOUNDED_TEST_LOCATION_ONLY', 'BOUNDED_TEST_LOCATION_ONLY');
+      await this.lockAuthorization(c, test.authorization_id);
+      return {
+        ...(await boundedPolicy(c, test, userId, this.ownerConfig!, imageInput)),
+        verifiedUpperMicros: null,
+      };
+    }
     const id = await this.resolveAuthorizationId(c, userId, sessionId, 'image');
     const row = (await c.query('SELECT * FROM live_test_sessions WHERE id=$1', [id])).rows[0];
     const scope = (
@@ -1569,6 +1649,17 @@ export class GenerationAuthority {
    * This check only reads; it never acquires either lock set or another financial scope. */
   async assertActivePolicy(c: PoolClient, authorizationId?: string, expectedFingerprint?: string) {
     if (!this.ownerConfig) return { revision: 0, hash: '', configFingerprint: '' };
+    const test = await boundedTest(c, authorizationId);
+    if (test) {
+      if (expectedFingerprint && expectedFingerprint !== this.ownerConfig.configFingerprint)
+        fail(409, 'GENERATION_POLICY_CHANGED', 'GENERATION_POLICY_CHANGED');
+      await boundedPolicy(c, test, test.owner_id, this.ownerConfig);
+      return {
+        revision: 1,
+        hash: test.policy_hash,
+        configFingerprint: this.ownerConfig.configFingerprint,
+      };
+    }
     const row = (
       await c.query("SELECT * FROM live_test_sessions WHERE scope_id=$1 AND mode='owner'", [
         GENERATION_SCOPE_ID,
