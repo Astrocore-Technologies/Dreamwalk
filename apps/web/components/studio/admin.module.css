@@ -202,3 +202,11 @@
     width: 100%;
   }
 }
+
+.taxonomyPicker {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  max-height: 50vh;
+  overflow: auto;
+}

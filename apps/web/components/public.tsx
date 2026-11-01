@@ -1,4 +1,5 @@
 'use client';
+import { isDiscoveryStory } from '@/lib/discovery';
 import { storyReturnPath, withStoryReturn } from './story-return';
 import { AdventureLaunch } from './game/adventure-launch';
 import { useT } from '@/lib/i18n';
@@ -87,10 +88,11 @@ export function AdventureCard({
       </div>
       <div className="card-content">
         <div className="card-author">
-          <span className="tiny-avatar">{adventure.author?.name?.slice(0, 1) || 'D'}</span>
-          {adventure.author?.name || 'Dreamwalk Studio'}
+          <span className="tiny-avatar">{adventure.author?.handle?.slice(0, 1) || 'D'}</span>
+          {adventure.author?.handle || 'Dreamwalk Studio'}
         </div>
         <h3>{text.title}</h3>
+        {adventure.visibility === 'private' && <Badge>{tr('Приватный')}</Badge>}
         <p>{text.synopsis}</p>
         <div className="card-meta">
           <span>
@@ -117,9 +119,15 @@ export function ExplorePage() {
     setQuery(params.get('q') || '');
   }, [params]);
   const genres = useResource<string[]>('/genres');
-  const { data, loading, error, reload } = useResource<Adventure[]>(
+  const {
+    data: catalog,
+    loading,
+    error,
+    reload,
+  } = useResource<Adventure[]>(
     `/adventures?q=${encodeURIComponent(query)}&genre=${encodeURIComponent(genre)}&sort=${sort}`,
   );
+  const data = catalog?.filter(isDiscoveryStory);
   return (
     <div className="discovery-page discovery-catalog">
       <div className="catalog-heading">
@@ -258,8 +266,8 @@ export function AdventurePage({ slug }: { slug: string }) {
           </div>
           <h1>{text.title}</h1>
           <Link className="discovery-author" href={`/creators/${a.author.handle}`}>
-            <span className="tiny-avatar">{a.author.name[0]}</span>
-            {a.author.name}
+            <span className="tiny-avatar">{a.author.handle[0]}</span>
+            {a.author.handle}
             <ArrowUpRight size={14} />
           </Link>
           <p className="story-synopsis">{text.synopsis}</p>
@@ -482,12 +490,12 @@ export function CreatorPage({ handle }: { handle: string }) {
           {data.creator.avatarAssetId ? (
             <img src={assetUrl(data.creator.avatarAssetId)} alt="" />
           ) : (
-            data.creator.name[0]
+            data.creator.handle[0]
           )}
         </span>
         <div>
           <span className="eyebrow">{tr('АВТОР МИРОВ')}</span>
-          <h1>{data.creator.name}</h1>
+          <h1>{data.creator.handle}</h1>
           <p>@{data.creator.handle}</p>
         </div>
       </div>

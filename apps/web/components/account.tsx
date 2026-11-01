@@ -74,6 +74,8 @@ function AuthForm({
     const lease = authGate.begin();
     if (!lease) return;
     const data = Object.fromEntries(new FormData(event.currentTarget));
+    // Keep the existing registration contract; login is the only public identity.
+    if (signup) data.name = data.handle;
     setBusy(true);
     setError('');
     try {
@@ -151,22 +153,12 @@ function AuthForm({
         <form method="post" className="stack" onSubmit={submit}>
           {signup && (
             <>
-              <Field label={tr('Как тебя называть?')}>
-                <Input
-                  name="name"
-                  autoComplete="nickname"
-                  required
-                  minLength={2}
-                  maxLength={60}
-                  placeholder={tr('Твоё имя')}
-                />
-              </Field>
               <Field
-                label={tr('Адрес профиля')}
+                label={tr('Логин')}
                 hint={tr('3–30 символов: латинские буквы, цифры и подчёркивание')}
               >
                 <Input
-                  aria-label={tr('Адрес профиля')}
+                  aria-label={tr('Логин')}
                   name="handle"
                   autoComplete="username"
                   required
@@ -284,8 +276,7 @@ export function OnboardingPage() {
   const router = useRouter();
   const returnTo = readStoryReturn(useSearchParams());
   const onboardingGate = useLaunchGate(`onboarding:${user?.id}:${returnTo}`);
-  const [name, setName] = useState(user?.name || ''),
-    [purpose, setPurpose] = useState('both'),
+  const [purpose, setPurpose] = useState('both'),
     [genres, setGenres] = useState<string[]>([]),
     [profilePublic, setPublic] = useState(true),
     [busy, setBusy] = useState(false),
@@ -314,7 +305,6 @@ export function OnboardingPage() {
                 await api<User>('/account/onboarding', {
                   method: 'POST',
                   body: JSON.stringify({
-                    name,
                     genres,
                     purpose,
                     profilePublic,
@@ -331,9 +321,6 @@ export function OnboardingPage() {
             }
           }}
         >
-          <Field label={tr('Имя')}>
-            <Input value={name} onChange={(e) => setName(e.target.value)} required minLength={2} />
-          </Field>
           <Field label={tr('Что привело тебя сюда?')}>
             <Select value={purpose} onChange={(e) => setPurpose(e.target.value)}>
               <option value="both">{tr('Хочу играть и создавать')}</option>
@@ -361,7 +348,7 @@ export function OnboardingPage() {
           </fieldset>
           <Toggle
             label={tr('Публичный профиль')}
-            description={tr('Другие смогут увидеть твоё имя, описание и опубликованные истории.')}
+            description={tr('Другие смогут увидеть твой логин, описание и опубликованные истории.')}
             checked={profilePublic}
             onChange={setPublic}
           />
@@ -410,8 +397,7 @@ export function AccountPage({ path }: { path: string }) {
 function ProfileForm() {
   const { t: tr } = useT();
   const { user, setUser, toast } = useClient();
-  const [name, setName] = useState(user?.name || ''),
-    [handle, setHandle] = useState(user?.handle || ''),
+  const [handle, setHandle] = useState(user?.handle || ''),
     [bio, setBio] = useState(user?.bio || ''),
     [avatar, setAvatar] = useState(user?.avatarAssetId),
     [busy, setBusy] = useState(false),
@@ -432,7 +418,6 @@ function ProfileForm() {
                 await api<User>('/account/profile', {
                   method: 'PATCH',
                   body: JSON.stringify({
-                    name,
                     handle,
                     bio,
                     avatarAssetId: avatar || null,
@@ -449,21 +434,12 @@ function ProfileForm() {
         >
           <div className="profile-upload">
             <span className="avatar large">
-              {avatar ? <img alt={tr('Аватар')} src={assetUrl(avatar)} /> : name[0]}
+              {avatar ? <img alt={tr('Аватар')} src={assetUrl(avatar)} /> : handle[0]}
             </span>
             <UploadField label={tr('Изменить аватар')} onUploaded={(a) => setAvatar(a.id)} />
           </div>
           <div className="field-grid">
-            <Field label={tr('Имя')}>
-              <Input
-                required
-                minLength={2}
-                maxLength={60}
-                value={name}
-                onChange={(e) => setName(e.target.value)}
-              />
-            </Field>
-            <Field label={tr('Адрес профиля')}>
+            <Field label={tr('Логин')}>
               <Input
                 required
                 pattern="[a-z0-9_]{3,30}"

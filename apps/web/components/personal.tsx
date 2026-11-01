@@ -246,6 +246,7 @@ export function LibraryPage() {
                 <small>{tr('Обновлено {date}', { date: date(a.updatedAt) })}</small>
               </span>
               <Badge>{a.status === 'published' ? tr('Опубликовано') : tr('Черновик')}</Badge>
+              {a.visibility === 'private' && <Badge>{tr('Приватный')}</Badge>}
               <ArrowUpRight size={18} />
             </Link>
           ))}

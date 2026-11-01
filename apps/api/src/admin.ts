@@ -3,7 +3,6 @@ import type { Request } from 'express';
 import { z } from 'zod';
 import {
   modelSchema,
-  controlledTagSchema,
   runtimeSchema,
   adventureSchema,
   parsePatch,
@@ -13,6 +12,8 @@ import { Db, camel } from './db';
 import { Auth, userView } from './auth';
 import { adventureSelect, adventureView, Content, readableAdventureSql } from './content';
 import { fail } from './errors';
+import { taxonomyUpdateSchema } from '@dreamwalk/contracts/dist/taxonomy';
+import { normalizeTaxonomy, mergeTaxonomy } from './taxonomy';
 import { NpcAiService } from './ai/npc-ai.service';
 import { AssetReuseService } from './assets/reuse.service';
 @Controller('api/v1')
@@ -70,14 +71,19 @@ export class AdminController {
       { id: 'constellation', name: 'Созвездие', credits: 1200, demo: true, available: false },
     ];
   }
+  @Get('taxonomy')
+  async publicTaxonomy() {
+    return normalizeTaxonomy(
+      (await this.db.query("SELECT value FROM platform_settings WHERE key='taxonomy'"))[0].value,
+    );
+  }
   @Get('admin/taxonomy')
   async taxonomy(
     @Req()
     req: Request,
   ) {
     await this.auth.admin(req);
-    return (await this.db.query("SELECT value FROM platform_settings WHERE key='taxonomy'"))[0]
-      .value;
+    return this.publicTaxonomy();
   }
   @Patch('admin/taxonomy')
   async editTaxonomy(
@@ -87,13 +93,7 @@ export class AdminController {
     req: Request,
   ) {
     const u = await this.auth.admin(req),
-      b = z
-        .object({
-          genres: z.array(z.string().trim().min(2).max(40)).min(1).max(50),
-          tags: z.array(controlledTagSchema).max(100),
-        })
-        .strict()
-        .parse(body);
+      b = taxonomyUpdateSchema.parse(body);
     if (
       new Set(b.genres).size !== b.genres.length ||
       new Set(b.tags.map((tag) => tag.id)).size !== b.tags.length
@@ -120,16 +120,17 @@ export class AdminController {
         )
       )
         fail(400, 'VALIDATION_FAILED', 'Existing tag identifiers and aliases must be preserved.');
+      const next = mergeTaxonomy(old, b);
       await c.query("UPDATE platform_settings SET value=$1,updated_at=now() WHERE key='taxonomy'", [
-        JSON.stringify(b),
+        JSON.stringify(next),
       ]);
       await c.query('INSERT INTO audit(actor_id,action,target_id,details) VALUES($1,$2,$3,$4)', [
         u.id,
         'taxonomy.update',
         'taxonomy',
-        JSON.stringify(b),
+        JSON.stringify(next),
       ]);
-      return b;
+      return next;
     });
   }
   @Get('admin/overview')

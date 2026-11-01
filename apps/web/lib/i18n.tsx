@@ -8,13 +8,22 @@ import {
   useRef,
   type ReactNode,
 } from 'react';
+import { taxonomySchema, type GenreDefinition } from '@dreamwalk/contracts/dist/taxonomy';
 import { translate, dictionaries, type Locale } from './locales';
 let currentLocale: Locale = 'ru';
+let currentGenres: GenreDefinition[] = [];
+function genreLabel(value: string, locale: Locale, genres: GenreDefinition[]) {
+  return (
+    genres.find((genre) => genre.value === value)?.labels[locale] ??
+    dictionaries[locale][value] ??
+    value
+  );
+}
 export function tr(key: string, params?: Record<string, string | number>) {
   return translate(currentLocale, key, params);
 }
 export function taxonomy(value: string) {
-  return dictionaries[currentLocale][value] ?? value;
+  return genreLabel(value, currentLocale, currentGenres);
 }
 export function getLocale() {
   return currentLocale;
@@ -34,6 +43,33 @@ const Context = createContext<{
 });
 export function LocaleProvider({ children }: { children: ReactNode }) {
   const authenticated = useRef(false);
+  const [genres, setGenres] = useState<GenreDefinition[]>([]);
+  useEffect(() => {
+    let active = true;
+    let request = 0;
+    const controller = new AbortController();
+    async function refresh() {
+      const version = ++request;
+      try {
+        const response = await fetch('/api/v1/taxonomy', { signal: controller.signal });
+        if (!response.ok) return;
+        const parsed = taxonomySchema.safeParse(await response.json());
+        if (active && version === request && parsed.success) {
+          currentGenres = parsed.data.genreDefinitions;
+          setGenres(parsed.data.genreDefinitions);
+        }
+      } catch {
+        /* Keep local labels available when metadata is unavailable. */
+      }
+    }
+    void refresh();
+    window.addEventListener('dreamwalk:taxonomy-updated', refresh);
+    return () => {
+      active = false;
+      controller.abort();
+      window.removeEventListener('dreamwalk:taxonomy-updated', refresh);
+    };
+  }, []);
   const [locale, changeLocale] = useState<Locale>('ru');
   const setLocale = useCallback((next: Locale, persistAccount = true) => {
     currentLocale = next;
@@ -81,7 +117,7 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
           authenticated.current = value;
         },
         t: (key, params) => translate(locale, key, params),
-        taxonomy: (value) => dictionaries[locale][value] ?? value,
+        taxonomy: (value) => genreLabel(value, locale, genres),
       }}
     >
       {children}

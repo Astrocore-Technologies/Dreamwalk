@@ -1,5 +1,6 @@
 import { test, expect, type Page, type TestInfo } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { exposeDiscoveryFixtures, fulfillDiscoveryFixtures } from './support/discovery-fixtures';
 
 async function appearance(page: Page, language: 'en' | 'uk' | 'ru', theme: 'dark' | 'light') {
   await page.addInitScript(
@@ -12,6 +13,7 @@ async function appearance(page: Page, language: 'en' | 'uk' | 'ru', theme: 'dark
   );
 }
 async function publicHome(page: Page, preferredSlug?: string) {
+  await exposeDiscoveryFixtures(page);
   const catalog = await page.request.get('/api/v1/adventures?sort=popular');
   expect(catalog.ok()).toBeTruthy();
   const stories = (await catalog.json()) as { id: string; slug: string }[];
@@ -288,7 +290,7 @@ test('empty/error discovery states stay honest, retry works, and guest sign-in p
         contentType: 'application/json',
         body: JSON.stringify({ code: 'SERVICE_UNAVAILABLE' }),
       });
-    return route.continue();
+    return fulfillDiscoveryFixtures(route);
   });
   await page.reload();
   const error = page.getByTestId('home-catalog-error').getByRole('alert');
