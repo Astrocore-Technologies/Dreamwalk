@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import type { GameProjection } from '@dreamwalk/contracts';
+import { entityLayout } from '../../apps/web/components/game/scene-geometry';
 
 async function register(page: Page) {
   const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
@@ -41,9 +42,15 @@ async function mapMenu(page: Page, campaignId: string, id: string, exit = false)
     y: Number((element as HTMLElement).dataset.cameraY),
     scale: Number((element as HTMLElement).dataset.cameraScale),
   }));
+  const layout = exit
+    ? { x: target!.x * 48, y: target!.y * 48, width: 48, height: 48 }
+    : entityLayout(
+        projection.entities.find((entity) => entity.id === id)!,
+        projection.entities,
+      );
   await page.mouse.click(
-    box.x + camera.x + (target!.x + 0.5) * 48 * camera.scale,
-    box.y + camera.y + (target!.y + 0.5) * 48 * camera.scale,
+    box.x + camera.x + (layout.x + layout.width / 2) * camera.scale,
+    box.y + camera.y + (layout.y + layout.height / 2) * camera.scale,
     { button: 'right' },
   );
   const menu = page.getByRole('dialog', { name: 'Действия', exact: true });
