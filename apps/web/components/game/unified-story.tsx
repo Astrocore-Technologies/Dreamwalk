@@ -15,7 +15,7 @@ import { Button, ErrorBox, Textarea } from '@/components/ui';
 import { noticeLabels } from './living-notices';
 import { PartyChat } from './party-chat';
 import { SceneMedia } from './scene-media';
-import { providerBoundKnown } from './narrative-guards';
+import { providerReserveKnown, providerBoundKnown } from './narrative-guards';
 import {
   storyTargetVisible,
   storyTargetValid,
@@ -617,11 +617,19 @@ export function UnifiedStory({
                 {prepared.result.quote.demo && <small>{h('demo')}</small>}
                 {prepared.result.quote.external && (
                   <p>
-                    {providerBoundKnown(prepared.result.quote, true)
-                      ? h('ceiling', {
-                          amount: (prepared.result.quote.providerUpperMicros / 1000000).toFixed(6),
+                    {providerReserveKnown(prepared.result.quote)
+                      ? h('requestReserve', {
+                          amount: (prepared.result.quote.providerReserveMicros! / 1000000).toFixed(
+                            6,
+                          ),
                         })
-                      : h('noBound')}
+                      : providerBoundKnown(prepared.result.quote, true)
+                        ? h('ceiling', {
+                            amount: (prepared.result.quote.providerUpperMicros! / 1000000).toFixed(
+                              6,
+                            ),
+                          })
+                        : h('noBound')}
                   </p>
                 )}
                 <div className={styles.actions}>

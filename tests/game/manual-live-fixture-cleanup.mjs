@@ -1,4 +1,5 @@
 import assert from 'node:assert/strict';
+import { cleanupPolicyRevisionFixture } from './policy-revision-fixture-cleanup.mjs';
 /** Only synthetic grants in the disposable integration-test cluster are removed. */
 export async function cleanupManualLiveFixture(db, sessionId, ownerId, scopeId) {
   assert.match(
@@ -24,6 +25,7 @@ export async function cleanupManualLiveFixture(db, sessionId, ownerId, scopeId) 
     await db.query('DELETE FROM live_authoring_text_quotes WHERE session_id=$1', [sessionId]);
   }
   await db.query('DELETE FROM live_test_text_permits WHERE session_id=$1', [sessionId]);
+  await cleanupPolicyRevisionFixture(db, [sessionId]);
   await db.query('DELETE FROM live_test_sessions WHERE id=$1 AND owner_id=$2', [
     sessionId,
     ownerId,

@@ -1,4 +1,9 @@
 import type { PoolClient } from 'pg';
+import type { TextReserveSnapshot } from '../generation/estimates';
+export interface PreparedTextRequest {
+  body: string;
+  snapshot: TextReserveSnapshot;
+}
 
 /** Server-only DTOs. Never return context/proposal/provider credentials through public job status. */
 export type AiPurpose =
@@ -56,6 +61,7 @@ export interface ProviderRequest {
   context: DecisionContext;
   signal: AbortSignal;
   maxCostMicros: number;
+  textReservationSnapshot?: TextReserveSnapshot;
 }
 export interface ProviderResult {
   proposal: unknown;
@@ -77,6 +83,7 @@ export interface NpcProvider {
   requestAuthorized?(id: string, context?: unknown): Promise<boolean>;
   generate(request: ProviderRequest): Promise<ProviderResult>;
   contextBudgetBytes?(maxCostMicros: number): number;
+  prepareTextRequest?(purpose: AiPurpose, context: unknown): PreparedTextRequest | undefined;
 }
 export interface AiPolicy {
   creditPrice: number;

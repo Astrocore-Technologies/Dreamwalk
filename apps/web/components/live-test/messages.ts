@@ -1,6 +1,180 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const liveMessages = {
+  policyClosePending: [
+    'Закрыть просмотр; операция не отменяется',
+    'Close review; the operation is not cancelled',
+    'Закрити перегляд; операція не скасовується',
+  ],
+
+  requestReserveConsent: [
+    'Разрешаю только этот запрос с показанным расчётным резервом. Он не ограничивает счёт провайдера.',
+    'I approve only this request with the displayed planning reserve. It does not cap the provider invoice.',
+    'Дозволяю лише цей запит із показаним розрахунковим резервом. Він не обмежує рахунок провайдера.',
+  ],
+
+  reserveTextOutput: ['Вывод текста', 'Text output', 'Виведення тексту'],
+  reserveBodyBytes: ['Полный запрос, байтов', 'Serialized request bytes', 'Повний запит, байтів'],
+  reserveInputTokens: [
+    'Оценка входных токенов',
+    'Estimated input tokens',
+    'Оцінка вхідних токенів',
+  ],
+  policyEstimator: [
+    'Все параметры расчёта резерва',
+    'Complete reserve estimator settings',
+    'Усі параметри розрахунку резерву',
+  ],
+
+  policyRetry: [
+    'Повторить ту же проверенную операцию',
+    'Retry the same reviewed operation',
+    'Повторити ту саму перевірену операцію',
+  ],
+  reserveTextInput: ['Ввод текста', 'Text input', 'Введення тексту'],
+  reserveImageInput: ['Ввод референсов', 'Reference input', 'Введення референсів'],
+  reserveImageOutput: ['Вывод изображения', 'Image output', 'Виведення зображення'],
+
+  policyModel: ['Модель', 'Model', 'Модель'],
+  policyTotal: ['Всего', 'Total', 'Усього'],
+  policyTitle: [
+    'Пересмотр политики генерации',
+    'Generation policy review',
+    'Перегляд політики генерації',
+  ],
+  policyOpen: [
+    'Проверить политику и изменения',
+    'Review policy and changes',
+    'Перевірити політику та зміни',
+  ],
+  policyCurrent: ['Действующая политика', 'Active policy', 'Чинна політика'],
+  policyProposed: ['Предложенная политика', 'Proposed policy', 'Запропонована політика'],
+  policyField: ['Условие', 'Setting', 'Умова'],
+  policyNoProposal: [
+    'Новых условий для применения нет.',
+    'There are no proposed changes to apply.',
+    'Нових умов для застосування немає.',
+  ],
+  policyUnknownProfile: [
+    'Прежний профиль недоступен. Старые цены не восстанавливаются предположениями.',
+    'The previous profile is unavailable. Historical prices are not reconstructed by guessing.',
+    'Попередній профіль недоступний. Старі ціни не відновлюються припущеннями.',
+  ],
+  policyNoActive: [
+    'Сначала подтвердите исходную конфигурацию владельца.',
+    'Acknowledge the initial owner configuration first.',
+    'Спочатку підтвердьте початкову конфігурацію власника.',
+  ],
+  policyRevision: ['Версия', 'Revision', 'Версія'],
+  policyHistory: ['История подтверждений', 'Acknowledgement history', 'Історія підтверджень'],
+  policyEvidence: ['Источник цен', 'Pricing evidence', 'Джерело цін'],
+  policyReviewed: ['Цены проверены', 'Pricing reviewed', 'Ціни перевірено'],
+  policyValidUntil: ['Цены действуют до', 'Pricing valid until', 'Ціни чинні до'],
+  policyText: ['Текст', 'Text', 'Текст'],
+  policyImage: ['Изображения', 'Images', 'Зображення'],
+  policyTextCap: ['Лимит текста', 'Text cap', 'Ліміт тексту'],
+  policyImageCap: ['Лимит изображений', 'Image cap', 'Ліміт зображень'],
+  policyInputRate: [
+    'Ввод за миллион токенов',
+    'Input per million tokens',
+    'Введення за мільйон токенів',
+  ],
+  policyOutputRate: [
+    'Вывод за миллион токенов',
+    'Output per million tokens',
+    'Виведення за мільйон токенів',
+  ],
+  policyImageInputRate: [
+    'Ввод изображений за миллион токенов',
+    'Image input per million tokens',
+    'Введення зображень за мільйон токенів',
+  ],
+  policyContext: ['Контекст, токенов', 'Context tokens', 'Токени контексту'],
+  policyOutputTokens: [
+    'Максимум выходных токенов',
+    'Maximum output tokens',
+    'Максимум вихідних токенів',
+  ],
+  policyInputBytes: ['Максимум байтов ввода', 'Maximum input bytes', 'Максимум байтів введення'],
+  policyImageProfile: [
+    'Размер / качество / число изображений',
+    'Size / quality / image count',
+    'Розмір / якість / кількість зображень',
+  ],
+  policyReferences: ['Максимум референсов', 'Maximum references', 'Максимум референсів'],
+  policyLiabilities: [
+    'Сохранённые обязательства',
+    'Existing liabilities',
+    'Збережені зобов’язання',
+  ],
+  policyUnchanged: [
+    'Применение условий не сбрасывает расходы, резервы или неизвестные списания. Старые запросы сохраняют свои снимки условий.',
+    'Applying a policy does not reset spending, reservations or unknown charges. Existing requests retain their policy snapshots.',
+    'Застосування умов не скидає витрати, резерви чи невідомі списання. Попередні запити зберігають свої знімки умов.',
+  ],
+  policyUnknown: ['Неизвестные списания', 'Unknown charges', 'Невідомі списання'],
+  policyAccounted: ['Всего учтено', 'Total accounted', 'Усього враховано'],
+  policyConsent: [
+    'Я сравнил модели, цены, лимиты и сроки подтверждения. Разрешаю только показанную новую версию; прежние обязательства сохраняются.',
+    'I reviewed the models, rates, caps and evidence dates. I authorize only this displayed revision; existing liabilities remain.',
+    'Я порівняв моделі, ціни, ліміти та дати підтвердження. Дозволяю лише показану нову версію; попередні зобов’язання зберігаються.',
+  ],
+  policyApply: [
+    'Применить проверенную версию',
+    'Apply reviewed revision',
+    'Застосувати перевірену версію',
+  ],
+  policyClose: ['Закрыть без применения', 'Close without applying', 'Закрити без застосування'],
+  policyApplied: [
+    'Новая версия подтверждена. Условия обновлены без сброса обязательств.',
+    'The new revision is acknowledged. Existing liabilities were preserved.',
+    'Нову версію підтверджено. Попередні зобов’язання збережено.',
+  ],
+  policyPending: [
+    'Ответ о применении неизвестен. Проверяйте результат по тому же идентификатору; повторное применение не отправляется.',
+    'The apply result is uncertain. Check the same operation; no second apply request is sent.',
+    'Результат застосування невідомий. Перевіряйте ту саму операцію; повторний запит не надсилається.',
+  ],
+  policyReconcile: [
+    'Проверить результат применения',
+    'Check apply result',
+    'Перевірити результат застосування',
+  ],
+  policyNotFound: [
+    'Применение пока не подтверждено. Это не гарантирует отмену; новый запрос не отправляется.',
+    'The apply is not confirmed yet. This does not prove cancellation; no new request is sent.',
+    'Застосування ще не підтверджено. Це не гарантує скасування; новий запит не надсилається.',
+  ],
+  policyStale: [
+    'Условия изменились. Загрузите и проверьте их заново перед подтверждением.',
+    'The policy changed. Reload and review it again before confirming.',
+    'Умови змінилися. Завантажте й перевірте їх знову перед підтвердженням.',
+  ],
+  reserveTitle: ['Резерв этого запроса', 'This request’s reserve', 'Резерв цього запиту'],
+  reserveEstimate: ['Расчётная стоимость', 'Planning estimate', 'Орієнтовна вартість'],
+  reserveMargin: ['Процентный запас', 'Percentage margin', 'Відсотковий запас'],
+  reserveFixed: ['Фиксированный запас', 'Fixed margin', 'Фіксований запас'],
+  reserveReferences: ['Запас для референсов', 'Reference allowance', 'Запас для референсів'],
+  reserveTotal: ['Итого резерв', 'Total reserve', 'Усього резерв'],
+  reserveLegacy: [
+    'Использован прежний фиксированный резерв; детализация расчёта недоступна.',
+    'This request uses a legacy fixed reserve; an itemized estimate is unavailable.',
+    'Використано попередній фіксований резерв; деталізація розрахунку недоступна.',
+  ],
+  reserveNotCap: [
+    'Оценка и запас не являются пределом счёта провайдера. Неизвестные списания остаются зарезервированными.',
+    'The estimate and margin do not cap the provider invoice. Unknown charges remain reserved.',
+    'Оцінка та запас не обмежують рахунок провайдера. Невідомі списання залишаються зарезервованими.',
+  ],
+  reserveReferenceRisk: [
+    'Стоимость обработки референсов неопределённа. Проверьте отдельное подтверждение риска перед отправкой изображения.',
+    'Reference processing cost is uncertain. Review the separate image risk consent before dispatch.',
+    'Вартість обробки референсів невизначена. Перевірте окреме підтвердження ризику перед надсиланням зображення.',
+  ],
+  reservePrompt: ['Размер описания, байтов', 'Prompt bytes', 'Розмір опису, байтів'],
+  reserveReferenceCount: ['Число референсов', 'Reference count', 'Кількість референсів'],
+  reserveUnavailable: ['Недоступно', 'Unavailable', 'Недоступно'],
+
   textRemaining: ['Доступно для текста', 'Available for text', 'Доступно для тексту'],
   imageRemaining: ['Доступно для изображений', 'Available for images', 'Доступно для зображень'],
   ownerTitle: ['Генерация на сервере', 'Server generation', 'Генерація на сервері'],

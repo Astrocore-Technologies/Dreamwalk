@@ -13,6 +13,18 @@ export class GenerationController {
   @Get('status') async status(@Req() req: Request) {
     return this.effectiveStatus((await this.auth.require(req)).id);
   }
+  @Get('policy') async policy(@Req() req: Request) {
+    return this.live.reviewPolicy((await this.auth.require(req)).id);
+  }
+  @Get('policy/operations/:operationId') async policyOperation(
+    @Req() req: Request,
+    @Param('operationId') operationId: string,
+  ) {
+    return this.live.policyOperation((await this.auth.require(req)).id, operationId);
+  }
+  @Post('policy/revisions') async amendPolicy(@Req() req: Request, @Body() body: unknown) {
+    return this.live.amendPolicy((await this.auth.require(req)).id, body);
+  }
   @Post('claim') async claim(@Req() req: Request, @Body() body: unknown) {
     const userId = (await this.auth.require(req)).id;
     await this.live.claim(userId, body);
@@ -25,7 +37,14 @@ export class GenerationController {
     const grantActive = status.enabled && status.state === 'active';
     const imageRemaining =
       status.mode === 'owner' ? status.imageRemainingMicros : status.remainingMicros;
-    const sufficient = typeof reserve === 'number' && imageRemaining >= reserve;
+    const perRequest =
+      status.mode === 'owner' &&
+      'requestEstimationEnabled' in image &&
+      image.requestEstimationEnabled === true;
+    // Capability permits a quote; the concrete quoted reserve is checked under the shared ledger lock.
+    const sufficient = perRequest
+      ? imageRemaining > 0
+      : typeof reserve === 'number' && imageRemaining >= reserve;
     const busy = status.heldMicros > 0;
     const blocked = !image.externalEnabled
       ? (image.externalBlockReasons[0] ?? 'EXTERNAL_PROVIDER_DISABLED')
@@ -42,6 +61,15 @@ export class GenerationController {
       imageBlockCode: blocked ?? image.externalBlockReasons[0] ?? null,
       imageConfiguration: {
         externalEnabled: image.externalEnabled,
+        ...('requestEstimationEnabled' in image
+          ? { requestEstimationEnabled: image.requestEstimationEnabled }
+          : {}),
+        ...('pricingProfileId' in image
+          ? {
+              pricingProfileId: image.pricingProfileId,
+              pricingProfileHash: image.pricingProfileHash,
+            }
+          : {}),
         ...('generationMode' in image && image.generationMode === 'owner' && status.mode === 'owner'
           ? {
               generationMode: 'owner' as const,

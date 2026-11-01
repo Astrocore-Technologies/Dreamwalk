@@ -49,12 +49,14 @@ function LocationImageStatus({ settings, saved }: { settings: Configuration; sav
           </p>
           {typeof config.estimatedTotalMicros === 'number' && (
             <p>
-              {m('estimate')}: {formatUsd(config.estimatedTotalMicros, locale)}
+              {m(config.requestEstimationEnabled ? 'profileEstimate' : 'estimate')}:{' '}
+              {formatUsd(config.estimatedTotalMicros, locale)}
             </p>
           )}
           {typeof config.reserveMicros === 'number' && (
             <p>
-              {m('reserve')}: {formatUsd(config.reserveMicros, locale)}
+              {m(config.requestEstimationEnabled ? 'profileReserve' : 'reserve')}:{' '}
+              {formatUsd(config.reserveMicros, locale)}
             </p>
           )}
           {verified(config) ? (

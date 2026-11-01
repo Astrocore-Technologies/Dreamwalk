@@ -43,17 +43,17 @@ development candidate, not a live-provider or deployment acceptance claim.
 All provider transports used for development checks are mock/synthetic. Tests
 provision disposable PostgreSQL clusters, not user databases.
 
-| Check                                                               | Executed result                                                                                    |
-| ------------------------------------------------------------------- | -------------------------------------------------------------------------------------------------- |
-| Production candidate build, workspace typecheck, ESLint, formatting | Passed on the implementation candidate. |
-| `npm run test:unit`                                                 | Contracts 9/9, game core 161/161, configuration/locales/native-stop guards 22/22.                  |
-| `npm run test:game`                                                 | Game core 161/161 plus selected UI/privacy/locale/regression tests 110/110.                        |
-| `npm run test:game:integration`                                     | 235/235, including manual-session expiry/race coverage; no failures or skips.                      |
-| Platform PostgreSQL integration                                     | 62/62.                                                                                             |
-| Image PostgreSQL/config integration                                 | 42/42, plus configuration tests in the runner.                                                     |
-| Visual/spatial authoring integration                                | 39/39.                                                                                             |
-| Reusable assets, homepage, local SMTP capture                       | 23/23, 4/4 and 1/1 respectively. No external mail.                                                 |
-| Manual-provider/world-progress and provider-protocol checks         | 12/12 and 10/10; manual expiry/consent-race PostgreSQL checks also pass 7/7.                       |
+| Check                                                               | Executed result                                                                   |
+| ------------------------------------------------------------------- | --------------------------------------------------------------------------------- |
+| Production candidate build, workspace typecheck, ESLint, formatting | Passed on the implementation candidate.                                           |
+| `npm run test:unit`                                                 | Contracts 9/9, game core 161/161, configuration/locales/native-stop guards 22/22. |
+| `npm run test:game`                                                 | Game core 161/161 plus selected UI/privacy/locale/regression tests 110/110.       |
+| `npm run test:game:integration`                                     | 235/235, including manual-session expiry/race coverage; no failures or skips.     |
+| Platform PostgreSQL integration                                     | 62/62.                                                                            |
+| Image PostgreSQL/config integration                                 | 42/42, plus configuration tests in the runner.                                    |
+| Visual/spatial authoring integration                                | 39/39.                                                                            |
+| Reusable assets, homepage, local SMTP capture                       | 23/23, 4/4 and 1/1 respectively. No external mail.                                |
+| Manual-provider/world-progress and provider-protocol checks         | 12/12 and 10/10; manual expiry/consent-race PostgreSQL checks also pass 7/7.      |
 
 Interactive browser checks used the isolated mock API/PostgreSQL,
 not intercepted requests:

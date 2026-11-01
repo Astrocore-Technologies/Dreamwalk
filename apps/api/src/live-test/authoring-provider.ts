@@ -1,7 +1,15 @@
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
+import { canonical } from '../ai/context';
 import { ProviderFailure } from '../ai/types';
 import { LIVE_TEXT } from './config';
+import {
+  estimateTextRequest,
+  estimateFingerprint,
+  type TextReserveSnapshot,
+  type TextEstimationPolicy,
+} from '../generation/estimates';
+import type { PreparedTextRequest } from '../ai/types';
 export interface AuthoringTextProfile {
   model: string;
   contextTokens: number;
@@ -10,7 +18,8 @@ export interface AuthoringTextProfile {
   inputMicrosPerMillion: number;
   outputMicrosPerMillion: number;
   upperMicros: number;
-  pricing?: { reviewedAt: string; validUntil: string };
+  estimation?: TextEstimationPolicy;
+  pricing?: { source?: string; reviewedAt: string; validUntil: string };
 }
 export interface AuthoringTextResult {
   proposal: unknown;
@@ -23,19 +32,48 @@ export interface AuthoringTextResult {
     costEvidence: 'configured_rates' | 'reported';
   };
 }
+export interface AuthoringTextRequest {
+  jobId: string;
+  context: unknown;
+  signal: AbortSignal;
+  textReservationSnapshot?: TextReserveSnapshot;
+  maxCostMicros?: number;
+}
 export interface AuthoringTextProvider {
   readonly version: string;
-  generate(request: {
-    jobId: string;
-    context: unknown;
-    signal: AbortSignal;
-  }): Promise<AuthoringTextResult>;
+  prepareTextRequest?(context: unknown): PreparedTextRequest | undefined;
+  generate(request: AuthoringTextRequest): Promise<AuthoringTextResult>;
 }
 export interface AuthoringTextDefinition {
   version: string;
   schema: Record<string, unknown>;
   instructions: string;
   validateProposal(value: unknown): unknown;
+}
+/** Exact key-free Responses body shared by quoting and transport. */
+export function buildAuthoringTextRequestBody(
+  definition: AuthoringTextDefinition,
+  profile: AuthoringTextProfile,
+  context: unknown,
+): string {
+  return JSON.stringify({
+    model: profile.model,
+    service_tier: 'default',
+    store: false,
+    stream: false,
+    reasoning: { effort: 'none' },
+    max_output_tokens: profile.maxOutputTokens,
+    instructions: definition.instructions,
+    input: JSON.stringify(profile.estimation ? canonical(context) : context),
+    text: {
+      format: {
+        type: 'json_schema',
+        name: 'private_location_layout',
+        strict: true,
+        schema: definition.schema,
+      },
+    },
+  });
 }
 /** Separate private-authoring adapter: no NPC/world schemas or authoritative game effects. */
 export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
@@ -57,15 +95,17 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
         profile.upperMicros,
       ].some((value) => !Number.isSafeInteger(value) || value <= 0) ||
       profile.maxInputBytes > 64000 ||
-      BigInt(profile.upperMicros) <
-        (BigInt(profile.contextTokens) * BigInt(profile.inputMicrosPerMillion) +
-          BigInt(profile.maxOutputTokens) * BigInt(profile.outputMicrosPerMillion) +
-          999999n) /
-          1000000n
+      (!profile.estimation &&
+        BigInt(profile.upperMicros) <
+          (BigInt(profile.contextTokens) * BigInt(profile.inputMicrosPerMillion) +
+            BigInt(profile.maxOutputTokens) * BigInt(profile.outputMicrosPerMillion) +
+            999999n) /
+            1000000n)
     )
       throw new Error('INVALID_AUTHORING_PROVIDER_PROFILE');
     this.profile = Object.freeze({
       ...profile,
+      ...(profile.estimation ? { estimation: Object.freeze({ ...profile.estimation }) } : {}),
       ...(profile.pricing ? { pricing: Object.freeze({ ...profile.pricing }) } : {}),
     });
     this.version = createHash('sha256')
@@ -79,11 +119,31 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
       )
       .digest('hex');
   }
-  async generate(request: {
-    jobId: string;
-    context: unknown;
-    signal: AbortSignal;
-  }): Promise<AuthoringTextResult> {
+  prepareTextRequest(context: unknown): PreparedTextRequest | undefined {
+    if (!this.profile.estimation) return undefined;
+    const body = buildAuthoringTextRequestBody(this.definition, this.profile, context);
+    const { pricing, ...profile } = this.profile;
+    return {
+      body,
+      snapshot: estimateTextRequest(
+        body,
+        {
+          ...profile,
+          ...(pricing?.source
+            ? {
+                pricing: {
+                  source: pricing.source,
+                  reviewedAt: pricing.reviewedAt,
+                  validUntil: pricing.validUntil,
+                },
+              }
+            : {}),
+        },
+        this.version,
+      ),
+    };
+  }
+  async generate(request: AuthoringTextRequest): Promise<AuthoringTextResult> {
     if (!this.apiKey) throw new ProviderFailure('LIVE_TEST_AUTHORIZED_KEY_REQUIRED', false);
     if (
       this.profile.pricing &&
@@ -93,26 +153,26 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
       )
     )
       throw new ProviderFailure('GENERATION_PRICING_EXPIRED', false);
-    const body = JSON.stringify({
-      model: this.profile.model,
-      service_tier: 'default',
-      store: false,
-      stream: false,
-      reasoning: { effort: 'none' },
-      max_output_tokens: this.profile.maxOutputTokens,
-      instructions: this.definition.instructions,
-      input: JSON.stringify(request.context),
-      text: {
-        format: {
-          type: 'json_schema',
-          name: 'private_location_layout',
-          strict: true,
-          schema: this.definition.schema,
-        },
-      },
-    });
+    const body = buildAuthoringTextRequestBody(this.definition, this.profile, request.context);
     if (Buffer.byteLength(body) > this.profile.maxInputBytes)
       throw new ProviderFailure('AUTHORING_CONTEXT_TOO_LARGE', false);
+    let snapshot: TextReserveSnapshot | undefined;
+    if (this.profile.estimation) {
+      const prepared = this.prepareTextRequest(request.context)!;
+      const pinned = request.textReservationSnapshot;
+      if (
+        !pinned ||
+        pinned.fingerprint !== prepared.snapshot.fingerprint ||
+        estimateFingerprint(pinned) !== estimateFingerprint(prepared.snapshot) ||
+        pinned.bodySha256 !== prepared.snapshot.bodySha256 ||
+        pinned.reserveMicros !== prepared.snapshot.reserveMicros ||
+        prepared.body !== body
+      )
+        throw new ProviderFailure('PROVIDER_REQUEST_SNAPSHOT_CHANGED', false);
+      snapshot = prepared.snapshot;
+      if (request.maxCostMicros === undefined || snapshot.reserveMicros > request.maxCostMicros)
+        throw new ProviderFailure('PROVIDER_BUDGET_TOO_SMALL', false);
+    }
     let response: Response;
     try {
       response = await this.transport('https://api.openai.com/v1/responses', {
@@ -202,6 +262,7 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
       value.usage.output_tokens > this.profile.maxOutputTokens
     )
       return failed('PROVIDER_LIMIT_VIOLATION');
+    if (snapshot && costMicros > snapshot.reserveMicros) return failed('PROVIDER_RESERVE_EXCEEDED');
     if (value.status !== 'completed') return failed('PROVIDER_INCOMPLETE');
     const texts: string[] = [];
     for (const output of value.output) {

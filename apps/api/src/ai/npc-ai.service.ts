@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Db } from '../db';
 import { fenceGenerationAdmission } from '../generation/scope-fence';
+import type { TextReserveSnapshot } from '../generation/estimates';
 import { GenerationAuthority } from '../generation/service';
 import { ManualLiveProvider } from '../live-test/provider';
 import { fail } from '../errors';
@@ -62,6 +63,7 @@ interface Job extends QueryResultRow {
   reservation_status: string;
   reservation_expires_at: Date;
   provider_upper_micros: string;
+  request_snapshot: TextReserveSnapshot | null;
   provider_actual_micros: string | null;
   provider_budget_status: string;
   created_at: Date;
@@ -226,6 +228,18 @@ export class NpcAiEngine {
     )
       fail(403, 'FORBIDDEN', 'FORBIDDEN');
   }
+  private requestPlan(scope: AiScope, context: DecisionContext) {
+    const snapshot =
+      this.provider.prepareTextRequest?.(scope.purpose ?? 'plan', context)?.snapshot ?? null;
+    const reserveMicros = snapshot?.reserveMicros ?? this.policy.providerUpperMicros;
+    if (
+      !Number.isSafeInteger(reserveMicros) ||
+      reserveMicros < 0 ||
+      reserveMicros > this.policy.providerUpperMicros
+    )
+      fail(409, 'PROVIDER_BUDGET_EXCEEDED', 'PROVIDER_BUDGET_EXCEEDED');
+    return { snapshot, reserveMicros };
+  }
   async quote(
     scope: AiScope,
     input: DecisionContext,
@@ -233,6 +247,7 @@ export class NpcAiEngine {
     client?: PoolClient,
   ) {
     const context = validateDecisionContext(input, this.policy.maxContextBytes);
+    const requestPlan = this.requestPlan(scope, context);
     const run = async (c: PoolClient) => {
       await this.authorize(c, { ...scope, origin: 'user', requesterUserId });
       await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
@@ -248,7 +263,7 @@ export class NpcAiEngine {
       const id = randomUUID(),
         expires = new Date(Date.now() + this.policy.quoteMs);
       await c.query(
-        `INSERT INTO npc_ai_quotes(id,campaign_id,npc_id,user_id,context_hash,purpose,provider_id,policy_version,credits,upper_micros,expires_at,provider_version) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
+        `INSERT INTO npc_ai_quotes(id,campaign_id,npc_id,user_id,context_hash,purpose,provider_id,policy_version,credits,upper_micros,expires_at,provider_version,request_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
         [
           id,
           scope.campaignId,
@@ -259,9 +274,10 @@ export class NpcAiEngine {
           this.provider.id,
           this.policy.version,
           this.policy.creditPrice,
-          this.policy.providerUpperMicros,
+          requestPlan.reserveMicros,
           expires,
           this.provider.version,
+          requestPlan.snapshot ? JSON.stringify(requestPlan.snapshot) : null,
         ],
       );
       return {
@@ -270,7 +286,15 @@ export class NpcAiEngine {
         expiresAt: expires.toISOString(),
         demo: true,
         requiresConsent: this.policy.creditPrice > 0 || this.provider.external,
-        providerUpperMicros: this.policy.providerUpperMicros,
+        providerUpperMicros: requestPlan.snapshot ? null : requestPlan.reserveMicros,
+        providerReserveMicros: requestPlan.reserveMicros,
+        ...(requestPlan.snapshot
+          ? {
+              estimateSnapshot: requestPlan.snapshot,
+              estimatedTotalMicros: requestPlan.snapshot.estimatedTotalMicros,
+              providerEnforcesQuotedCap: false,
+            }
+          : {}),
         provider: this.provider.id,
         external: this.provider.external,
         policyVersion: this.policy.version,
@@ -416,6 +440,7 @@ export class NpcAiEngine {
         fail(409, 'TURN_PHASE_STALE', 'TURN_PHASE_STALE');
       if (this.policy.killSwitch || (this.provider.external && !this.policy.externalApproved))
         fail(503, 'PROVIDER_DISABLED', 'PROVIDER_DISABLED');
+      const requestPlan = this.requestPlan(scope, context);
       const count = Number(
         (
           await c.query(
@@ -448,7 +473,8 @@ export class NpcAiEngine {
           q.provider_version !== this.provider.version ||
           q.policy_version !== this.policy.version ||
           q.credits !== this.policy.creditPrice ||
-          Number(q.upper_micros) !== this.policy.providerUpperMicros ||
+          Number(q.upper_micros) !== requestPlan.reserveMicros ||
+          digest(q.request_snapshot ?? null) !== digest(requestPlan.snapshot) ||
           new Date(q.expires_at).getTime() <= Date.now()
         )
           fail(409, 'QUOTE_EXPIRED', 'QUOTE_EXPIRED');
@@ -524,18 +550,38 @@ export class NpcAiEngine {
       ).rows[0];
       await this.excludeLegacyOwnerBypass(c);
       if (budget.blocked) fail(503, 'PROVIDER_DISABLED', 'PROVIDER_DISABLED');
-      if (
+      const liabilities =
         Number(budget.reserved_micros) +
-          Number(budget.spent_micros) +
-          Number(budget.unknown_micros) +
-          this.policy.providerUpperMicros >
-        Math.min(Number(budget.cap_micros), this.policy.providerCapMicros)
-      )
+        Number(budget.spent_micros) +
+        Number(budget.unknown_micros);
+      let cap = Math.min(Number(budget.cap_micros), this.policy.providerCapMicros);
+      if (this.provider instanceof ManualLiveProvider && this.provider.session.mode === 'owner') {
+        // The financial row precedes the common fence. Read the accepted policy without
+        // locking another authorization/scope, then retain this fence through job insertion.
+        await fenceGenerationAdmission(c);
+        cap = await this.provider.session.acknowledgedTextCap(c, generationAuthorizationId!);
+        if (cap < liabilities)
+          fail(
+            409,
+            'GENERATION_CAP_BELOW_HISTORICAL_SPEND',
+            'GENERATION_CAP_BELOW_HISTORICAL_SPEND',
+          );
+      }
+      if (liabilities + requestPlan.reserveMicros > cap)
         fail(409, 'PROVIDER_BUDGET_EXCEEDED', 'PROVIDER_BUDGET_EXCEEDED');
+      if (
+        this.provider instanceof ManualLiveProvider &&
+        this.provider.session.mode === 'owner' &&
+        Number(budget.cap_micros) !== cap
+      )
+        await c.query('UPDATE npc_ai_provider_budgets SET cap_micros=$2 WHERE provider_id=$1', [
+          this.provider.id,
+          cap,
+        ]);
       const id = randomUUID();
       const r = await c.query<Job>(
-        `INSERT INTO npc_ai_jobs(id,campaign_id,npc_id,operation_id,request_hash,origin,requester_user_id,payer_user_id,purpose,context_hash,context,provider_id,provider_version,policy_version,status,credits,reservation_status,reservation_expires_at,provider_upper_micros,provider_budget_status,quote_id,request_meta,sponsor_id,subject_kind,provider_external,generation_authorization_id)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'reserved',$15,$16,$17,$18,'reserved',$19,$20,$21,$22,$23,$24) RETURNING *`,
+        `INSERT INTO npc_ai_jobs(id,campaign_id,npc_id,operation_id,request_hash,origin,requester_user_id,payer_user_id,purpose,context_hash,context,provider_id,provider_version,policy_version,status,credits,reservation_status,reservation_expires_at,provider_upper_micros,provider_budget_status,quote_id,request_meta,sponsor_id,subject_kind,provider_external,generation_authorization_id,request_snapshot)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'reserved',$15,$16,$17,$18,'reserved',$19,$20,$21,$22,$23,$24,$25) RETURNING *`,
         [
           id,
           scope.campaignId,
@@ -554,7 +600,7 @@ export class NpcAiEngine {
           this.policy.creditPrice,
           payer ? 'held' : 'none',
           new Date(Date.now() + this.policy.reservationMs),
-          this.policy.providerUpperMicros,
+          requestPlan.reserveMicros,
           payer && !input.sponsorId ? input.quoteId : null,
           JSON.stringify({
             quoteId: input.quoteId ?? null,
@@ -567,6 +613,7 @@ export class NpcAiEngine {
           scope.subjectKind ?? 'npc',
           this.provider.external === true,
           generationAuthorizationId,
+          requestPlan.snapshot ? JSON.stringify(requestPlan.snapshot) : null,
         ],
       );
       if (input.runtimeRequestId)
@@ -576,7 +623,7 @@ export class NpcAiEngine {
         );
       await c.query(
         'UPDATE npc_ai_provider_budgets SET reserved_micros=reserved_micros+$2 WHERE provider_id=$1',
-        [this.provider.id, this.policy.providerUpperMicros],
+        [this.provider.id, requestPlan.reserveMicros],
       );
       return this.dto(r.rows[0]);
     });
@@ -739,6 +786,9 @@ export class NpcAiEngine {
             context: claimed.context,
             signal: controller.signal,
             maxCostMicros: Number(claimed.provider_upper_micros),
+            ...(claimed.request_snapshot
+              ? { textReservationSnapshot: claimed.request_snapshot }
+              : {}),
           }),
           new Promise<never>((_, reject) =>
             controller.signal.addEventListener(

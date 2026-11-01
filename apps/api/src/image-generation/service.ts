@@ -1,3 +1,9 @@
+import {
+  estimateImageRequest,
+  imagePricingProfileSnapshot,
+  type ImageReserveSnapshot,
+  type ImagePricingProfileSnapshot,
+} from '../generation/estimates';
 import { Inject, Injectable, OnModuleDestroy } from '@nestjs/common';
 import { randomUUID, createHash } from 'node:crypto';
 import { readFile, writeFile, mkdir, unlink } from 'node:fs/promises';
@@ -65,6 +71,10 @@ interface Job extends QueryResultRow {
   mode: 'mock' | 'external';
   cost_basis: 'legacy_unknown' | 'fixture' | 'verified_bound' | 'approved_estimate';
   estimated_total_micros: string | null;
+  estimate_snapshot: ImageReserveSnapshot | null;
+  pricing_profile_snapshot: ImagePricingProfileSnapshot | null;
+  generation_policy_revision: number | null;
+  generation_policy_hash: string | null;
   policy_version: string;
   status: string;
   reservation_id: string;
@@ -324,14 +334,53 @@ export class ImageGenerationEngine {
     }
     return { hashes, refs, livePolicy };
   }
+  private planning(input: GenerationRequest) {
+    const p = this.policy.ownerImageProfile;
+    if (input.mode !== 'external' || this.policy.generationMode !== 'owner' || !p) return undefined;
+    const references = input.referenceRevisionIds.length + input.privateReferenceAssetIds.length;
+    if (references > p.maxReferenceImages)
+      fail(409, 'IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE', 'IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE');
+    if (Buffer.byteLength(input.prompt, 'utf8') > p.maxPromptUtf8Bytes)
+      fail(413, 'GENERATION_INPUT_TOO_LARGE', 'GENERATION_INPUT_TOO_LARGE');
+    return {
+      estimateSnapshot: estimateImageRequest(input.prompt, references, p, this.provider.id),
+      pricingProfileSnapshot: imagePricingProfileSnapshot(p),
+    };
+  }
   private reservationMicros(input: GenerationRequest) {
-    return input.mode === 'mock'
-      ? this.policy.generationMode === 'owner'
-        ? 0
-        : this.policy.mockUpperMicros
-      : this.policy.costBasis === 'approved_estimate'
-        ? this.policy.operationalReserveMicros!
-        : this.policy.verifiedUpperMicros!;
+    return (
+      this.planning(input)?.estimateSnapshot.reserveMicros ??
+      (input.mode === 'mock'
+        ? this.policy.generationMode === 'owner'
+          ? 0
+          : this.policy.mockUpperMicros
+        : this.policy.costBasis === 'approved_estimate'
+          ? this.policy.operationalReserveMicros!
+          : this.policy.verifiedUpperMicros!)
+    );
+  }
+  private assertPolicyRevision(
+    row: {
+      input: unknown;
+      generation_policy_revision?: number | null;
+      generation_policy_hash?: string | null;
+    },
+    policy?: ImagePolicy,
+  ) {
+    if (
+      this.policy.generationMode !== 'owner' ||
+      generationRequestSchema.parse(row.input).mode !== 'external' ||
+      !this.capabilities
+    )
+      return;
+    if (
+      !policy ||
+      !Number.isSafeInteger(policy.generationPolicyRevision) ||
+      !policy.generationPolicyHash ||
+      row.generation_policy_revision !== policy.generationPolicyRevision ||
+      row.generation_policy_hash !== policy.generationPolicyHash
+    )
+      fail(409, 'GENERATION_POLICY_STALE', 'GENERATION_POLICY_STALE');
   }
   private liveGate(input: GenerationRequest) {
     if (input.mode !== 'external') return;
@@ -364,21 +413,46 @@ export class ImageGenerationEngine {
     request_hash: string;
     cost_basis?: string;
     estimated_total_micros?: unknown;
+    estimate_snapshot?: ImageReserveSnapshot | null;
+    pricing_profile_snapshot?: ImagePricingProfileSnapshot | null;
+    generation_policy_revision?: number | null;
+    generation_policy_hash?: string | null;
   }) {
-    if (
-      this.policy.generationMode === 'owner' &&
-      generationRequestSchema.parse(row.input).mode === 'external' &&
-      (row.cost_basis !== 'approved_estimate' ||
-        Number(row.estimated_total_micros) !== this.policy.estimatedTotalMicros ||
-        Number(row.upper_micros) !== this.policy.operationalReserveMicros)
-    )
-      fail(409, 'QUOTE_PROVIDER_CHANGED', 'QUOTE_PROVIDER_CHANGED');
+    const input = generationRequestSchema.parse(row.input),
+      planned = this.planning(input);
+    if (this.policy.generationMode === 'owner' && input.mode === 'external') {
+      if (
+        row.cost_basis !== 'approved_estimate' ||
+        Number(row.estimated_total_micros) !==
+          (planned?.estimateSnapshot.estimatedTotalMicros ?? this.policy.estimatedTotalMicros) ||
+        Number(row.upper_micros) !== this.reservationMicros(input)
+      )
+        fail(409, 'QUOTE_PROVIDER_CHANGED', 'QUOTE_PROVIDER_CHANGED');
+      if (row.estimate_snapshot || row.pricing_profile_snapshot) {
+        if (
+          !planned ||
+          hash(row.estimate_snapshot) !== hash(planned.estimateSnapshot) ||
+          hash(row.pricing_profile_snapshot) !== hash(planned.pricingProfileSnapshot)
+        )
+          fail(409, 'QUOTE_PROVIDER_CHANGED', 'QUOTE_PROVIDER_CHANGED');
+      } else if (this.policy.ownerImageProfile?.estimation)
+        fail(409, 'QUOTE_PROVIDER_CHANGED', 'QUOTE_PROVIDER_CHANGED');
+    }
     const expected = hash({
       input: row.input,
       refs: row.reference_hashes,
       policy: this.policy.version,
       provider: this.provider.id,
       upper: Number(row.upper_micros),
+      ...(row.estimate_snapshot
+        ? {
+            estimateSnapshotHash: row.estimate_snapshot.fingerprint,
+            pricingProfileHash: row.pricing_profile_snapshot?.fingerprint,
+          }
+        : {}),
+      ...(row.generation_policy_revision != null
+        ? { policyRevision: row.generation_policy_revision, policyHash: row.generation_policy_hash }
+        : {}),
     });
     if (row.policy_version !== this.policy.version || expected !== row.request_hash)
       fail(409, 'QUOTE_PROVIDER_CHANGED', 'QUOTE_PROVIDER_CHANGED');
@@ -398,7 +472,7 @@ export class ImageGenerationEngine {
       return { decision: 'reuse', matches, charge: 0, providerCalls: 0 };
     this.liveGate(input);
     return this.db.tx(async (c) => {
-      await this.authorize(c, actorId, input, authorization.hashes);
+      const currentAuthorization = await this.authorize(c, actorId, input, authorization.hashes);
       const n = (
         await c.query(
           "SELECT count(*)::int AS n FROM image_generation_quotes WHERE actor_id=$1 AND created_at>now()-interval '1 minute'",
@@ -409,16 +483,33 @@ export class ImageGenerationEngine {
       const id = randomUUID(),
         expiresAt = new Date(Date.now() + this.policy.quoteTtlMs),
         upper = this.reservationMicros(input),
-        costBasis = input.mode === 'mock' ? 'fixture' : (this.policy.costBasis ?? 'verified_bound');
+        costBasis = input.mode === 'mock' ? 'fixture' : (this.policy.costBasis ?? 'verified_bound'),
+        planned = this.planning(input),
+        policyRevision = currentAuthorization.livePolicy?.generationPolicyRevision,
+        policyHash = currentAuthorization.livePolicy?.generationPolicyHash;
+      if (
+        this.policy.generationMode === 'owner' &&
+        input.mode === 'external' &&
+        this.capabilities &&
+        (!Number.isSafeInteger(policyRevision) || !policyHash)
+      )
+        fail(409, 'GENERATION_POLICY_STALE', 'GENERATION_POLICY_STALE');
       const requestHash = hash({
         input,
         refs: authorization.hashes,
         policy: this.policy.version,
         provider: this.provider.id,
         upper,
+        ...(planned
+          ? {
+              estimateSnapshotHash: planned.estimateSnapshot.fingerprint,
+              pricingProfileHash: planned.pricingProfileSnapshot.fingerprint,
+            }
+          : {}),
+        ...(policyRevision != null ? { policyRevision, policyHash } : {}),
       });
       await c.query(
-        'INSERT INTO image_generation_quotes(id,actor_id,adventure_id,request_hash,input,reference_hashes,mode,policy_version,upper_micros,expires_at,cost_basis,estimated_total_micros) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)',
+        'INSERT INTO image_generation_quotes(id,actor_id,adventure_id,request_hash,input,reference_hashes,mode,policy_version,upper_micros,expires_at,cost_basis,estimated_total_micros,estimate_snapshot,pricing_profile_snapshot,generation_policy_revision,generation_policy_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16)',
         [
           id,
           actorId,
@@ -431,7 +522,13 @@ export class ImageGenerationEngine {
           upper,
           expiresAt,
           costBasis,
-          costBasis === 'approved_estimate' ? this.policy.estimatedTotalMicros : null,
+          costBasis === 'approved_estimate'
+            ? (planned?.estimateSnapshot.estimatedTotalMicros ?? this.policy.estimatedTotalMicros)
+            : null,
+          planned?.estimateSnapshot ?? null,
+          planned?.pricingProfileSnapshot ?? null,
+          policyRevision ?? null,
+          policyHash ?? null,
         ],
       );
       return {
@@ -444,10 +541,24 @@ export class ImageGenerationEngine {
           reserveMicros: upper,
           verifiedUpperMicros: costBasis === 'verified_bound' ? upper : null,
           ...(costBasis === 'approved_estimate'
-            ? { estimatedTotalMicros: this.policy.estimatedTotalMicros }
+            ? {
+                estimatedTotalMicros:
+                  planned?.estimateSnapshot.estimatedTotalMicros ??
+                  this.policy.estimatedTotalMicros,
+              }
             : {}),
           expiresAt: expiresAt.toISOString(),
           rightsAttestationRequired: true,
+          ...(planned
+            ? {
+                ...planned,
+                estimateSnapshotId: planned.estimateSnapshot.id,
+                estimateSnapshotHash: planned.estimateSnapshot.fingerprint,
+                pricingProfileId: planned.pricingProfileSnapshot.id,
+                pricingProfileHash: planned.pricingProfileSnapshot.fingerprint,
+              }
+            : {}),
+          ...(policyRevision != null ? { policyRevision, policyHash } : {}),
           ...(input.mode === 'external' && this.policy.generationMode === 'owner'
             ? {
                 generationMode: 'owner',
@@ -469,6 +580,14 @@ export class ImageGenerationEngine {
       studioLocationId: j.input.studioLocationContext?.locationId,
       studioSourceHash: j.input.studioLocationContext?.sourceHash,
       costBasis: j.cost_basis,
+      estimateSnapshot: j.estimate_snapshot ?? undefined,
+      pricingProfileSnapshot: j.pricing_profile_snapshot ?? undefined,
+      estimateSnapshotId: j.estimate_snapshot?.id,
+      estimateSnapshotHash: j.estimate_snapshot?.fingerprint,
+      pricingProfileId: j.pricing_profile_snapshot?.id,
+      pricingProfileHash: j.pricing_profile_snapshot?.fingerprint,
+      policyRevision: j.generation_policy_revision ?? undefined,
+      policyHash: j.generation_policy_hash ?? undefined,
       reserveMicros: Number(j.upper_micros),
       verifiedUpperMicros: j.cost_basis === 'verified_bound' ? Number(j.upper_micros) : null,
       estimatedTotalMicros:
@@ -498,6 +617,37 @@ export class ImageGenerationEngine {
       .strict()
       .parse(body);
     return this.db.tx(async (c) => {
+      await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+        `art-owner:${actorId}`,
+      ]);
+      // Read-only receipt recovery never creates a reservation or revives an old policy.
+      if (
+        !(
+          await c.query('SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE', [
+            actorId,
+          ])
+        ).rowCount
+      )
+        fail(401, 'UNAUTHORIZED', 'UNAUTHORIZED');
+      const previous = (
+        await c.query<Job>(
+          'SELECT * FROM image_generation_jobs WHERE actor_id=$1 AND operation_id=$2',
+          [actorId, b.operationId],
+        )
+      ).rows[0];
+      if (previous) {
+        if (previous.quote_id !== b.quoteId)
+          fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+        if (
+          previous.mode === 'external' &&
+          previous.cost_basis === 'approved_estimate' &&
+          (previous.input.generationAuthorizationId || this.policy.generationMode === 'owner') &&
+          b.estimateRiskConsent !== true
+        )
+          fail(409, 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED', 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED');
+        return this.dto(previous);
+      }
+
       const q = (
         await c.query('SELECT * FROM image_generation_quotes WHERE id=$1 AND actor_id=$2', [
           b.quoteId,
@@ -516,17 +666,7 @@ export class ImageGenerationEngine {
       const authorization = await this.authorize(c, actorId, input, q.reference_hashes);
       this.liveGate(input);
       this.assertQuotedProvider(q);
-      const previous = (
-        await c.query<Job>(
-          'SELECT * FROM image_generation_jobs WHERE actor_id=$1 AND operation_id=$2',
-          [actorId, b.operationId],
-        )
-      ).rows[0];
-      if (previous) {
-        if (previous.quote_id !== b.quoteId)
-          fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
-        return this.dto(previous);
-      }
+      this.assertPolicyRevision(q, authorization.livePolicy);
       await lockRasterQuota(c, actorId, MAX_RASTER_BYTES);
       await c.query('SELECT id FROM image_generation_quotes WHERE id=$1 FOR UPDATE', [q.id]);
       if (
@@ -558,7 +698,13 @@ export class ImageGenerationEngine {
                 textCapMicros: 0,
                 mockUpperMicros: 0,
               }
-            : (authorization.livePolicy ?? this.policy),
+            : input.mode === 'external' && this.policy.generationMode === 'owner'
+              ? {
+                  ...(authorization.livePolicy ?? this.policy),
+                  estimatedTotalMicros: Number(q.estimated_total_micros),
+                  operationalReserveMicros: Number(q.upper_micros),
+                }
+              : (authorization.livePolicy ?? this.policy),
           actorId,
           'image',
           id,
@@ -567,7 +713,7 @@ export class ImageGenerationEngine {
         );
       const job = (
         await c.query<Job>(
-          "INSERT INTO image_generation_jobs(id,actor_id,adventure_id,operation_id,quote_id,request_hash,input,reference_hashes,mode,policy_version,status,reservation_id,upper_micros,expires_at,upload_id,family_id,revision_id,cost_basis,estimated_total_micros) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',$11,$12,$13,$14,$15,$16,$17,$18) RETURNING *",
+          "INSERT INTO image_generation_jobs(id,actor_id,adventure_id,operation_id,quote_id,request_hash,input,reference_hashes,mode,policy_version,status,reservation_id,upper_micros,expires_at,upload_id,family_id,revision_id,cost_basis,estimated_total_micros,estimate_snapshot,pricing_profile_snapshot,generation_policy_revision,generation_policy_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *",
           [
             id,
             actorId,
@@ -587,6 +733,10 @@ export class ImageGenerationEngine {
             randomUUID(),
             q.cost_basis,
             q.estimated_total_micros,
+            q.estimate_snapshot ?? null,
+            q.pricing_profile_snapshot ?? null,
+            q.generation_policy_revision ?? null,
+            q.generation_policy_hash ?? null,
           ],
         )
       ).rows[0];
@@ -761,6 +911,7 @@ export class ImageGenerationEngine {
           auth = await this.authorize(c, candidate.actor_id, input, candidate.reference_hashes);
         this.liveGate(input);
         this.assertQuotedProvider(candidate);
+        this.assertPolicyRevision(candidate, auth.livePolicy);
         await this.lockBudget(c, candidate);
         const j = (
           await c.query<Job>(
@@ -988,7 +1139,13 @@ export class ImageGenerationEngine {
     try {
       await this.db.tx(async (c) => {
         const input = generationRequestSchema.parse(row.input);
-        await this.authorize(c, row.actor_id, input, row.reference_hashes);
+        const admissionAuthorization = await this.authorize(
+          c,
+          row.actor_id,
+          input,
+          row.reference_hashes,
+        );
+        this.assertPolicyRevision(row, admissionAuthorization.livePolicy);
         if (this.policy.generationMode === 'owner') {
           this.liveGate(input);
           this.assertQuotedProvider(row);

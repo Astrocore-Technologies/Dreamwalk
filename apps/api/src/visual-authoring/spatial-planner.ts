@@ -85,6 +85,7 @@ export class SpatialPlannerService {
       }
     }
     const profile = this.engine?.live.textProfile() ?? LIVE_TEXT;
+    const perRequestEstimate = 'estimation' in profile && !!profile.estimation;
     if (!available) blockers.push('SPATIAL_PLANNER_UNAVAILABLE');
     if (p.plan_origin !== 'ai-pending') blockers.push('SPATIAL_MODE_NOT_PENDING');
     if (p.status !== 'concept') blockers.push('STATE_CONFLICT');
@@ -101,7 +102,7 @@ export class SpatialPlannerService {
       } else throw error;
     }
     const quotes = await this.db.query(
-      `SELECT q.id,q.upper_micros AS "upperMicros",q.expires_at AS "expiresAt",EXISTS(SELECT 1 FROM live_authoring_text_jobs j WHERE j.quote_id=q.id) AS consumed
+      `SELECT q.id,q.upper_micros AS "upperMicros",q.expires_at AS "expiresAt",q.request_snapshot,q.generation_policy_revision,q.generation_policy_hash,EXISTS(SELECT 1 FROM live_authoring_text_jobs j WHERE j.quote_id=q.id) AS consumed
       FROM live_authoring_text_quotes q WHERE q.project_id=$1 AND q.actor_id=$2 ORDER BY q.created_at DESC LIMIT 20`,
       [id, owner],
     );
@@ -122,7 +123,18 @@ export class SpatialPlannerService {
         status,
         canCancel: ['queued', 'dispatched', 'generated'].includes(status),
         canRetry: false,
-        upperMicros: Number(row.upper_micros),
+        upperMicros: row.request_snapshot ? null : Number(row.upper_micros),
+        reserveMicros: Number(row.upper_micros),
+        policyRevision: row.generation_policy_revision ?? null,
+        policyHash: row.generation_policy_hash ?? null,
+        ...(row.request_snapshot
+          ? {
+              estimateSnapshot: row.request_snapshot,
+              estimatedTotalMicros: row.request_snapshot.estimatedTotalMicros,
+              costBasis: row.request_snapshot.costBasis,
+              providerEnforcesQuotedCap: false,
+            }
+          : {}),
         actualMicros: row.actual_micros === null ? null : Number(row.actual_micros),
         costStatus:
           status === 'unknown' ? 'unknown' : row.actual_micros !== null ? 'settled' : 'reserved',
@@ -179,8 +191,25 @@ export class SpatialPlannerService {
       manualDispatchOnly: true,
       model: profile.model,
       maxOutputTokens: profile.maxOutputTokens,
-      upperMicros: profile.upperMicros,
-      quotes: quotes.map((q) => ({ ...q, upperMicros: Number(q.upperMicros) })),
+      upperMicros: perRequestEstimate ? null : profile.upperMicros,
+      perRequestEstimate: perRequestEstimate,
+      quotes: quotes.map((q) => ({
+        id: q.id,
+        expiresAt: q.expiresAt,
+        consumed: q.consumed,
+        upperMicros: q.request_snapshot ? null : Number(q.upperMicros),
+        reserveMicros: Number(q.upperMicros),
+        policyRevision: q.generation_policy_revision ?? null,
+        policyHash: q.generation_policy_hash ?? null,
+        ...(q.request_snapshot
+          ? {
+              estimateSnapshot: q.request_snapshot,
+              estimatedTotalMicros: q.request_snapshot.estimatedTotalMicros,
+              costBasis: q.request_snapshot.costBasis,
+              providerEnforcesQuotedCap: false,
+            }
+          : {}),
+      })),
       jobs,
       currentProposal,
       canApply,

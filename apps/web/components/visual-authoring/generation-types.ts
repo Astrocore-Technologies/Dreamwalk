@@ -1,5 +1,14 @@
 import type { ArtRevision } from '../assets/types';
+import type { LiveTestStatus } from '../live-test/types';
+import type {
+  RequestEstimateSnapshot,
+  RequestPricingProfileSnapshot,
+} from '../live-test/request-reserve-types';
 export type ImageConfiguration = {
+  requestEstimationEnabled?: boolean;
+  pricingProfileId?: string;
+  pricingProfileHash?: string;
+  providerFingerprint?: string;
   generationMode?: 'owner' | 'manual';
   ownerEstimateEnabled?: boolean;
   estimateRiskConsentRequired?: boolean;
@@ -20,6 +29,14 @@ export type ImageConfiguration = {
   };
 };
 export type GenerationQuote = {
+  pricingProfileId?: string;
+  pricingProfileHash?: string;
+  estimateSnapshot?: RequestEstimateSnapshot;
+  pricingProfileSnapshot?: RequestPricingProfileSnapshot;
+  estimateSnapshotId?: string;
+  estimateSnapshotHash?: string;
+  policyRevision?: number;
+  policyHash?: string;
   generationMode?: 'owner' | 'manual';
   estimateRiskConsentRequired?: boolean;
   providerEnforcesQuotedCap?: boolean;
@@ -83,8 +100,10 @@ export const admittedConcept = (state: GenerationState | null) =>
     (item) => item.role === 'concept' && !!item.revisionId && item.validation?.valid,
   );
 
-// An estimate is not an upper bound. Only the explicitly configured owner path
-// may offer risk consent; legacy manual estimates remain non-dispatchable.
+// Request reserves are server snapshots, never a provider invoice guarantee.
+const nonnegativeInteger = (value: unknown): value is number =>
+  Number.isSafeInteger(value) && (value as number) >= 0;
+const positiveInteger = (value: unknown): value is number => nonnegativeInteger(value) && value > 0;
 export const ownerImageEstimateAvailable = (config: ImageConfiguration | null | undefined) =>
   config?.generationMode === 'owner' &&
   config.externalEnabled &&
@@ -92,10 +111,11 @@ export const ownerImageEstimateAvailable = (config: ImageConfiguration | null | 
   config.estimateRiskConsentRequired === true &&
   config.providerEnforcesQuotedCap === false &&
   config.verifiedUpperMicros === null &&
-  Number.isSafeInteger(config.estimatedTotalMicros) &&
-  (config.estimatedTotalMicros ?? 0) > 0 &&
-  Number.isSafeInteger(config.reserveMicros) &&
-  (config.reserveMicros ?? 0) >= (config.estimatedTotalMicros ?? Infinity);
+  (config.requestEstimationEnabled === true
+    ? !!config.pricingProfileId && !!config.pricingProfileHash
+    : positiveInteger(config.estimatedTotalMicros) &&
+      positiveInteger(config.reserveMicros) &&
+      config.reserveMicros >= config.estimatedTotalMicros);
 export const ownerImageQuoteMatches = (
   quote:
     | {
@@ -107,17 +127,94 @@ export const ownerImageQuoteMatches = (
         upperMicros: number | null;
         estimatedTotalMicros?: number;
         reserveMicros?: number;
+        estimateSnapshot?: RequestEstimateSnapshot;
+        pricingProfileSnapshot?: RequestPricingProfileSnapshot;
+        estimateSnapshotId?: string;
+        estimateSnapshotHash?: string;
+        pricingProfileId?: string;
+        pricingProfileHash?: string;
+        policyRevision?: number;
+        policyHash?: string;
       }
     | null
     | undefined,
   config: ImageConfiguration | null | undefined,
-) =>
-  ownerImageEstimateAvailable(config) &&
-  quote?.mode === 'external' &&
-  quote.generationMode === 'owner' &&
-  quote.estimateRiskConsentRequired === true &&
-  quote.providerEnforcesQuotedCap === false &&
-  quote.costBasis === 'approved_estimate' &&
-  quote.upperMicros === null &&
-  quote.estimatedTotalMicros === config?.estimatedTotalMicros &&
-  quote.reserveMicros === config?.reserveMicros;
+  authorization?: LiveTestStatus | null,
+) => {
+  if (
+    !ownerImageEstimateAvailable(config) ||
+    quote?.mode !== 'external' ||
+    quote.generationMode !== 'owner' ||
+    quote.estimateRiskConsentRequired !== true ||
+    quote.providerEnforcesQuotedCap !== false ||
+    quote.costBasis !== 'approved_estimate' ||
+    quote.upperMicros !== null ||
+    !positiveInteger(quote.estimatedTotalMicros) ||
+    !positiveInteger(quote.reserveMicros) ||
+    quote.reserveMicros < quote.estimatedTotalMicros
+  )
+    return false;
+  if (
+    authorization?.policyRevision !== undefined &&
+    (quote.policyRevision !== authorization.policyRevision ||
+      quote.policyHash !== authorization.policyHash)
+  )
+    return false;
+  const estimate = quote.estimateSnapshot,
+    pricing = quote.pricingProfileSnapshot;
+  if (estimate || pricing || config?.requestEstimationEnabled) {
+    if (
+      !estimate ||
+      !pricing ||
+      estimate.schemaVersion !== 1 ||
+      estimate.providerEnforcesQuotedCap !== false ||
+      pricing.providerEnforcesQuotedCap !== false ||
+      !['operator_heuristic', 'legacy_fixed'].includes(estimate.basis) ||
+      estimate.estimatedTotalMicros !== quote.estimatedTotalMicros ||
+      estimate.reserveMicros !== quote.reserveMicros ||
+      estimate.id !== quote.estimateSnapshotId ||
+      estimate.fingerprint !== quote.estimateSnapshotHash ||
+      pricing.id !== quote.pricingProfileId ||
+      pricing.fingerprint !== quote.pricingProfileHash ||
+      estimate.pricingProfileId !== pricing.id ||
+      estimate.pricingProfileHash !== pricing.fingerprint ||
+      pricing.id !== config?.pricingProfileId ||
+      pricing.fingerprint !== config?.pricingProfileHash ||
+      (config?.providerFingerprint !== undefined &&
+        estimate.providerFingerprint !== config.providerFingerprint) ||
+      !nonnegativeInteger(estimate.promptUtf8Bytes) ||
+      !nonnegativeInteger(estimate.referenceCount) ||
+      (estimate.referenceCount > 0 && estimate.uncertainReferences !== true)
+    )
+      return false;
+    if (estimate.basis === 'operator_heuristic') {
+      const parts = [
+        estimate.inputTextMicros,
+        estimate.inputImageMicros,
+        estimate.outputImageMicros,
+      ];
+      const margins = [
+        estimate.percentageMarginMicros,
+        estimate.fixedMarginMicros,
+        estimate.referenceAllowanceMicros,
+      ];
+      if (
+        !parts.every(nonnegativeInteger) ||
+        !margins.every(nonnegativeInteger) ||
+        !nonnegativeInteger(estimate.marginBps) ||
+        parts.reduce<number>((sum, value) => sum + (value ?? 0), 0) !==
+          quote.estimatedTotalMicros ||
+        quote.estimatedTotalMicros +
+          margins.reduce<number>((sum, value) => sum + (value ?? 0), 0) !==
+          quote.reserveMicros
+      )
+        return false;
+    }
+    return true;
+  }
+  // Persisted pre-snapshot quotes retain the old fixed-profile fence.
+  return (
+    quote.estimatedTotalMicros === config?.estimatedTotalMicros &&
+    quote.reserveMicros === config?.reserveMicros
+  );
+};

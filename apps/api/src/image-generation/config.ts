@@ -1,5 +1,6 @@
 /** Server-owned image provider configuration. No dotenv/files, URLs, or credential values in DTOs. */
 import { type OwnerGenerationConfig } from '../generation/config';
+import { imagePricingProfileSnapshot } from '../generation/estimates';
 import { LIVE_TEXT } from '../live-test/config';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -96,6 +97,12 @@ export interface ImageCapabilities {
   externalBlockReasons: string[];
   generationMode?: 'owner';
   ownerEstimateEnabled?: true;
+  requestEstimationEnabled?: boolean;
+  estimatePolicyKind?: 'operator_heuristic' | 'legacy_fixed';
+  estimationPolicy?: OwnerGenerationConfig['image']['estimation'];
+  pricingProfileId?: string;
+  pricingProfileHash?: string;
+  providerFingerprint?: string;
   estimateRiskConsentRequired?: true;
   requestProfile: {
     provider: string;
@@ -368,6 +375,7 @@ export function createOwnerImageRuntime(
     ...defaultImagePolicy,
     version: `owner-image-policy-v1:${config.configFingerprint}`,
     generationMode: 'owner',
+    ownerImageProfile: p,
     generationConfigFingerprint: config.configFingerprint,
     scopeId: LIVE_TEXT.scopeId,
     externalEnabled: true,
@@ -381,8 +389,10 @@ export function createOwnerImageRuntime(
     imageCapMicros: config.imageCapMicros,
     textCapMicros: config.textCapMicros,
   });
+  const provider = new ModeImageProvider(new OwnerOpenAiImageProvider(config, dependencies));
+  const pricingProfile = imagePricingProfileSnapshot(p);
   return {
-    provider: new ModeImageProvider(new OwnerOpenAiImageProvider(config, dependencies)),
+    provider,
     policy,
     capabilities: {
       mockAvailable: true,
@@ -390,6 +400,12 @@ export function createOwnerImageRuntime(
       externalBlockReasons: [],
       generationMode: 'owner',
       ownerEstimateEnabled: true,
+      requestEstimationEnabled: !!p.estimation,
+      estimatePolicyKind: p.estimation ? 'operator_heuristic' : 'legacy_fixed',
+      estimationPolicy: p.estimation,
+      pricingProfileId: pricingProfile.id,
+      pricingProfileHash: pricingProfile.fingerprint,
+      providerFingerprint: provider.id,
       estimateRiskConsentRequired: true,
       requestProfile: {
         provider: 'openai',

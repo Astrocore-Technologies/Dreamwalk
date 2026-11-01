@@ -1,5 +1,10 @@
+import type { TextRequestEstimateSnapshot } from './request-reserve-types';
 export type TurnFence = { roundId: string; phaseEpoch: number; rulesetVersion: 1 };
 export type LiveTestStatus = {
+  policyRevision?: number;
+  policyHash?: string | null;
+  configFingerprint?: string;
+  activeConfigFingerprint?: string | null;
   enabled: boolean;
   mode?: 'manual' | 'owner';
   authorizationId?: string | null;
@@ -33,11 +38,17 @@ export type LiveTestStatus = {
   };
 };
 export type LiveRequest = {
+  errorCode?: string | null;
+  configFingerprint?: string | null;
+  estimateSnapshot?: TextRequestEstimateSnapshot | null;
+  reserveMicros?: number;
+  policyRevision?: number;
+  policyHash?: string;
   id: string;
   subjectId: string;
   purpose: string;
   permitState: null | 'authorized' | 'dispatched' | 'settled' | 'unknown' | 'cancelled';
-  upperMicros: number;
+  upperMicros: number | null;
 };
 export type LiveRequests = { turnFence: TurnFence; requests: LiveRequest[] };
 export const generationAuthorizationId = (value: LiveTestStatus | null) =>
@@ -105,3 +116,48 @@ export const generationRemaining = (value: LiveTestStatus | null, purpose: 'text
     ),
   );
 };
+
+export const liveRequestReserve = (request: LiveRequest): number | null => {
+  const value = request.reserveMicros ?? request.upperMicros;
+  if (typeof value !== 'number' || !Number.isSafeInteger(value) || value < 0) return null;
+  const estimate = request.estimateSnapshot;
+  if (
+    estimate &&
+    (estimate.schemaVersion !== 1 ||
+      estimate.providerEnforcesQuotedCap !== false ||
+      estimate.reserveMicros !== value ||
+      !Number.isSafeInteger(estimate.estimatedTotalMicros) ||
+      estimate.estimatedTotalMicros < 0 ||
+      value < estimate.estimatedTotalMicros)
+  )
+    return null;
+  return value;
+};
+export const liveRequestPolicyCurrent = (request: LiveRequest, status: LiveTestStatus) =>
+  status.policyRevision === undefined ||
+  (request.policyRevision === status.policyRevision && request.policyHash === status.policyHash);
+
+export const liveRequestConsentFence = (
+  request: LiveRequest,
+  authorization?: Pick<LiveTestStatus, 'mode'> | null,
+): { estimateFingerprint?: string; policyRevision?: number; policyHash?: string } | null => {
+  const heuristic = request.estimateSnapshot?.costBasis === 'operator_estimate';
+  if (authorization?.mode !== 'owner' && !heuristic) return {};
+  if (
+    !Number.isSafeInteger(request.policyRevision) ||
+    (request.policyRevision ?? -1) < 0 ||
+    typeof request.policyHash !== 'string' ||
+    !/^[a-f0-9]{64}$/.test(request.policyHash)
+  )
+    return null;
+  if (heuristic && !/^[a-f0-9]{64}$/.test(request.estimateSnapshot!.fingerprint)) return null;
+  return {
+    policyRevision: request.policyRevision,
+    policyHash: request.policyHash,
+    ...(heuristic ? { estimateFingerprint: request.estimateSnapshot!.fingerprint } : {}),
+  };
+};
+
+export const ownerClaimFingerprintCurrent = (status: LiveTestStatus) =>
+  status.mode !== 'owner' ||
+  (typeof status.configFingerprint === 'string' && /^[a-f0-9]{64}$/.test(status.configFingerprint));

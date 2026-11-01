@@ -34,6 +34,7 @@ export function readNpcAiConfiguration(env: NodeJS.ProcessEnv = process.env): {
         reasoningEffort: 'none',
         inputMicrosPerMillion: profile.inputMicrosPerMillion,
         outputMicrosPerMillion: profile.outputMicrosPerMillion,
+        ...(profile.estimation ? { estimation: profile.estimation, pricing: profile.pricing } : {}),
       }),
       policy: {
         externalApproved: true,

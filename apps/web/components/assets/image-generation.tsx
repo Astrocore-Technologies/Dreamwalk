@@ -13,6 +13,11 @@ import {
   ownerImageQuoteMatches,
   type ImageConfiguration,
 } from '../visual-authoring/generation-types';
+import { RequestReserve } from '../live-test/request-reserve';
+import type {
+  RequestEstimateSnapshot,
+  RequestPricingProfileSnapshot,
+} from '../live-test/request-reserve-types';
 import type { ArtRevision, ArtSpec } from './types';
 import { artPreviewUrl } from './types';
 import { useAssetText } from './messages';
@@ -54,6 +59,14 @@ type Job = {
   canCancel: boolean;
 };
 type Quote = {
+  estimateSnapshot?: RequestEstimateSnapshot;
+  pricingProfileSnapshot?: RequestPricingProfileSnapshot;
+  estimateSnapshotId?: string;
+  estimateSnapshotHash?: string;
+  pricingProfileId?: string;
+  pricingProfileHash?: string;
+  policyRevision?: number;
+  policyHash?: string;
   generationMode?: 'owner' | 'manual';
   estimateRiskConsentRequired?: boolean;
   providerEnforcesQuotedCap?: boolean;
@@ -205,9 +218,11 @@ export function ImageGeneration({
     attested,
     externalDispatchAllowed: dispatchAllowed,
     authorizationMode: grant?.mode,
+    policyRevision: grant?.policyRevision,
+    policyHash: grant?.policyHash,
     costConfiguration: config.data,
   });
-  const estimatedQuote = ownerMode && ownerImageQuoteMatches(quote, config.data);
+  const estimatedQuote = ownerMode && ownerImageQuoteMatches(quote, config.data, grant);
   const quoteBudgetAvailable =
     !ownerMode ||
     (quote !== null &&
@@ -334,7 +349,7 @@ export function ImageGeneration({
             (mode === 'mock'
               ? result.quote.upperMicros === 0
               : result.quote.upperMicros === config.data?.verifiedUpperMicros)) ||
-            (ownerMode && ownerImageQuoteMatches(result.quote, config.data)))
+            (ownerMode && ownerImageQuoteMatches(result.quote, config.data, grant)))
         ) {
           quotedFingerprint.current = fingerprint;
           setQuote(result.quote);
@@ -611,6 +626,7 @@ export function ImageGeneration({
                 ? `${g('estimatedCost')}: ${g('usd')} ${((quote.estimatedTotalMicros ?? 0) / 1000000).toFixed(6)}`
                 : `${g('upperCost')}: ${g('usd')} ${((quote.upperMicros ?? 0) / 1000000).toFixed(6)}`}
           </p>
+          {quote.estimateSnapshot && <RequestReserve snapshot={quote.estimateSnapshot} />}
           {quote.costBasis === 'approved_estimate' && (
             <p>
               {g('reserveCost')}: {g('usd')} {((quote.reserveMicros ?? 0) / 1000000).toFixed(6)}.{' '}

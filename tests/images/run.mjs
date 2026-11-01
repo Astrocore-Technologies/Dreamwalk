@@ -55,11 +55,11 @@ const assetDir = await mkdtemp(join(tmpdir(), 'dreamwalk-image-test-'));
 process.env.ASSET_DIR = assetDir;
 const database = await startLocalPostgres();
 const npm = process.platform === 'win32' ? 'npm.cmd' : 'npm';
-async function run(command, args) {
+async function run(command, args, env = process.env) {
   const child = spawn(
     command === npm && process.platform === 'win32' ? process.execPath : command,
     command === npm && process.platform === 'win32' ? [process.env.npm_execpath, ...args] : args,
-    { stdio: 'inherit', env: process.env },
+    { stdio: 'inherit', env },
   );
   const [code] = await once(child, 'exit');
   if (code !== 0) throw new Error(`Game test subprocess failed (${code})`);
@@ -77,9 +77,11 @@ try {
     '--test',
     'tests/images/config.test.mjs',
     'tests/images/owner-config.test.mjs',
+    'tests/images/request-estimates.test.mjs',
   ]);
   let files = [
     'integration-owner-generation.test.mjs',
+    'integration-request-estimates.test.mjs',
     'integration-budget.test.mjs',
     'integration-diagnostics.test.mjs',
     'integration-generation.test.mjs',
@@ -96,6 +98,14 @@ try {
   if (files.includes(ownerFile))
     await run(process.execPath, ['--test', `tests/images/${ownerFile}`]);
   files = files.filter((file) => file !== ownerFile);
+  const requestFile = 'integration-request-estimates.test.mjs';
+  if (!selectedTestFile && files.includes(requestFile)) {
+    await run(process.execPath, ['tests/images/run.mjs', '--skip-build'], {
+      ...process.env,
+      IMAGE_TEST_FILE: requestFile,
+    });
+    files = files.filter((file) => file !== requestFile);
+  }
   if (files.length)
     await run(process.execPath, [
       '--test',

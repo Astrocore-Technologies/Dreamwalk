@@ -80,7 +80,18 @@ export interface StoryQuote {
   expiresAt: string;
   demo: boolean;
   requiresConsent: boolean;
-  providerUpperMicros: number;
+  providerUpperMicros: number | null;
+  providerReserveMicros?: number;
+  estimatedTotalMicros?: number;
+  providerEnforcesQuotedCap?: boolean;
+  estimateSnapshot?: {
+    schemaVersion: 1;
+    costBasis: 'operator_estimate' | 'legacy_fixed';
+    fingerprint: string;
+    reserveMicros: number;
+    estimatedTotalMicros: number;
+    providerEnforcesQuotedCap: false;
+  };
   provider: string;
   external: boolean;
   policyVersion: string;

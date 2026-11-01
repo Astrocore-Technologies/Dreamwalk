@@ -4,7 +4,12 @@ import type { GameProjection } from '@dreamwalk/contracts';
 import { SceneMedia } from './scene-media';
 import { api, ApiError, errorMessage } from '@/lib/client';
 import { Button, ErrorBox, Field, Textarea } from '@/components/ui';
-import { providerBoundKnown, samePreparedTurn } from './narrative-guards';
+import {
+  providerReserveKnown,
+  providerBoundKnown,
+  samePreparedTurn,
+  type ProviderCostQuote,
+} from './narrative-guards';
 import { useNarrativeText } from './narrative-messages';
 type Turn = {
   id: string;
@@ -29,8 +34,8 @@ type NarrativeStatus = {
   };
   turns: Turn[];
 };
-type Quote = {
-  providerUpperMicros?: number;
+type Quote = ProviderCostQuote & {
+  providerUpperMicros?: number | null;
   external?: boolean;
   provider?: string;
   id: string;
@@ -270,11 +275,15 @@ export function NarrativeDirector({
           {prepared.quote.demo && <small>{h('demo')}</small>}
           {(prepared.quote.external ?? status?.configuration.provider === 'external') && (
             <p>
-              {providerBoundKnown(prepared.quote, true)
-                ? h('providerBound', {
-                    amount: ((prepared.quote.providerUpperMicros || 0) / 1000000).toFixed(6),
+              {providerReserveKnown(prepared.quote)
+                ? h('requestReserve', {
+                    amount: (prepared.quote.providerReserveMicros! / 1000000).toFixed(6),
                   })
-                : h('missingBound')}
+                : providerBoundKnown(prepared.quote, true)
+                  ? h('providerBound', {
+                      amount: ((prepared.quote.providerUpperMicros ?? 0) / 1000000).toFixed(6),
+                    })
+                  : h('missingBound')}
             </p>
           )}
           <p>{h('expires', { time: new Date(prepared.quote.expiresAt).toLocaleTimeString() })}</p>

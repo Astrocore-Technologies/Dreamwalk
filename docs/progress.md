@@ -783,3 +783,43 @@ The final escaped-star presentation correction passed the affected UI rebuild an
 Actual browser execution and screenshot inspection are still pending for this tranche;
 these local results do not establish live model quality or successful image generation.
 No additional paid calls or changes to the user's running local preview were made.
+
+## 2026-11-01 - per-request reserves and owner policy revisions
+
+Owner quotes can use explicitly reviewed request-planning assumptions instead of a
+whole-budget hold. Text planning covers the complete serialized provider envelope;
+image planning records actual prompt bytes, selected references, output assumptions,
+percentage margin and fixed/reference allowances. The UI separates these operator
+estimates from reported usage and provider invoice limits. Legacy fixed profiles keep
+their original behavior and labels. Private photo/concept references remain supported.
+
+Migration 037 stores immutable quote/job pricing snapshots and append-only policy
+revisions on the existing authorization and financial scope. The owner reviews the
+candidate against unchanged liabilities and explicitly applies it with an operation
+ID and revision/hash fences. Restart, stale workers and duplicate commands cannot
+silently accept another profile, reset spending, clear stops or charge twice. The
+secondary NPC queue ceiling follows the acknowledged policy while preserving its
+financial counters. Unknown, HTTP 403 and overrun stops remain durable. Export and
+erasure retain financial evidence while removing private-input hashes.
+
+Local verification includes production build, workspace typechecks and repository
+lint; contracts/core 170/170, platform PostgreSQL 62/62, image suites 87 distinct
+checks and visual/spatial 42/42. The full game/PostgreSQL regression passed 295
+checks before the final queue-cap/lock refinement. After that refinement the affected
+policy PostgreSQL suite passed 14/14 and owner compatibility passed 38/38, including
+an actual concurrent amendment versus job-insert lock overlap. Text envelope/cap
+units passed 15/15. The final UI/privacy/controller payload passed 137 with four
+legacy Windows file-guard skips; database-backed guard tests ran separately.
+Configuration/locales/database-shutdown checks passed 22/22.
+
+Chromium verification covered 12 new policy/reserve scenarios and 16 existing owner
+and location-art scenarios using synthetic transports. An initial test-only pending
+button locator failure was corrected and its scenario rerun successfully. Desktop
+and mobile captures were inspected. These checks preserve quote/consent, private
+references, save/reload/reuse and map binding; they are not real provider evidence.
+
+Examples remain disabled. No real key, paid provider request, existing user database
+or stopped user application was used for this change. Manual setup and renewal are
+in `owner-generation.md` and `generation-policy-revisions.md`. The owner must finish
+configuration and perform the first real image test themselves; successful provider
+access, real image quality and invoice behavior are still unverified.

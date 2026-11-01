@@ -4,13 +4,16 @@ import { once } from 'node:events';
 import net from 'node:net';
 import { randomUUID } from 'node:crypto';
 import { readdirSync } from 'node:fs';
-import { mkdtemp, rm } from 'node:fs/promises';
+import { mkdtemp, rm, access } from 'node:fs/promises';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { startLocalPostgres } from './postgres-local.mjs';
 import { forceMockNpcTestEnvironment } from './mock-npc-test-env.mjs';
 
 if (process.env.NODE_ENV === 'production') throw new Error('Game tests cannot run in production');
+const skipBuild = process.argv.includes('--skip-build');
+if (process.argv.slice(2).some((arg) => arg !== '--skip-build'))
+  throw new Error('Unknown game runner option');
 forceMockNpcTestEnvironment();
 async function freePort() {
   const server = net.createServer();
@@ -53,8 +56,10 @@ async function run(command, args, env = process.env) {
   if (code !== 0) throw new Error(`Game test subprocess failed (${code})`);
 }
 try {
-  for (const workspace of ['@dreamwalk/contracts', '@dreamwalk/game-core', '@dreamwalk/api'])
-    await run(npm, ['run', 'build', '-w', workspace]);
+  if (skipBuild) await access(new URL('../apps/api/dist/main.js', import.meta.url));
+  else
+    for (const workspace of ['@dreamwalk/contracts', '@dreamwalk/game-core', '@dreamwalk/api'])
+      await run(npm, ['run', 'build', '-w', workspace]);
   await run(process.execPath, ['apps/api/dist/migrate.js']);
   await run(process.execPath, ['apps/api/dist/seed.js']);
   let files = readdirSync('tests/game').filter((name) => /^integration.*\.test\.mjs$/.test(name));
@@ -66,14 +71,19 @@ try {
   // Legacy synthetic suites intentionally retain financial liabilities. The owner
   // admission suite must prove clean first-claim behavior in its own fresh cluster,
   // not erase those liabilities or weaken the production guard to share a fixture.
-  const ownerFile = 'integration-generation-owner.test.mjs';
-  if (!process.env.GAME_TEST_FILE && files.includes(ownerFile)) {
-    await run(process.execPath, ['scripts/test-game.mjs'], {
-      ...process.env,
-      GAME_TEST_FILE: ownerFile,
-    });
-    files = files.filter((name) => name !== ownerFile);
-  }
+  const isolatedOwnerFiles = [
+    'integration-generation-owner.test.mjs',
+    'integration-generation-policy-revisions.test.mjs',
+  ];
+  if (!process.env.GAME_TEST_FILE)
+    for (const ownerFile of isolatedOwnerFiles) {
+      if (!files.includes(ownerFile)) continue;
+      await run(process.execPath, ['scripts/test-game.mjs', '--skip-build'], {
+        ...process.env,
+        GAME_TEST_FILE: ownerFile,
+      });
+      files = files.filter((name) => name !== ownerFile);
+    }
   if (files.length)
     await run(process.execPath, [
       '--test',

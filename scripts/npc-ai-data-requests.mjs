@@ -2,7 +2,11 @@
 export async function exportNpcAiData(client, userId) {
   return (
     await client.query(
-      `SELECT id,campaign_id,purpose,status,credits,reservation_status,result_code,created_at,completed_at
+      `SELECT id,campaign_id,purpose,status,credits,reservation_status,result_code,created_at,completed_at,
+    CASE WHEN requester_user_id=$1 THEN request_snapshot
+      WHEN request_snapshot IS NULL THEN NULL
+      ELSE (request_snapshot-'bodySha256'-'id'-'fingerprint')||'{"privateInputRedacted":true}'::jsonb
+    END AS request_snapshot
     FROM npc_ai_jobs WHERE requester_user_id=$1 OR payer_user_id=$1 ORDER BY created_at`,
       [userId],
     )
@@ -35,7 +39,7 @@ export async function purgeNpcAiData(client, userId, campaigns) {
       );
     }
     await client.query(
-      `UPDATE npc_ai_jobs SET context='{}',context_hash='erased',proposal=NULL,request_meta='{}',quote_id=NULL,npc_id='erased-npc',
+      `UPDATE npc_ai_jobs SET request_snapshot=CASE WHEN request_snapshot IS NULL THEN NULL ELSE (request_snapshot-'bodySha256'-'id'-'fingerprint')||'{"privateInputErased":true}'::jsonb END,context='{}',context_hash='erased',proposal=NULL,request_meta='{}',quote_id=NULL,npc_id='erased-npc',
       cancel_requested=true,result_code='DATA_ERASED',status=CASE WHEN status='committed' THEN status ELSE 'cancelled' END,
       reservation_status=CASE WHEN reservation_status='held' THEN 'released' ELSE reservation_status END,
       provider_budget_status=CASE WHEN provider_budget_status='reserved' THEN $2 ELSE provider_budget_status END,
@@ -51,6 +55,11 @@ export async function purgeNpcAiData(client, userId, campaigns) {
     [affectedIds, userId],
   );
   await client.query('DELETE FROM npc_ai_cache WHERE campaign_id=ANY($1::uuid[])', [affectedIds]);
+  // Some consumed quotes can remain referenced; scrub their private linkage before deletion.
+  await client.query(
+    `UPDATE npc_ai_quotes SET request_snapshot=CASE WHEN request_snapshot IS NULL THEN NULL ELSE (request_snapshot-'bodySha256'-'id'-'fingerprint')||'{"privateInputErased":true}'::jsonb END WHERE campaign_id=ANY($1::uuid[]) OR user_id=$2`,
+    [affectedIds, userId],
+  );
   await client.query(
     'DELETE FROM npc_ai_quotes q WHERE (campaign_id=ANY($1::uuid[]) OR user_id=$2) AND NOT EXISTS (SELECT 1 FROM npc_ai_jobs j WHERE j.quote_id=q.id)',
     [affectedIds, userId],
