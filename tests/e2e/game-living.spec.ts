@@ -1,27 +1,19 @@
+import {
+  approachTarget,
+  mapAction,
+  readProjection,
+  inventory,
+  closeInventory,
+  legacyRealtimeLaunch,
+} from './support/map-actions';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
 async function approachHelper(page: Page) {
-  const helper = page.locator('[data-entity-id="helper"]');
-  await expect(helper).toBeVisible();
-  await helper.getByRole('button', { name: 'Подойти', exact: true }).click();
-  const position = page.getByTestId('game-position');
-  await expect
-    .poll(
-      async () =>
-        Math.abs(
-          Number(await position.getAttribute('data-x')) -
-            Number(await helper.getAttribute('data-x')),
-        ) +
-        Math.abs(
-          Number(await position.getAttribute('data-y')) -
-            Number(await helper.getAttribute('data-y')),
-        ),
-    )
-    .toBeLessThanOrEqual(1);
+  await approachTarget(page, new URL(page.url()).pathname.split('/').at(-1)!, 'helper');
 }
 
-test('living author version saves personality and reacts without manual NPC request', async ({
+test('legacy realtime author version retains personality, obligations and private story transport', async ({
   page,
   browser,
 }) => {
@@ -54,6 +46,7 @@ test('living author version saves personality and reacts without manual NPC requ
       },
     });
     expect(guestRegistration.status()).toBe(201);
+    await legacyRealtimeLaunch(page);
     await page.goto('/studio/adventures/new');
     await page.getByLabel('Название приключения').fill(`Living courtyard ${suffix}`);
     await page.getByRole('button', { name: 'Сохранить черновик', exact: true }).click();
@@ -172,28 +165,41 @@ test('living author version saves personality and reacts without manual NPC requ
     await guest.getByRole('button', { name: 'Принять приглашение в кампанию' }).click();
     await expect(guest).toHaveURL(new RegExp(`/game/${campaignId}$`));
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
-    const helper = page.locator('[data-entity-id="helper"]');
-    // The helper becomes visible after approaching the keeper in the initial scene.
-    await page
-      .locator('[data-entity-id="keeper"]')
-      .getByRole('button', { name: 'Подойти', exact: true })
-      .click();
-    await expect(helper).toBeVisible();
+    await approachTarget(page, campaignId, 'keeper');
+    expect((await readProjection(page, campaignId)).entities.some((e) => e.id === 'helper')).toBe(
+      true,
+    );
     // Both independent actors deliberately stand near the same live NPC. The
     // authored preset pins the helper's patrol target to its spawn, not a test teleport.
     await approachHelper(guest);
     await approachHelper(page);
-    await helper.getByRole('button', { name: 'Попросить помощи', exact: true }).click();
+    // Legacy help action no longer has a dedicated visible button. Keep its
+    // command/privacy contract and the current obligation UI as split coverage.
+    const help = await page.request.post(`/api/v1/game/campaigns/${campaignId}/commands`, {
+      data: {
+        protocolVersion: 1,
+        operationId: randomUUID(),
+        type: 'action',
+        action: { kind: 'talk', targetId: 'helper' },
+      },
+    });
+    expect(help.ok()).toBeTruthy();
+    expect((await help.json()).status).toBe('committed');
     await expect(page.locator('[data-npc-obligation="proposed"]')).toBeVisible();
     await page.getByRole('button', { name: 'Принять обещание', exact: true }).click();
     await expect(page.locator('[data-npc-obligation="fulfilled"]')).toBeVisible();
-    await expect(page.locator('[data-inventory-id="token"]')).toBeVisible();
-    await expect(guest.locator('[data-inventory-id="token"]')).toHaveCount(0);
+    await expect((await inventory(page)).locator('[data-inventory-id="token"]')).toBeVisible();
+    await closeInventory(page);
+    expect((await readProjection(guest, campaignId)).inventory.some((e) => e.id === 'token')).toBe(
+      false,
+    );
+    await expect((await inventory(guest)).locator('[data-inventory-id="token"]')).toHaveCount(0);
+    await closeInventory(guest);
     await expect(guest.locator('[data-npc-obligation]')).toHaveCount(0);
     await expect(guest.locator('[data-story-code="fulfilled"]')).toBeVisible();
     const speech = page.getByTestId('unified-story');
     await approachHelper(page);
-    await page.locator('[data-select-npc="helper"]').click();
+    await mapAction(page, campaignId, 'helper', 'Сказать');
     await expect(page.getByText('PRIVATE_AUTHOR_FACT_TITLE', { exact: true })).toHaveCount(0);
     await speech.getByRole('button', { name: 'Шёпот', exact: true }).click();
     async function say(text: string) {
@@ -224,29 +230,29 @@ test('living author version saves personality and reacts without manual NPC requ
     await Promise.all([page.reload(), guest.reload()]);
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
     await expect(guest.getByText(/Thank you, helper/)).toHaveCount(0);
-    await expect(page.locator('[data-inventory-id="token"]')).toBeVisible();
-    await expect(guest.locator('[data-inventory-id="token"]')).toHaveCount(0);
+    await expect((await inventory(page)).locator('[data-inventory-id="token"]')).toBeVisible();
+    await closeInventory(page);
+    expect((await readProjection(guest, campaignId)).inventory.some((e) => e.id === 'token')).toBe(
+      false,
+    );
+    await expect((await inventory(guest)).locator('[data-inventory-id="token"]')).toHaveCount(0);
+    await closeInventory(guest);
     await expect(guest.locator('[data-npc-obligation]')).toHaveCount(0);
     await expect(guest.locator('[data-story-code="fulfilled"]')).toBeVisible();
     await expect(page.locator('[data-npc-obligation="fulfilled"]')).toBeVisible();
     await expect(speech.getByText(/Thank you, helper/)).toBeVisible();
-    await speech.getByRole('tab', { name: 'Вне игры', exact: true }).click();
-    await guest
-      .getByTestId('unified-story')
-      .getByRole('tab', { name: 'Вне игры', exact: true })
-      .click();
-    const chat = page.getByRole('region', { name: 'Внеигровой чат группы', exact: true });
-    await chat.getByLabel('Сообщение группе', { exact: true }).fill('OOC_ONLY_PLAN_742');
-    await chat.getByRole('button', { name: 'Отправить группе', exact: true }).click();
-    await expect(
-      guest.getByRole('region', { name: 'Внеигровой чат группы', exact: true }),
-    ).toContainText('OOC_ONLY_PLAN_742');
+    // OOC controls were intentionally removed. Its retained transport must still
+    // remain separate from authoritative story canon and visible story output.
+    await expect(speech.getByRole('tab', { name: 'Вне игры', exact: true })).toHaveCount(0);
+    const chat = await page.request.post(`/api/v1/game/campaigns/${campaignId}/chat`, {
+      data: { operationId: randomUUID(), text: 'OOC_ONLY_PLAN_742' },
+    });
+    expect(chat.ok()).toBeTruthy();
+    const guestChat = await guest.request.get(`/api/v1/game/campaigns/${campaignId}/chat`);
+    expect(guestChat.ok()).toBeTruthy();
+    expect(JSON.stringify(await guestChat.json())).toContain('OOC_ONLY_PLAN_742');
     await expect(page.getByTestId('story-feed')).not.toContainText('OOC_ONLY_PLAN_742');
-    await speech.getByRole('tab', { name: 'История', exact: true }).click();
-    await guest
-      .getByTestId('unified-story')
-      .getByRole('tab', { name: 'История', exact: true })
-      .click();
+    await expect(guest.getByTestId('story-feed')).not.toContainText('OOC_ONLY_PLAN_742');
     // Reload cleared recipient/channel. A typed attempt is previewed inline and never executed merely by typing.
     await speech.getByLabel('Твой ход', { exact: true }).fill('*wait*');
     await speech.getByRole('button', { name: 'Отправить', exact: true }).click();

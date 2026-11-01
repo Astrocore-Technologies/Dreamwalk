@@ -1,3 +1,4 @@
+import { mapAction } from './support/map-actions';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import type { GameProjection } from '@dreamwalk/contracts';
@@ -37,7 +38,7 @@ async function clickCell(page: Page, x: number, y: number, button: 'left' | 'rig
   });
 }
 async function say(page: Page, npcId: string, text: string) {
-  await page.locator(`[data-select-npc="${npcId}"]`).click();
+  await mapAction(page, new URL(page.url()).pathname.split('/').at(-1)!, npcId, 'Сказать');
   const composer = page.getByTestId('unified-story');
   await composer.getByLabel('Твой ход', { exact: true }).fill(text);
   await composer.getByRole('button', { name: 'Отправить', exact: true }).click();
@@ -199,7 +200,7 @@ test('sequential turns retain two addressed posts, freeze NPCs, and reply only a
         ),
       )
       .toBeGreaterThan(0);
-    await clickCell(owner, 4, 3, 'right');
+    await mapAction(owner, id, 'mira', 'Осмотреть');
     await expect(owner.getByTestId('npc-public-inspection')).toContainText('patient alchemist');
     await expect(owner.getByText('TURN_PRIVATE_NPC_SECRET', { exact: true })).toHaveCount(0);
     await say(owner, 'mira', 'Мира, что ты заметила в комнате?');
@@ -215,9 +216,9 @@ test('sequential turns retain two addressed posts, freeze NPCs, and reply only a
     expect(restored.turn?.resources.movement).toBe(5);
     expect(restored.turn?.pendingNpcReplies).toHaveLength(2);
     for (const npc of ['mira', 'borin'])
-      expect(restored.entities.find((e) => e.id === npc)).toMatchObject(
-        before.entities.find((e) => e.id === npc)!,
-      );
+      expect(restored.entities.find((e) => e.id === npc)).toMatchObject({
+        ...before.entities.find((e) => e.id === npc)!,
+      });
     await owner.getByRole('button', { name: 'Завершить ход', exact: true }).click();
     await expect(
       guest
@@ -243,10 +244,7 @@ test('sequential turns retain two addressed posts, freeze NPCs, and reply only a
     await expect(owner.getByTestId('game-position')).toHaveAttribute('data-y', '4');
     const guestBefore = await snapshot(guest, id),
       guestActor = guestBefore.actorId;
-    await owner
-      .locator(`[data-entity-id="${guestActor}"]`)
-      .getByRole('button', { name: 'Толкнуть', exact: true })
-      .click();
+    await mapAction(owner, id, guestActor, 'Толкнуть');
     await expect(guest.getByRole('button', { name: 'Защититься', exact: true })).toBeVisible();
     await guest.getByRole('button', { name: 'Защититься', exact: true }).scrollIntoViewIfNeeded();
     await guest.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());

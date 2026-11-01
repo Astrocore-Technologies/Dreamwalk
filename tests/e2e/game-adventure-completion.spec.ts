@@ -1,3 +1,12 @@
+import {
+  approachTarget,
+  mapAction,
+  mapMenu,
+  inventory,
+  closeInventory,
+  legacyRealtimeLaunch,
+  readProjection,
+} from './support/map-actions';
 import { exposeDiscoveryFixtures } from './support/discovery-fixtures';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
@@ -24,13 +33,6 @@ async function account(page: Page, index: number) {
   expect(hero.ok()).toBeTruthy();
   return { handle, heroId: (await hero.json()).id as string };
 }
-async function position(page: Page, id: string) {
-  const response = await page.request.get(`/api/v1/game/campaigns/${id}/snapshot`);
-  expect(response.ok()).toBeTruthy();
-  const { projection } = await response.json();
-  const actor = projection.entities.find((e: { id: string }) => e.id === projection.actorId);
-  return [actor.x, actor.y];
-}
 async function capture(page: Page, filename: string) {
   await page.evaluate(() => document.fonts.ready);
   await expect(page.locator('canvas')).toBeVisible();
@@ -56,7 +58,7 @@ async function capture(page: Page, filename: string) {
     await page.screenshot({ path: test.info().outputPath(filename), fullPage: false });
   }
 }
-test('four independent players start the public Observatory with owned heroes and retain a shared ending', async ({
+test('four players retain the legacy realtime Observatory ending with owned heroes', async ({
   browser,
 }) => {
   // Four independent live WebGL pages also record trace snapshots. Measured CI:
@@ -82,6 +84,7 @@ test('four independent players start the public Observatory with owned heroes an
   let journeyCompleted = false;
   try {
     const accounts = await Promise.all(pages.map((p, i) => account(p, i + 1)));
+    await legacyRealtimeLaunch(owner);
     await exposeDiscoveryFixtures(owner);
     await owner.goto('/home');
     const featured = owner.getByTestId('home-featured');
@@ -143,41 +146,49 @@ test('four independent players start the public Observatory with owned heroes an
     await test.step(
       'Pick up the brass key through the UI',
       async () => {
-        const key = owner.locator('[data-entity-id="key"]');
-        await key.getByRole('button', { name: 'Подойти', exact: true }).click();
-        await expect.poll(() => position(owner, id)).toEqual([4, 6]);
-        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-x', '4');
-        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-y', '6');
-        await key.getByRole('button', { name: 'Подобрать', exact: true }).click();
-        await expect(owner.locator('[data-inventory-id="key"]')).toHaveCount(1);
+        await approachTarget(owner, id, 'key');
+        await mapAction(owner, id, 'key', 'Взять');
+        await expect((await inventory(owner)).locator('[data-inventory-id="key"]')).toHaveCount(1);
+        await closeInventory(owner);
       },
       { timeout: 30000 },
     );
     await test.step(
       'Unlock and open the main door through the UI',
       async () => {
-        const door = owner.locator('[data-entity-id="door"]');
-        await door.getByRole('button', { name: 'Подойти', exact: true }).click();
-        await expect.poll(() => position(owner, id)).toEqual([9, 5]);
-        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-x', '9');
-        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-y', '5');
-        await door.getByRole('button', { name: 'Отпереть', exact: true }).click();
-        await door.getByRole('button', { name: 'Открыть дверь', exact: true }).click();
+        await approachTarget(owner, id, 'door');
+        await mapAction(owner, id, 'door', 'Отпереть');
+        await expect
+          .poll(
+            async () =>
+              (await readProjection(owner, id)).entities.find((e) => e.id === 'door')?.locked,
+          )
+          .toBe(false);
+        await mapAction(owner, id, 'door', 'Открыть');
+        await expect
+          .poll(
+            async () =>
+              (await readProjection(owner, id)).entities.find((e) => e.id === 'door')?.open,
+          )
+          .toBe(true);
         await expect(
-          door.getByRole('button', { name: 'Закрыть дверь', exact: true }),
+          (await mapMenu(owner, id, 'door')).getByRole('button', {
+            name: 'Закрыть дверь',
+            exact: true,
+          }),
         ).toBeVisible();
+        await owner
+          .getByRole('dialog', { name: 'Действия', exact: true })
+          .getByRole('button', { name: 'Закрыть', exact: true })
+          .click();
       },
       { timeout: 30000 },
     );
     await test.step(
       'Move through the main roof exit',
       async () => {
-        const exit = owner.locator('[data-exit-id="roof-exit"]');
-        await exit.getByRole('button', { name: 'Подойти', exact: true }).click();
-        await expect.poll(() => position(owner, id)).toEqual([12, 5]);
-        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-x', '12');
-        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-y', '5');
-        await exit.getByRole('button', { name: 'Перейти', exact: true }).click();
+        await approachTarget(owner, id, 'roof-exit', true);
+        await mapAction(owner, id, 'roof-exit', 'Перейти', true);
         await expect(owner.locator('[data-scene-profile="observatory-roof-v1"]')).toBeVisible();
       },
       { timeout: 30000 },
@@ -185,12 +196,8 @@ test('four independent players start the public Observatory with owned heroes an
     await test.step(
       'Pick up the journal through the UI',
       async () => {
-        const journal = owner.locator('[data-entity-id="journal"]');
-        await journal.getByRole('button', { name: 'Подойти', exact: true }).click();
-        await expect.poll(() => position(owner, id)).toEqual([6, 4]);
-        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-x', '6');
-        await expect(owner.getByTestId('game-position')).toHaveAttribute('data-y', '4');
-        await journal.getByRole('button', { name: 'Подобрать', exact: true }).click();
+        await approachTarget(owner, id, 'journal');
+        await mapAction(owner, id, 'journal', 'Взять');
       },
       { timeout: 30000 },
     );
@@ -203,7 +210,9 @@ test('four independent players start the public Observatory with owned heroes an
     }
     for (const guest of guests) {
       await expect(guest.locator('[data-scene-profile="observatory-interior-v1"]')).toBeVisible();
-      await expect(guest.locator('[data-entity-id="journal"]')).toHaveCount(0);
+      expect((await readProjection(guest, id)).entities.some((e) => e.id === 'journal')).toBe(
+        false,
+      );
     }
     await Promise.all(pages.map((p) => p.reload()));
     for (const page of pages)
@@ -211,7 +220,7 @@ test('four independent players start the public Observatory with owned heroes an
         'data-objective-status',
         'achieved',
       );
-    await expect(owner.locator('[data-inventory-id="journal"]')).toHaveCount(1);
+    await expect((await inventory(owner)).locator('[data-inventory-id="journal"]')).toHaveCount(1);
     await capture(owner, 'sample-adventure-ending-desktop.png');
     await owner.setViewportSize({ width: 390, height: 844 });
     expect(

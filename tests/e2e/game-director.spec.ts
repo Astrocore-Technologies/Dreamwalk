@@ -1,3 +1,9 @@
+import {
+  approachTarget,
+  mapAction,
+  legacyRealtimeLaunch,
+  readProjection,
+} from './support/map-actions';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { readFile } from 'node:fs/promises';
@@ -28,8 +34,7 @@ async function travel(page: Page, id: string, destination: string) {
   const before = await snapshot(page, id);
   const exit = before.map.exits.find((value) => value.destinationMapId === destination)!;
   expect(exit).toBeTruthy();
-  const card = page.locator(`[data-exit-id="${exit.id}"]`);
-  await card.getByRole('button', { name: 'Подойти', exact: true }).click();
+  await approachTarget(page, id, exit.id, true);
   await expect
     .poll(
       async () => {
@@ -43,7 +48,7 @@ async function travel(page: Page, id: string, destination: string) {
       { timeout: 30000 },
     )
     .toBe(true);
-  await card.getByRole('button', { name: 'Перейти', exact: true }).click();
+  await mapAction(page, id, exit.id, 'Перейти', true);
   await expect(page.getByTestId('game-position')).toHaveAttribute('data-map-id', destination);
 }
 async function prepare(page: Page, text: string) {
@@ -67,7 +72,7 @@ async function confirm(page: Page, revision: number) {
     revision,
   );
 }
-test('two players coauthor committed evolving scenes, travel and retain shared canon on reload', async ({
+test('two realtime players coauthor committed evolving scenes, travel and retain shared canon on reload', async ({
   browser,
 }) => {
   test.setTimeout(300000);
@@ -84,6 +89,7 @@ test('two players coauthor committed evolving scenes, travel and retain shared c
     await owner.setViewportSize({ width: 1440, height: 1000 });
     await account(owner);
     const guestHandle = await account(guest);
+    await legacyRealtimeLaunch(owner);
     await owner.goto('/adventures/old-observatory');
     await owner.getByRole('button', { name: 'Начать прохождение', exact: true }).click();
     await expect(owner).toHaveURL(/\/game\/[a-f0-9-]+$/);
@@ -126,8 +132,10 @@ test('two players coauthor committed evolving scenes, travel and retain shared c
     expect((await snapshot(owner, id)).map.id).toBe(originalMap); // No client-side teleport.
     await travel(owner, id, first.sceneId);
     first.npcId = (await snapshot(owner, id)).entities.find((entity) => entity.kind === 'npc')!.id;
-    await expect(owner.locator(`[data-entity-id="${first.npcId}"]`)).toHaveCount(1);
-    await expect(guest.locator(`[data-entity-id="${first.npcId}"]`)).toHaveCount(0);
+    expect((await readProjection(owner, id)).entities.some((e) => e.id === first.npcId)).toBe(true);
+    expect((await readProjection(guest, id)).entities.some((e) => e.id === first.npcId)).toBe(
+      false,
+    );
     // Real original raster upload, library reuse and explicit campaign binding. No screenshot mock.
     const uploaded = await owner.request.post('/api/v1/assets', {
       multipart: {

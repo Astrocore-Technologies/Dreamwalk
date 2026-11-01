@@ -1,7 +1,12 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import type { GameProjection } from '@dreamwalk/contracts';
-import { entityLayout } from '../../apps/web/components/game/scene-geometry';
+import {
+  readProjection,
+  position,
+  mapMenu,
+  inventory,
+  closeInventory,
+} from './support/map-actions';
 
 async function register(page: Page) {
   const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
@@ -17,62 +22,6 @@ async function register(page: Page) {
   expect(response.status()).toBe(201);
   return { handle, user: (await response.json()).user as { id: string } };
 }
-async function readProjection(page: Page, campaignId: string): Promise<GameProjection> {
-  const response = await page.request.get(`/api/v1/game/campaigns/${campaignId}/snapshot`);
-  expect(response.ok()).toBeTruthy();
-  return (await response.json()).projection;
-}
-async function position(page: Page, campaignId: string) {
-  const projection = await readProjection(page, campaignId);
-  const actor = projection.entities.find((entity) => entity.id === projection.actorId)!;
-  return [actor.x, actor.y];
-}
-async function mapMenu(page: Page, campaignId: string, id: string, exit = false) {
-  const projection = await readProjection(page, campaignId);
-  const target = exit
-    ? projection.map.exits.find((e) => e.id === id)
-    : projection.entities.find((e) => e.id === id);
-  expect(target, `Visible map target ${id} must exist`).toBeTruthy();
-  const canvas = page.locator('[data-camera-scale]');
-  await expect(canvas).toHaveAttribute('data-camera-scale', /[0-9]/);
-  await canvas.scrollIntoViewIfNeeded();
-  const box = (await canvas.boundingBox())!;
-  const camera = await canvas.evaluate((element) => ({
-    x: Number((element as HTMLElement).dataset.cameraX),
-    y: Number((element as HTMLElement).dataset.cameraY),
-    scale: Number((element as HTMLElement).dataset.cameraScale),
-  }));
-  const layout = exit
-    ? { x: target!.x * 48, y: target!.y * 48, width: 48, height: 48 }
-    : entityLayout(
-        projection.entities.find((entity) => entity.id === id)!,
-        projection.entities,
-      );
-  await page.mouse.click(
-    box.x + camera.x + (layout.x + layout.width / 2) * camera.scale,
-    box.y + camera.y + (layout.y + layout.height / 2) * camera.scale,
-    { button: 'right' },
-  );
-  const menu = page.getByRole('dialog', { name: 'Действия', exact: true });
-  await expect(menu).toBeVisible();
-  if (!exit) await expect(menu.locator(`[data-map-target="${id}"]`)).toBeVisible();
-  return exit ? menu : menu.locator(`[data-map-target="${id}"]`);
-}
-async function inventory(page: Page, english = false) {
-  const name = english ? 'Inventory' : 'Инвентарь';
-  const panel = page.getByRole('dialog', { name, exact: true });
-  if (!(await panel.isVisible()))
-    await page.getByRole('button', { name: new RegExp(`^${name}`) }).click();
-  await expect(panel).toBeVisible();
-  return panel;
-}
-async function closeInventory(page: Page) {
-  await page
-    .getByRole('dialog', { name: 'Инвентарь', exact: true })
-    .getByRole('button', { name: 'Закрыть', exact: true })
-    .click();
-}
-
 test('two independent browser sessions share one key, preserve it on reload, and split maps', async ({
   browser,
 }) => {
@@ -119,7 +68,9 @@ test('two independent browser sessions share one key, preserve it on reload, and
     )
       .getByRole('button', { name: 'Подойти', exact: true })
       .click();
-    await expect.poll(() => position(owner, campaignId)).toEqual([4, 6]);
+    // Current Approach selects the nearest free adjacent tile (left of key at4,6),
+    // unlike the deleted nearby-list helper that moved onto the item's tile.
+    await expect.poll(() => position(owner, campaignId)).toEqual([3, 6]);
     await (
       await mapMenu(owner, campaignId, 'key')
     )
