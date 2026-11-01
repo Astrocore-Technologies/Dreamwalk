@@ -7,6 +7,7 @@ import type { GameAction, GameEntity, GamePoint } from '@dreamwalk/contracts';
 import { api, errorMessage, useClient, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Field, Input, Loading, PageHeading } from '@/components/ui';
+import { artPreviewUrl } from '../assets/types';
 import { authorizedArt } from '../assets/art-visibility';
 import { useAssetText } from '../assets/messages';
 import { useCampaignArt } from '../assets/use-campaign-art';
@@ -376,6 +377,10 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
               ? turnText('stale')
               : '';
   const inspectedNpc = p.entities.find((e) => e.kind === 'npc' && e.id === inspectedNpcId);
+  const inspectedPortrait = inspectedNpc
+    ? art.find((entry) => entry.slot === `entity:${inspectedNpc.id}:portrait`)
+    : undefined;
+  const inspectedPortraitUrl = inspectedPortrait ? artPreviewUrl(inspectedPortrait.url) : undefined;
   const selectedTarget = p.entities.find((entity) => entity.id === selected.targetId);
   return (
     <div className={styles.root}>
@@ -516,6 +521,13 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                   ×
                 </Button>
               </header>
+              {inspectedPortraitUrl && (
+                <img
+                  className={styles.artPortrait}
+                  src={inspectedPortraitUrl}
+                  alt={inspectedNpc.label || t('NPC')}
+                />
+              )}
               <p>
                 {inspectedNpc.publicProfile?.description ||
                   inspectedNpc.supportingNpc?.description ||

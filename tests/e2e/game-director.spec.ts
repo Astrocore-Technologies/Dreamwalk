@@ -210,9 +210,21 @@ test('two realtime players coauthor committed evolving scenes, travel and retain
     await expect(portrait).toHaveCount(1);
     const portraitId = await portrait.getAttribute('data-media-revision');
     await portrait.getByRole('button', { name: 'Применить к этой кампании', exact: true }).click();
-    await expect(owner.locator(`img[src*="${portraitId}"][src*="campaignId"]`)).toBeVisible({
-      timeout: 15000,
-    });
+    await owner
+      .getByRole('button', { name: /^Осмотреть ·/ })
+      .first()
+      .click();
+    const appliedPortrait = owner
+      .getByTestId('npc-public-inspection')
+      .locator(`img[src*="${portraitId}"][src*="campaignId"]`);
+    await expect(appliedPortrait).toBeVisible({ timeout: 15000 });
+    await expect
+      .poll(() =>
+        appliedPortrait.evaluate(
+          (image: HTMLImageElement) => image.complete && image.naturalWidth > 0,
+        ),
+      )
+      .toBe(true);
     await owner.locator('main').scrollIntoViewIfNeeded();
     await owner.evaluate(() => scrollTo(0, 0));
     await owner.screenshot({ path: test.info().outputPath('director-generated-scene.png') });
@@ -259,7 +271,7 @@ test('two realtime players coauthor committed evolving scenes, travel and retain
       true,
     );
     await guest.locator('header').getByRole('combobox').selectOption('uk');
-    await expect(guest.getByRole('tab', { name: 'Історія', exact: true })).toBeVisible();
+    await expect(guest.getByRole('region', { name: 'Історія', exact: true })).toBeVisible();
   } finally {
     await Promise.allSettled(contexts.map((context) => context.close()));
   }

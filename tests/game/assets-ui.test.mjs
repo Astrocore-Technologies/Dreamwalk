@@ -180,3 +180,45 @@ test('specific slots accept exact and unrestricted camera art, not conflicting v
   assert.equal(artCameraMatches(undefined, 'isometric'), true);
   assert.equal(artCameraMatches('unrestricted', 'side'), true);
 });
+
+test('inspection portraits require the current visible NPC and matching authorized immutable binding', async () => {
+  const source = await readFile(
+    new URL('../../apps/web/components/game/game-page.tsx', import.meta.url),
+    'utf8',
+  );
+  // Execute the component's actual derived selection, not a duplicate test implementation.
+  const selection = source.slice(
+    source.indexOf('  const inspectedNpc ='),
+    source.indexOf('  const selectedTarget ='),
+  );
+  assert.match(selection, /artPreviewUrl/);
+  assert.match(source, /const art = p \? authorizedArt\(p, fetchedArt\) : \[\]/);
+  assert.match(source, /inspectedPortraitUrl && \([\s\S]*?src=\{inspectedPortraitUrl\}/);
+  const select = new Function(
+    'p',
+    'art',
+    'inspectedNpcId',
+    'artPreviewUrl',
+    selection + '\nreturn inspectedPortraitUrl;',
+  );
+  const portrait = entry('entity:keeper:portrait');
+  const p = {
+    map: { id: 'room' },
+    entities: [{ id: 'keeper', kind: 'npc' }],
+    artBindings: [portrait],
+  };
+  const render = (projection, cached = [portrait], npcId = 'keeper') =>
+    select(projection, authorizedArt(projection, cached), npcId, artPreviewUrl);
+  assert.equal(render(p), portrait.url);
+  assert.equal(render(p, [], 'keeper'), undefined);
+  assert.equal(render({ ...p, entities: [] }), undefined);
+  assert.equal(render({ ...p, entities: [{ id: 'keeper', kind: 'player' }] }), undefined);
+  assert.equal(render(p, [portrait], 'other-npc'), undefined);
+  assert.equal(render({ ...p, artBindings: [] }), undefined);
+  assert.equal(render({ ...p, artBindings: [{ ...portrait, revisionId: 'other' }] }), undefined);
+  assert.equal(render({ ...p, artBindings: [{ ...portrait, sha256: 'b'.repeat(64) }] }), undefined);
+  assert.equal(
+    render(p, [{ ...portrait, url: 'https://private.invalid/original.png' }]),
+    undefined,
+  );
+});

@@ -145,19 +145,31 @@ test('four players retain the legacy realtime Observatory ending with owned hero
       { timeout: 25000 },
     );
     await test.step(
+      'Approach the brass key through the UI',
+      () => approachTarget(owner, id, 'key'),
+      { timeout: 30000 },
+    );
+    await test.step(
       'Pick up the brass key through the UI',
+      () => mapAction(owner, id, 'key', 'Взять'),
+      { timeout: 30000 },
+    );
+    await test.step(
+      'Verify the brass key in visible inventory',
       async () => {
-        await approachTarget(owner, id, 'key');
-        await mapAction(owner, id, 'key', 'Взять');
         await expect((await inventory(owner)).locator('[data-inventory-id="key"]')).toHaveCount(1);
         await closeInventory(owner);
       },
       { timeout: 30000 },
     );
     await test.step(
-      'Unlock and open the main door through the UI',
+      'Approach the main door through the UI',
+      () => approachTarget(owner, id, 'door'),
+      { timeout: 30000 },
+    );
+    await test.step(
+      'Unlock the main door through the UI',
       async () => {
-        await approachTarget(owner, id, 'door');
         await mapAction(owner, id, 'door', 'Отпереть');
         await expect
           .poll(
@@ -165,6 +177,12 @@ test('four players retain the legacy realtime Observatory ending with owned hero
               (await readProjection(owner, id)).entities.find((e) => e.id === 'door')?.locked,
           )
           .toBe(false);
+      },
+      { timeout: 30000 },
+    );
+    await test.step(
+      'Open the main door through the UI',
+      async () => {
         await mapAction(owner, id, 'door', 'Открыть');
         await expect
           .poll(
@@ -172,6 +190,12 @@ test('four players retain the legacy realtime Observatory ending with owned hero
               (await readProjection(owner, id)).entities.find((e) => e.id === 'door')?.open,
           )
           .toBe(true);
+      },
+      { timeout: 30000 },
+    );
+    await test.step(
+      'Verify the opened door menu',
+      async () => {
         await expect(
           (await mapMenu(owner, id, 'door')).getByRole('button', {
             name: 'Закрыть дверь',
@@ -186,18 +210,26 @@ test('four players retain the legacy realtime Observatory ending with owned hero
       { timeout: 30000 },
     );
     await test.step(
+      'Approach the main roof exit',
+      () => approachTarget(owner, id, 'roof-exit', true),
+      { timeout: 30000 },
+    );
+    await test.step(
       'Move through the main roof exit',
       async () => {
-        await approachTarget(owner, id, 'roof-exit', true);
         await mapAction(owner, id, 'roof-exit', 'Перейти', true);
         await expect(owner.locator('[data-scene-profile="observatory-roof-v1"]')).toBeVisible();
       },
       { timeout: 30000 },
     );
     await test.step(
+      'Approach the journal through the UI',
+      () => approachTarget(owner, id, 'journal'),
+      { timeout: 30000 },
+    );
+    await test.step(
       'Pick up the journal through the UI',
       async () => {
-        await approachTarget(owner, id, 'journal');
         await mapAction(owner, id, 'journal', 'Взять');
       },
       { timeout: 30000 },
