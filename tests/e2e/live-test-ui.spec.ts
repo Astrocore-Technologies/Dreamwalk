@@ -1,6 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import type { GameEnvelope } from '@dreamwalk/contracts';
+import { gameEnvelopeSchema, type GameEnvelope } from '@dreamwalk/contracts';
 
 const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lxoAAAAASUVORK5CYII=',
@@ -410,7 +410,17 @@ test('synthetic world requests require individual consent and stale phase fences
       upperMicros: 264036,
     },
   ];
-  await page.routeWebSocket('**/*', (ws) => ws.close());
+  // Isolate only the synthetic campaign transport. Closing every WebSocket also
+  // closes Next's development/HMR connection and prevents the app from hydrating.
+  gameEnvelopeSchema.parse(envelope);
+  let isolatedGameSockets = 0;
+  await page.routeWebSocket(
+    (url) => url.pathname === '/api/v1/game/socket' && url.searchParams.get('campaignId') === id,
+    (ws) => {
+      isolatedGameSockets++;
+      ws.close();
+    },
+  );
   await page.route(`**/api/v1/game/campaigns/${id}/snapshot`, (route) =>
     route.fulfill({ json: envelope }),
   );
@@ -433,6 +443,9 @@ test('synthetic world requests require individual consent and stale phase fences
   });
   await page.goto(`/game/${id}`);
   const panel = page.getByTestId('live-test-panel');
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
+  await expect(panel).toBeVisible();
+  await expect.poll(() => isolatedGameSockets).toBeGreaterThan(0);
   await panel.getByRole('button', { name: 'Check world requests', exact: true }).click();
   const first = panel.locator(`[data-live-request="${requests[0].id}"]`),
     second = panel.locator(`[data-live-request="${requests[1].id}"]`);
