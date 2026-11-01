@@ -122,7 +122,25 @@ await test(
         { slot: 'map:courtyard:background', revisionId: a.revision.id },
         { slot: 'entity:hidden-relic:object:default', revisionId: hidden.revision.id },
       ]);
-      const v1 = await publish(owner, s.id);
+      // Owner-only compile versions are not private publication. Release the exact
+      // validated map + art snapshot explicitly before any cooperative access.
+      await owner.request(
+        `/studio/adventures/${s.id}/invitations`,
+        { handle: guest.handle },
+        'POST',
+        409,
+      );
+      const currentStory = await owner.request(`/studio/adventures/${s.id}`),
+        currentGame = await owner.request(`/studio/adventures/${s.id}/playable-draft`),
+        currentArt = await owner.request(`/asset-library/stories/${s.id}/draft`);
+      const released = await owner.request(`/studio/adventures/${s.id}/private-release`, {
+        operationId: op(),
+        expectedEditRevision: currentStory.editRevision,
+        expectedGameRevision: currentGame.revision,
+        expectedArtRevision: currentArt.revision,
+      });
+      assert.ok(released.releaseId);
+      const v1 = { versionId: released.playableVersionId };
       const c1 = (
         await owner.request('/game/campaigns', {
           turnBased: false,

@@ -260,7 +260,13 @@ test(
       await page.getByLabel('Имя NPC', { exact: true }).fill('Не сохранять');
       await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
       await expect(page.getByRole('dialog')).toBeVisible();
-      await page.getByRole('dialog').getByRole('button', { name: 'Закрыть', exact: true }).click();
+      const discard = page.getByRole('dialog', { name: 'Закрыть без сохранения?', exact: true });
+      // Select the explicit destructive footer action, not the equally named modal X.
+      await discard
+        .getByRole('button', { name: 'Закрыть', exact: true })
+        .filter({ hasText: /^\s*Закрыть\s*$/ })
+        .click();
+      await expect(discard).not.toBeVisible();
       await page.getByRole('button', { name: 'Редактировать', exact: true }).click();
       await expect(page.getByLabel('Имя NPC', { exact: true })).toHaveValue('Локальный хранитель');
       await page.getByRole('button', { name: 'Закрыть', exact: true }).click();

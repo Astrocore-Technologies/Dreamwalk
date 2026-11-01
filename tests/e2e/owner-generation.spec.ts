@@ -391,9 +391,22 @@ async function openLocation(page: Page, f: Awaited<ReturnType<typeof fixture>>) 
     .click();
   return page.getByTestId('location-image-dialog');
 }
-async function explicitlyOpenLibrary(page: Page, f: Awaited<ReturnType<typeof fixture>>) {
+async function explicitlyOpenLibrary(
+  page: Page,
+  f: Awaited<ReturnType<typeof fixture>>,
+  generationMounts: number,
+) {
   const dialog = page.getByTestId('location-image-dialog');
-  expect(f.calls.libraryReads).toBe(0);
+  // ImageGeneration loads the owned-reference catalog on EACH mount, even before
+  // the free library picker opens. Success mounts it three times (initial,
+  // dismissed/reopened, reload/reopened); unknown outcomes mount it twice.
+  // useResource runs once in production, twice under Next dev StrictMode.
+  const before = f.calls.libraryReads;
+  expect(before).toBeGreaterThanOrEqual(generationMounts);
+  expect(before).toBeLessThanOrEqual(generationMounts * 2);
+  const dispatches = f.calls.dispatch,
+    quotes = f.calls.quote,
+    bindings = f.calls.bind;
   const response = page.waitForResponse(
     (r) => new URL(r.url()).pathname === '/api/v1/asset-library' && r.request().method() === 'GET',
   );
@@ -402,9 +415,21 @@ async function explicitlyOpenLibrary(page: Page, f: Awaited<ReturnType<typeof fi
     .click();
   expect((await response).ok()).toBeTruthy();
   await expect(dialog.getByRole('heading', { name: 'Art library', exact: true })).toBeVisible();
-  // CI runs Next dev: StrictMode may probe the mounted resource effect once more.
-  // No polling/retry loop or generation may be triggered by this explicit free lookup.
-  expect([1, 2]).toContain(f.calls.libraryReads);
+  // Observe past the existing two-second job-status polling interval. That read
+  // may reconcile an unknown receipt; it must not reload the catalog or dispatch.
+  // Both StrictMode mount effects have a chance to finish before the final delta.
+  await page.waitForTimeout(2200);
+  expect([1, 2]).toContain(f.calls.libraryReads - before);
+  expect(f.calls.libraryReads).toBeLessThanOrEqual((generationMounts + 1) * 2);
+  expect(f.calls.dispatch).toBe(dispatches);
+  expect(f.calls.quote).toBe(quotes);
+  expect(f.calls.bind).toBe(bindings);
+  const settledReads = f.calls.libraryReads;
+  await page.waitForTimeout(2200);
+  expect(f.calls.libraryReads).toBe(settledReads);
+  expect(f.calls.dispatch).toBe(dispatches);
+  expect(f.calls.quote).toBe(quotes);
+  expect(f.calls.bind).toBe(bindings);
 }
 async function claim(page: Page) {
   const panel = page.getByTestId('live-test-panel');
@@ -530,7 +555,7 @@ test('synthetic owner image has separate budget, request and estimate-risk conse
   expect(f.calls.dispatch).toBe(1);
   expect(f.calls.bind).toBe(1);
   expect(f.calls.mapWrites).toBe(0);
-  await explicitlyOpenLibrary(page, f);
+  await explicitlyOpenLibrary(page, f, 3);
   expect(f.calls.dispatch).toBe(1);
   expect(f.calls.bind).toBe(1);
   expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
@@ -572,7 +597,7 @@ for (const outcome of ['unknown', 'response-lost'] as const)
     ).toBeVisible();
     expect(f.calls.dispatch).toBe(1);
     expect(f.calls.bind).toBe(0);
-    await explicitlyOpenLibrary(page, f);
+    await explicitlyOpenLibrary(page, f, 2);
     expect(f.calls.dispatch).toBe(1);
     expect(f.calls.bind).toBe(0);
     await expect(page.getByTestId('live-test-panel')).toContainText('Generation stopped');
