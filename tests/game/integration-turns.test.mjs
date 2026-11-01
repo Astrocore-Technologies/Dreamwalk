@@ -498,8 +498,16 @@ await test(
             409,
           );
           assert.equal(rejected.code, 'TURN_RULESET_UPGRADE_REQUIRED');
+          const omitted = await owner.request(
+            '/game/campaigns',
+            { playableVersionId: versionId },
+            'POST',
+            409,
+          );
+          assert.equal(omitted.code, 'TURN_RULESET_UPGRADE_REQUIRED');
           const { campaignId } = await owner.request('/game/campaigns', {
             playableVersionId: versionId,
+            turnBased: false,
           });
           assert.equal((await snapshot(owner, campaignId)).projection.map.id, 'river');
         },

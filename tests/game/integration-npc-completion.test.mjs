@@ -58,7 +58,10 @@ async function fixture(owner, change = () => {}, visibility = 'private') {
   const { versionId } = await owner.request(`/studio/adventures/${story.id}/playable-versions`, {
     expectedRevision: 1,
   });
-  const { campaignId } = await owner.request('/game/campaigns', { playableVersionId: versionId });
+  const { campaignId } = await owner.request('/game/campaigns', {
+    turnBased: false,
+    playableVersionId: versionId,
+  });
   return { story, draft, campaignId, versionId };
 }
 async function join(owner, guest, f) {

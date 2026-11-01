@@ -4,6 +4,7 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Db } from '../db';
 import { fenceGenerationAdmission } from '../generation/scope-fence';
+import { packNpcContextWindow } from '../game/npc-context-budget';
 import type { TextReserveSnapshot } from '../generation/estimates';
 import { GenerationAuthority } from '../generation/service';
 import { ManualLiveProvider } from '../live-test/provider';
@@ -102,7 +103,13 @@ export class NpcAiEngine {
     readonly provider: NpcProvider = new MockNpcProvider(),
     policy: Partial<AiPolicy> = {},
   ) {
-    this.policy = { ...defaults, ...policy };
+    this.policy = {
+      ...defaults,
+      ...policy,
+      ...(provider.contextWindow?.()
+        ? { maxContextBytes: provider.contextWindow()!.transportLimitBytes }
+        : {}),
+    };
     for (const value of [
       this.policy.creditPrice,
       this.policy.providerUpperMicros,
@@ -149,6 +156,16 @@ export class NpcAiEngine {
         this.policy.maxContextBytes,
     );
   }
+  contextWindow() {
+    return this.provider.contextWindow?.();
+  }
+  contextFits(purpose: AiScope['purpose'], context: unknown) {
+    return this.provider.contextFits?.(purpose ?? 'plan', context) ?? true;
+  }
+  packContext<T extends object>(context: T, purpose: AiScope['purpose']) {
+    if (!this.contextWindow()) return { ...context, budgetExceeded: false };
+    return packNpcContextWindow(context, (value) => this.contextFits(purpose, value));
+  }
   manualLive() {
     return this.provider.manualLive === true;
   }
@@ -162,6 +179,7 @@ export class NpcAiEngine {
   }
   public configuration() {
     return {
+      ...(this.contextWindow() ? { textContext: this.contextWindow() } : {}),
       provider: this.provider.external ? 'external' : 'mock',
       enabled: !this.policy.killSwitch && (!this.provider.external || this.policy.externalApproved),
       externalCallsEnabled:
@@ -247,6 +265,8 @@ export class NpcAiEngine {
     client?: PoolClient,
   ) {
     const context = validateDecisionContext(input, this.policy.maxContextBytes);
+    if (!this.contextFits(scope.purpose, context))
+      fail(413, 'TEXT_CONTEXT_WINDOW_EXCEEDED', 'TEXT_CONTEXT_WINDOW_EXCEEDED');
     const requestPlan = this.requestPlan(scope, context);
     const run = async (c: PoolClient) => {
       await this.authorize(c, { ...scope, origin: 'user', requesterUserId });
@@ -440,6 +460,8 @@ export class NpcAiEngine {
         fail(409, 'TURN_PHASE_STALE', 'TURN_PHASE_STALE');
       if (this.policy.killSwitch || (this.provider.external && !this.policy.externalApproved))
         fail(503, 'PROVIDER_DISABLED', 'PROVIDER_DISABLED');
+      if (!this.contextFits(scope.purpose, context))
+        fail(413, 'TEXT_CONTEXT_WINDOW_EXCEEDED', 'TEXT_CONTEXT_WINDOW_EXCEEDED');
       const requestPlan = this.requestPlan(scope, context);
       const count = Number(
         (

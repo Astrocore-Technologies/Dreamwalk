@@ -1,3 +1,11 @@
+import {
+  createAuthoredDraft,
+  compilePlayableDraft,
+  createStateFromPlayable,
+  initializeTurnController,
+  projectState,
+} from '@dreamwalk/game-core';
+import { gameEnvelopeSchema } from '@dreamwalk/contracts';
 import { expect, test, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { settingsSchema } from '@dreamwalk/contracts';
@@ -310,6 +318,8 @@ async function fixture(
     await route.abort();
   });
   return {
+    user,
+    status,
     policy,
     calls,
     releaseApply,
@@ -874,3 +884,262 @@ for (const variant of ['stale-policy', 'pricing-mismatch', 'broken-margin'] as c
     expect(f.policy.active!.revision).toBe(2);
     noPaidOrUnexpected(f);
   });
+
+for (const locale of ['uk', 'en', 'ru'] as const) {
+  test(`context and reply limits stay separate from money in ${locale}`, async ({ page }) => {
+    const f = await fixture(page, { locale });
+    const text = f.policy.proposed!.profile.text;
+    text.contextTokens = 128000;
+    text.contextBudgetTokens = 256000;
+    text.maxOutputTokens = 8192;
+    text.maxInputBytes = 4194304;
+    await page.goto('/admin');
+    const dialog = await openReview(page);
+    await expect(dialog).toContainText(
+      {
+        en: 'Available history may be shorter than the actual-token limit.',
+        ru: 'Доступная история может быть короче лимита фактических токенов.',
+        uk: 'Доступна історія може бути коротшою за межу фактичних токенів.',
+      }[locale],
+    );
+    const labels = {
+      en: [
+        'Model context capacity',
+        'Requested window per request, including reply',
+        'Effective window within model capacity',
+        'Separate reply limit, tokens',
+      ],
+      ru: [
+        'Ёмкость контекста модели',
+        'Выбранное окно на запрос, включая ответ',
+        'Доступное окно с учётом модели',
+        'Отдельный предел ответа, токенов',
+      ],
+      uk: [
+        'Місткість контексту моделі',
+        'Вибране вікно на запит, включно з відповіддю',
+        'Доступне вікно з урахуванням моделі',
+        'Окрема межа відповіді, токенів',
+      ],
+    }[locale];
+    for (const [index, value] of [128000, 256000, 128000, 8192].entries())
+      await expect(comparisonCells(dialog, labels[index]).nth(1)).toHaveText(String(value));
+    await dialog.getByRole('rowheader', { name: labels[0], exact: true }).scrollIntoViewIfNeeded();
+    await page.screenshot({ path: test.info().outputPath(`text-context-${locale}-desktop.png`) });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(dialog).toBeVisible();
+    await dialog
+      .getByRole('rowheader', { name: labels[3], exact: true })
+      .evaluate((element) => element.scrollIntoView({ block: 'center' }));
+    await expect(dialog.getByRole('rowheader', { name: labels[1], exact: true })).toBeInViewport();
+    await expect(dialog.getByRole('rowheader', { name: labels[3], exact: true })).toBeInViewport();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: test.info().outputPath(`text-context-${locale}-mobile.png`) });
+    expect(f.calls.apply).toHaveLength(0);
+    noPaidOrUnexpected(f);
+  });
+}
+
+async function preflightFixture(page: Page, locale: Locale, unreviewed = false, lost = false) {
+  const f = await fixture(page, { locale }),
+    id = randomUUID(),
+    requestId = randomUUID(),
+    actor = 'count-player';
+  const compiled = compilePlayableDraft(createAuthoredDraft('courtyard'));
+  const state = initializeTurnController(createStateFromPlayable(compiled.playable!, [actor]), [
+    actor,
+  ]).state;
+  const projection = projectState(state, actor);
+  projection.turn = {
+    ...projection.turn!,
+    phase: 'world',
+    activeActorId: null,
+    ownTurn: false,
+    phaseEpoch: 7,
+  };
+  const envelope = gameEnvelopeSchema.parse({
+    type: 'snapshot',
+    streamId: 'synthetic-count-stream',
+    connectionEpoch: 1,
+    projectionRevision: projection.revision,
+    projection,
+  });
+  const turnFence = { roundId: projection.turn.roundId, phaseEpoch: 7, rulesetVersion: 1 };
+  const r = {
+    id: requestId,
+    subjectId: 'Keeper',
+    purpose: 'speech',
+    permitState: null,
+    upperMicros: 20000,
+    reserveMicros: 20000,
+    policyRevision: 1,
+    policyHash: currentHash,
+    configFingerprint: currentFingerprint,
+    counting: {
+      blockCode: unreviewed ? 'TEXT_COUNT_COST_REVIEW_REQUIRED' : null,
+      candidateFingerprint: 'a'.repeat(64),
+      historyRecords: 150,
+      reserveMicros: unreviewed ? null : 7,
+      attempts: 0,
+      maxAttempts: 3,
+      latest: null as null | Record<string, unknown>,
+    },
+  };
+  const counts: Record<string, unknown>[] = [],
+    gets: string[] = [];
+  await page.routeWebSocket(
+    (url) => url.pathname === '/api/v1/game/socket',
+    (ws) => ws.close(),
+  );
+  await page.route('**/api/v1/**', async (route) => {
+    const path = new URL(route.request().url()).pathname,
+      method = route.request().method();
+    if (path.endsWith(`/game/campaigns/${id}/snapshot`)) return route.fulfill({ json: envelope });
+    if (path.endsWith(`/game/campaigns/${id}/members`))
+      return route.fulfill({
+        json: {
+          ownerId: f.user.id,
+          members: [{ userId: f.user.id, actorId: actor, username: 'Owner', status: 'accepted' }],
+        },
+      });
+    if (path.endsWith(`/asset-library/campaigns/${id}/manifest`))
+      return route.fulfill({ json: { bindings: [] } });
+    if (path.endsWith(`/game/campaigns/${id}/turns/feed`))
+      return route.fulfill({
+        json: {
+          entries: [],
+          turns: [],
+          canonRevision: 0,
+          canSubmit: false,
+          configuration: {
+            provider: 'mock',
+            enabled: true,
+            externalCallsEnabled: false,
+            demo: true,
+            creditPrice: 0,
+            providerUpperMicros: 0,
+          },
+        },
+      });
+    if (path.endsWith(`/game/campaigns/${id}/hero`)) return route.fulfill({ json: { hero: null } });
+    if (path.endsWith(`/game/campaigns/${id}/chat`))
+      return route.fulfill({ json: { messages: [] } });
+    if (path.endsWith(`/game/campaigns/${id}/ai/sponsors`))
+      return route.fulfill({
+        json: { sponsors: [], configuration: { creditPrice: 0, providerUpperMicros: 0 } },
+      });
+    if (path.endsWith(`/game/campaigns/${id}/ai`))
+      return route.fulfill({
+        json: {
+          configuration: { enabled: true, provider: 'mock', creditPrice: 0 },
+          jobs: [],
+          wallet: { balance: 0, available: 0, reserved: 0 },
+        },
+      });
+    if (path.endsWith(`/generation/campaigns/${id}/requests`) && method === 'GET')
+      return route.fulfill({ json: { turnFence, requests: [r] } });
+    if (
+      path.endsWith(`/generation/campaigns/${id}/requests/${requestId}/preflight`) &&
+      method === 'POST'
+    ) {
+      const body = route.request().postDataJSON();
+      expect(body.turnFence).toEqual(turnFence);
+      expect(body.candidateFingerprint).toBe(r.counting.candidateFingerprint);
+      expect(body.consent).toBe(true);
+      counts.push(body);
+      r.counting.attempts++;
+      r.counting.latest = {
+        id: randomUUID(),
+        status: 'succeeded',
+        inputTokens: 130000,
+        actualMicros: 7,
+        resultCode: null,
+        costBasis: 'owner_reviewed_fixed_rate',
+        invoiceExact: false,
+      };
+      if (lost) return route.abort();
+      return route.fulfill({ json: r.counting.latest });
+    }
+    if (path.includes('/generation/text-counts/operations/') && method === 'GET') {
+      gets.push(path);
+      return route.fulfill({ json: r.counting.latest });
+    }
+    return route.fallback();
+  });
+  await page.goto(`/game/${id}`);
+  const panel = page.getByTestId('live-test-panel');
+  await expect(panel).toBeVisible();
+  // Before loading requests, the final button is the localized pending-request load control.
+  await panel.getByRole('button').last().click();
+  const widget = page.getByTestId('text-count-preflight');
+  await expect(widget).toBeVisible();
+  return { ...f, id, counts, gets, widget, r };
+}
+for (const locale of ['uk', 'en', 'ru'] as const)
+  test(`manual token preflight has a visible unknown-price gate and no background request (${locale})`, async ({
+    page,
+  }) => {
+    const f = await preflightFixture(page, locale, true);
+    await expect(f.widget.getByRole('checkbox')).toBeDisabled();
+    await expect(f.widget.getByRole('button').first()).toBeDisabled();
+    expect(f.counts).toHaveLength(0);
+    await f.widget.scrollIntoViewIfNeeded();
+    await f.widget.screenshot({
+      path: test.info().outputPath(`token-preflight-${locale}-desktop.png`),
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await f.widget.scrollIntoViewIfNeeded();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await f.widget.screenshot({
+      path: test.info().outputPath(`token-preflight-${locale}-mobile.png`),
+    });
+    expect(f.counts).toHaveLength(0);
+    noPaidOrUnexpected(f);
+  });
+test('manual token preflight sends one explicit request and clears consent after a changed history selection', async ({
+  page,
+}) => {
+  const f = await preflightFixture(page, 'en');
+  const consent = f.widget.getByRole('checkbox');
+  await consent.check();
+  await f.widget.getByRole('spinbutton').fill('20');
+  await expect(consent).not.toBeChecked();
+  await consent.check();
+  await f.widget
+    .getByRole('button', { name: 'Count once', exact: true })
+    .evaluate((b: HTMLButtonElement) => {
+      b.click();
+      b.click();
+    });
+  await expect.poll(() => f.counts.length).toBe(1);
+  expect(f.counts[0].keepRecentHistory).toBe(20);
+  await expect(f.widget).toContainText('Count saved');
+  await expect(consent).not.toBeChecked();
+  await page.reload();
+  expect(f.counts).toHaveLength(1);
+  noPaidOrUnexpected(f);
+});
+test('manual token preflight reconciles a lost response only by GET without another paid request', async ({
+  page,
+}) => {
+  const f = await preflightFixture(page, 'en', false, true);
+  await f.widget.getByRole('checkbox').check();
+  await f.widget.getByRole('button', { name: 'Count once', exact: true }).click();
+  await page.reload();
+  await page.getByTestId('live-test-panel').getByRole('button').last().click();
+  const reconcile = f.widget.getByRole('button', {
+    name: 'Check result without retry',
+    exact: true,
+  });
+  await expect(reconcile).toBeVisible();
+  expect(f.counts).toHaveLength(1);
+  await reconcile.click();
+  await expect(f.widget).toContainText('Count saved');
+  expect(f.gets).toHaveLength(1);
+  expect(f.counts).toHaveLength(1);
+  noPaidOrUnexpected(f);
+});

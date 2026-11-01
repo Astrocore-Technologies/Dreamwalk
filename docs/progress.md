@@ -823,3 +823,84 @@ or stopped user application was used for this change. Manual setup and renewal a
 in `owner-generation.md` and `generation-policy-revisions.md`. The owner must finish
 configuration and perform the first real image test themselves; successful provider
 access, real image quality and invoice behavior are still unverified.
+
+## 2026-11-01 - independent per-request text window
+
+Owner profiles can choose `text.contextBudgetTokens` up to 256000 independently
+from verified model capacity (`contextTokens`), reserved reply length
+(`maxOutputTokens`) and cumulative financial caps. The effective window is limited
+by model capacity. Explicit window mode removes the former 64 KiB packing gate,
+uses a separate 4 MiB transport guard, and sends `truncation: disabled`. Legacy
+profiles and image budgeting keep their existing semantics. Policy changes use the
+existing reviewed revisions and immutable request/pricing snapshots; they do not
+reset the ledger or clear unknown liabilities and permanent stops.
+
+Context assembly can retrieve committed, audience-authorized story history and the
+NPC's own archived observations instead of only the short hot-memory slice. Whole
+older optional records are selected under the complete request-envelope budget;
+canon, rules, current questions, existing summaries and required evidence stay
+pinned. OOC chat and other participants' whispers remain excluded. Stored history
+is unchanged. Deferred NPC/director requests retain an approved body under the
+same canon and phase, avoiding repeated large-context rewrites. No automatic paid
+counting, summarization or retry was introduced.
+
+The counter adapter supports verified model-specific implementations, but this
+repository currently has no verified GPT-6 Luna tokenizer or connected count API.
+The ordinary OpenAI path explicitly uses complete UTF-8 envelope bytes plus a
+protocol allowance as a conservative estimate. This can retain less history than
+a true tokenizer: 130000 Cyrillic letters occupy 260000 bytes. The large byte
+fixture and synthetic exact counter do not demonstrate a real 130k-token Russian
+conversation. The UI and documentation expose that limitation. See
+`text-context-window.md` and `owner-generation.md`.
+
+Local production build, workspace typechecks, lint and formatting passed. The final
+UI/privacy/controller payload passed 150 with four existing Windows file-guard
+skips, and focused context/transport/authoring checks passed 28/28. The full
+game/PostgreSQL regression passed 297 checks before the final history-packing and
+deferred-body refinements; the affected policy (15/15) and turn (13/13) suites
+passed again on the final code. Image suites passed 87 distinct checks and visual/spatial authoring 42/42.
+Chromium passed 15 policy/context scenarios, including complete uk/en/ru copy; the
+three context scenarios were rerun after the final capture adjustment. Desktop and
+mobile captures were inspected. Provider responses and browser APIs were synthetic.
+
+No existing user database, actual environment file, key or stopped user application
+was used or activated. The real location-image and text/private-photo character
+adapters remain separate manual generation workflows. Successful real provider
+access, actual image quality and real model-specific token capacity still require
+the owner's subsequent manual setup and test. This local change is unpublished.
+
+## 2026-11-01 - explicit manual token-count preflight
+
+The full permitted context is retained before approximate packing. A separate
+owner-consented POST can use the official Responses input-token-count endpoint,
+then persist body/model/provider/policy/phase-bound evidence for normal quoting,
+consent and dispatch. Migration 038 stores durable operations, attempt limits and
+financial linkage. Reads, startup and NPC ticks never count remotely. The ordinary
+approximate path remains available for a short first game test.
+
+Count pricing has not been verified for the owner's live setup. The default gate
+therefore blocks actual counting; it is never assigned an implicit zero price.
+An optional separately reviewed fixed count rate uses the same authorization and
+text/total ledger. Errors, 403, deadlines and unknown outcomes stop dispatch and
+retain liabilities. Duplicate operations, reconnects and status reconciliation do
+not resend. Exact token-count evidence is distinguished from configured cost and
+provider invoice accuracy. Existing keys, environment and user databases remain
+untouched; no real count or generation was dispatched.
+
+The isolated PostgreSQL preflight suite passed 11/11 through the real count-to-
+quote/consent/generation pipeline with injected HTTP. The full game/PostgreSQL runner
+passed 308 checks (38 owner, 15 policy, 11 preflight, 244 runtime). Focused context/
+count/provider checks passed 37/37 after removing the special 256k ceiling; the UI/
+privacy/controller payload passed 158 with four existing Windows skips. Production
+build, workspace typechecks, lint and formatting passed. Five new Chromium scenarios
+passed across uk/en/ru, including duplicate clicks and reload/GET reconciliation of a
+lost count response. Test-only game fixture contract errors were corrected before the
+successful run. Desktop/mobile captures were inspected. These synthetic results do
+not establish live provider access or invoice accuracy.
+
+The owner clarified that 256k was an example rather than a product maximum. The
+special 256000-token ceiling is removed: requested windows can be larger and the
+verified model capacity determines the effective window. Financial limits and the
+separate transport byte guard still apply; persistent story history can grow beyond
+any one provider request. Approximate startup needs no new mandatory environment
+field, and `text.counting` stays omitted while count pricing is unverified.

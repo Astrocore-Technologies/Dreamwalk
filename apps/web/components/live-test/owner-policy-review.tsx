@@ -89,13 +89,38 @@ function PolicyComparison({
         read: (p) => money(p?.text.outputMicrosPerMillion),
       },
       {
+        key: 'countPrice',
+        label: m('countPrice'),
+        read: (p) =>
+          p?.text.counting ? money(p.text.counting.microsPerRequest) : m('countPriceUnknown'),
+      },
+      {
+        key: 'countEvidence',
+        label: m('countPricingEvidence'),
+        read: (p) =>
+          p?.text.counting ? JSON.stringify(p.text.counting.pricing) : m('countPriceUnknown'),
+      },
+      {
         key: 'context',
-        label: m('policyContext'),
+        label: m('contextModelCapacity'),
         read: (p) => p?.text.contextTokens ?? m('reserveUnavailable'),
       },
       {
+        key: 'requestedContext',
+        label: m('contextRequested'),
+        read: (p) => p?.text.contextBudgetTokens ?? m('reserveLegacy'),
+      },
+      {
+        key: 'effectiveContext',
+        label: m('contextEffective'),
+        read: (p) =>
+          p?.text.contextBudgetTokens === undefined
+            ? m('reserveLegacy')
+            : Math.min(p.text.contextBudgetTokens, p.text.contextTokens),
+      },
+      {
         key: 'outputTokens',
-        label: m('policyOutputTokens'),
+        label: m('contextAnswer'),
         read: (p) => p?.text.maxOutputTokens ?? m('reserveUnavailable'),
       },
       {
@@ -163,6 +188,13 @@ function PolicyComparison({
     ];
   return (
     <div className={styles.tableWrap}>
+      {(current?.text.contextBudgetTokens !== undefined ||
+        proposed?.text.contextBudgetTokens !== undefined) && (
+        <>
+          <p>{m('contextEstimate')}</p>
+          <p>{m('contextHistory')}</p>
+        </>
+      )}
       <table>
         <thead>
           <tr>

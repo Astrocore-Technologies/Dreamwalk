@@ -1,6 +1,6 @@
 # Dreamwalk sequential turns — local implementation
 
-This mode is an explicit versioned opt-in. A pinned authored `turnRules` preset initializes a new campaign; legacy campaigns retain their existing hybrid mechanics. A source-free compatibility template may be started with `turnBased: true` as the current authored Observatory acceptance fixture. Requesting that flag for an authored pre-v3 package without a turn preset returns `TURN_RULESET_UPGRADE_REQUIRED`; it never substitutes a different map or silently migrates an existing save.
+New authored campaigns default to this versioned sequential mode, even when an older client omits the turn flag. Home, adventure details and Studio test launches also send explicit turn intent. An explicit false flag remains a legacy compatibility path; existing campaigns are never converted merely by opening them. A pinned authored `turnRules` preset initializes a new campaign; legacy campaigns retain their existing hybrid mechanics. A source-free compatibility template may be started with `turnBased: true` as the current authored Observatory acceptance fixture. Requesting that flag for an authored pre-v3 package without a turn preset returns `TURN_RULESET_UPGRADE_REQUIRED`; it never substitutes a different map or silently migrates an existing save.
 
 ## Supported rules and timing
 
@@ -35,3 +35,42 @@ NPC jobs are checked against the persisted round/phase/ruleset at queue, claim a
 ## Verification commands
 
 `GAME_TEST_FILE=integration-turns.test.mjs npm run test:game:integration` covers immediate committed walking, budgets shared by click/text, two private/public NPC addresses, no player-phase autonomy, ordering, End Turn replay, restart, explicit legacy-map gating, perceived click harm and player/NPC world reactions. `integration-turn-provider-fences.test.mjs` adds real PostgreSQL queue/dispatch fence checks with a controlled zero-network provider. Test commands and actual outcomes are recorded in the final progress entry; this document does not claim an unrun browser or production/provider pass.
+
+## Explicit conversion of an existing campaign
+
+The local operator command below plans by default. It does not load root provider
+credentials, bootstrap a database, seed content or call a model. Use the existing
+persistent database configuration and the actual owning account handle.
+
+```sh
+node scripts/convert-campaign-turns.mjs --database-env-file "<absolute existing database.env>" --campaign "<campaign UUID>" --owner-handle "<owner handle>"
+```
+
+Before applying, warn participants, let editing save and close campaign tabs so the
+existing runtime commits a paused checkpoint. Stop the local API on port 4000 and
+create and verify a fresh logical database backup. The local repair workflow uses a
+custom pg_dump archive encrypted with Windows DPAPI CurrentUser; keep that Windows
+account available for recovery. No provider key belongs in a backup command.
+
+```sh
+node scripts/convert-campaign-turns.mjs --database-env-file "<absolute existing database.env>" --campaign "<campaign UUID>" --owner-handle "<owner handle>" --expected-revision <planned current revision> --operation-id "<new operation UUID>" --backup-file "<fresh backup.dump.dpapi>" --apply
+```
+
+Apply refuses a listening local runtime, an unpaused checkpoint, a stale revision,
+wrong owner, inconsistent snapshot, active encounter or unresolved campaign job.
+The backup metadata must be newer than the saved campaign update. Backup archive
+validation is a separate operator step, not inferred from a filename.
+
+Conversion locks and rechecks the saved campaign, preserves its source pin, seed,
+current positions, inventory ownership, NPC plans/knowledge, canon, art and history,
+and stops only future legacy paths and transient movement traces. It adds the pinned
+base turn controller, then writes campaign state, revision, event, snapshot, outbox
+and idempotency receipt in one transaction. A rollback restores all of them. Reusing
+the same operation returns its receipt; converting an already-turn-based save never
+refills resources. Inspect the read-only plan after an uncertain terminal result
+before deciding any further operator step.
+
+No image job, generation authorization, reservation, actual spend, unknown liability
+or permanent provider stop is changed. Restart with the same database/assets and
+without demo seed, then reload clients to receive the new phase fence and remaining
+resources. Test providers remain mocks; this is not live-model verification.

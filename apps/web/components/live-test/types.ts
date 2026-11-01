@@ -1,6 +1,9 @@
 import type { TextRequestEstimateSnapshot } from './request-reserve-types';
 export type TurnFence = { roundId: string; phaseEpoch: number; rulesetVersion: 1 };
 export type LiveTestStatus = {
+  imageOnlyAdmission?: boolean;
+  retainedImageHoldMicros?: number;
+  imageActiveHeldMicros?: number;
   policyRevision?: number;
   policyHash?: string | null;
   configFingerprint?: string;
@@ -32,12 +35,32 @@ export type LiveTestStatus = {
     upperMicros: number;
     maxOutputTokens: number;
     contextTokens: number;
+    contextBudgetTokens?: number;
     costEvidence: string;
     pricingSource?: string;
     reasoningEffort?: string;
   };
 };
+export type TextCountReceipt = {
+  id: string;
+  status: string;
+  inputTokens: number | null;
+  actualMicros: number | null;
+  resultCode: string | null;
+  costBasis: string;
+  invoiceExact: false;
+};
+export type TextCountView = {
+  blockCode: string | null;
+  candidateFingerprint: string;
+  historyRecords: number;
+  reserveMicros: number | null;
+  attempts: number;
+  maxAttempts: number;
+  latest: TextCountReceipt | null;
+};
 export type LiveRequest = {
+  counting?: TextCountView;
   errorCode?: string | null;
   configFingerprint?: string | null;
   estimateSnapshot?: TextRequestEstimateSnapshot | null;
@@ -69,6 +92,14 @@ export const liveSessionActive = (value: LiveTestStatus | null, now = Date.now()
   !generationExpired(value, now) &&
   generationPricingCurrent(value, now) &&
   value.remainingMicros > 0;
+/** Image-only admission never activates text or settles old liabilities. */
+export const imageSessionActive = (value: LiveTestStatus | null, now = Date.now()) =>
+  liveSessionActive(value, now) ||
+  (!!value &&
+    value.mode === 'owner' &&
+    value.imageOnlyAdmission === true &&
+    value.imagesEnabled &&
+    liveSessionActive({ ...value, state: 'active' }, now));
 export const sameTurnFence = (a?: TurnFence, b?: TurnFence) =>
   !!a &&
   !!b &&

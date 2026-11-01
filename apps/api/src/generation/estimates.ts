@@ -1,5 +1,11 @@
 /** Operator planning heuristics, not official tokenization, reference pricing rules, or invoice bounds. */
 import { createHash } from 'node:crypto';
+import {
+  measureTextContext,
+  assertTextContext,
+  type TextContextMeasurement,
+  type TextTokenCounter,
+} from '../ai/text-context';
 export interface TextEstimationPolicy {
   kind: 'operator_heuristic';
   textTokensPerKiBUtf8: number;
@@ -20,6 +26,7 @@ export interface PricingEvidence {
 export interface TextEstimateProfile {
   model: string;
   contextTokens: number;
+  contextBudgetTokens?: number;
   maxOutputTokens: number;
   maxInputBytes: number;
   inputMicrosPerMillion: number;
@@ -45,6 +52,7 @@ export interface ImageEstimateProfile {
   reserveMicros?: number;
 }
 export interface TextReserveSnapshot {
+  contextWindow?: TextContextMeasurement;
   schemaVersion: 1;
   id: string;
   fingerprint: string;
@@ -171,6 +179,7 @@ export function estimateTextRequest(
   serializedBody: string,
   profile: TextEstimateProfile,
   providerFingerprint: string,
+  counter?: TextTokenCounter,
 ): TextReserveSnapshot {
   if (typeof serializedBody !== 'string' || !providerFingerprint)
     throw new RequestEstimationError('GENERATION_ESTIMATION_INVALID');
@@ -182,10 +191,20 @@ export function estimateTextRequest(
     throw new RequestEstimationError('GENERATION_INPUT_TOO_LARGE');
   const p = profile.estimation;
   if (p) policy(p);
-  const bodyTokens = p
-    ? ceil(BigInt(serializedBytes) * BigInt(p.textTokensPerKiBUtf8), 1024n)
-    : BigInt(profile.contextTokens);
-  const protocolTokens = p ? BigInt(p.textProtocolTokens) : 0n,
+  const contextWindow =
+    profile.contextBudgetTokens !== undefined
+      ? assertTextContext(measureTextContext(serializedBody, profile, counter))
+      : undefined;
+  const bodyTokens = contextWindow
+    ? BigInt(contextWindow.inputTokens - contextWindow.protocolTokenAllowance)
+    : p
+      ? ceil(BigInt(serializedBytes) * BigInt(p.textTokensPerKiBUtf8), 1024n)
+      : BigInt(profile.contextTokens);
+  const protocolTokens = contextWindow
+      ? BigInt(contextWindow.protocolTokenAllowance)
+      : p
+        ? BigInt(p.textProtocolTokens)
+        : 0n,
     inputTokens = bodyTokens + protocolTokens;
   if (p && inputTokens + BigInt(profile.maxOutputTokens) > BigInt(profile.contextTokens))
     throw new RequestEstimationError('GENERATION_CONTEXT_ESTIMATE_EXCEEDED');
@@ -203,6 +222,7 @@ export function estimateTextRequest(
     fixed = p ? BigInt(p.fixedMarginMicros) : 0n;
   return signed('text-estimate-v1', {
     schemaVersion: 1 as const,
+    ...(contextWindow ? { contextWindow } : {}),
     costBasis: p ? ('operator_estimate' as const) : ('legacy_fixed' as const),
     providerEnforcesQuotedCap: false as const,
     bodySha256: createHash('sha256').update(serializedBody, 'utf8').digest('hex'),

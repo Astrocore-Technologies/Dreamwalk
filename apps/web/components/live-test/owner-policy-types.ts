@@ -7,6 +7,8 @@ export type PolicyProfile = {
   text: {
     model: string;
     contextTokens: number;
+    contextBudgetTokens?: number;
+    counting?: { kind: 'owner_reviewed_fixed'; microsPerRequest: number; pricing: PolicyPricing };
     maxOutputTokens: number;
     maxInputBytes: number;
     inputMicrosPerMillion: number;

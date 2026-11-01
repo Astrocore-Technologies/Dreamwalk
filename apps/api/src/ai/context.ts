@@ -1,3 +1,4 @@
+import { modelContext } from './text-preflight';
 import { createHash } from 'node:crypto';
 import type { DecisionContext } from './types';
 export function canonical(value: unknown): unknown {
@@ -27,7 +28,9 @@ export function validateDecisionContext(
     typeof context.contextHash !== 'string' ||
     !context.contextHash ||
     context.contextHash.length > 200 ||
-    Buffer.byteLength(JSON.stringify(context)) > maxBytes
+    Buffer.byteLength(JSON.stringify(modelContext(context))) > maxBytes ||
+    ('textContextCandidate' in context &&
+      Buffer.byteLength(JSON.stringify(context.textContextCandidate)) > maxBytes)
   )
     throw new Error('INVALID_DECISION_CONTEXT');
   return structuredClone(context);

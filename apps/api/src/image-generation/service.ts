@@ -17,6 +17,7 @@ import { sourceAccessSql } from '../game/source-access';
 import { config } from '../config';
 import { fail } from '../errors';
 import { ImageProviderFailure, normalizeSafeImageDiagnostic } from './error-diagnostics';
+import { recoverModelRejectionTx } from './recovery';
 import { AssetReuseService } from '../assets/reuse.service';
 import { normalizeRaster, lockRasterQuota, MAX_RASTER_BYTES } from '../assets/raster';
 import { admitGeneratedRaster } from '../assets/generated-admission';
@@ -96,6 +97,31 @@ interface Job extends QueryResultRow {
   created_at: Date;
 }
 export class ImageGenerationEngine {
+  async recoverModelRejection(actorId: string, id: string, body: unknown) {
+    return this.db.tx((c) => recoverModelRejectionTx(c, actorId, id, body, this.policy));
+  }
+  async modelRejectionRecovery(actorId: string, id: string) {
+    z.uuid().parse(id);
+    return this.db.tx(async (c) => {
+      const peek = (
+        await c.query<Job>('SELECT * FROM image_generation_jobs WHERE id=$1 AND actor_id=$2', [
+          id,
+          actorId,
+        ])
+      ).rows[0];
+      if (!peek) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      await this.lockBudget(c, peek);
+      await c.query('SELECT id FROM image_generation_jobs WHERE id=$1 FOR UPDATE', [id]);
+      const row = (
+        await c.query('SELECT actual_micros FROM image_generation_recoveries WHERE job_id=$1', [id])
+      ).rows[0];
+      return {
+        status: row ? 'recovered' : 'not_recovered',
+        ...(row ? { actualMicros: Number(row.actual_micros) } : {}),
+        automaticRetry: false,
+      };
+    });
+  }
   async prepareStudioLocation(actorId: string, body: unknown) {
     return this.db.tx((c) => prepareStudioLocationTx(c, this.assets, actorId, body));
   }
@@ -1030,6 +1056,10 @@ export class ImageGenerationEngine {
         await c.query<Job>('SELECT * FROM image_generation_jobs WHERE id=$1 FOR UPDATE', [id])
       ).rows[0];
       if (!j) return;
+      if (
+        (await c.query('SELECT 1 FROM image_generation_recoveries WHERE job_id=$1', [id])).rowCount
+      )
+        fail(409, 'RECOVERED_REJECTION_RECEIPT_CONFLICT', 'RECOVERED_REJECTION_RECEIPT_CONFLICT');
       if (
         !(await c.query('SELECT 1 FROM image_generation_attempts WHERE job_id=$1', [id])).rowCount
       )

@@ -57,6 +57,7 @@ await test(
         expectedRevision: 1,
       });
       const { campaignId: id } = await a.request('/game/campaigns', {
+        turnBased: false,
         playableVersionId: versionId,
       });
       for (const member of [b, c]) {

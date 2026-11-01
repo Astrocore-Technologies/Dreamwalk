@@ -81,6 +81,8 @@ try {
   ]);
   let files = [
     'integration-owner-generation.test.mjs',
+    'integration-recovery.test.mjs',
+    'integration-retained-rejections.test.mjs',
     'integration-request-estimates.test.mjs',
     'integration-budget.test.mjs',
     'integration-diagnostics.test.mjs',

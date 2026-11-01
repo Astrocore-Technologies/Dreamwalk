@@ -38,6 +38,16 @@ export class ImageGenerationController {
   @Get('jobs/:id') async get(@Req() req: Request, @Param('id') id: string) {
     return this.images.get((await this.auth.require(req)).id, id);
   }
+  @Get('jobs/:id/recovery') async recoveryStatus(@Req() req: Request, @Param('id') id: string) {
+    return this.images.modelRejectionRecovery((await this.auth.require(req)).id, id);
+  }
+  @Post('jobs/:id/recover-model-rejection') async recoverModelRejection(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.images.recoverModelRejection((await this.auth.require(req)).id, id, body);
+  }
   @Post('jobs/:id/cancel') async cancel(
     @Req() req: Request,
     @Param('id') id: string,

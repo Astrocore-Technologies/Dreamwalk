@@ -41,6 +41,7 @@ await test(
       const ids = [];
       for (let i = 0; i < 15; i++) {
         const { campaignId } = await owner.request('/game/campaigns', {
+          turnBased: false,
           playableVersionId: source.playableVersionId,
         });
         await owner.request(`/game/campaigns/${campaignId}/invitations`, {
@@ -65,6 +66,7 @@ await test(
       );
       await guest.request(`/invitations/${sourceInvite.id}/respond`, { decision: 'accept' });
       const privateCampaign = await owner.request('/game/campaigns', {
+        turnBased: false,
         playableVersionId: version.versionId,
       });
       await owner.request(`/game/campaigns/${privateCampaign.campaignId}/invitations`, {

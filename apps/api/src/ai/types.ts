@@ -82,7 +82,21 @@ export interface NpcProvider {
   canDispatchJob?(id: string): Promise<boolean>;
   requestAuthorized?(id: string, context?: unknown): Promise<boolean>;
   generate(request: ProviderRequest): Promise<ProviderResult>;
+  countBody?(purpose: AiPurpose, context: unknown): string;
+  count?(purpose: AiPurpose, context: unknown, operationId: string): Promise<number>;
   contextBudgetBytes?(maxCostMicros: number): number;
+  contextWindow?():
+    | {
+        requestedContextTokens: number;
+        effectiveContextTokens: number;
+        modelContextTokens: number;
+        reservedOutputTokens: number;
+        precision: string;
+        counterId: string;
+        transportLimitBytes: number;
+      }
+    | undefined;
+  contextFits?(purpose: AiPurpose, context: unknown): boolean;
   prepareTextRequest?(purpose: AiPurpose, context: unknown): PreparedTextRequest | undefined;
 }
 export interface AiPolicy {

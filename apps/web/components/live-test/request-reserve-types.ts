@@ -45,6 +45,19 @@ export type RequestPricingProfileSnapshot = {
 };
 
 export type TextRequestEstimateSnapshot = {
+  contextWindow?: {
+    requestedContextTokens: number;
+    effectiveContextTokens: number;
+    modelContextTokens: number;
+    reservedOutputTokens: number;
+    inputTokens: number;
+    totalTokens: number;
+    precision: 'exact' | 'conservative_estimate';
+    counterId: string;
+    protocolTokenAllowance: number;
+    serializedBytes: number;
+    transportLimitBytes: number;
+  };
   schemaVersion: 1;
   id: string;
   fingerprint: string;

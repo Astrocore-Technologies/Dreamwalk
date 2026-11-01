@@ -1,3 +1,10 @@
+import { retainedModelRejectionAdmission } from '../image-generation/retained-rejections';
+import {
+  bodyHash,
+  modelContext,
+  type TextCountAdapter,
+  type TextCountEvidence,
+} from '../ai/text-preflight';
 import { Injectable } from '@nestjs/common';
 import type { PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
@@ -54,6 +61,371 @@ const consentSchema = z
 export class GenerationAuthority {
   readonly config: LiveTestConfig & { mode: 'owner' | 'manual' };
   readonly ownerConfig?: OwnerGenerationConfig;
+  private textCountAdapter?: TextCountAdapter;
+  configureTextCountAdapter(adapter: TextCountAdapter) {
+    this.textCountAdapter = adapter;
+  }
+  private countCandidate(context: Record<string, unknown>, keepRecentHistory?: number) {
+    const full = structuredClone(modelContext(context.textContextCandidate ?? context)) as Record<
+      string,
+      unknown
+    >;
+    if (keepRecentHistory !== undefined && Array.isArray(full.history)) {
+      // Pin records referenced by current obligations/questions as well as the newest record.
+      const ids = new Set<string>([
+        ...((full.requestedFactIds as string[]) ?? []),
+        String(full.replyToObservationId ?? ''),
+      ]);
+      for (const x of [full.goal, ...((full.obligations as object[]) ?? []), full.summary])
+        for (const id of (x as { evidenceIds?: string[]; observationIds?: string[] } | undefined)
+          ?.evidenceIds ??
+          (x as { observationIds?: string[] } | undefined)?.observationIds ??
+          [])
+          ids.add(id);
+      const tail = new Set(full.history.slice(-Math.max(1, keepRecentHistory)));
+      full.history = full.history.filter(
+        (r: Record<string, unknown>) =>
+          tail.has(r) || ids.has(String(r.id ?? r.observationId ?? '')),
+      );
+    }
+    delete full.budgetExceeded;
+    return full;
+  }
+  private countGate() {
+    const price = this.ownerConfig?.text.counting;
+    return !this.ownerConfig?.text.contextBudgetTokens
+      ? 'TEXT_COUNT_WINDOW_REQUIRED'
+      : !price
+        ? 'TEXT_COUNT_COST_REVIEW_REQUIRED'
+        : !ownerPricingIsCurrent(price.pricing)
+          ? 'TEXT_COUNT_PRICING_EXPIRED'
+          : !this.textCountAdapter
+            ? 'TEXT_COUNT_ADAPTER_UNAVAILABLE'
+            : null;
+  }
+  private countReceipt(row: Record<string, unknown>) {
+    return {
+      id: row.id,
+      status:
+        row.status === 'dispatched' && new Date(String(row.deadline_at)).getTime() <= Date.now()
+          ? 'unknown'
+          : row.status,
+      inputTokens: row.input_tokens === null ? null : Number(row.input_tokens),
+      resultCode: row.result_code ?? null,
+      actualMicros: row.actual_micros === null ? null : Number(row.actual_micros),
+      costBasis: 'owner_reviewed_fixed_rate',
+      invoiceExact: false,
+    };
+  }
+  private async countView(
+    c: PoolClient,
+    request: { id: string; context: Record<string, unknown> },
+  ) {
+    if (!this.ownerConfig?.text.contextBudgetTokens) return undefined;
+    const rows = (
+      await c.query(
+        'SELECT *,count(*) OVER() AS attempts FROM generation_text_counts WHERE request_id=$1 ORDER BY created_at DESC,id DESC LIMIT 1',
+        [request.id],
+      )
+    ).rows;
+    const candidate = this.countCandidate(request.context);
+    return {
+      blockCode: this.countGate(),
+      candidateFingerprint: digest(candidate),
+      historyRecords: Array.isArray(candidate.history) ? candidate.history.length : 0,
+      reserveMicros: this.ownerConfig.text.counting?.microsPerRequest ?? null,
+      attempts: Number(rows[0]?.attempts ?? 0),
+      maxAttempts: 3,
+      latest: rows[0] ? this.countReceipt(rows[0]) : null,
+    };
+  }
+  /** Pure GET reconciliation never retries an uncertain count. */
+  async countOperation(userId: string, operationId: string) {
+    await this.owner(userId);
+    z.uuid().parse(operationId);
+    const row = (
+      await this.db.query(
+        'SELECT * FROM generation_text_counts WHERE actor_id=$1 AND operation_id=$2',
+        [userId, operationId],
+      )
+    )[0];
+    if (!row) fail(404, 'TEXT_COUNT_NOT_FOUND', 'TEXT_COUNT_NOT_FOUND');
+    return this.countReceipt(row);
+  }
+  async assertCountEvidence(context: unknown, client?: PoolClient, expectedRequestId?: string) {
+    const e = (context as { textCountEvidence?: TextCountEvidence } | null)?.textCountEvidence;
+    if (!e) return;
+    const run = async (c: PoolClient) => {
+      const active = await this.assertActivePolicy(c);
+      const row = (
+        await c.query("SELECT * FROM generation_text_counts WHERE id=$1 AND status='succeeded'", [
+          e.id,
+        ])
+      ).rows[0];
+      if (
+        !row ||
+        (expectedRequestId && row.request_id !== expectedRequestId) ||
+        row.body_sha256 !== e.bodySha256 ||
+        row.model !== e.model ||
+        row.provider_version !== e.providerVersion ||
+        Number(row.input_tokens) !== e.inputTokens ||
+        Number(row.policy_revision) !== e.policyRevision ||
+        row.policy_hash !== e.policyHash ||
+        active.revision !== e.policyRevision ||
+        active.hash !== e.policyHash ||
+        digest(row.turn_fence) !== digest((context as Record<string, unknown>).turnFence)
+      )
+        fail(409, 'TEXT_COUNT_EVIDENCE_STALE', 'TEXT_COUNT_EVIDENCE_STALE');
+    };
+    if (client) await run(client);
+    else await this.db.tx(run);
+  }
+  /** Only this explicitly consented POST may call the count adapter. No generation is dispatched here. */
+  async preflightCount(userId: string, campaignId: string, requestId: string, input: unknown) {
+    await this.owner(userId);
+    z.uuid().parse(campaignId);
+    z.uuid().parse(requestId);
+    const v = z
+      .object({
+        operationId: z.uuid(),
+        turnFence: fenceSchema,
+        policyRevision: z.number().int().nonnegative(),
+        policyHash: z.string().regex(/^[a-f0-9]{64}$/),
+        candidateFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
+        keepRecentHistory: z.number().int().min(1).max(32768).optional(),
+        consent: z.literal(true),
+      })
+      .strict()
+      .parse(input);
+    const requestHash = digest({ campaignId, requestId, ...v });
+    const admitted = await this.db.tx(async (c) => {
+      const authorizationId = await this.resolveAuthorizationId(c, userId);
+      const prior = (
+        await c.query(
+          'SELECT * FROM generation_text_counts WHERE authorization_id=$1 AND operation_id=$2',
+          [authorizationId, v.operationId],
+        )
+      ).rows[0];
+      if (prior) {
+        if (prior.request_hash !== requestHash)
+          fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+        return { prior };
+      }
+      const gate = this.countGate();
+      if (gate) fail(409, gate, gate);
+      const active = await this.assertActivePolicy(c, authorizationId);
+      if (active.revision !== v.policyRevision || active.hash !== v.policyHash)
+        fail(409, 'GENERATION_POLICY_STALE', 'GENERATION_POLICY_STALE');
+      const turn = await this.campaign(c, campaignId, userId);
+      if (
+        digest({ roundId: turn.roundId, phaseEpoch: turn.phaseEpoch, rulesetVersion: 1 }) !==
+        digest(v.turnFence)
+      )
+        fail(409, 'TURN_PHASE_STALE', 'TURN_PHASE_STALE');
+      const row = (
+        await c.query(
+          "SELECT * FROM game_npc_decision_requests WHERE id=$1 AND campaign_id=$2 AND status='queued' FOR UPDATE",
+          [requestId, campaignId],
+        )
+      ).rows[0];
+      if (
+        !row ||
+        row.job_id ||
+        (row.requester_user_id && row.requester_user_id !== userId) ||
+        !['speech', 'plan', 'story_turn', 'narrative'].includes(row.purpose)
+      )
+        fail(409, 'LIVE_REQUEST_UNAVAILABLE', 'LIVE_REQUEST_UNAVAILABLE');
+      if (
+        (await c.query('SELECT 1 FROM live_test_text_permits WHERE request_id=$1', [requestId]))
+          .rowCount
+      )
+        fail(409, 'MANUAL_REQUEST_ALREADY_AUTHORIZED', 'MANUAL_REQUEST_ALREADY_AUTHORIZED');
+      if (
+        (
+          await c.query(
+            'SELECT count(*)::int AS n FROM generation_text_counts WHERE request_id=$1',
+            [requestId],
+          )
+        ).rows[0].n >= 3
+      )
+        fail(409, 'TEXT_COUNT_ATTEMPT_LIMIT', 'TEXT_COUNT_ATTEMPT_LIMIT');
+      if (
+        digest(this.countCandidate(row.context)) !== v.candidateFingerprint ||
+        digest(row.context.turnFence) !== digest(v.turnFence)
+      )
+        fail(409, 'TEXT_COUNT_CANDIDATE_STALE', 'TEXT_COUNT_CANDIDATE_STALE');
+      const candidate = this.countCandidate(row.context, v.keepRecentHistory);
+      const body = this.textCountAdapter!.countBody(row.purpose, candidate);
+      if (Buffer.byteLength(body) > this.ownerConfig!.text.maxInputBytes)
+        fail(413, 'TEXT_CONTEXT_TRANSPORT_LIMIT', 'TEXT_CONTEXT_TRANSPORT_LIMIT');
+      const price = this.ownerConfig!.text.counting!;
+      const reservation = await reserveGenerationSpend(
+        c,
+        {
+          ...(await this.effectivePolicy(c)),
+          costBasis: 'approved_estimate',
+          verifiedUpperMicros: null,
+          operationalReserveMicros: price.microsPerRequest,
+        },
+        userId,
+        'text',
+        `text-count:${v.operationId}`,
+        price.microsPerRequest,
+      );
+      const id = randomUUID();
+      const job = (
+        await c.query(
+          `INSERT INTO generation_text_counts(id,authorization_id,scope_id,actor_id,campaign_id,request_id,operation_id,request_hash,source_hash,body_sha256,model,provider_version,policy_revision,policy_hash,turn_fence,pricing_snapshot,reservation_id,status,deadline_at)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,$15,$16,$17,'dispatched',clock_timestamp()+interval '60 seconds') RETURNING *`,
+          [
+            id,
+            authorizationId,
+            GENERATION_SCOPE_ID,
+            userId,
+            campaignId,
+            requestId,
+            v.operationId,
+            requestHash,
+            digest(row.context),
+            bodyHash(body),
+            this.ownerConfig!.text.model,
+            this.textCountAdapter!.version,
+            active.revision,
+            active.hash,
+            JSON.stringify(v.turnFence),
+            JSON.stringify(price),
+            reservation,
+          ],
+        )
+      ).rows[0];
+      return { job, candidate, purpose: row.purpose };
+    });
+    if (admitted.prior) return this.countReceipt(admitted.prior);
+    const { job, candidate, purpose } = admitted;
+    let tokens: number | null = null,
+      code: string | null = null;
+    try {
+      tokens = await this.textCountAdapter!.count(purpose, candidate, job.id);
+      if (!Number.isSafeInteger(tokens) || tokens < 0)
+        throw new Error('TEXT_COUNT_INVALID_RESPONSE');
+    } catch (e) {
+      code =
+        e instanceof Error && e.message === 'PROVIDER_HTTP_403'
+          ? 'PROVIDER_HTTP_403'
+          : 'TEXT_COUNT_OUTCOME_UNKNOWN';
+    }
+    return this.db.tx(async (c) => {
+      await this.lockAuthorization(c, job.authorization_id);
+      const current = (
+        await c.query('SELECT * FROM generation_text_counts WHERE id=$1 FOR UPDATE', [job.id])
+      ).rows[0];
+      if (current.status !== 'dispatched') {
+        if (current.status === 'unknown' && tokens !== null && !code) {
+          await settleGenerationSpend(
+            c,
+            job.reservation_id,
+            Number(job.pricing_snapshot.microsPerRequest),
+          );
+          await c.query('UPDATE generation_text_counts SET actual_micros=$2 WHERE id=$1', [
+            job.id,
+            Number(job.pricing_snapshot.microsPerRequest),
+          ]);
+        }
+        return this.countReceipt(
+          (await c.query('SELECT * FROM generation_text_counts WHERE id=$1', [job.id])).rows[0],
+        );
+      }
+      const deadline = new Date(current.deadline_at).getTime() <= Date.now();
+      if (code || tokens === null || deadline) {
+        await c.query(
+          "UPDATE generation_text_counts SET status='unknown',result_code=$2,completed_at=clock_timestamp() WHERE id=$1",
+          [job.id, code ?? 'TEXT_COUNT_DEADLINE_EXCEEDED'],
+        );
+        await c.query(
+          "UPDATE live_test_sessions SET state='stopped',stop_code=COALESCE(stop_code,$2) WHERE id=$1",
+          [job.authorization_id, code ?? 'TEXT_COUNT_DEADLINE_EXCEEDED'],
+        );
+        await c.query('UPDATE generation_budget_scopes SET blocked=true WHERE id=$1', [
+          GENERATION_SCOPE_ID,
+        ]);
+      } else {
+        await settleGenerationSpend(
+          c,
+          job.reservation_id,
+          Number(job.pricing_snapshot.microsPerRequest),
+        );
+        const row = (
+          await c.query('SELECT * FROM game_npc_decision_requests WHERE id=$1 FOR UPDATE', [
+            requestId,
+          ])
+        ).rows[0];
+        const active = await this.assertActivePolicy(c, job.authorization_id);
+        const campaign = (
+          await c.query('SELECT state FROM game_campaigns WHERE id=$1', [campaignId])
+        ).rows[0];
+        const t = campaign?.state?.turnController;
+        const stale =
+          !row ||
+          row.status !== 'queued' ||
+          digest(row.context) !== job.source_hash ||
+          active.revision !== Number(job.policy_revision) ||
+          active.hash !== job.policy_hash ||
+          digest({
+            roundId: t?.roundId,
+            phaseEpoch: t?.phaseEpoch,
+            rulesetVersion: t?.ruleset?.version,
+          }) !== digest(v.turnFence);
+        const over =
+          tokens + this.ownerConfig!.text.maxOutputTokens >
+          Math.min(
+            this.ownerConfig!.text.contextBudgetTokens!,
+            this.ownerConfig!.text.contextTokens,
+          );
+        const status = stale ? 'stale' : over ? 'over_context' : 'succeeded';
+        if (!stale && !over) {
+          const evidence: TextCountEvidence = {
+            id: job.id,
+            model: job.model,
+            bodySha256: job.body_sha256,
+            inputTokens: tokens,
+            providerVersion: job.provider_version,
+            policyRevision: Number(job.policy_revision),
+            policyHash: job.policy_hash,
+          };
+          const counted: Record<string, unknown> = {
+            ...candidate,
+            textContextCandidate: row.context.textContextCandidate ?? candidate,
+            textCountEvidence: evidence,
+            budgetExceeded: false,
+          };
+          // budgetExceeded is not a model field in the counted candidate; keep its body identical.
+          delete (counted as Record<string, unknown>).budgetExceeded;
+          await c.query('UPDATE game_npc_decision_requests SET context=$2 WHERE id=$1', [
+            requestId,
+            JSON.stringify(counted),
+          ]);
+          if (counted.storyTurnId)
+            await c.query(
+              'UPDATE game_story_turns SET context=$2 WHERE id=$1 AND erased_at IS NULL',
+              [counted.storyTurnId, JSON.stringify(counted)],
+            );
+        }
+        await c.query(
+          'UPDATE generation_text_counts SET status=$2,input_tokens=$3,actual_micros=$4,result_code=$5,completed_at=clock_timestamp() WHERE id=$1',
+          [
+            job.id,
+            status,
+            tokens,
+            Number(job.pricing_snapshot.microsPerRequest),
+            stale ? 'TEXT_COUNT_CANDIDATE_STALE' : over ? 'TEXT_CONTEXT_WINDOW_EXCEEDED' : null,
+          ],
+        );
+      }
+      return this.countReceipt(
+        (await c.query('SELECT * FROM generation_text_counts WHERE id=$1', [job.id])).rows[0],
+      );
+    });
+  }
   private textRequestPlanner?: (purpose: AiPurpose, context: unknown) => TextReserveSnapshot;
   configureTextRequestPlanner(
     planner: (purpose: AiPurpose, context: unknown) => TextReserveSnapshot,
@@ -200,15 +572,20 @@ export class GenerationAuthority {
     };
   }
   /** Existing financial identity is retained; this is not a new allowance or reconciliation. */
-  private async historicalSafety(c: PoolClient, userId: string, firstClaim = false) {
+  private async historicalSafety(
+    c: PoolClient,
+    userId: string,
+    firstClaim = false,
+    imageOnlyAdmission = false,
+  ) {
     const unsafe = (
       await c.query(
         `SELECT 1 FROM generation_budget_reservations r JOIN generation_budget_scopes b ON b.id=r.scope_id
        WHERE ((r.scope_id<>$1 OR $2::boolean) AND r.status='held' AND r.upper_micros>0) OR (r.status='settled' AND r.actual_micros IS NULL)
-       UNION ALL SELECT 1 FROM generation_budget_scopes b WHERE blocked AND (approved OR id=$1 OR EXISTS(SELECT 1 FROM generation_budget_reservations r WHERE r.scope_id=b.id AND (r.upper_micros>0 OR r.actual_micros>0)))
-       UNION ALL SELECT 1 FROM live_test_sessions WHERE scope_id=$1 AND state='stopped' AND COALESCE(stop_code,'')<>'OWNER_GENERATION_MODE_ACTIVE'
+       UNION ALL SELECT 1 FROM generation_budget_scopes b WHERE blocked AND NOT($3::boolean AND id=$1) AND (approved OR id=$1 OR EXISTS(SELECT 1 FROM generation_budget_reservations r WHERE r.scope_id=b.id AND (r.upper_micros>0 OR r.actual_micros>0)))
+       UNION ALL SELECT 1 FROM live_test_sessions WHERE scope_id=$1 AND state='stopped' AND COALESCE(stop_code,'')<>'OWNER_GENERATION_MODE_ACTIVE' AND NOT($3::boolean AND mode='owner' AND stop_code='IMAGE_RESULT_UNKNOWN')
        LIMIT 1`,
-        [GENERATION_SCOPE_ID, firstClaim],
+        [GENERATION_SCOPE_ID, firstClaim, imageOnlyAdmission],
       )
     ).rowCount;
     if (unsafe)
@@ -233,9 +610,10 @@ export class GenerationAuthority {
       await c.query(
         `
       SELECT 1 FROM image_generation_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id
-      WHERE (r.scope_id<>$1 OR $2::boolean) AND j.mode='external' AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=now()))
+      WHERE (r.scope_id<>$1 OR $2::boolean) AND j.mode='external' AND NOT EXISTS(SELECT 1 FROM image_generation_recoveries recovery WHERE recovery.job_id=j.id AND recovery.scope_id=r.scope_id AND j.status='rejected' AND r.status='settled' AND recovery.actual_micros=r.actual_micros) AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=now()))
       UNION ALL SELECT 1 FROM live_test_text_permits p JOIN live_test_sessions a ON a.id=p.session_id
       WHERE (a.scope_id<>$1 OR $2::boolean) AND (p.state='unknown' OR p.result_code='PROVIDER_HTTP_403' OR (p.state='dispatched' AND p.dispatched_at<=now()-interval '60 seconds'))
+      UNION ALL SELECT 1 FROM generation_text_counts WHERE status='unknown' OR (status='dispatched' AND deadline_at<=now())
       UNION ALL SELECT 1 FROM live_authoring_text_jobs j JOIN live_test_sessions a ON a.id=j.session_id
       WHERE (a.scope_id<>$1 OR $2::boolean) AND (j.status='unknown' OR j.error_code='PROVIDER_HTTP_403' OR (j.status='dispatched' AND j.deadline_at<=now())) LIMIT 1`,
         [GENERATION_SCOPE_ID, firstClaim],
@@ -354,6 +732,7 @@ export class GenerationAuthority {
     c: PoolClient,
     userId: string,
     suppliedId?: string,
+    purpose: 'text' | 'image' = 'text',
   ): Promise<string> {
     await this.ownerTx(c, userId);
     let id = suppliedId;
@@ -369,7 +748,7 @@ export class GenerationAuthority {
       id = row.id;
     }
     if (!id) fail(403, 'LIVE_SESSION_FORBIDDEN', 'LIVE_SESSION_FORBIDDEN');
-    await this.session(c, id!, userId);
+    await this.session(c, id!, userId, purpose);
     return id!;
   }
   private async enableExclusiveScope(c: PoolClient) {
@@ -637,10 +1016,16 @@ export class GenerationAuthority {
   }
   async authorizeImage(c: PoolClient, userId: string, sessionId?: string): Promise<ImagePolicy> {
     await this.owner(userId);
-    const id = await this.resolveAuthorizationId(c, userId, sessionId);
+    const id = await this.resolveAuthorizationId(c, userId, sessionId, 'image');
+    const row = (await c.query('SELECT * FROM live_test_sessions WHERE id=$1', [id])).rows[0];
+    const scope = (
+      await c.query('SELECT * FROM generation_budget_scopes WHERE id=$1', [row.scope_id])
+    ).rows[0];
+    const retained = this.ownerConfig ? await retainedModelRejectionAdmission(c, row, scope) : null;
     // The grant supplies rights/caps only; an image factory must supply its own cost evidence.
     return {
       ...(await this.effectivePolicy(c)),
+      ...(retained?.eligible ? { preserveModelRejectionHolds: true as const } : {}),
       verifiedUpperMicros: null,
       ...(this.ownerConfig
         ? {
@@ -651,7 +1036,12 @@ export class GenerationAuthority {
         : {}),
     };
   }
-  private async session(c: PoolClient, sessionId: string, userId: string) {
+  private async session(
+    c: PoolClient,
+    sessionId: string,
+    userId: string,
+    purpose: 'text' | 'image' = 'text',
+  ) {
     if (!this.config.enabled) fail(409, 'LIVE_TEST_DISABLED', 'LIVE_TEST_DISABLED');
     await this.ownerTx(c, userId);
     const s = await this.lockAuthorization(c, sessionId);
@@ -660,6 +1050,7 @@ export class GenerationAuthority {
     const scope = (
       await c.query('SELECT * FROM generation_budget_scopes WHERE id=$1', [s.scope_id])
     ).rows[0];
+    let retained: Awaited<ReturnType<typeof retainedModelRejectionAdmission>> | undefined;
     if (this.ownerConfig) {
       if (
         s.mode !== 'owner' ||
@@ -682,7 +1073,8 @@ export class GenerationAuthority {
         !scope.serialize_outstanding
       )
         fail(409, 'GENERATION_CONFIG_IMMUTABLE', 'GENERATION_CONFIG_IMMUTABLE');
-      await this.historicalSafety(c, userId);
+      if (purpose === 'image') retained = await retainedModelRejectionAdmission(c, s, scope);
+      await this.historicalSafety(c, userId, false, retained?.eligible === true);
     } else {
       if (s.mode !== 'manual' || !s.expires_at || sessionId !== this.config.sessionId)
         fail(403, 'LIVE_SESSION_FORBIDDEN', 'LIVE_SESSION_FORBIDDEN');
@@ -702,12 +1094,12 @@ export class GenerationAuthority {
       if (new Date(s.expires_at).getTime() <= Date.now())
         fail(409, 'LIVE_TEST_EXPIRED', 'LIVE_TEST_EXPIRED');
     }
-    if (s.state !== 'active' || scope.blocked || !scope.approved)
+    if ((s.state !== 'active' || scope.blocked || !scope.approved) && !retained?.eligible)
       fail(409, 'LIVE_SESSION_STOPPED', 'LIVE_SESSION_STOPPED');
     const unknown = (
       await c.query(
-        "SELECT 1 FROM generation_budget_reservations b JOIN image_generation_jobs j ON j.reservation_id=b.id WHERE b.scope_id=$1 AND j.mode='external' AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=now())) UNION ALL SELECT 1 FROM live_test_text_permits p JOIN live_test_sessions a ON a.id=p.session_id WHERE a.scope_id=$1 AND (p.state='unknown' OR (p.state='dispatched' AND p.dispatched_at<=now()-interval '60 seconds')) LIMIT 1",
-        [s.scope_id],
+        "SELECT 1 FROM generation_budget_reservations b JOIN image_generation_jobs j ON j.reservation_id=b.id WHERE b.scope_id=$1 AND NOT(b.id=ANY($2::uuid[])) AND j.mode='external' AND NOT EXISTS(SELECT 1 FROM image_generation_recoveries recovery WHERE recovery.job_id=j.id AND recovery.scope_id=b.scope_id AND j.status='rejected' AND b.status='settled' AND recovery.actual_micros=b.actual_micros) AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=now())) UNION ALL SELECT 1 FROM live_test_text_permits p JOIN live_test_sessions a ON a.id=p.session_id WHERE a.scope_id=$1 AND (p.state='unknown' OR (p.state='dispatched' AND p.dispatched_at<=now()-interval '60 seconds')) LIMIT 1",
+        [s.scope_id, retained?.eligible ? retained.reservationIds : []],
       )
     ).rowCount;
     if (unknown) fail(409, 'LIVE_OUTCOME_UNRESOLVED', 'LIVE_OUTCOME_UNRESOLVED');
@@ -759,15 +1151,24 @@ export class GenerationAuthority {
             )
           ).rows[0]
         : null;
+      const countViews = new Map<string, unknown>();
+      for (const r of rows) countViews.set(r.id, await this.countView(c, r));
       return {
         turnFence: { roundId: turn.roundId, phaseEpoch: turn.phaseEpoch, rulesetVersion: 1 },
         requests: rows.map((r) => {
-          const estimateSnapshot = this.requestEstimate(r.purpose, r.context);
+          let estimateSnapshot: TextReserveSnapshot | null = null,
+            estimateError: string | null = null;
+          try {
+            estimateSnapshot = this.requestEstimate(r.purpose, r.context);
+          } catch {
+            estimateError = 'TEXT_CONTEXT_WINDOW_EXCEEDED';
+          }
           return {
             id: r.id,
             subjectId: r.npc_id,
             purpose: r.purpose,
-            errorCode: r.result_code ?? null,
+            errorCode: estimateError ?? r.result_code ?? null,
+            counting: countViews.get(r.id),
             permitState: r.permit_state ?? null,
             upperMicros:
               estimateSnapshot?.costBasis === 'operator_estimate' ? null : this.textUpperMicros(),
@@ -842,6 +1243,7 @@ export class GenerationAuthority {
         fail(409, 'TURN_PHASE_STALE', 'TURN_PHASE_STALE');
       if (r.requester_user_id && r.requester_user_id !== userId)
         fail(403, 'FORBIDDEN', 'FORBIDDEN');
+      await this.assertCountEvidence(r.context, c, requestId);
       const estimateSnapshot = this.requestEstimate(r.purpose, r.context);
       const reserveMicros = estimateSnapshot?.reserveMicros ?? this.textUpperMicros();
       const activePolicy = this.ownerConfig ? await this.assertActivePolicy(c, sessionId) : null;
@@ -855,6 +1257,15 @@ export class GenerationAuthority {
         v.estimateFingerprint !== estimateSnapshot.fingerprint
       )
         fail(409, 'GENERATION_TEXT_RESERVE_STALE', 'GENERATION_TEXT_RESERVE_STALE');
+      if (
+        (
+          await c.query(
+            "SELECT 1 FROM generation_text_counts WHERE request_id=$1 AND status='dispatched' LIMIT 1",
+            [requestId],
+          )
+        ).rowCount
+      )
+        fail(409, 'TEXT_COUNT_IN_PROGRESS', 'TEXT_COUNT_IN_PROGRESS');
       const reservation = await reserveGenerationSpend(
         c,
         await this.effectivePolicy(c),
@@ -1032,6 +1443,7 @@ export class GenerationAuthority {
         digest(request.context) !== p.context_hash
       )
         fail(409, 'TURN_PHASE_STALE', 'TURN_PHASE_STALE');
+      await this.assertCountEvidence(request.context, c, rId);
       const storedSnapshot = p.request_snapshot as TextReserveSnapshot | null;
       if (
         (storedSnapshot || snapshot) &&
@@ -1483,7 +1895,7 @@ export class GenerationAuthority {
     let unsafe =
       (
         await this.db.query(
-          "SELECT 1 FROM generation_budget_reservations b JOIN image_generation_jobs j ON j.reservation_id=b.id WHERE b.scope_id=$1 AND j.mode='external' AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=now())) UNION ALL SELECT 1 FROM live_test_text_permits p WHERE p.session_id=$2 AND (p.state='unknown' OR (p.state='dispatched' AND p.dispatched_at<=now()-interval '60 seconds')) LIMIT 1",
+          "SELECT 1 FROM generation_budget_reservations b JOIN image_generation_jobs j ON j.reservation_id=b.id WHERE b.scope_id=$1 AND j.mode='external' AND NOT EXISTS(SELECT 1 FROM image_generation_recoveries recovery WHERE recovery.job_id=j.id AND recovery.scope_id=b.scope_id AND j.status='rejected' AND b.status='settled' AND recovery.actual_micros=b.actual_micros) AND (j.status='unknown' OR j.safe_diagnostic->>'httpStatus'='403' OR (j.status='dispatched' AND j.dispatch_deadline<=now())) UNION ALL SELECT 1 FROM live_test_text_permits p WHERE p.session_id=$2 AND (p.state='unknown' OR (p.state='dispatched' AND p.dispatched_at<=now()-interval '60 seconds')) LIMIT 1",
           [GENERATION_SCOPE_ID, this.config.sessionId],
         )
       ).length > 0;
@@ -1524,6 +1936,49 @@ export class GenerationAuthority {
       imageBlockCode: 'VERIFIED_IMAGE_UPPER_BOUND_REQUIRED',
     };
   }
+  private async imageOnlyAdmissionStatus(userId: string) {
+    const denied = {
+      imageOnlyAdmission: false,
+      retainedImageHoldMicros: 0,
+      imageActiveHeldMicros: 0,
+    };
+    if (!this.ownerConfig || !this.pricingCurrent()) return denied;
+    return this.db.tx(async (c) => {
+      await c.query('SET TRANSACTION ISOLATION LEVEL REPEATABLE READ READ ONLY');
+      const row = (
+        await c.query(
+          "SELECT * FROM live_test_sessions WHERE scope_id=$1 AND mode='owner' AND owner_id=$2",
+          [GENERATION_SCOPE_ID, userId],
+        )
+      ).rows[0];
+      const scope = (
+        await c.query('SELECT * FROM generation_budget_scopes WHERE id=$1', [GENERATION_SCOPE_ID])
+      ).rows[0];
+      if (
+        !row ||
+        row.config_hash !== this.identity() ||
+        row.owner_handle !== this.ownerConfig!.ownerHandle ||
+        !scope ||
+        Number(scope.total_cap_micros) !== Number(row.cap_micros) ||
+        Number(scope.image_cap_micros) !== Number(row.image_cap_micros) ||
+        Number(scope.text_cap_micros) !== Number(row.text_cap_micros)
+      )
+        return denied;
+      try {
+        await this.assertActivePolicy(c, row.id);
+        const admission = await retainedModelRejectionAdmission(c, row, scope);
+        if (!admission.eligible) return denied;
+        await this.historicalSafety(c, userId, false, true);
+        return {
+          imageOnlyAdmission: true,
+          retainedImageHoldMicros: admission.retainedMicros,
+          imageActiveHeldMicros: admission.activeHeldMicros,
+        };
+      } catch {
+        return denied;
+      }
+    });
+  }
   private async ownerStatus(userId: string) {
     const cfg = this.ownerConfig!;
     const row = (
@@ -1556,6 +2011,7 @@ export class GenerationAuthority {
       policy.blockers.find((code) => code !== 'GENERATION_CONSENT_REQUIRED') ??
       null;
     return {
+      ...(await this.imageOnlyAdmissionStatus(userId)),
       mode: 'owner' as const,
       enabled: true,
       policyRevision: policy.active?.revision ?? 0,

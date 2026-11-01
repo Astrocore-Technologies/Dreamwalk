@@ -418,3 +418,24 @@ application. Dispatch checks the accepted persisted revision again. Provider-que
 caps follow only that acknowledged policy; increasing a server candidate alone
 cannot raise spending authority. Owner/source/asset and private-photo permissions
 remain independent checks.
+
+### Manual text-context preflight
+
+`POST /generation/campaigns/:id/requests/:requestId/preflight` accepts
+`operationId`, `turnFence`, `policyRevision`, `policyHash`, `candidateFingerprint`,
+optional `keepRecentHistory` (1–32768), and `consent: true`. Only the configured
+owner in the world phase may admit a queued, unapproved request. Unreviewed count
+pricing returns `TEXT_COUNT_COST_REVIEW_REQUIRED` without dispatch or reservation.
+The fee shares the existing text/total ledger; at most three explicit preflights
+are admitted per request. The response includes operation `id`, `status`,
+`inputTokens`, `actualMicros`, `resultCode`, `costBasis` and `invoiceExact: false`.
+`actualMicros` is the explicitly reviewed fixed-rate settlement, not a provider
+invoice assertion. A count never grants generation consent.
+
+`GET /generation/text-counts/operations/:operationId` returns the owner's saved
+receipt without retrying the provider. Pending request GETs expose a `counting`
+view with the gate, candidate fingerprint, optional reserve, attempt limit and
+last receipt. Statuses include `dispatched`, `succeeded`, `over_context`, `stale`,
+`unknown` and `erased`. Stale evidence cannot authorize a changed model/body,
+policy, phase or a different request. Unknown outcomes retain liabilities and
+stop dispatch; changing policy cannot clear the stop.

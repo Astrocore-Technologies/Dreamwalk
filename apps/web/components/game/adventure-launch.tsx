@@ -46,7 +46,11 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
     try {
       const result = await api<{ campaignId: string }>('/game/campaigns', {
         method: 'POST',
-        body: JSON.stringify({ playableVersionId: versionId, ...heroSelection.body }),
+        body: JSON.stringify({
+          playableVersionId: versionId,
+          turnBased: true,
+          ...heroSelection.body,
+        }),
       });
       if (gate.accepts(lease)) {
         router.push(`/game/${result.campaignId}`);

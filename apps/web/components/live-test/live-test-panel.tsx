@@ -23,6 +23,7 @@ import {
 import { useLiveText } from './messages';
 import styles from './live-test.module.css';
 import { TextRequestReserve } from './request-reserve';
+import { TextCountPreflight } from './text-count-preflight';
 import { OwnerPolicyReview } from './owner-policy-review';
 
 export function useLiveTestStatus() {
@@ -456,6 +457,24 @@ export function LiveTestPanel({
                 <p>{m(request.permitState === 'authorized' ? 'approved' : request.permitState)}</p>
               )}
               {uncertain.includes(request.id) && <p role="status">{m('unknown')}</p>}
+              {campaignId && (
+                <TextCountPreflight
+                  key={`${request.id}:${request.policyHash}:${JSON.stringify(batch.turnFence)}`}
+                  campaignId={campaignId}
+                  request={request}
+                  turnFence={batch.turnFence}
+                  disabled={
+                    busy ||
+                    !active ||
+                    !sameTurnFence(turnFence, batch.turnFence) ||
+                    !liveRequestPolicyCurrent(request, status)
+                  }
+                  onChanged={async () => {
+                    await requests();
+                    await refresh();
+                  }}
+                />
+              )}
               {!request.permitState && (
                 <>
                   <label className={styles.check}>

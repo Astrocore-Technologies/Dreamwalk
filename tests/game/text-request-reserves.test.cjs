@@ -442,6 +442,7 @@ test('NPC queue reserves actual affordable request when remaining provider budge
     ownerConfig: { text: { estimation } },
     preparedAuthorizationId: async () => randomUUID(),
     acknowledgedTextCap: async () => 100000,
+    configureTextCountAdapter: () => {},
     configureTextRequestPlanner: (f) => {
       planner = f;
     },
@@ -615,4 +616,193 @@ test('owner cap cannot fall below liabilities and manual mode retains the histor
   assert.equal(manual.events.includes('accepted-policy-read'), false);
   assert.equal(manual.events.includes('cap-update'), false);
   assert.equal(manual.job(), undefined);
+});
+
+test('large request dispatch pins its independent window and output snapshot; replaying the pure quote does not send', async () => {
+  let calls = 0,
+    body;
+  const c = config({ contextBudgetTokens: 256000 });
+  const provider = new OpenAiNpcProvider(c, async (_url, options) => {
+    calls++;
+    body = options.body;
+    return response({ text: 'Synthetic large-context reply' }, 140000, 10);
+  });
+  const context = { contextHash: 'large-history', replyLocale: 'ru', history: 'x'.repeat(130000) };
+  const prepared = provider.prepareTextRequest('speech', context);
+  assert.ok(prepared.snapshot.serializedBytes > 130000);
+  assert.equal(prepared.snapshot.contextWindow.requestedContextTokens, 256000);
+  assert.deepEqual(provider.prepareTextRequest('speech', context).snapshot, prepared.snapshot);
+  assert.equal(calls, 0);
+  const result = await provider.generate({
+    ...request(context),
+    maxCostMicros: prepared.snapshot.reserveMicros,
+    textReservationSnapshot: prepared.snapshot,
+  });
+  assert.equal(calls, 1);
+  assert.equal(body, prepared.body);
+  assert.equal(JSON.parse(body).truncation, 'disabled');
+  assert.equal(result.failureCode, undefined);
+  assert.equal(result.usage.inputTokens, 140000);
+  const newer = new OpenAiNpcProvider({ ...c, maxOutputTokens: 4096 }, async () => {
+    assert.fail('Stale snapshot must not dispatch');
+  });
+  await assert.rejects(
+    newer.generate({ ...request(context), textReservationSnapshot: prepared.snapshot }),
+    /PROVIDER_REQUEST_SNAPSHOT_CHANGED/,
+  );
+});
+
+test('actual deferred-request processor preserves previously quoted history during a same-phase metadata refresh', async () => {
+  const { GameService } = require('../../apps/api/dist/game/game.service.js');
+  const fence = { roundId: 'world-round', phaseEpoch: 3, rulesetVersion: 1 };
+  const frozen = {
+    contextHash: 'same-semantic-state',
+    turnFence: fence,
+    historyPolicy: 'permitted-only',
+    history: [{ text: 'QUOTED_ALLOWED_HISTORY' }],
+    contextSelection: { omittedRecords: 4 },
+    recipientId: 'player',
+    channel: 'say',
+    observationIds: [],
+    deferredSpeechId: randomUUID(),
+    replyLocale: 'ru',
+  };
+  const row = {
+    id: randomUUID(),
+    npc_id: 'keeper',
+    requester_user_id: 'owner',
+    purpose: 'speech',
+    context: frozen,
+  };
+  const written = [];
+  let reviewed;
+  const fake = {
+    db: {
+      query: async (sql, args = []) => {
+        if (sql.startsWith('SELECT * FROM game_npc_decision_requests')) return [row];
+        if (sql.startsWith('SELECT c.id FROM game_campaigns')) return [{ id: 'campaign' }];
+        if (sql.startsWith('SELECT status FROM npc_ai_jobs')) return [];
+        if (sql.startsWith('UPDATE game_npc_decision_requests SET context=')) {
+          written.push(JSON.parse(args[1]));
+          return [];
+        }
+        if (sql.includes("result_code='PROVIDER_DISABLED'")) return [];
+        if (sql.startsWith('SELECT 1 FROM game_npc_decision_requests')) return [{ id: row.id }];
+        if (sql.startsWith('SELECT npc_id FROM game_npc_decision_requests')) return [];
+        assert.fail('Unexpected SQL in deferred-body regression');
+      },
+    },
+    ai: {
+      contextWindow: () => ({ effectiveContextTokens: 256000 }),
+      configuration: () => ({ enabled: false }),
+      activeSponsor: async () => null,
+      manualLive: () => true,
+      manualRequestAuthorized: async (_id, context) => {
+        reviewed = context;
+        return true;
+      },
+    },
+    reconcileIntents: async () => {},
+    speechContext: () => ({
+      contextHash: frozen.contextHash,
+      turnFence: { ...fence },
+      recipientId: 'player',
+      channel: 'say',
+      observationIds: [],
+      claims: [],
+    }),
+  };
+  const state = {
+    tick: 1,
+    turnController: { phase: 'world' },
+    entities: { keeper: { kind: 'npc' } },
+    npcBrains: { keeper: {} },
+  };
+  await GameService.prototype.processDecisionRequests.call(fake, 'campaign', { state });
+  assert.equal(written.length, 0, 'Frozen large history is not rewritten every world tick');
+  assert.deepEqual(reviewed.history, frozen.history);
+  assert.deepEqual(reviewed.contextSelection, frozen.contextSelection);
+  assert.equal(reviewed.replyLocale, 'ru');
+});
+
+test('actual deferred-request processor prepares the history window before asking for manual authorization', async () => {
+  const { GameService } = require('../../apps/api/dist/game/game.service.js');
+  const fence = { roundId: 'world-round', phaseEpoch: 3, rulesetVersion: 1 };
+  const original = {
+    contextHash: 'semantic',
+    turnFence: fence,
+    recipientId: 'player',
+    channel: 'say',
+    audienceIds: ['keeper', 'player'],
+    observationIds: [],
+    deferredSpeechId: randomUUID(),
+    replyLocale: 'uk',
+  };
+  const row = {
+    id: randomUUID(),
+    npc_id: 'keeper',
+    requester_user_id: 'owner',
+    purpose: 'speech',
+    context: original,
+  };
+  const written = [];
+  let reviewed, failed;
+  const fake = {
+    db: {
+      query: async (sql, args = []) => {
+        if (sql.startsWith('SELECT * FROM game_npc_decision_requests')) return [row];
+        if (sql.startsWith('SELECT c.id FROM game_campaigns')) return [{ id: 'campaign' }];
+        if (sql.includes('WITH recent AS')) return [];
+        if (sql.startsWith('UPDATE game_npc_decision_requests SET context=')) {
+          written.push(JSON.parse(args[1]));
+          return [];
+        }
+        if (sql.startsWith('SELECT 1 FROM game_npc_decision_requests')) return [{ id: row.id }];
+        if (sql.startsWith('SELECT npc_id FROM game_npc_decision_requests')) return [];
+        assert.fail('Unexpected outer SQL in pre-consent context regression');
+      },
+      tx: async (work) =>
+        work({
+          query: async (sql, args = []) => {
+            if (sql.startsWith('SELECT context FROM game_npc_decision_requests'))
+              return { rows: [{ context: original }], rowCount: 1 };
+            if (sql.startsWith('SELECT 1 FROM live_test_text_permits'))
+              return { rows: [], rowCount: 0 };
+            if (sql.startsWith('UPDATE game_npc_decision_requests SET context=')) {
+              written.push(JSON.parse(args[1]));
+              return { rows: [], rowCount: 1 };
+            }
+            assert.fail('No financial mutation is allowed before consent');
+          },
+        }),
+    },
+    ai: {
+      contextWindow: () => ({ effectiveContextTokens: 256000 }),
+      packContext: (c) => ({ ...c, budgetExceeded: false }),
+      manualLive: () => true,
+      manualRequestAuthorized: async (_id, c) => {
+        reviewed = c;
+        return false;
+      },
+    },
+    reconcileIntents: async () => {},
+    failUnqueuedManualRequest: async (_id, code) => {
+      failed = code;
+    },
+    speechContext: () => ({ ...original, claims: [] }),
+  };
+  const state = {
+    tick: 1,
+    turnController: { phase: 'world' },
+    entities: { keeper: { kind: 'npc' } },
+    npcBrains: {
+      keeper: { living: { relationships: {}, goal: {}, obligations: [], observations: [] } },
+    },
+  };
+  await GameService.prototype.processDecisionRequests.call(fake, 'campaign', { state });
+  assert.equal(failed, 'MANUAL_AUTHORIZATION_UNAVAILABLE');
+  assert.ok(reviewed.historyPolicy);
+  assert.deepEqual(reviewed.history, []);
+  assert.ok(written.at(-1).historyPolicy);
+  assert.equal(written.at(-1).replyLocale, 'uk');
 });

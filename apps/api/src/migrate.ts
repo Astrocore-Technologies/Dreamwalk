@@ -1,7 +1,11 @@
 import { Pool } from 'pg';
 import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
-import { createHash } from 'node:crypto';
+import {
+  canonicalMigrationSql,
+  migrationChecksum,
+  matchesMigrationChecksum,
+} from './migration-checksum';
 async function main() {
   if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
   const p = new Pool({ connectionString: process.env.DATABASE_URL });
@@ -11,18 +15,17 @@ async function main() {
     await c.query(
       'CREATE TABLE IF NOT EXISTS schema_migrations(name text PRIMARY KEY,sha256 text NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())',
     );
-    const directory = resolve(
-      process.cwd().endsWith('/apps/api')
-        ? '../../packages/db/migrations'
-        : 'packages/db/migrations',
-    );
+    // Anchor to this module; Windows workspace cwd uses backslashes.
+    const directory = resolve(__dirname, '../../../packages/db/migrations');
     for (const name of (await readdir(directory)).filter((n) => n.endsWith('.sql')).sort()) {
-      const sql = await readFile(resolve(directory, name), 'utf8'),
-        hash = createHash('sha256').update(sql).digest('hex');
+      const originalSql = await readFile(resolve(directory, name), 'utf8');
+      const sql = canonicalMigrationSql(originalSql),
+        hash = migrationChecksum(sql);
       const old = (await c.query('SELECT sha256 FROM schema_migrations WHERE name=$1', [name]))
         .rows[0];
       if (old) {
-        if (old.sha256 !== hash) throw new Error(`Migration checksum changed: ${name}`);
+        if (!matchesMigrationChecksum(originalSql, old.sha256))
+          throw new Error(`Migration checksum changed: ${name}`);
         continue;
       }
       await c.query('BEGIN');

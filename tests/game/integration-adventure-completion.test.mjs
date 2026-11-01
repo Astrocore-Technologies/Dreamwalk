@@ -27,7 +27,10 @@ async function act(user, id, action) {
   return result;
 }
 async function party(owner, others, version) {
-  const { campaignId } = await owner.request('/game/campaigns', { playableVersionId: version });
+  const { campaignId } = await owner.request('/game/campaigns', {
+    turnBased: false,
+    playableVersionId: version,
+  });
   for (const user of others) {
     await owner.request(path(campaignId, 'invitations'), { username: user.handle });
     await user.request(path(campaignId, 'accept'), {});
@@ -272,6 +275,7 @@ await test(
           expectedRevision: 1,
         });
         const { campaignId } = await a.request('/game/campaigns', {
+          turnBased: false,
           playableVersionId: v.versionId,
         });
         const before = goal(await snapshot(a, campaignId)).title;

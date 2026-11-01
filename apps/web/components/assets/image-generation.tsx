@@ -6,7 +6,7 @@ import { LiveTestPanel } from '../live-test/live-test-panel';
 import {
   generationAuthorizationId,
   generationRemaining,
-  liveSessionActive,
+  imageSessionActive,
   type LiveTestStatus,
 } from '../live-test/types';
 import {
@@ -207,12 +207,17 @@ export function ImageGeneration({
   const outstandingExternalJob = jobs.some(
     (job) =>
       job.mode === 'external' &&
-      ['queued', 'dispatched', 'unknown', 'generated'].includes(job.status),
+      ['queued', 'dispatched', 'unknown', 'generated'].includes(job.status) &&
+      !(
+        grant?.imageOnlyAdmission &&
+        job.status === 'unknown' &&
+        job.diagnostic?.httpStatus === 403
+      ),
   );
   const dispatchAllowed =
     !outstandingExternalJob &&
     externalDispatchAllowed &&
-    (!ownerMode || (!!grant?.imagesEnabled && liveSessionActive(grant, now)));
+    (!ownerMode || (!!grant?.imagesEnabled && imageSessionActive(grant, now)));
   const fingerprint = JSON.stringify({
     request,
     attested,

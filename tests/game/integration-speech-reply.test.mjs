@@ -28,6 +28,7 @@ await test(
       const ids = [];
       for (let i = 0; i < 6; i++) {
         const { campaignId } = await owner.request('/game/campaigns', {
+          turnBased: false,
           playableVersionId: story.playableVersionId,
         });
         await owner.request(`/game/campaigns/${campaignId}/invitations`, {

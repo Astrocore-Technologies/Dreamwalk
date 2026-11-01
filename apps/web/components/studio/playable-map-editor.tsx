@@ -236,7 +236,11 @@ export function PlayableMapEditor({
         );
         const campaign = await api<{ campaignId: string }>('/game/campaigns', {
           method: 'POST',
-          body: JSON.stringify({ playableVersionId: version.versionId, ...heroSelection.body }),
+          body: JSON.stringify({
+            playableVersionId: version.versionId,
+            turnBased: true,
+            ...heroSelection.body,
+          }),
         });
         if (launchGate.accepts(lease)) {
           router.push(`/game/${campaign.campaignId}`);

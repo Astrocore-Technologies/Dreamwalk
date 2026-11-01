@@ -16,6 +16,12 @@ export class GenerationProvider implements NpcProvider {
     readonly session: GenerationAuthority,
   ) {
     this.id = inner.id;
+    if (inner.count && inner.countBody)
+      session.configureTextCountAdapter({
+        version: inner.version,
+        countBody: (purpose, context) => inner.countBody!(purpose, context),
+        count: (purpose, context, id) => inner.count!(purpose, context, id),
+      });
     this.version = `${inner.version}:generation-${session.mode}-v1`;
     if (session.ownerConfig?.text.estimation) {
       session.configureTextRequestPlanner((purpose, context) => {
@@ -27,6 +33,12 @@ export class GenerationProvider implements NpcProvider {
   }
   prepareTextRequest(purpose: AiPurpose, context: unknown) {
     return this.inner.prepareTextRequest?.(purpose, context);
+  }
+  contextWindow() {
+    return this.inner.contextWindow?.();
+  }
+  contextFits(purpose: AiPurpose, context: unknown) {
+    return this.inner.contextFits?.(purpose, context) ?? true;
   }
   contextBudgetBytes(max: number) {
     return this.inner.contextBudgetBytes?.(max) ?? 32000;
@@ -45,6 +57,7 @@ export class GenerationProvider implements NpcProvider {
         digest(request.textReservationSnapshot) !== digest(prepared.snapshot))
     )
       throw new ProviderFailure('PROVIDER_REQUEST_SNAPSHOT_CHANGED', false);
+    await this.session.assertCountEvidence(request.context);
     let permit: string;
     try {
       permit = await this.session.begin(request, prepared?.snapshot);

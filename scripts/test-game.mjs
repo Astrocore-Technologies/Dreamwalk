@@ -74,6 +74,7 @@ try {
   const isolatedOwnerFiles = [
     'integration-generation-owner.test.mjs',
     'integration-generation-policy-revisions.test.mjs',
+    'integration-generation-text-preflight.test.mjs',
   ];
   if (!process.env.GAME_TEST_FILE)
     for (const ownerFile of isolatedOwnerFiles) {

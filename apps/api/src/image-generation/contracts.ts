@@ -92,6 +92,8 @@ export const generationRequestSchema = z
   });
 export type GenerationRequest = z.infer<typeof generationRequestSchema>;
 export interface ImagePolicy {
+  /** Image-only authority exception; never supplied by request JSON. Holds remain fully accounted. */
+  preserveModelRejectionHolds?: true;
   generationMode?: 'owner';
   generationPolicyRevision?: number;
   generationPolicyHash?: string;

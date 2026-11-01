@@ -35,6 +35,7 @@ import { Db } from '../db';
 import { NpcAiService } from '../ai/npc-ai.service';
 import type { ReadyDecision } from '../ai/types';
 import { digest } from '../ai/context';
+import { extendContextHistory } from './context-history';
 import { fail } from '../errors';
 import { sourceAccessSql } from './source-access';
 import { insertNpcRequest, type NpcDecisionRequest } from './npc-requests';
@@ -511,11 +512,25 @@ export class StoryTurnRuntime {
             };
           fail(409, code, code);
         }
-        const stored = {
-          ...context,
-          mockProposal: createMockStoryTurnProposal(live.state, a.actorId, input, turnId),
-        };
-        if (Buffer.byteLength(JSON.stringify(stored)) > this.ai.contextBudgetBytes())
+        const stored = await extendContextHistory(
+          this.db,
+          this.ai,
+          id,
+          live.state,
+          a.actorId,
+          {
+            ...context,
+            mockProposal: createMockStoryTurnProposal(live.state, a.actorId, input, turnId),
+          },
+          'story_turn',
+          input.targetNpcId,
+        );
+        if (
+          stored.budgetExceeded ||
+          (!this.ai.contextWindow() &&
+            Buffer.byteLength(JSON.stringify(stored)) > this.ai.contextBudgetBytes()) ||
+          !this.ai.contextFits('story_turn', stored)
+        )
           fail(413, 'CONTEXT_BUDGET_EXCEEDED', 'CONTEXT_BUDGET_EXCEEDED');
         const quote = await this.ai.quote(
           {
@@ -712,14 +727,28 @@ export class StoryTurnRuntime {
         turnFence: turnFence(live.state),
       };
       const base = buildStoryTurnContext(live.state, r.actor_id, worldInput, r.id);
-      const context = {
-        ...r.context,
-        ...base,
-        worldInput,
-        turnBasedDeferredDirector: true,
-        turnFence: turnFence(live.state),
-        mockProposal: createMockStoryTurnProposal(live.state, r.actor_id, worldInput, r.id),
-      };
+      const context =
+        this.ai.contextWindow() &&
+        r.context.historyPolicy &&
+        r.context.contextHash === base.contextHash &&
+        digest(r.context.turnFence) === digest(turnFence(live.state))
+          ? r.context
+          : await extendContextHistory(
+              this.db,
+              this.ai,
+              id,
+              live.state,
+              r.actor_id,
+              {
+                ...r.context,
+                ...base,
+                worldInput,
+                turnBasedDeferredDirector: true,
+                turnFence: turnFence(live.state),
+                mockProposal: createMockStoryTurnProposal(live.state, r.actor_id, worldInput, r.id),
+              },
+              'story_turn',
+            );
       const scope = {
         campaignId: id,
         npcId: r.actor_id,
@@ -728,14 +757,16 @@ export class StoryTurnRuntime {
         purpose: 'story_turn' as const,
         requesterUserId: r.requester_user_id,
       };
-      await this.db.query(
-        "UPDATE game_npc_decision_requests SET context=$2 WHERE id=$1 AND status='queued'",
-        [request.id, JSON.stringify(context)],
-      );
-      await this.db.query(
-        'UPDATE game_story_turns SET context=$2 WHERE id=$1 AND erased_at IS NULL',
-        [r.id, JSON.stringify(context)],
-      );
+      if (context !== r.context) {
+        await this.db.query(
+          "UPDATE game_npc_decision_requests SET context=$2 WHERE id=$1 AND status='queued'",
+          [request.id, JSON.stringify(context)],
+        );
+        await this.db.query(
+          'UPDATE game_story_turns SET context=$2 WHERE id=$1 AND erased_at IS NULL',
+          [r.id, JSON.stringify(context)],
+        );
+      }
       if (
         this.ai.manualLive() &&
         !(await this.ai.manualRequestAuthorized(String(request.id), context))

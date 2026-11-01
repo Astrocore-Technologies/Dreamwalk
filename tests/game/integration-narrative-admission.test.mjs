@@ -31,6 +31,7 @@ await test(
       const ids = [];
       for (let i = 0; i < 13; i++) {
         const { campaignId } = await a.request('/game/campaigns', {
+          turnBased: false,
           playableVersionId: story.playableVersionId,
         });
         await a.request(`/game/campaigns/${campaignId}/invitations`, { username: b.handle });
