@@ -178,6 +178,7 @@ export function compilePlayableDraft(input: unknown): {
     entities[n.id] = {
       id: n.id,
       kind: 'npc',
+      ...(n.npcPlaceholder ? { npcPlaceholder: n.npcPlaceholder } : {}),
       ...(n.characterAnimation
         ? { characterAnimation: structuredClone(n.characterAnimation) }
         : {}),

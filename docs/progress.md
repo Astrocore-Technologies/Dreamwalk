@@ -922,3 +922,13 @@ See `npc-character-quality.md` for the deterministic three-character fixture and
 separate, not-yet-authorized real-model acceptance procedure. New characterization is
 opt-in for authored NPCs; existing/generated NPCs retain their existing behavior unless
 explicitly authored. No external card import, TTS, new emotional art or paid calls.
+
+## 2026-11-02 — explicit reusable NPC silhouette placeholders
+
+- Added optional neutral/male/female/crowd map-NPC presentation, neutral for legacy and
+  unspecified entities. Three stable ID-selected original vector variants per category;
+  no inference from character text and no provider calls.
+- Existing bound portrait/animation wins. Labels and authoritative geometry are unchanged.
+- Local exact-geometry offscreen contact sheet inspected at token sizes; schema/compile/
+  projection and deterministic-render-selection regressions added. Unique NPC image
+  generation remains future work, not part of this change.

@@ -209,7 +209,8 @@ test('playable select labels stay exact independently of option text', async () 
       /<Field label=\{t\('([^']+)'\)\}>\s*<Select\s+aria-label=\{t\('([^']+)'\)\}/g,
     ),
   ];
-  assert.equal(selects.length, 11);
+  assert.equal(selects.length, [...editor.matchAll(/<Select\b/g)].length);
+  assert.ok(selects.some((match) => match[1] === 'Силуэт NPC'));
   for (const match of selects) assert.equal(match[1], match[2]);
 });
 

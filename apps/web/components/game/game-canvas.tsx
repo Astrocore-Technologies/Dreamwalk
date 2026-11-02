@@ -1,4 +1,10 @@
 'use client';
+import {
+  drawNpcSilhouette,
+  npcSilhouetteKey,
+  NPC_PLACEHOLDERS,
+  NPC_SILHOUETTE_VARIANTS,
+} from './npc-silhouettes';
 import { intersectsViewport, rendererActivity } from './renderer-activity';
 import { sceneClick } from './scene-input';
 import { entityLayout, containsScenePoint } from './scene-geometry';
@@ -241,6 +247,21 @@ export function GameCanvas({
       const journalDrawing = new Graphics();
       drawJournal(journalDrawing);
       const journalTexture = app.renderer.generateTexture(journalDrawing);
+      const npcTextures = new Map<string, InstanceType<typeof Texture>>();
+      for (const category of NPC_PLACEHOLDERS) {
+        for (let variant = 0; variant < NPC_SILHOUETTE_VARIANTS; variant++) {
+          const drawing = new Graphics();
+          drawNpcSilhouette(drawing, category, variant);
+          npcTextures.set(
+            `${category}:${variant}`,
+            app.renderer.generateTexture({
+              target: drawing,
+              frame: new Rectangle(0, 0, 64, 64),
+            }),
+          );
+          drawing.destroy();
+        }
+      }
       journalDrawing.destroy();
       const objects = new Container();
       const itemDrawing = new Graphics();
@@ -331,6 +352,7 @@ export function GameCanvas({
         textureBudget.close();
         oldCleanup();
         journalTexture.destroy(true);
+        for (const texture of npcTextures.values()) texture.destroy(true);
         for (const texture of itemTextures.values()) texture.destroy(true);
         for (const texture of artTextures.values()) texture.destroy(true);
         artTextures.clear();
@@ -627,11 +649,13 @@ export function GameCanvas({
               record.animationBase = undefined;
               record.sprite.texture =
                 boundTexture ||
-                (entity.item
-                  ? itemTextures.get(entity.item.visual)!
-                  : entity.visual === 'journal'
-                    ? journalTexture
-                    : frames[frame]);
+                (entity.kind === 'npc'
+                  ? npcTextures.get(npcSilhouetteKey(entity))!
+                  : entity.item
+                    ? itemTextures.get(entity.item.visual)!
+                    : entity.visual === 'journal'
+                      ? journalTexture
+                      : frames[frame]);
               record.sprite.width = tile;
               record.sprite.height = boundTexture && entity.kind === 'door' ? tile * 1.5 : tile;
             }

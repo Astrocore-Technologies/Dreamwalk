@@ -10,6 +10,21 @@ export const localeNames: Record<Locale, string> = {
 export const intlLocales: Record<Locale, string> = { uk: 'uk-UA', en: 'en-GB', ru: 'ru-RU' };
 const messages: Record<string, Record<Locale, string>> = {
   ...gameMessages,
+  'Силуэт NPC': { ru: 'Силуэт NPC', en: 'NPC silhouette', uk: 'Силует NPC' },
+  'Нейтральный силуэт': {
+    ru: 'Нейтральный силуэт',
+    en: 'Neutral silhouette',
+    uk: 'Нейтральний силует',
+  },
+  'Мужской силуэт': { ru: 'Мужской силуэт', en: 'Male silhouette', uk: 'Чоловічий силует' },
+  'Женский силуэт': { ru: 'Женский силуэт', en: 'Female silhouette', uk: 'Жіночий силует' },
+  'Группа силуэтов': { ru: 'Группа силуэтов', en: 'Crowd silhouette', uk: 'Група силуетів' },
+  'Временный силуэт. Собственный арт заменяет его, размер персонажа не меняется.': {
+    ru: 'Временный силуэт. Собственный арт заменяет его, размер персонажа не меняется.',
+    en: 'Temporary silhouette. Custom art replaces it without changing creature size.',
+    uk: 'Тимчасовий силует. Власний арт замінює його без зміни розміру персонажа.',
+  },
+
   'Подтверди почту, чтобы продолжить.': {
     ru: 'Подтверди почту, чтобы продолжить.',
     en: 'Verify your email to continue.',
