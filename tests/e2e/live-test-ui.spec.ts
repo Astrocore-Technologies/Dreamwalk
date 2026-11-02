@@ -376,7 +376,7 @@ test('synthetic planning estimate is never shown as a free hard cap and cannot d
   expect(mock.calls.dispatch).toBe(0);
   expect(mock.calls.unexpected).toBe(0);
 });
-test('synthetic world requests require individual consent and stale phase fences disable approval', async ({
+test('gameplay hides world-request diagnostics without granting background consent', async ({
   page,
 }) => {
   await account(page);
@@ -450,34 +450,18 @@ test('synthetic world requests require individual consent and stale phase fences
     throw new Error(`Unexpected synthetic test route ${path}`);
   });
   await page.goto(`/game/${id}`);
-  const panel = page.getByTestId('live-test-panel');
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(panel).toBeVisible();
+  await expect(page.getByTestId('live-test-panel')).toHaveCount(0);
+  await expect(page.getByTestId('release-generation-panel')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Check world requests', exact: true })).toHaveCount(
+    0,
+  );
   await expect.poll(() => isolatedGameSockets).toBeGreaterThan(0);
-  await panel.getByRole('button', { name: 'Check world requests', exact: true }).click();
-  const first = panel.locator(`[data-live-request="${requests[0].id}"]`),
-    second = panel.locator(`[data-live-request="${requests[1].id}"]`);
-  await expect(first).toBeVisible();
   expect(approvals).toBe(0);
-  await first
-    .getByLabel('I approve only this request up to the displayed amount.', { exact: true })
-    .check();
-  await first.getByRole('button', { name: 'Approve this request', exact: true }).click();
-  await expect(first.getByText('Authorized', { exact: true })).toBeVisible();
-  await expect(second.getByRole('checkbox')).not.toBeChecked();
-  expect(approvals).toBe(1);
   envelope.projection.turn.phaseEpoch++;
   await page.reload();
-  await panel.getByRole('button', { name: 'Check world requests', exact: true }).click();
-  await expect(
-    panel.getByText('The turn changed. Refresh requests first.', { exact: true }),
-  ).toBeVisible();
-  await expect(
-    panel
-      .locator(`[data-live-request="${requests[1].id}"]`)
-      .getByRole('button', { name: 'Approve this request', exact: true }),
-  ).toBeDisabled();
-  expect(approvals).toBe(1);
+  await expect(page.getByTestId('live-test-panel')).toHaveCount(0);
+  expect(approvals).toBe(0);
 });
 
 test('admin catalog hides generation controls without enabling provider calls', async ({

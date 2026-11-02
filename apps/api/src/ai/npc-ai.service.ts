@@ -186,6 +186,9 @@ export class NpcAiEngine {
     if (!this.contextWindow()) return { ...context, budgetExceeded: false };
     return packNpcContextWindow(context, (value) => this.contextFits(purpose, value));
   }
+  releaseGeneration() {
+    return this.provider instanceof ReleaseGenerationProvider;
+  }
   manualLive() {
     return this.provider.manualLive === true;
   }
@@ -659,7 +662,10 @@ export class NpcAiEngine {
           request.campaign_id !== scope.campaignId ||
           request.npc_id !== scope.npcId ||
           request.purpose !== (scope.purpose ?? 'plan') ||
-          request.context.contextHash !== context.contextHash
+          request.context.contextHash !== context.contextHash ||
+          (input.expectedRuntimeContextDigest !== undefined &&
+            (digest(request.context) !== input.expectedRuntimeContextDigest ||
+              digest(context) !== input.expectedRuntimeContextDigest))
         )
           fail(409, 'RUNTIME_REQUEST_STALE', 'RUNTIME_REQUEST_STALE');
       }

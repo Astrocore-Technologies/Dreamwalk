@@ -72,7 +72,11 @@ export function StaticPage({ path }: { path: string }) {
             <Sparkles size={25} />
             <h2>{t('Что такое искры?')}</h2>
             <p>
-              {locale === 'ru' ? 'Искры показывают стоимость AI-действий. Покупки и платный кошелёк пока не активированы; демонстрационный баланс не является деньгами. Генерация доступна только с отдельным разрешением и защитными лимитами владельца.' : locale === 'uk' ? 'Іскри показують вартість AI-дій. Покупки та платний гаманець поки не активовано; демонстраційний баланс не є грошима. Генерація доступна лише з окремим дозволом і захисними лімітами власника.' : 'Sparks express AI action costs. Purchases and the paid wallet are not active; demo balances are not money. Generation requires separate authorization and owner safety limits.'}
+              {locale === 'ru'
+                ? 'Генерация расходует Искры. Перед подтверждением ты увидишь примерную стоимость и резерв; после выполнения — фактический расход. Неиспользованный резерв освобождается, а неизвестный расход остаётся на сверке.'
+                : locale === 'uk'
+                  ? 'Генерація витрачає Іскри. Перед підтвердженням ти побачиш приблизну вартість і резерв; після виконання — фактичну витрату. Невикористаний резерв звільняється, а невідома витрата залишається на звірці.'
+                  : 'Generation uses Sparks. Before confirming, you see the estimated cost and planned hold; afterward, the actual usage. Unused holds are released, while unknown costs remain pending reconciliation.'}
             </p>
             <MoreLink href="/wallet">{t('Посмотреть кошелёк')}</MoreLink>
           </Panel>

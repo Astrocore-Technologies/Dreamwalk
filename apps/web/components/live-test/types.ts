@@ -62,6 +62,7 @@ export type TextCountView = {
   latest: TextCountReceipt | null;
 };
 export type LiveRequest = {
+  composerBound?: boolean;
   counting?: TextCountView;
   errorCode?: string | null;
   configFingerprint?: string | null;
