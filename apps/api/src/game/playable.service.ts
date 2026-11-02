@@ -280,16 +280,30 @@ export class PlayableService {
     const currentContent = contentSchema.parse((story.data as Record<string, unknown>).content);
     const sameIds = (a: string[], b: string[]) =>
       JSON.stringify([...new Set(a)].sort()) === JSON.stringify([...new Set(b)].sort());
-    if (
+    const linkedLocations = draft.maps.flatMap((m) =>
+      m.sourceLocationId ? [m.sourceLocationId] : [],
+    );
+    const linkedNpcs = draft.npcs.flatMap((n) => (n.sourceNpcId ? [n.sourceNpcId] : []));
+    // Standalone legacy maps were authored independently of the narrative wizard.
+    // Do not replace their reviewed mechanics/objectives merely because no source links exist.
+    const previousNpcIds =
+      (
+        await c.query(
+          "SELECT package->'source'->'content'->'npcIds' AS ids FROM game_playable_versions WHERE adventure_id=$1 ORDER BY created_at DESC LIMIT 1",
+          [story.id],
+        )
+      ).rows[0]?.ids ?? [];
+    const changedLinkedLocations =
+      linkedLocations.length > 0 &&
       !sameIds(
-        draft.maps.flatMap((m) => (m.sourceLocationId ? [m.sourceLocationId] : [])),
+        linkedLocations,
         currentContent.locations.map((l) => l.id),
-      ) ||
-      !sameIds(
-        draft.npcs.flatMap((n) => (n.sourceNpcId ? [n.sourceNpcId] : [])),
-        currentContent.npcIds,
-      )
-    )
+      );
+    const changedLinkedNpcs =
+      linkedLocations.length > 0 &&
+      (currentContent.npcIds.length > 0 || previousNpcIds.length > 0) &&
+      !sameIds(linkedNpcs, currentContent.npcIds);
+    if (changedLinkedLocations || changedLinkedNpcs)
       return this.freezeLaunchSource(c, story, audience, expectedArtRevision, draft);
     await this.validateNpcReferences(c, String(story.owner_id), draft, String(story.id));
     this.validateLocations(story, draft);

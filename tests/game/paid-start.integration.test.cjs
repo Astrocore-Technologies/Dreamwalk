@@ -491,6 +491,40 @@ test(
         },
       );
       await t.test(
+        'standalone legacy authored maps remain free without narrative source links',
+        async () => {
+          const { createAuthoredDraft } = require('../../packages/game-core/dist');
+          const legacyId = randomUUID();
+          const legacyData = adventureSchema.parse({
+            title: 'Standalone mechanics',
+            visibility: 'private',
+          });
+          await pool.query(
+            "INSERT INTO adventures(id,owner_id,title,synopsis,slug,genre,status,visibility,data) VALUES($1,$2,'Standalone mechanics','Fixture',$3,'mystery','draft','private',$4)",
+            [legacyId, owner, 'legacy-' + legacyId, JSON.stringify(legacyData)],
+          );
+          const draft = createAuthoredDraft('courtyard');
+          for (const map of draft.maps) delete map.sourceLocationId;
+          draft.npcs[0].sourceNpcId = npcId;
+          await pool.query(
+            'INSERT INTO adventure_game_drafts(adventure_id,revision,draft) VALUES($1,1,$2)',
+            [legacyId, JSON.stringify(draft)],
+          );
+          const row = (await db.query('SELECT * FROM adventures WHERE id=$1', [legacyId]))[0];
+          const v = await db.tx((c) => playable.freeze(c, row, 'private', 1));
+          assert.ok(
+            (await db.query('SELECT package FROM game_playable_versions WHERE id=$1', [v]))[0]
+              .package.compiled,
+          );
+          const result = await game.create(request(owner), {
+            playableVersionId: v,
+            turnBased: false,
+          });
+          assert.ok(result.campaignId);
+          assert.equal(calls, 2);
+        },
+      );
+      await t.test(
         'public launch source still requires the current approved publication',
         async () => {
           const publicId = randomUUID(),
