@@ -375,13 +375,24 @@ await test(
             // Drain batches rather than bypass the real queue admission limit.
             if (i % 8 === 7 || i === 139)
               await until(
-                () =>
-                  db.query(
+                async () => {
+                  // SQL polling is not player presence. Keep the online actor active while
+                  // draining; otherwise the 5-second offline freeze can stop this very queue.
+                  await snapshot(owner, cid);
+                  return db.query(
                     "SELECT count(*) FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id WHERE r.campaign_id=$1 AND (r.status='queued' OR j.status IN ('reserved','running','result_received','validated'))",
                     [cid],
-                  ),
+                  );
+                },
                 (r) => Number(r.rows[0].count) === 0,
-              );
+              ).catch(async (error) => {
+                const pending = await db.query(
+                  'SELECT r.status AS request_status,r.result_code,j.status AS job_status,j.result_code AS job_result,count(*)::int FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id WHERE r.campaign_id=$1 GROUP BY 1,2,3,4',
+                  [cid],
+                );
+                t.diagnostic(`Batch ${i}: queue status counts ${JSON.stringify(pending.rows)}`);
+                throw error;
+              });
           }
           const state = await stored(cid),
             hot = state.npcBrains.gardener.living.observations;
