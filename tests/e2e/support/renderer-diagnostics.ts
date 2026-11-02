@@ -53,6 +53,94 @@ export async function profileOwnerReload(page: Page, info: TestInfo): Promise<()
       return /^\/?[\w./-]+\.[cm]?js$/.test(value) ? value : '[omitted]';
     }
   };
+  // Browser-level metadata is projected immediately; never retain the returned
+  // commandLine, machine model, driver strings, proxy arguments or profile paths.
+  const browser = page.context().browser();
+  const browserSession = browser
+    ? await bounded('browser-session', () => browser.newBrowserCDPSession())
+    : undefined;
+  let gpuBackend: unknown;
+  let launchFlags: unknown;
+  if (browserSession) {
+    try {
+      const system = await bounded('gpu-info', () => browserSession.send('SystemInfo.getInfo'));
+      if (system) {
+        const renderer = [
+          system.gpu.auxAttributes?.glRenderer,
+          system.gpu.auxAttributes?.glVendor,
+          ...system.gpu.devices.map((device) => device.deviceString),
+        ].join(' ');
+        gpuBackend = {
+          devices: system.gpu.devices.map((device) => ({
+            vendorId: Number.isSafeInteger(device.vendorId) ? device.vendorId : undefined,
+            deviceId: Number.isSafeInteger(device.deviceId) ? device.deviceId : undefined,
+          })),
+          software: /swiftshader/i.test(renderer)
+            ? 'swiftshader'
+            : /llvmpipe/i.test(renderer)
+              ? 'llvmpipe'
+              : /softpipe/i.test(renderer)
+                ? 'softpipe'
+                : 'not-identified',
+          angle: /\bANGLE\b/.test(renderer),
+          vulkan: /vulkan/i.test(renderer),
+          features: Object.fromEntries(
+            ['webgl', 'webgl2', 'gpu_compositing'].map((key) => {
+              const value = system.gpu.featureStatus?.[key];
+              return [
+                key,
+                [
+                  'enabled',
+                  'enabled_on',
+                  'enabled_force',
+                  'disabled_off',
+                  'disabled_software',
+                  'unavailable_software',
+                  'unavailable_off',
+                  'unavailable_force',
+                  'disabled_off_ok',
+                ].includes(value || '')
+                  ? value
+                  : 'not-identified',
+              ];
+            }),
+          ),
+        };
+      }
+      const command = await bounded('browser-flags', () =>
+        browserSession.send('Browser.getBrowserCommandLine'),
+      );
+      if (command) {
+        const args = command.arguments;
+        launchFlags = {
+          headless: args.some((arg) =>
+            ['--headless', '--headless=new', '--headless=old'].includes(arg),
+          ),
+          unsafeSwiftshaderEnabled: args.includes('--enable-unsafe-swiftshader'),
+          gpuDisabled: args.includes('--disable-gpu'),
+          softwareRasterizerDisabled: args.includes('--disable-software-rasterizer'),
+          useAngle: [
+            'default',
+            'd3d11',
+            'd3d9',
+            'gl',
+            'gles',
+            'vulkan',
+            'metal',
+            'swiftshader',
+            'swiftshader-webgl',
+          ].find((value) => args.includes(`--use-angle=${value}`)),
+          useGl: ['default', 'angle', 'desktop', 'egl', 'swiftshader', 'disabled'].find((value) =>
+            args.includes(`--use-gl=${value}`),
+          ),
+        };
+      }
+    } catch {
+      errors.push('gpu-metadata-projection');
+    } finally {
+      await bounded('browser-detach', () => browserSession.detach());
+    }
+  }
   const session = await bounded('session', () => page.context().newCDPSession(page));
   let before: unknown;
   if (session) {
@@ -110,6 +198,8 @@ export async function profileOwnerReload(page: Page, info: TestInfo): Promise<()
               scope: 'owner-final-reload-readiness-only',
               profilingOverhead: true,
               browserVersion: page.context().browser()?.version(),
+              gpuBackend,
+              launchFlags,
               consoleTypes,
               webglWarnings,
               metricsBefore: metrics(before),

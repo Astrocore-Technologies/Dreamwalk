@@ -1,4 +1,5 @@
 'use client';
+import { intersectsViewport, rendererActivity } from './renderer-activity';
 import { sceneClick } from './scene-input';
 import { entityLayout, containsScenePoint } from './scene-geometry';
 import { MapActions, InventoryPanel } from './map-actions';
@@ -106,7 +107,9 @@ export function GameCanvas({
       if (disposed) return;
       const app = new Application();
       await app.init({
-        resizeTo: element,
+        autoStart: false,
+        width: Math.max(1, element.clientWidth),
+        height: Math.max(1, element.clientHeight),
         background: '#171321',
         antialias: true,
         resolution: Math.min(devicePixelRatio || 1, 2),
@@ -118,12 +121,63 @@ export function GameCanvas({
       }
       element.appendChild(app.canvas);
       app.canvas.setAttribute('aria-hidden', 'true');
+      // ResizePlugin's resizeTo renders unconditionally, even with a stopped
+      // ticker. Own resizing here so offscreen/hidden canvases do no frame work.
+      let synchronizeFrame = () => {};
+      let resumeFrame = () => {};
+      const resize = () =>
+        app.renderer.resize(Math.max(1, element.clientWidth), Math.max(1, element.clientHeight));
+      element.dataset.rendererActive = 'false';
+      const activity = rendererActivity({
+        resume: () => {
+          resize();
+          resumeFrame();
+          app.render();
+          element.dataset.rendererActive = 'true';
+          app.start(); // Pixi resets its RAF timestamp when restarting.
+        },
+        pause: () => {
+          app.stop();
+          element.dataset.rendererActive = 'false';
+        },
+      });
+      const supportsIntersection = typeof IntersectionObserver !== 'undefined';
+      let inViewport =
+        !supportsIntersection ||
+        intersectsViewport(element.getBoundingClientRect(), window.innerWidth, window.innerHeight);
+      const visibility = () => activity.visibility(inViewport, document.hidden);
+      const intersection = supportsIntersection
+        ? new IntersectionObserver(
+            (entries) => {
+              const entry = entries.find((value) => value.target === element);
+              if (!entry) return;
+              inViewport =
+                entry.isIntersecting &&
+                entry.intersectionRect.width > 0 &&
+                entry.intersectionRect.height > 0;
+              visibility();
+            },
+            { threshold: [0, Number.EPSILON] },
+          )
+        : null;
+      intersection?.observe(element);
+      document.addEventListener('visibilitychange', visibility);
+      visibility();
       const observer = new ResizeObserver(() => {
-        app.resize();
+        if (!activity.isActive()) return;
+        resize();
+        synchronizeFrame();
+        app.render();
       });
       observer.observe(element);
+      let cleaned = false;
       cleanup = () => {
-        observer?.disconnect();
+        if (cleaned) return;
+        cleaned = true;
+        intersection?.disconnect();
+        document.removeEventListener('visibilitychange', visibility);
+        observer.disconnect();
+        activity.dispose();
         app.destroy(true, { children: true });
       };
       const atlas = await Assets.load<InstanceType<typeof Texture>>(
@@ -268,7 +322,10 @@ export function GameCanvas({
       const retryArtAt = new Map<string, number>();
       let artKey = '';
       const oldCleanup = cleanup;
+      let resourcesCleaned = false;
       cleanup = () => {
+        if (resourcesCleaned) return;
+        resourcesCleaned = true;
         for (const controller of artRequests.values()) controller.abort();
         artRequests.clear();
         textureBudget.close();
@@ -470,8 +527,10 @@ export function GameCanvas({
         if (interaction?.kind === 'npc') state.onSelectNpc(interaction.npcId);
         else if (interaction?.kind === 'move') state.onMove(interaction.target);
       });
+      let resuming = false;
       const render = () => {
-        const { projection: p, reducedMotion: reduced } = latest.current;
+        const { projection: p, reducedMotion } = latest.current;
+        const reduced = reducedMotion || resuming;
         app.ticker.maxFPS = reduced ? 30 : 60;
         synchronizeArt();
         const key = `${p.map.id}:${p.map.revision}:${p.map.width}:${p.map.height}:${p.map.sceneProfile || ''}:${JSON.stringify(p.map.composition)}`;
@@ -641,6 +700,14 @@ export function GameCanvas({
           }
         }
         for (const record of sprites.values()) {
+          if (resuming) {
+            record.trace = undefined;
+            record.feedback = undefined;
+            record.walkingUntil = 0;
+            record.previousX = record.x;
+            record.previousY = record.y;
+            record.changedAt = now - 200;
+          }
           const fraction = reduced ? 1 : Math.min(1, (now - record.changedAt) / 130);
           const trace =
             !reduced && record.trace
@@ -688,6 +755,7 @@ export function GameCanvas({
           }
         }
         actors.sortableChildren = true;
+        const renderedActor = p.entities.find((entity) => entity.id === p.actorId);
         const own = sprites.get(p.actorId);
         const camera = mapCamera({
           viewportWidth: app.screen.width,
@@ -711,6 +779,13 @@ export function GameCanvas({
           const text = value.toFixed(3);
           if (element.dataset[key] !== text) element.dataset[key] = text;
         }
+        for (const [key, value] of Object.entries({
+          renderedMapId: p.map.id,
+          renderedActorX: String(renderedActor?.x ?? ''),
+          renderedActorY: String(renderedActor?.y ?? ''),
+        })) {
+          if (element.dataset[key] !== value) element.dataset[key] = value;
+        }
         if (own) {
           focus
             .clear()
@@ -726,7 +801,16 @@ export function GameCanvas({
 
       app.ticker.maxFPS = latest.current.reducedMotion ? 30 : 60;
       app.ticker.add(render);
-      render();
+      synchronizeFrame = render;
+      resumeFrame = () => {
+        resuming = true;
+        try {
+          render();
+        } finally {
+          resuming = false;
+        }
+      };
+      activity.ready();
     })().catch(() => {
       if (!disposed) {
         cleanup();

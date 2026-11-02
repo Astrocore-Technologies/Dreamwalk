@@ -264,6 +264,11 @@ test('four players retain the legacy realtime Observatory ending with owned hero
       const finishProfile = index === 0 ? await profileOwnerReload(page, test.info()) : undefined;
       try {
         await page.reload();
+        // Restored scroll may leave the map offscreen, where rendering is correctly paused.
+        // Reveal it as a user would before asserting its actual restored scene.
+        await page
+          .getByRole('group', { name: 'Карта приключения', exact: true })
+          .scrollIntoViewIfNeeded();
         // A restored HTTP projection can show the ending before Pixi/socket startup.
         // Use the existing 15s expectation bound for actual readiness on every client,
         // not force-clicking a toolbar while reconnect banners still move its layout.
