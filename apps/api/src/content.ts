@@ -620,7 +620,10 @@ export class ContentController {
         ownedCharacterPackage(c, u.id, String(data.characterPackageVersionId)),
       );
       // An explicit portrait edit is independent of the existing in-world sprite package.
-      if (!Object.hasOwn(patch, 'portraitAssetId'))
+      if (
+        Object.hasOwn(patch, 'characterPackageVersionId') &&
+        !Object.hasOwn(patch, 'portraitAssetId')
+      )
         data.portraitAssetId = manifest.parts.find((p) => p.role === 'portrait')!.uploadId;
     }
     if (
