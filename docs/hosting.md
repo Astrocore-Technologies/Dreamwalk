@@ -120,3 +120,13 @@ Railway Config as Code is deprecated and cannot be enabled on new services.
 The settings worksheet is deliberately not named railway.json. For this release,
 service API settings own the configuration; no project-wide IaC import/apply runs.
 Source: https://docs.railway.com/infrastructure-as-code#migrating-from-config-as-code.
+
+## Production database prerequisite
+
+The database operator must install `pgcrypto` once using their database console.
+It is needed by existing SQL digest-based erasure triggers, not only UUIDs.
+Production migrations only read-check `pg_extension` and fail closed if it is
+missing. After verification, the runner omits the exact extension-install statement
+from the first migration's execution; historical files and recorded checksums are
+unchanged. New extension DDL is rejected in production, not silently executed.
+No operator extension command is dispatched by the deployment agent.
