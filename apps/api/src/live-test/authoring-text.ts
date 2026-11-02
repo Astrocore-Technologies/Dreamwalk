@@ -180,33 +180,45 @@ export class AuthoringTextEngine {
     );
   }
   private async activePolicy(c: PoolClient, authorizationId: string) {
-    if (this.live.mode === 'owner') return this.live.assertActivePolicy(c, authorizationId);
+    if (this.live.mode === 'owner' || this.live.mode === 'release')
+      return this.live.assertActivePolicy(c, authorizationId);
     return null;
   }
   async quote(
     ownerId: string,
-    input: AuthoringTextBinding & { operationId: string; context: unknown },
+    input: Omit<AuthoringTextBinding, 'sessionId'> & {
+      sessionId?: string;
+      operationId: string;
+      context: unknown;
+    },
     validateFence: AuthoringTextFence,
   ) {
     await this.live.requireOwner(ownerId);
     z.uuid().parse(input.operationId);
-    const binding = bindingSchema.parse(
-      Object.fromEntries(
-        Object.entries(input).filter(([k]) => !['operationId', 'context'].includes(k)),
-      ),
-    );
+    const candidateBinding = bindingSchema
+      .extend({ sessionId: z.uuid().optional() })
+      .parse(
+        Object.fromEntries(
+          Object.entries(input).filter(([k]) => !['operationId', 'context'].includes(k)),
+        ),
+      );
     const context = JSON.parse(JSON.stringify(input.context));
     if (Buffer.byteLength(JSON.stringify(context)) > 32000)
       fail(400, 'AUTHORING_CONTEXT_TOO_LARGE', 'AUTHORING_CONTEXT_TOO_LARGE');
     const snapshot = this.provider.prepareTextRequest?.(context)?.snapshot ?? null;
-    const requestHash = digest({
-      binding,
-      context,
-      provider: this.provider.version,
-      ...(snapshot ? { requestSnapshot: snapshot } : {}),
-    });
     return this.db.tx(async (c) => {
       await this.lockSource(c, ownerId);
+      const sessionId =
+        this.live.mode === 'release'
+          ? await this.live.resolveAuthorizationId(c, ownerId, candidateBinding.sessionId)
+          : candidateBinding.sessionId;
+      const binding = bindingSchema.parse({ ...candidateBinding, sessionId });
+      const requestHash = digest({
+        binding,
+        context,
+        provider: this.provider.version,
+        ...(snapshot ? { requestSnapshot: snapshot } : {}),
+      });
       await assertBoundedTextSource(c, binding.sessionId, binding.projectId);
       await this.live.authorizeText(c, ownerId, binding.sessionId);
       const activePolicy = await this.activePolicy(c, binding.sessionId);
@@ -250,22 +262,26 @@ export class AuthoringTextEngine {
           ],
         )
       ).rows[0];
-      const sparkQuoteId = await quoteSparks(c, {
-        ownerId,
-        operationId: id,
-        sourceKind: 'text',
-        sourceId: id,
-        reserveSubunits: String(row.upper_micros),
-        expiresAt: expiresAt.toISOString(),
-        tariff: sparkTariff(snapshot ?? this.live.textProfile(), 'openai', this.provider.version),
-        providerQuote: {
-          quoteId: id,
-          providerVersion: this.provider.version,
-          requestHash,
-          profile: this.live.textProfile(),
-          requestSnapshot: snapshot,
+      const sparkQuoteId = await quoteSparks(
+        c,
+        {
+          ownerId,
+          operationId: id,
+          sourceKind: 'text',
+          sourceId: id,
+          reserveSubunits: String(row.upper_micros),
+          expiresAt: expiresAt.toISOString(),
+          tariff: sparkTariff(snapshot ?? this.live.textProfile(), 'openai', this.provider.version),
+          providerQuote: {
+            quoteId: id,
+            providerVersion: this.provider.version,
+            requestHash,
+            profile: this.live.textProfile(),
+            requestSnapshot: snapshot,
+          },
         },
-      });
+        { required: this.live.mode === 'release' },
+      );
       await c.query('UPDATE live_authoring_text_quotes SET spark_quote_id=$2 WHERE id=$1', [
         id,
         sparkQuoteId,
@@ -342,13 +358,23 @@ export class AuthoringTextEngine {
       const id = randomUUID();
       const reservation = await reserveGenerationSpend(
         c,
-        policy,
+        this.live.mode === 'release' && locked.request_snapshot?.costBasis === 'operator_estimate'
+          ? {
+              ...policy,
+              verifiedUpperMicros: null,
+              costBasis: 'approved_estimate',
+              estimatedTotalMicros: locked.request_snapshot.estimatedTotalMicros,
+              operationalReserveMicros: Number(locked.upper_micros),
+            }
+          : policy,
         ownerId,
         'text',
         `manual-authoring-text:${id}`,
         Number(locked.upper_micros),
       );
-      await reserveSparks(c, ownerId, locked.spark_quote_id, reservation);
+      await reserveSparks(c, ownerId, locked.spark_quote_id, reservation, {
+        required: this.live.mode === 'release',
+      });
       const job = (
         await c.query<AuthoringJob>(
           "INSERT INTO live_authoring_text_jobs(id,actor_id,session_id,project_id,operation_id,quote_id,request_hash,project_revision,source_hash,readset_hash,context_hash,context,provider_version,reservation_id,status,request_snapshot,generation_policy_revision,generation_policy_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'queued',$15,$16,$17) RETURNING *",
@@ -783,7 +809,7 @@ export function createAuthoringTextEngine(
     live,
     new BoundedAuthoringTextProvider(
       definition,
-      live.mode === 'owner'
+      live.mode === 'owner' || live.mode === 'release'
         ? (process.env.NPC_AI_API_KEY ?? process.env.OPENAI_API_KEY)
         : process.env.NPC_AI_API_KEY,
       fetch,

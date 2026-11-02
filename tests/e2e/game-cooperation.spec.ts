@@ -26,7 +26,13 @@ async function register(page: Page) {
 test('two independent browser sessions share one key, preserve it on reload, and split maps', async ({
   browser,
 }) => {
-  test.setTimeout(90000);
+  test.setTimeout(process.env.CI ? 160000 : 90000);
+  if (process.env.CI) {
+    // CI runs one worker against one shared API/IP. Earlier scenarios can exhaust
+    // its real 600/minute window; begin this scenario after a quiet full window,
+    // before any mutation. Keep runtime limits and unknown-outcome rules intact.
+    await new Promise((resolve) => setTimeout(resolve, 61000));
+  }
   const ownerContext = await browser.newContext({
     baseURL: test.info().project.use.baseURL,
     reducedMotion: 'reduce',

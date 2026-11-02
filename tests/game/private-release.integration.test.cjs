@@ -85,6 +85,8 @@ test(
         return req.user;
       },
       current: async (req) => req.user ?? null,
+      viewer: async (req) =>
+        req.user?.emailVerificationRequired && !req.user.emailVerified ? null : (req.user ?? null),
       ownedAsset: async (user, id) => {
         if (
           id &&
@@ -274,6 +276,17 @@ test(
           assert.equal(await access(invited, privateTest), false);
           assert.equal(await access(outsider, release.playableVersionId), false);
           await assert.rejects(controller.detail(storyId, request(outsider)), code('NOT_FOUND'));
+          await assert.rejects(
+            controller.detail(storyId, {
+              user: {
+                id: invited,
+                role: 'user',
+                emailVerificationRequired: true,
+                emailVerified: false,
+              },
+            }),
+            code('NOT_FOUND'),
+          );
           await assert.rejects(
             db.tx((c) => playable.resolveForStart(c, invited, privateTest, randomUUID(), 1)),
             code('FORBIDDEN'),

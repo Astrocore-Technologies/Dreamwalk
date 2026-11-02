@@ -10,7 +10,7 @@ import { createAuthoringTextEngine } from './live-test/authoring-text';
 import { LiveTestController } from './live-test/controller';
 import { LiveTestService } from './live-test/service';
 import { GenerationAuthority } from './generation/service';
-import { readOwnerGenerationConfig } from './generation/config';
+import { readGenerationConfig } from './generation/config';
 import { readLiveTestConfig } from './live-test/config';
 import { VisualAuthoringController } from './visual-authoring/controller';
 import { VisualAuthoringService } from './visual-authoring/service';
@@ -53,11 +53,13 @@ class Health {
       status: 'ok',
       mode: 'platform',
       aiProvider:
-        process.env.GENERATION_MODE === 'owner'
-          ? 'owner-configured'
-          : process.env.LIVE_TEST_ENABLED === 'true'
-            ? 'openai-manual'
-            : 'mock',
+        process.env.GENERATION_MODE === 'release'
+          ? 'release-configured'
+          : process.env.GENERATION_MODE === 'owner'
+            ? 'owner-configured'
+            : process.env.LIVE_TEST_ENABLED === 'true'
+              ? 'openai-manual'
+              : 'mock',
       paymentsEnabled: false,
     };
   }
@@ -89,10 +91,13 @@ class Health {
       provide: GenerationAuthority,
       inject: [Db],
       useFactory: (db: Db) => {
-        const owner = readOwnerGenerationConfig(process.env);
-        if (owner.mode === 'owner' && process.env.LIVE_TEST_ENABLED === 'true')
+        const owner = readGenerationConfig(process.env);
+        if (owner.mode !== 'disabled' && process.env.LIVE_TEST_ENABLED === 'true')
           throw new Error('GENERATION_MODES_CONFLICT');
-        return new GenerationAuthority(db, owner.mode === 'owner' ? owner : readLiveTestConfig());
+        return new GenerationAuthority(
+          db,
+          owner.mode !== 'disabled' ? owner : readLiveTestConfig(),
+        );
       },
     },
     // Compatibility token only; ordinary mode uses the generic authority above.

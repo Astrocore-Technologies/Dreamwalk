@@ -1,6 +1,7 @@
 import type { TextRequestEstimateSnapshot } from './request-reserve-types';
 export type TurnFence = { roundId: string; phaseEpoch: number; rulesetVersion: 1 };
 export type LiveTestStatus = {
+  ownerId?: string;
   imageOnlyAdmission?: boolean;
   retainedImageHoldMicros?: number;
   imageActiveHeldMicros?: number;
@@ -9,7 +10,7 @@ export type LiveTestStatus = {
   configFingerprint?: string;
   activeConfigFingerprint?: string | null;
   enabled: boolean;
-  mode?: 'manual' | 'owner';
+  mode?: 'manual' | 'owner' | 'release';
   authorizationId?: string | null;
   sessionId: string | null;
   state: 'unclaimed' | 'active' | 'stopped' | 'expired';
@@ -77,7 +78,7 @@ export type LiveRequests = { turnFence: TurnFence; requests: LiveRequest[] };
 export const generationAuthorizationId = (value: LiveTestStatus | null) =>
   value?.authorizationId ?? value?.sessionId ?? null;
 export const generationExpired = (value: LiveTestStatus, now = Date.now()) =>
-  value.mode === 'owner'
+  value.mode === 'owner' || value.mode === 'release'
     ? false
     : !value.expiresAt ||
       !Number.isFinite(Date.parse(value.expiresAt)) ||
@@ -88,7 +89,7 @@ export const liveSessionActive = (value: LiveTestStatus | null, now = Date.now()
   !!value &&
   value.enabled &&
   value.state === 'active' &&
-  !!generationAuthorizationId(value) &&
+  (value.mode === 'release' || !!generationAuthorizationId(value)) &&
   !generationExpired(value, now) &&
   generationPricingCurrent(value, now) &&
   value.remainingMicros > 0;
@@ -100,6 +101,15 @@ export const imageSessionActive = (value: LiveTestStatus | null, now = Date.now(
     value.imageOnlyAdmission === true &&
     value.imagesEnabled &&
     liveSessionActive({ ...value, state: 'active' }, now));
+/** Release creates authority on the first quoted POST; legacy modes still need a grant ID. */
+export const imageQuoteAuthorizationAvailable = (
+  value: LiveTestStatus | null,
+  legacyAuthorizationId?: string | null,
+  now = Date.now(),
+) =>
+  value?.mode === 'release'
+    ? value.imagesEnabled && imageSessionActive(value, now)
+    : !!(generationAuthorizationId(value) ?? legacyAuthorizationId);
 export const sameTurnFence = (a?: TurnFence, b?: TurnFence) =>
   !!a &&
   !!b &&
@@ -173,7 +183,7 @@ export const liveRequestConsentFence = (
   authorization?: Pick<LiveTestStatus, 'mode'> | null,
 ): { estimateFingerprint?: string; policyRevision?: number; policyHash?: string } | null => {
   const heuristic = request.estimateSnapshot?.costBasis === 'operator_estimate';
-  if (authorization?.mode !== 'owner' && !heuristic) return {};
+  if (authorization?.mode !== 'owner' && authorization?.mode !== 'release' && !heuristic) return {};
   if (
     !Number.isSafeInteger(request.policyRevision) ||
     (request.policyRevision ?? -1) < 0 ||

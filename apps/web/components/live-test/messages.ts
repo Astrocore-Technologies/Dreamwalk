@@ -1,6 +1,38 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const liveMessages = {
+  walletNotEnabled: [
+    'Кошелёк Искр ещё не активирован для этого аккаунта.',
+    'The Sparks wallet is not enabled for this account yet.',
+    'Гаманець Іскор ще не активовано для цього акаунта.',
+  ],
+  insufficientSparks: [
+    'Недостаточно доступных Искр для генерации.',
+    'Not enough available Sparks for generation.',
+    'Недостатньо доступних Іскор для генерації.',
+  ],
+  accountReview: [
+    'Расход по предыдущему запросу требует проверки. Резерв сохранён; повтор автоматически не запускается.',
+    'A previous request needs a cost review. Its reservation is retained; no automatic retry is made.',
+    'Витрати за попереднім запитом потребують перевірки. Резерв збережено; автоматичного повтору немає.',
+  ],
+  policyChanged: [
+    'Настройки генерации изменились. Обновите страницу и получите новую оценку.',
+    'Generation settings changed. Refresh and request a new estimate.',
+    'Налаштування генерації змінилися. Оновіть сторінку й отримайте нову оцінку.',
+  ],
+  releaseTitle: ['Генерация', 'Generation', 'Генерація'],
+  releaseReady: ['Генерация доступна', 'Generation is available', 'Генерація доступна'],
+  releaseUnavailable: [
+    'Генерация сейчас недоступна',
+    'Generation is currently unavailable',
+    'Генерація зараз недоступна',
+  ],
+  releaseBilling: [
+    'Стоимость показывается в Искрах перед запуском. Резерв удерживается до получения результата; повтор неизвестного запроса не запускается автоматически.',
+    'The Sparks cost is shown before generation. A reservation remains until the outcome is known; uncertain requests are never retried automatically.',
+    'Вартість показується в Іскрах перед запуском. Резерв утримується до отримання результату; запит із невідомим результатом не повторюється автоматично.',
+  ],
   countSucceeded: ['Подсчёт сохранён', 'Count saved', 'Підрахунок збережено'],
   countDispatched: ['Подсчёт выполняется', 'Count in progress', 'Підрахунок виконується'],
   countUnknown: [

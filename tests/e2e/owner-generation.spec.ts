@@ -19,6 +19,7 @@ async function fixture(
   page: Page,
   options: {
     locale?: Locale;
+    release?: boolean;
     adminPresentation?: boolean;
     maxReferenceImages?: 0 | 1 | 2;
     forbidden?: boolean;
@@ -105,7 +106,7 @@ async function fixture(
     ).ok(),
   ).toBeTruthy();
   const config = {
-    generationMode: 'owner',
+    generationMode: options.release ? 'release' : 'owner',
     mockAvailable: false,
     externalEnabled: true,
     externalBlockReasons: [],
@@ -129,11 +130,12 @@ async function fixture(
   const configFingerprint = createHash('sha256').update(JSON.stringify(config)).digest('hex');
   const status = {
     configFingerprint,
-    mode: 'owner',
+    ...(options.release ? { policyRevision: 1, policyHash: configFingerprint } : {}),
+    mode: options.release ? 'release' : 'owner',
     enabled: true,
     authorizationId: null as string | null,
     sessionId: null as string | null,
-    state: 'unclaimed',
+    state: options.release ? 'active' : 'unclaimed',
     expiresAt: null,
     pricingValidUntil: new Date(
       Date.now() + (options.stalePricing ? -1000 : 86400000),
@@ -143,8 +145,8 @@ async function fixture(
     heldMicros: 0,
     remainingMicros: 1000000,
     priorHeldReservations: 0,
-    imagesEnabled: false,
-    imageBlockCode: 'GENERATION_AUTHORIZATION_REQUIRED' as string | null,
+    imagesEnabled: options.release === true,
+    imageBlockCode: (options.release ? null : 'GENERATION_AUTHORIZATION_REQUIRED') as string | null,
     stopCode: null as string | null,
     imageConfiguration: { requestProfile: config.requestProfile },
     text: {
@@ -300,9 +302,16 @@ async function fixture(
       expect(status.state).toBe('active');
       expect(body).toMatchObject({
         mode: 'external',
-        liveTestSessionId: authorizationId,
+        ...(options.release ? {} : { liveTestSessionId: authorizationId }),
         studioLocationContext: { locationId, sourceHash },
       });
+      if (options.release) {
+        expect(body.liveTestSessionId).toBeUndefined();
+        expect(body.generationAuthorizationId).toBeUndefined();
+        // First successful quote persists authority; a subsequent read must not invalidate it.
+        status.authorizationId = authorizationId;
+        status.sessionId = authorizationId;
+      }
       calls.quote++;
       return route.fulfill({
         json: {
@@ -311,7 +320,7 @@ async function fixture(
           quote: {
             id: quoteId,
             mode: 'external',
-            generationMode: 'owner',
+            generationMode: options.release ? 'release' : 'owner',
             estimateRiskConsentRequired: true,
             providerEnforcesQuotedCap: false,
             costBasis: 'approved_estimate',
@@ -320,6 +329,18 @@ async function fixture(
             reserveMicros: 100000,
             expiresAt: new Date(Date.now() + 300000).toISOString(),
             rightsAttestationRequired: true,
+            ...(options.release
+              ? {
+                  policyRevision: 1,
+                  policyHash: configFingerprint,
+                  sparks: {
+                    quoteId: randomUUID(),
+                    reserveSubunits: '100000',
+                    rateVersion: 'api-cent-1-spark-v1',
+                    walletCharging: true,
+                  },
+                }
+              : {}),
           },
         },
       });
@@ -893,3 +914,41 @@ for (const maxReferenceImages of [1, 2] as const)
     expect(f.calls.legacy).toBe(0);
     expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
   });
+
+test('ordinary release author generates without Live Test claim or session ID and keeps first quote after admission', async ({
+  page,
+}) => {
+  const f = await fixture(page, { release: true, adminPresentation: false });
+  const dialog = await openLocation(page, f);
+  await expect(dialog.getByTestId('live-test-panel')).toHaveCount(0);
+  await expect(
+    dialog.getByRole('button', { name: 'Authorize owner budget', exact: true }),
+  ).toHaveCount(0);
+  const generation = page.getByRole('region', { name: 'Image preparation', exact: true });
+  await generation
+    .getByLabel('License or terms name', { exact: true })
+    .fill('Synthetic test output');
+  await generation
+    .getByLabel('I confirm rights to this request and the selected owned references.', {
+      exact: true,
+    })
+    .check();
+  const prepareQuote = generation.getByRole('button', {
+    name: 'Check library and prepare quote',
+    exact: true,
+  });
+  // Release authority is first persisted by this POST, never an operator claim.
+  expect(f.status.authorizationId).toBeNull();
+  await expect(prepareQuote).toBeEnabled();
+  await prepareQuote.click();
+  const run = generation.getByRole('button', { name: 'Generate one image', exact: true });
+  await expect(run).toBeDisabled();
+  await generation.getByLabel(requestConsent, { exact: true }).check();
+  await generation.getByLabel(risk, { exact: true }).check();
+  await expect(run).toBeEnabled();
+  await run.click();
+  await expect.poll(() => f.calls.dispatch).toBe(1);
+  expect(f.calls.claim).toBe(0);
+  expect(f.calls.legacy).toBe(0);
+  expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
+});
