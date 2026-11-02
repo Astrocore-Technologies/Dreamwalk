@@ -110,6 +110,15 @@ test('scoped character profile and lore save, discard and preview preserve autho
   expect(stored.characterProfile.personality.characterization.publicVoice.cadence).toBe('brief');
   expect(stored.characterProfile).toEqual(first.npc.characterProfile);
   expect(stored.modelProfileId).toBe(first.npc.modelProfileId);
+  // The parent refresh may remount this scoped editor after a successful save.
+  // Reopen from durable state before exercising a second edit/discard.
+  await page.reload();
+  await page.getByRole('button', { name: /NPC$/ }).click();
+  await panel
+    .locator('.row')
+    .filter({ hasText: 'Северин' })
+    .getByRole('button', { name: 'Редактировать', exact: true })
+    .click();
   await panel.getByLabel('Первая реплика', { exact: true }).fill('Не сохранять.');
   await panel.getByRole('button', { name: 'Закрыть', exact: true }).click();
   const discard = page.getByRole('dialog', { name: 'Закрыть без сохранения?' });

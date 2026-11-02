@@ -92,6 +92,7 @@ test('wallet and admin UI use actual Sparks without duplicate explanation or dem
   );
   const admin = (await source('components/admin.tsx')).split('function AdminCredits()')[1];
   assert.match(admin, /readSparksWallet\(wallet, userId\)/);
+  assert.match(admin, /aria-label=\{t\('Пользователь'\)\}/);
   assert.match(admin, /formatSparkSubunits\(result.availableSubunits, locale\)/);
   assert.doesNotMatch(admin, /DEMO|demo ledger|demo Искр|Тестовая валюта/);
   assert.equal(

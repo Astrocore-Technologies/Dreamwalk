@@ -1277,6 +1277,7 @@ function AdminCredits() {
           >
             <Field label={t('Пользователь')}>
               <Select
+                aria-label={t('Пользователь')}
                 value={userId}
                 onChange={(e) => {
                   setUserId(e.target.value);
