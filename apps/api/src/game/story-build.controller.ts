@@ -15,6 +15,9 @@ export class StoryBuildController {
   ) {
     return this.service.prepare((await this.auth.require(r)).id, id, b);
   }
+  @Get('adventures/:id/latest') async latest(@Req() r: Request, @Param('id') id: string) {
+    return this.service.latest((await this.auth.require(r)).id, id);
+  }
   @Get(':id') async state(@Req() r: Request, @Param('id') id: string) {
     return this.service.state((await this.auth.require(r)).id, id);
   }

@@ -1,3 +1,4 @@
+import { savePrivateFixture, publishPrivateFixture } from './support/private-authoring';
 import { mapAction } from './support/map-actions';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
@@ -165,17 +166,10 @@ test('sequential turns retain two addressed posts, freeze NPCs, and reply only a
       ],
       roundPolicy: { maxRounds: 5, planningMs: 30000 },
     };
-    const saved = await request(
-      owner,
-      `/studio/adventures/${story.id}/playable-draft`,
-      { expectedRevision: 0, draft },
-      'PUT',
-    );
-    const version = await request(owner, `/studio/adventures/${story.id}/playable-versions`, {
-      expectedRevision: saved.revision,
-    });
+    await savePrivateFixture(owner, story.id, draft);
+    const version = await publishPrivateFixture(owner, story.id);
     const campaign = await request(owner, '/game/campaigns', {
-      playableVersionId: version.versionId,
+      playableVersionId: version.playableVersionId,
     });
     const id = campaign.campaignId;
     const invitation = await request(owner, `/studio/adventures/${story.id}/invitations`, {

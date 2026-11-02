@@ -134,6 +134,7 @@ async function fixture(
   page: Page,
   options: {
     locale?: Locale;
+    role?: 'admin' | 'user';
     outcome?: 'success' | 'unknown' | 'stale';
     holdApply?: boolean;
     blocker?: string;
@@ -149,7 +150,7 @@ async function fixture(
     handle: `policy_${userId.replaceAll('-', '').slice(0, 10)}`,
     bio: '',
     avatarAssetId: null,
-    role: 'admin',
+    role: options.role ?? 'admin',
     onboarded: true,
     emailVerified: false,
     settings: settingsSchema.parse({ language: locale }),
@@ -338,6 +339,18 @@ async function fixture(
     },
   };
 }
+test('ordinary author cannot open the technical policy editor or trigger an amendment from the workshop', async ({
+  page,
+}) => {
+  const f = await fixture(page, { role: 'user' });
+  await page.goto('/studio/visuals');
+  await expect(page.getByTestId('live-test-panel')).toHaveCount(0);
+  await expect(page.getByTestId('owner-policy-review')).toHaveCount(0);
+  await expect(page.getByTestId('owner-policy-dialog')).toHaveCount(0);
+  expect(f.calls.apply).toHaveLength(0);
+  expect(f.calls.policyGets).toBe(0);
+  noPaidOrUnexpected(f);
+});
 async function openReview(page: Page) {
   await page.getByTestId('owner-policy-review').getByRole('button').click();
   const dialog = page.getByTestId('owner-policy-dialog');

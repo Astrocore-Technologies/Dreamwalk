@@ -1,3 +1,4 @@
+import { releasePrivateFixture } from './support-authored.mjs';
 /** True offline pause preserves remaining durations, not expired absolute wall-clock deadlines. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -37,9 +38,7 @@ await test(
         { expectedRevision: 0, draft },
         'PUT',
       );
-      const { versionId } = await a.request(`/studio/adventures/${story.id}/playable-versions`, {
-        expectedRevision: 1,
-      });
+      const { playableVersionId: versionId } = await releasePrivateFixture(a, story.id);
       const create = async () =>
         (await a.request('/game/campaigns', { turnBased: false, playableVersionId: versionId }))
           .campaignId;

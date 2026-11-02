@@ -34,6 +34,9 @@ export interface AuthoringTextResult {
   usage: {
     inputTokens: number;
     outputTokens: number;
+    cachedInputTokens?: number;
+    cacheWriteInputTokens?: number;
+    costVerifiedForSparks?: boolean;
     costMicros: number;
     costEvidence: 'configured_rates' | 'reported';
   };
@@ -244,10 +247,36 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
         id: z.string().min(1).max(200),
         status: z.string(),
         service_tier: z.string(),
-        usage: z.object({
-          input_tokens: z.number().int().nonnegative().max(10000000),
-          output_tokens: z.number().int().nonnegative().max(10000000),
-        }),
+        usage: z
+          .object({
+            input_tokens: z.number().int().nonnegative().max(10000000),
+            output_tokens: z.number().int().nonnegative().max(10000000),
+            input_tokens_details: z
+              .object({
+                cached_tokens: z.number().int().nonnegative().max(10000000).optional(),
+                cache_write_tokens: z.number().int().nonnegative().max(10000000).optional(),
+                cache_write_tokens_details: z
+                  .object({
+                    ttl_30m_tokens: z.number().int().nonnegative(),
+                    ttl_12h_tokens: z.number().int().nonnegative(),
+                  })
+                  .optional(),
+              })
+              .refine(
+                (d) =>
+                  !d.cache_write_tokens_details ||
+                  d.cache_write_tokens_details.ttl_30m_tokens +
+                    d.cache_write_tokens_details.ttl_12h_tokens ===
+                    d.cache_write_tokens,
+              )
+              .optional(),
+          })
+          .refine(
+            (u) =>
+              (u.input_tokens_details?.cached_tokens ?? 0) +
+                (u.input_tokens_details?.cache_write_tokens ?? 0) <=
+              u.input_tokens,
+          ),
         output: z.array(z.unknown()),
       })
       .safeParse(raw);
@@ -263,6 +292,13 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
     );
     const usage = {
       inputTokens: value.usage.input_tokens,
+      cachedInputTokens: value.usage.input_tokens_details?.cached_tokens ?? 0,
+      cacheWriteInputTokens: value.usage.input_tokens_details?.cache_write_tokens ?? 0,
+      // Existing profiles have no immutable discounted-read or cache-write rate.
+      // Preserve legacy configured provider spend but hold user billing for reconciliation.
+      costVerifiedForSparks:
+        (value.usage.input_tokens_details?.cached_tokens ?? 0) === 0 &&
+        (value.usage.input_tokens_details?.cache_write_tokens ?? 0) === 0,
       outputTokens: value.usage.output_tokens,
       costMicros,
       costEvidence: 'configured_rates' as const,

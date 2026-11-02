@@ -1,3 +1,9 @@
+import { createAuthoredDraft } from '@dreamwalk/game-core';
+import {
+  savePrivateFixture,
+  launchPrivateFixture,
+  authoringRequest,
+} from './support/private-authoring';
 import {
   approachTarget,
   reconfirmKnownStale,
@@ -5,7 +11,6 @@ import {
   readProjection,
   inventory,
   closeInventory,
-  legacyRealtimeLaunch,
 } from './support/map-actions';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
@@ -14,7 +19,7 @@ async function approachHelper(page: Page) {
   await approachTarget(page, new URL(page.url()).pathname.split('/').at(-1)!, 'helper');
 }
 
-test('legacy realtime author version retains personality, obligations and private story transport', async ({
+test('API-authored realtime fixture retains personality, obligations and private story UI transport', async ({
   page,
   browser,
 }) => {
@@ -47,105 +52,98 @@ test('legacy realtime author version retains personality, obligations and privat
       },
     });
     expect(guestRegistration.status()).toBe(201);
-    await legacyRealtimeLaunch(page);
     await page.goto('/studio/adventures/new');
     await page.getByLabel('Название приключения').fill(`Living courtyard ${suffix}`);
     await page.getByRole('button', { name: 'Сохранить черновик', exact: true }).click();
     await expect(page).toHaveURL(/\/studio\/adventures\/[a-f0-9-]+$/);
     const adventureId = new URL(page.url()).pathname.split('/').at(-1)!;
-    await page.getByRole('button', { name: /Локации$/ }).click();
-    const editor = page.getByRole('region', { name: 'Игровая карта', exact: true });
-    await editor
-      .getByRole('button', { name: 'Шаблон: смотритель и помощник', exact: true })
-      .click();
-    // Preserve the autonomous realtime compatibility scenario; sequential turns have their own suite.
-    await editor.getByLabel('Пошаговый режим Dreamwalk', { exact: true }).uncheck();
-    await editor.getByLabel('Объект на карте', { exact: true }).selectOption('npc:keeper');
-    await editor.getByLabel('Публичная манера речи', { exact: true }).selectOption('warm');
-    await editor.getByLabel('Держать обещания', { exact: true }).check();
-    await editor
-      .getByRole('group', { name: 'Важные связи', exact: true })
-      .getByLabel('Помощник', { exact: true })
-      .check();
-    await editor.getByRole('button', { name: 'Добавить пример решения', exact: true }).click();
-    await editor.getByLabel('Ситуация 1', { exact: true }).fill('Someone asks for help.');
-    await editor.getByLabel('Решение 1', { exact: true }).fill('Check what I can safely offer.');
-    const saved = page.waitForResponse(
-      (r) =>
-        r.url().endsWith('/playable-draft') &&
-        r.request().method() === 'PUT' &&
-        r
-          .request()
-          .postDataJSON()
-          ?.draft?.npcs?.some(
-            (npc: { personality?: { biography?: string } }) =>
-              npc.personality?.biography === 'Protect the courtyard, not a secret live memory.',
-          ),
+    // Former personality/map controls are an explicit API fixture; live gameplay remains browser coverage.
+    const draft = createAuthoredDraft('courtyard');
+    draft.npcs[0] = {
+      ...draft.npcs[0],
+      goal: 'patrol',
+      patrolTarget: { x: 6, y: 4 },
+      personality: {
+        role: 'guard',
+        values: ['duty', 'caution'],
+        taboos: ['steal', 'disclose_private'],
+        speechStyle: '',
+        publicSpeechStyle: 'warm',
+        habits: ['keep_promises'],
+        links: [{ npcId: 'helper', relation: 'ally' }],
+        biography: 'Protect the courtyard, not a secret live memory.',
+        decisionExamples: [
+          { situation: 'Someone asks for help.', response: 'Check what I can safely offer.' },
+        ],
+      },
+    };
+    draft.npcs.push({
+      id: 'helper',
+      label: 'Помощник',
+      mapId: draft.startMapId,
+      x: 7,
+      y: 6,
+      visual: 'traveler',
+      goal: 'help',
+      patrolTarget: { x: 7, y: 6 },
+      personality: {
+        role: 'helper',
+        values: ['kindness', 'honesty'],
+        taboos: ['steal', 'harm', 'disclose_private'],
+        speechStyle: '',
+      },
+      initialFacts: [
+        {
+          id: 'fixture-fountain',
+          title: 'PRIVATE_AUTHOR_FACT_TITLE',
+          text: 'The fountain was built by an astronomer.',
+          disclosure: 'asked',
+          publicQuestion: 'Who built the fountain?',
+        },
+      ],
+      initialGoals: [
+        {
+          id: 'fixture-patrol',
+          kind: 'patrol',
+          priority: 1,
+          motivation: 'routine',
+          when: [],
+          success: [],
+          cancelWhen: [],
+          holdTicks: 20,
+        },
+      ],
+      promiseTemplates: [
+        {
+          id: 'fixture-token-promise',
+          itemId: 'token',
+          offerOn: 'addressed',
+          conditions: [],
+          dueTicks: 200,
+          requiresAcceptance: true,
+        },
+      ],
+    });
+    Object.assign(
+      draft.objects.find((item) => item.id === 'token')!,
+      { ownerNpcId: 'helper', x: 7, y: 6 },
     );
-    await editor
-      .getByLabel('Биография и мотивы', { exact: true })
-      .fill('Protect the courtyard, not a secret live memory.');
-    expect((await saved).ok()).toBeTruthy();
-    await expect(
-      editor.locator('[data-autosave-scope="map"][data-autosave-status="saved"]'),
-    ).toBeVisible();
+    const saved = await savePrivateFixture(page, adventureId, draft);
     await page.reload();
-    await page.getByRole('button', { name: /Локации$/ }).click();
-    await editor.getByLabel('Объект на карте', { exact: true }).selectOption('npc:keeper');
-    await expect(editor.getByLabel('Биография и мотивы', { exact: true })).toHaveValue(
-      'Protect the courtyard, not a secret live memory.',
+    const persisted = await authoringRequest(
+      page,
+      `/studio/adventures/${adventureId}/playable-draft`,
     );
-    await expect(editor.getByLabel('Публичная манера речи', { exact: true })).toHaveValue('warm');
-    await expect(editor.getByLabel('Держать обещания', { exact: true })).toBeChecked();
-    await expect(editor.getByLabel('Решение 1', { exact: true })).toHaveValue(
-      'Check what I can safely offer.',
-    );
-    await editor.getByLabel('Объект на карте', { exact: true }).selectOption('npc:helper');
-    await editor.getByRole('button', { name: 'Добавить факт', exact: true }).click();
-    await editor
-      .getByLabel('Внутреннее название факта', { exact: true })
-      .fill('PRIVATE_AUTHOR_FACT_TITLE');
-    await editor
-      .getByLabel('Текст знания', { exact: true })
-      .fill('The fountain was built by an astronomer.');
-    await editor.getByLabel('Правило раскрытия', { exact: true }).selectOption('asked');
-    await editor.getByLabel('Публичный вопрос', { exact: true }).fill('Who built the fountain?');
-    await editor.getByRole('button', { name: 'Добавить цель', exact: true }).click();
-    const promiseSaved = page.waitForResponse(
-      (r) =>
-        r.url().endsWith('/playable-draft') &&
-        r.request().method() === 'PUT' &&
-        r
-          .request()
-          .postDataJSON()
-          ?.draft?.npcs?.some(
-            (npc: { id: string; promiseTemplates?: unknown[] }) =>
-              npc.id === 'helper' && npc.promiseTemplates?.length === 1,
-          ),
-    );
-    await editor.getByRole('button', { name: 'Добавить шаблон обещания', exact: true }).click();
-    expect((await promiseSaved).ok()).toBeTruthy();
-    await expect(editor.getByLabel('Требовать согласия игрока', { exact: true })).toBeChecked();
-    await expect(
-      editor.locator('[data-autosave-scope="map"][data-autosave-status="saved"]'),
-    ).toBeVisible();
-    await page.reload();
-    await page.getByRole('button', { name: /Локации$/ }).click();
-    await editor.getByLabel('Объект на карте', { exact: true }).selectOption('npc:helper');
-    await expect(editor.getByLabel('Текст знания', { exact: true })).toHaveValue(
-      'The fountain was built by an astronomer.',
-    );
-    await expect(editor.getByLabel('Публичный вопрос', { exact: true })).toHaveValue(
-      'Who built the fountain?',
-    );
-    await editor
-      .getByRole('button', { name: 'Сохранить и проверить восприятие', exact: true })
-      .click();
-    await expect(editor.getByText(/Проверена версия черновика/)).toBeVisible();
-    await editor.getByRole('button', { name: 'Сохранить и проверить в игре', exact: true }).click();
-    await expect(page).toHaveURL(/\/game\/[a-f0-9-]+$/);
+    expect(persisted.draft.npcs[0].personality).toEqual(saved.draft.npcs[0].personality);
+    expect(persisted.draft.npcs[1].initialFacts).toEqual(saved.draft.npcs[1].initialFacts);
+    expect(persisted.draft.npcs[1].promiseTemplates[0].requiresAcceptance).toBe(true);
+    const preview = await authoringRequest(page, `/studio/adventures/${adventureId}/npc-preview`, {
+      expectedRevision: saved.revision,
+      npcId: 'helper',
+    });
+    expect(preview.sourceRevision).toBe(saved.revision);
+    const campaignId = await launchPrivateFixture(page, adventureId, false);
     await expect(page.getByText('Подключено', { exact: true })).toBeVisible();
-    const campaignId = new URL(page.url()).pathname.split('/').at(-1)!;
     const invitation = await page.request.post(
       `/api/v1/studio/adventures/${adventureId}/invitations`,
       { data: { handle: guestHandle } },
@@ -298,7 +296,9 @@ test('legacy realtime author version retains personality, obligations and privat
     );
     await budget.getByRole('button', { name: 'Узнать стоимость', exact: true }).click();
     expect((await quoteResponse).ok()).toBeTruthy();
-    await expect(budget.getByText('Стоимость: 0 искр', { exact: true })).toBeVisible();
+    await expect(budget.locator('[data-spark-quote-price]')).toHaveText(
+      'Демонстрационные единицы: 0',
+    );
     const queued = page.waitForResponse(
       (r) => r.url().endsWith('/ai/jobs') && r.request().method() === 'POST',
     );

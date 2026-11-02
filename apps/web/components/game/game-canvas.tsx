@@ -1,11 +1,12 @@
 'use client';
+import { intersectsViewport, rendererActivity } from './renderer-activity';
 import { sceneClick } from './scene-input';
 import { entityLayout, containsScenePoint } from './scene-geometry';
 import { MapActions, InventoryPanel } from './map-actions';
 import { useItemText } from './item-messages';
 import { committedPathSample, spriteFeedback } from './turn-ui';
 import { useEffect, useRef, useState } from 'react';
-import { cameraAxis } from './camera-geometry';
+import { mapCamera, mapRasterBounds, MIN_MAP_ZOOM, MAX_MAP_ZOOM } from './map-camera';
 import { useObjectiveText } from './campaign-objectives';
 import { drawBundledScene, drawJournal } from './bundled-scene';
 import { TextureBudget, textureDimensions } from '../assets/texture-budget';
@@ -106,7 +107,9 @@ export function GameCanvas({
       if (disposed) return;
       const app = new Application();
       await app.init({
-        resizeTo: element,
+        autoStart: false,
+        width: Math.max(1, element.clientWidth),
+        height: Math.max(1, element.clientHeight),
         background: '#171321',
         antialias: true,
         resolution: Math.min(devicePixelRatio || 1, 2),
@@ -118,12 +121,63 @@ export function GameCanvas({
       }
       element.appendChild(app.canvas);
       app.canvas.setAttribute('aria-hidden', 'true');
+      // ResizePlugin's resizeTo renders unconditionally, even with a stopped
+      // ticker. Own resizing here so offscreen/hidden canvases do no frame work.
+      let synchronizeFrame = () => {};
+      let resumeFrame = () => {};
+      const resize = () =>
+        app.renderer.resize(Math.max(1, element.clientWidth), Math.max(1, element.clientHeight));
+      element.dataset.rendererActive = 'false';
+      const activity = rendererActivity({
+        resume: () => {
+          resize();
+          resumeFrame();
+          app.render();
+          element.dataset.rendererActive = 'true';
+          app.start(); // Pixi resets its RAF timestamp when restarting.
+        },
+        pause: () => {
+          app.stop();
+          element.dataset.rendererActive = 'false';
+        },
+      });
+      const supportsIntersection = typeof IntersectionObserver !== 'undefined';
+      let inViewport =
+        !supportsIntersection ||
+        intersectsViewport(element.getBoundingClientRect(), window.innerWidth, window.innerHeight);
+      const visibility = () => activity.visibility(inViewport, document.hidden);
+      const intersection = supportsIntersection
+        ? new IntersectionObserver(
+            (entries) => {
+              const entry = entries.find((value) => value.target === element);
+              if (!entry) return;
+              inViewport =
+                entry.isIntersecting &&
+                entry.intersectionRect.width > 0 &&
+                entry.intersectionRect.height > 0;
+              visibility();
+            },
+            { threshold: [0, Number.EPSILON] },
+          )
+        : null;
+      intersection?.observe(element);
+      document.addEventListener('visibilitychange', visibility);
+      visibility();
       const observer = new ResizeObserver(() => {
-        app.resize();
+        if (!activity.isActive()) return;
+        resize();
+        synchronizeFrame();
+        app.render();
       });
       observer.observe(element);
+      let cleaned = false;
       cleanup = () => {
-        observer?.disconnect();
+        if (cleaned) return;
+        cleaned = true;
+        intersection?.disconnect();
+        document.removeEventListener('visibilitychange', visibility);
+        observer.disconnect();
+        activity.dispose();
         app.destroy(true, { children: true });
       };
       const atlas = await Assets.load<InstanceType<typeof Texture>>(
@@ -268,7 +322,10 @@ export function GameCanvas({
       const retryArtAt = new Map<string, number>();
       let artKey = '';
       const oldCleanup = cleanup;
+      let resourcesCleaned = false;
       cleanup = () => {
+        if (resourcesCleaned) return;
+        resourcesCleaned = true;
         for (const controller of artRequests.values()) controller.abort();
         artRequests.clear();
         textureBudget.close();
@@ -369,9 +426,13 @@ export function GameCanvas({
             });
         }
         const key =
+          `${state.projection.map.id}:${state.projection.map.width}:${state.projection.map.height}:` +
           JSON.stringify(state.projection.map.composition) +
           visible
-            .map((entry) => `${entry.slot}:${entry.revisionId}:${artTextures.has(entry.url)}`)
+            .map(
+              (entry) =>
+                `${entry.slot}:${entry.revisionId}:${artTextures.has(entry.url)}:${JSON.stringify(entry.imageFraming ?? null)}`,
+            )
             .join('|');
         if (key !== artKey) {
           artKey = key;
@@ -386,8 +447,17 @@ export function GameCanvas({
           terrain.visible = !texture || !state.projection.map.composition;
           if (texture) {
             const sprite = new Sprite(texture);
-            sprite.width = state.projection.map.width * tile;
-            sprite.height = state.projection.map.height * tile;
+            const framing = mapRasterBounds(
+              background?.width ?? texture.width,
+              background?.height ?? texture.height,
+              state.projection.map.width * tile,
+              state.projection.map.height * tile,
+              background?.imageFraming,
+              state.projection.map,
+            );
+            sprite.position.set(framing.x, framing.y);
+            sprite.width = framing.width;
+            sprite.height = framing.height;
             artBackground.addChild(sprite);
           }
           for (const decoration of decorations) decoration.destroy();
@@ -457,11 +527,13 @@ export function GameCanvas({
         if (interaction?.kind === 'npc') state.onSelectNpc(interaction.npcId);
         else if (interaction?.kind === 'move') state.onMove(interaction.target);
       });
+      let resuming = false;
       const render = () => {
-        const { projection: p, reducedMotion: reduced } = latest.current;
+        const { projection: p, reducedMotion } = latest.current;
+        const reduced = reducedMotion || resuming;
         app.ticker.maxFPS = reduced ? 30 : 60;
         synchronizeArt();
-        const key = `${p.map.id}:${p.map.revision}:${p.map.sceneProfile || ''}:${JSON.stringify(p.map.composition)}`;
+        const key = `${p.map.id}:${p.map.revision}:${p.map.width}:${p.map.height}:${p.map.sceneProfile || ''}:${JSON.stringify(p.map.composition)}`;
         if (key !== mapKey) {
           mapKey = key;
           lastRevision = -1;
@@ -628,6 +700,14 @@ export function GameCanvas({
           }
         }
         for (const record of sprites.values()) {
+          if (resuming) {
+            record.trace = undefined;
+            record.feedback = undefined;
+            record.walkingUntil = 0;
+            record.previousX = record.x;
+            record.previousY = record.y;
+            record.changedAt = now - 200;
+          }
           const fraction = reduced ? 1 : Math.min(1, (now - record.changedAt) / 130);
           const trace =
             !reduced && record.trace
@@ -675,26 +755,42 @@ export function GameCanvas({
           }
         }
         actors.sortableChildren = true;
+        const renderedActor = p.entities.find((entity) => entity.id === p.actorId);
         const own = sprites.get(p.actorId);
+        const camera = mapCamera({
+          viewportWidth: app.screen.width,
+          viewportHeight: app.screen.height,
+          worldWidth: p.map.width * tile,
+          worldHeight: p.map.height * tile,
+          zoom: zoomRef.current,
+          // Follow the animated world-cell center, not a tall/narrow sprite's top corner.
+          focusX: own ? own.sprite.x - (own.offsetX ?? 0) + tile / 2 : undefined,
+          focusY: own ? own.sprite.y - (own.offsetY ?? 0) + tile / 2 : undefined,
+        });
+        world.scale.set(camera.scale);
+        world.position.set(camera.x, camera.y);
+        for (const [key, value] of Object.entries({
+          cameraX: camera.x,
+          cameraY: camera.y,
+          cameraScale: camera.scale,
+          cameraFitScale: camera.fitScale,
+          cameraZoom: zoomRef.current,
+        })) {
+          const text = value.toFixed(3);
+          if (element.dataset[key] !== text) element.dataset[key] = text;
+        }
+        for (const [key, value] of Object.entries({
+          renderedMapId: p.map.id,
+          renderedActorX: String(renderedActor?.x ?? ''),
+          renderedActorY: String(renderedActor?.y ?? ''),
+        })) {
+          if (element.dataset[key] !== value) element.dataset[key] = value;
+        }
         if (own) {
-          const scale = zoomRef.current;
-          world.scale.set(scale);
-          world.position.set(
-            cameraAxis(app.screen.width, p.map.width * tile, own.sprite.x + tile / 2, scale),
-            cameraAxis(app.screen.height, p.map.height * tile, own.sprite.y + tile / 2, scale),
-          );
-          for (const [key, value] of Object.entries({
-            cameraX: world.x,
-            cameraY: world.y,
-            cameraScale: scale,
-          })) {
-            const text = value.toFixed(3);
-            if (element.dataset[key] !== text) element.dataset[key] = text;
-          }
           focus
             .clear()
             .ellipse(
-              own.sprite.x + tile / 2,
+              own.sprite.x + own.sprite.width / 2,
               own.sprite.y + own.sprite.height - tile * 0.15,
               tile * 0.37,
               tile * 0.15,
@@ -705,7 +801,16 @@ export function GameCanvas({
 
       app.ticker.maxFPS = latest.current.reducedMotion ? 30 : 60;
       app.ticker.add(render);
-      render();
+      synchronizeFrame = render;
+      resumeFrame = () => {
+        resuming = true;
+        try {
+          render();
+        } finally {
+          resuming = false;
+        }
+      };
+      activity.ready();
     })().catch(() => {
       if (!disposed) {
         cleanup();
@@ -776,14 +881,16 @@ export function GameCanvas({
         <div className={styles.mapTools}>
           <button
             type="button"
-            onClick={() => setZoom((value) => Math.min(1.5, value + 0.2))}
+            onClick={() => setZoom((value) => Math.min(MAX_MAP_ZOOM, value + 0.2))}
+            disabled={zoom >= MAX_MAP_ZOOM}
             aria-label={t('Увеличить карту')}
           >
             +
           </button>
           <button
             type="button"
-            onClick={() => setZoom((value) => Math.max(0.6, value - 0.2))}
+            onClick={() => setZoom((value) => Math.max(MIN_MAP_ZOOM, value - 0.2))}
+            disabled={zoom <= MIN_MAP_ZOOM}
             aria-label={t('Уменьшить карту')}
           >
             −

@@ -125,6 +125,18 @@ try {
         heroes: await rows('SELECT id,data,created_at,updated_at FROM heroes WHERE owner_id=$1', [
           user.id,
         ]),
+        sparks: {
+          wallets: await rows('SELECT * FROM spark_wallets WHERE owner_id=$1', [user.id]),
+          quotes: await rows('SELECT * FROM spark_quotes WHERE owner_id=$1', [user.id]),
+          holds: await rows('SELECT * FROM spark_holds WHERE owner_id=$1', [user.id]),
+          ledger: await rows('SELECT * FROM spark_ledger WHERE owner_id=$1', [user.id]),
+        },
+        privateReleases: await rows('SELECT * FROM adventure_private_releases WHERE owner_id=$1', [
+          user.id,
+        ]),
+        storyNpcOperations: await rows('SELECT * FROM story_npc_operations WHERE owner_id=$1', [
+          user.id,
+        ]),
         npcs: await rows('SELECT id,data,created_at,updated_at FROM npcs WHERE owner_id=$1', [
           user.id,
         ]),
@@ -232,6 +244,9 @@ try {
       await c.query('DELETE FROM sessions WHERE user_id=$1', [user.id]);
       await c.query('DELETE FROM auth_email_tokens WHERE user_id=$1', [user.id]);
       await c.query('DELETE FROM heroes WHERE owner_id=$1', [user.id]);
+      await c.query('UPDATE adventures SET private_release_id=NULL WHERE owner_id=$1', [user.id]);
+      await c.query('DELETE FROM adventure_private_releases WHERE owner_id=$1', [user.id]);
+      await c.query('DELETE FROM story_npc_operations WHERE owner_id=$1', [user.id]);
       await c.query('DELETE FROM npcs WHERE owner_id=$1', [user.id]);
       await c.query(
         "UPDATE adventures SET slug='erased-'||id::text,title='Deleted content',synopsis='',genre='',data='{}',published_snapshot=NULL,status='archived',visibility='private' WHERE owner_id=$1",

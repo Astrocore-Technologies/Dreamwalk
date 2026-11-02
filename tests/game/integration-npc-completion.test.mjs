@@ -1,3 +1,4 @@
+import { releasePrivateFixture } from './support-authored.mjs';
 /** End-to-end completion boundaries: normal dialogue, OOC, moderator sandbox and confirmed intents. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -55,9 +56,7 @@ async function fixture(owner, change = () => {}, visibility = 'private') {
     'PUT',
   );
   if (visibility === 'public') return { story, draft };
-  const { versionId } = await owner.request(`/studio/adventures/${story.id}/playable-versions`, {
-    expectedRevision: 1,
-  });
+  const { playableVersionId: versionId } = await releasePrivateFixture(owner, story.id);
   const { campaignId } = await owner.request('/game/campaigns', {
     turnBased: false,
     playableVersionId: versionId,

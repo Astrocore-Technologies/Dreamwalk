@@ -38,6 +38,18 @@ export interface TextEstimateProfile {
 export interface ImageEstimateProfile {
   model: string;
   size: string;
+  framingPolicy?: {
+    version: 1;
+    mode: 'map_aspect_reviewed_range';
+    assumptionKind: 'operator_range_ceiling_estimate';
+    maxAspectRatio: number;
+    quality: 'low' | 'medium' | 'high';
+    minPixels: number;
+    maxPixels: number;
+    maxEdge: number;
+    reviewedOutputImageTokens: number;
+    pricing: PricingEvidence;
+  };
   quality: string;
   outputs: number;
   format: string;
@@ -85,6 +97,18 @@ export interface ImagePricingProfileSnapshot {
   fingerprint: string;
   model: string;
   size: string;
+  framingPolicy?: {
+    version: 1;
+    mode: 'map_aspect_reviewed_range';
+    assumptionKind: 'operator_range_ceiling_estimate';
+    maxAspectRatio: number;
+    quality: 'low' | 'medium' | 'high';
+    minPixels: number;
+    maxPixels: number;
+    maxEdge: number;
+    reviewedOutputImageTokens: number;
+    pricing: PricingEvidence;
+  };
   quality: string;
   outputs: number;
   format: string;
@@ -254,6 +278,14 @@ export function imagePricingProfileSnapshot(
     schemaVersion: 1 as const,
     model: profile.model,
     size: profile.size,
+    ...(profile.framingPolicy
+      ? {
+          framingPolicy: {
+            ...profile.framingPolicy,
+            pricing: { ...profile.framingPolicy.pricing },
+          },
+        }
+      : {}),
     quality: profile.quality,
     outputs: profile.outputs,
     format: profile.format,

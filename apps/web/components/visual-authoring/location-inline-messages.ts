@@ -45,14 +45,14 @@ export const locationInlineMessages = {
     'Попередній запит ще не завершено. Дочекайся результату перед новою генерацією.',
   ],
   authorization: [
-    'Нужно подтверждение бюджета владельца. Настройки доступны ниже.',
-    'Owner budget approval is required. Settings are available below.',
-    'Потрібне підтвердження бюджету власника. Налаштування доступні нижче.',
+    'Генерация пока недоступна: нужен разрешённый лимит. Администратор может проверить ограничения.',
+    'Generation is unavailable until a limit is authorized. An administrator can review the safeguards.',
+    'Генерація поки недоступна: потрібен дозволений ліміт. Адміністратор може перевірити обмеження.',
   ],
-  settings: [
-    'Настройки бюджета и библиотеки',
-    'Budget and library settings',
-    'Налаштування бюджету та бібліотеки',
+  library: [
+    'Выбрать изображение из библиотеки',
+    'Choose an image from library',
+    'Вибрати зображення з бібліотеки',
   ],
   refresh: ['Обновить статус', 'Refresh status', 'Оновити стан'],
   recovery: [

@@ -1,8 +1,10 @@
 'use client';
+import { imageFramingEvidenceMatches, type ImageFraming } from '@dreamwalk/contracts';
+import { ImageFramingNotice } from '../visual-authoring/image-framing-notice';
 import { useEffect, useRef, useState } from 'react';
-import { api, ApiError, errorMessage, useResource } from '@/lib/client';
+import { api, ApiError, errorMessage, useResource, useClient } from '@/lib/client';
 import { Button, ErrorBox, Field, Input, Select, Textarea } from '@/components/ui';
-import { LiveTestPanel } from '../live-test/live-test-panel';
+import { LiveTestPanel, useLiveTestStatus } from '../live-test/live-test-panel';
 import {
   generationAuthorizationId,
   generationRemaining,
@@ -13,6 +15,12 @@ import {
   ownerImageQuoteMatches,
   type ImageConfiguration,
 } from '../visual-authoring/generation-types';
+import {
+  useSparkCosts,
+  SparkQuotePrice,
+  SparkQuoteNotice,
+  SparkReceiptCost,
+} from '../visual-authoring/sparks-cost';
 import { RequestReserve } from '../live-test/request-reserve';
 import type {
   RequestEstimateSnapshot,
@@ -24,6 +32,8 @@ import { useAssetText } from './messages';
 import { useImageText } from './image-messages';
 import styles from './assets.module.css';
 export type PreparedStudioLocationRequest = {
+  framingVersion?: 1;
+  imageFraming?: ImageFraming;
   adventureId: string;
   studioLocationContext: { locationId: string; expectedEditRevision: number; sourceHash: string };
   prompt: string;
@@ -37,6 +47,10 @@ export type PreparedStudioLocationRequest = {
   mode: 'external';
 };
 type Job = {
+  sparkStatus?: string;
+  sparkReservedSubunits?: string;
+  sparkCapturedSubunits?: string | null;
+
   id: string;
   studioLocationId?: string;
   studioSourceHash?: string;
@@ -59,12 +73,17 @@ type Job = {
   canCancel: boolean;
 };
 type Quote = {
+  framingVersion?: 1;
+  imageFraming?: ImageFraming | null;
+  sparks?: { quoteId: string; reserveSubunits: string; rateVersion: string; walletCharging: true };
   estimateSnapshot?: RequestEstimateSnapshot;
   pricingProfileSnapshot?: RequestPricingProfileSnapshot;
   estimateSnapshotId?: string;
   estimateSnapshotHash?: string;
   pricingProfileId?: string;
   pricingProfileHash?: string;
+  basePricingProfileId?: string;
+  basePricingProfileHash?: string;
   policyRevision?: number;
   policyHash?: string;
   generationMode?: 'owner' | 'manual';
@@ -139,11 +158,14 @@ export function ImageGeneration({
   onAdmitted: (revisionId?: string) => void;
 }) {
   const a = useAssetText(),
-    g = useImageText();
+    g = useImageText(),
+    { s, amount } = useSparkCosts(),
+    { user } = useClient();
   const config = useResource<ImageConfiguration & { mockAvailable: boolean }>(
     '/image-generation/config',
   );
-  const [managedAuthorization, setManagedAuthorization] = useState<LiveTestStatus | null>(null);
+  // Read authorization independently of the admin-only settings panel.
+  const { status: managedAuthorization, setStatus: setManagedAuthorization } = useLiveTestStatus();
   const grant = authorization ?? managedAuthorization,
     authorizationId = generationAuthorizationId(grant) ?? liveTestSessionId,
     ownerMode = grant?.mode === 'owner';
@@ -348,6 +370,7 @@ export function ImageGeneration({
         if (
           result.decision === 'quote' &&
           result.quote?.mode === mode &&
+          imageFramingEvidenceMatches(preparedRequest ?? {}, result.quote) &&
           ((result.quote.upperMicros !== null &&
             Number.isSafeInteger(result.quote.upperMicros) &&
             result.quote.upperMicros >= 0 &&
@@ -378,6 +401,7 @@ export function ImageGeneration({
       !valid ||
       !quoteBudgetAvailable ||
       !quote ||
+      !imageFramingEvidenceMatches(preparedRequest ?? {}, quote) ||
       !consent ||
       busy ||
       !Number.isFinite(Date.parse(quote.expiresAt)) ||
@@ -436,8 +460,17 @@ export function ImageGeneration({
   }
   return (
     <section className={styles.root} aria-label={g('title')}>
+      {preparedRequest && (
+        <ImageFramingNotice
+          {...preparedRequest}
+          approvedSize={config.data?.requestProfile?.size}
+          approvedPolicy={config.data?.requestProfile?.framingPolicy}
+        />
+      )}
       <h3>{g('title')}</h3>
-      {!externalOnly && <LiveTestPanel onStatusChange={setManagedAuthorization} />}
+      {!externalOnly && user?.role === 'admin' && (
+        <LiveTestPanel onStatusChange={setManagedAuthorization} />
+      )}
       {!externalOnly && (
         <Field label={g('mode')}>
           <Select
@@ -476,7 +509,7 @@ export function ImageGeneration({
           </details>
         </div>
       )}
-      {mode === 'external' && config.data?.requestProfile && (
+      {user?.role === 'admin' && mode === 'external' && config.data?.requestProfile && (
         <p>
           {config.data.requestProfile.model} · {config.data.requestProfile.size} ·{' '}
           {config.data.requestProfile.quality} · {config.data.requestProfile.outputs}
@@ -625,17 +658,23 @@ export function ImageGeneration({
       {quote && (
         <div role="status">
           <p>
-            {quote.mode === 'mock'
-              ? g('cost')
-              : quote.costBasis === 'approved_estimate'
-                ? `${g('estimatedCost')}: ${g('usd')} ${((quote.estimatedTotalMicros ?? 0) / 1000000).toFixed(6)}`
-                : `${g('upperCost')}: ${g('usd')} ${((quote.upperMicros ?? 0) / 1000000).toFixed(6)}`}
+            {quote.mode === 'mock' ? (
+              g('cost')
+            ) : (
+              <>
+                {s(quote.costBasis === 'approved_estimate' ? 'estimate' : 'upper')}:{' '}
+                {amount(quote.estimatedTotalMicros ?? quote.upperMicros)}
+              </>
+            )}
           </p>
-          {quote.estimateSnapshot && <RequestReserve snapshot={quote.estimateSnapshot} />}
+          {quote.sparks && <SparkQuotePrice quote={quote} />}
+          {quote.mode === 'external' && <SparkQuoteNotice quote={quote} />}
+          {user?.role === 'admin' && quote.estimateSnapshot && (
+            <RequestReserve snapshot={quote.estimateSnapshot} />
+          )}
           {quote.costBasis === 'approved_estimate' && (
             <p>
-              {g('reserveCost')}: {g('usd')} {((quote.reserveMicros ?? 0) / 1000000).toFixed(6)}.{' '}
-              {g('estimateNotice')}
+              {s('reserve')}: {amount(quote.reserveMicros)}. {g('estimateNotice')}
             </p>
           )}
           {quote.upperMicros === null && !estimatedQuote ? (
@@ -693,6 +732,11 @@ export function ImageGeneration({
           data-image-job-status={job.status}
         >
           <p>{g(job.status)}</p>
+          {job.sparkStatus && (
+            <p>
+              <SparkReceiptCost receipt={{ ...job, generationCost: null }} />
+            </p>
+          )}
           {job.mode === 'mock' && <p>{g('mock')}</p>}
           {job.errorCode && <code>{job.errorCode}</code>}
           {job.diagnostic && (
@@ -703,10 +747,13 @@ export function ImageGeneration({
           )}
           {job.mode === 'external' && (
             <p>
-              {g('heldCost')}: {g('usd')} {(job.heldMicros / 1000000).toFixed(6)}
-              {job.actualMicros !== undefined
-                ? ` · ${g('actualCost')}: ${g('usd')} ${(job.actualMicros / 1000000).toFixed(6)}`
-                : ''}
+              {s('reserve')}: {amount(job.heldMicros)}
+              {job.actualMicros !== undefined && (
+                <>
+                  {' '}
+                  · {s('actual')}: {amount(job.actualMicros)}
+                </>
+              )}
             </p>
           )}
           {job.canCancel && (

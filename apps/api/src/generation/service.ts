@@ -1,3 +1,10 @@
+import {
+  quoteSparks,
+  reserveSparks,
+  settleReservationSparks,
+  sparkTariff,
+  sparkQuoteView,
+} from './sparks-hooks';
 import { boundedTest, boundedPolicy, createBoundedTest } from './bounded-test';
 import { retainedModelRejectionAdmission } from '../image-generation/retained-rejections';
 import {
@@ -278,6 +285,27 @@ export class GenerationAuthority {
         price.microsPerRequest,
       );
       const id = randomUUID();
+      const sparkQuoteId =
+        price.microsPerRequest > 0
+          ? await quoteSparks(c, {
+              ownerId: userId,
+              operationId: id,
+              sourceKind: 'text',
+              sourceId: `count:${id}`,
+              reserveSubunits: String(price.microsPerRequest),
+              expiresAt: new Date(Date.now() + 60000).toISOString(),
+              tariff: sparkTariff(this.textProfile(), 'openai', this.textCountAdapter!.version),
+              providerQuote: {
+                countId: id,
+                model: this.ownerConfig!.text.model,
+                providerVersion: this.textCountAdapter!.version,
+                pricing: price,
+                policy: active,
+                requestHash,
+              },
+            })
+          : null;
+      if (price.microsPerRequest > 0) await reserveSparks(c, userId, sparkQuoteId, reservation);
       const job = (
         await c.query(
           `INSERT INTO generation_text_counts(id,authorization_id,scope_id,actor_id,campaign_id,request_id,operation_id,request_hash,source_hash,body_sha256,model,provider_version,policy_revision,policy_hash,turn_fence,pricing_snapshot,reservation_id,status,deadline_at)
@@ -303,6 +331,10 @@ export class GenerationAuthority {
           ],
         )
       ).rows[0];
+      await c.query('UPDATE generation_text_counts SET spark_quote_id=$2 WHERE id=$1', [
+        id,
+        sparkQuoteId,
+      ]);
       return { job, candidate, purpose: row.purpose };
     });
     if (admitted.prior) return this.countReceipt(admitted.prior);
@@ -342,6 +374,10 @@ export class GenerationAuthority {
       }
       const deadline = new Date(current.deadline_at).getTime() <= Date.now();
       if (code || tokens === null || deadline) {
+        await settleReservationSparks(c, job.reservation_id, {
+          outcome: 'unknown',
+          receiptId: `count:${job.id}`,
+        });
         await c.query(
           "UPDATE generation_text_counts SET status='unknown',result_code=$2,completed_at=clock_timestamp() WHERE id=$1",
           [job.id, code ?? 'TEXT_COUNT_DEADLINE_EXCEEDED'],
@@ -387,6 +423,18 @@ export class GenerationAuthority {
             this.ownerConfig!.text.contextTokens,
           );
         const status = stale ? 'stale' : over ? 'over_context' : 'succeeded';
+        await settleReservationSparks(
+          c,
+          job.reservation_id,
+          stale
+            ? { outcome: 'failure_policy_pending', receiptId: `count:${job.id}` }
+            : {
+                outcome: 'success',
+                actualMicros: String(job.pricing_snapshot.microsPerRequest),
+                evidence: 'configured_rates',
+                receiptId: `count:${job.id}`,
+              },
+        );
         if (!stale && !over) {
           const evidence: TextCountEvidence = {
             id: job.id,
@@ -1282,7 +1330,16 @@ export class GenerationAuthority {
       if (previous) {
         if (previous.request_id !== requestId || previous.campaign_id !== campaignId)
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
-        return { id: previous.id, state: previous.state };
+        const reserve = (
+          await c.query('SELECT upper_micros FROM generation_budget_reservations WHERE id=$1', [
+            previous.reservation_id,
+          ])
+        ).rows[0];
+        return {
+          id: previous.id,
+          state: previous.state,
+          ...sparkQuoteView(previous.spark_quote_id, String(reserve.upper_micros)),
+        };
       }
       if (
         (await c.query('SELECT 1 FROM live_test_text_permits WHERE request_id=$1', [requestId]))
@@ -1355,6 +1412,30 @@ export class GenerationAuthority {
         reserveMicros,
       );
       const id = randomUUID();
+      const sparkQuoteId = await quoteSparks(c, {
+        ownerId: userId,
+        operationId: id,
+        sourceKind: 'text',
+        sourceId: requestId,
+        reserveSubunits: String(reserveMicros),
+        expiresAt: new Date(
+          Math.min(Date.now() + 60000, this.config.expiresAt?.getTime() ?? Infinity),
+        ).toISOString(),
+        tariff: sparkTariff(
+          this.textProfile(),
+          'openai',
+          activePolicy?.hash || 'manual-live-text-v1',
+        ),
+        providerQuote: {
+          permitId: id,
+          requestId,
+          contextHash: digest(r.context),
+          profile: this.textProfile(),
+          estimateSnapshot,
+          policy: activePolicy,
+        },
+      });
+      await reserveSparks(c, userId, sparkQuoteId, reservation);
       await c.query(
         "INSERT INTO live_test_text_permits(id,session_id,campaign_id,request_id,operation_id,context_hash,round_id,phase_epoch,reservation_id,state,request_snapshot,generation_policy_revision,generation_policy_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,'authorized',$10,$11,$12)",
         [
@@ -1372,9 +1453,14 @@ export class GenerationAuthority {
           activePolicy?.hash ?? null,
         ],
       );
+      await c.query('UPDATE live_test_text_permits SET spark_quote_id=$2 WHERE id=$1', [
+        id,
+        sparkQuoteId,
+      ]);
       return {
         id,
         state: 'authorized',
+        ...sparkQuoteView(sparkQuoteId, String(reserveMicros)),
         upperMicros: estimateSnapshot?.costBasis === 'operator_estimate' ? null : reserveMicros,
         reserveMicros,
         estimateSnapshot,
@@ -1481,6 +1567,10 @@ export class GenerationAuthority {
     )
       return false;
     await settleGenerationSpend(c, permit.reservation_id, 0);
+    await settleReservationSparks(c, permit.reservation_id, {
+      outcome: 'not_dispatched',
+      receiptId: `permit:${permit.id}`,
+    });
     await c.query(
       "UPDATE live_test_text_permits SET state='cancelled',completed_at=now(),result_code=$2 WHERE id=$1",
       [permit.id, /^[A-Z0-9_]{1,80}$/.test(code) ? code : 'MANUAL_REQUEST_UNAVAILABLE'],
@@ -1572,6 +1662,11 @@ export class GenerationAuthority {
       if (!p) return;
       const overdue = await this.overdueDispatch(c, p.reservation_id);
       if (actual !== null) await settleGenerationSpend(c, p.reservation_id, actual);
+      if (actual === null || overdue || code !== 'PROVIDER_RESULT')
+        await settleReservationSparks(c, p.reservation_id, {
+          outcome: actual === null || overdue ? 'unknown' : 'failure_policy_pending',
+          receiptId: `permit:${id}`,
+        });
       const reserve = (
         await c.query('SELECT upper_micros FROM generation_budget_reservations WHERE id=$1', [
           p.reservation_id,
@@ -1605,6 +1700,36 @@ export class GenerationAuthority {
       );
     });
   }
+  /** Called only by the NPC semantic finalizer, after its commit decision. */
+  async finalizeNpcSparks(
+    c: PoolClient,
+    jobId: string,
+    committed: boolean,
+    actualMicros: number | null,
+  ) {
+    const p = (
+      await c.query(
+        "SELECT p.* FROM live_test_text_permits p JOIN npc_ai_jobs j ON (j.id=p.job_id OR j.request_meta->>'runtimeRequestId'=p.request_id::text) WHERE j.id=$1",
+        [jobId],
+      )
+    ).rows[0];
+    if (!p) return;
+    await settleReservationSparks(
+      c,
+      p.reservation_id,
+      committed && actualMicros !== null
+        ? {
+            outcome: 'success',
+            actualMicros: String(actualMicros),
+            evidence: 'configured_rates',
+            receiptId: `permit:${p.id}`,
+          }
+        : {
+            outcome: actualMicros === null ? 'unknown' : 'failure_policy_pending',
+            receiptId: `permit:${p.id}`,
+          },
+    );
+  }
   async settleJob(c: PoolClient, jobId: string, actual: number | null, unknown: boolean) {
     const peek = (
       await c.query(
@@ -1619,6 +1744,10 @@ export class GenerationAuthority {
     ).rows[0];
     if (p.state === 'authorized' && actual === 0 && !unknown) {
       await settleGenerationSpend(c, p.reservation_id, 0);
+      await settleReservationSparks(c, p.reservation_id, {
+        outcome: 'not_dispatched',
+        receiptId: `permit:${p.id}`,
+      });
       await c.query(
         "UPDATE live_test_text_permits SET state='cancelled',completed_at=now(),result_code='UNDISPATCHED_OR_CACHE' WHERE id=$1",
         [p.id],
@@ -1630,6 +1759,10 @@ export class GenerationAuthority {
         [p.id],
       );
     } else if (p.state === 'dispatched' && unknown) {
+      await settleReservationSparks(c, p.reservation_id, {
+        outcome: 'unknown',
+        receiptId: `permit:${p.id}`,
+      });
       await c.query(
         "UPDATE live_test_text_permits SET state='unknown',result_code='PROVIDER_OUTCOME_UNKNOWN' WHERE id=$1",
         [p.id],

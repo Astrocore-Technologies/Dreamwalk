@@ -13,7 +13,10 @@ test('generation UI gates the selected mode with fresh quote consent and stable 
   assert.match(s, /config.data\?\.verifiedUpperMicros/);
   assert.match(s, /!config.data\?\.externalEnabled \|\| !authorizationId/);
   assert.match(s, /result.quote.upperMicros === 0/);
-  assert.match(s, /!valid\s+\|\|\s+!quoteBudgetAvailable\s+\|\|\s+!quote\s+\|\|\s+!consent/);
+  assert.match(
+    s,
+    /!valid\s+\|\|\s+!quoteBudgetAvailable\s+\|\|\s+!quote\s+\|\|\s+!imageFramingEvidenceMatches\(preparedRequest \?\? \{\}, quote\)\s+\|\|\s+!consent/,
+  );
   assert.match(s, /quotedFingerprint.current !== fingerprint/);
   assert.match(s, /quote\?\.mode !== mode/);
   assert.match(s, /quote.upperMicros === null/);

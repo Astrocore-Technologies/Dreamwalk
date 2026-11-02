@@ -75,6 +75,9 @@ export type StoryActionPreview = {
   action: z.infer<typeof narrativeActionSchema>;
 };
 export interface StoryQuote {
+  chargeUnit?: 'sparks' | 'credits';
+  sparkReservedSubunits?: string | null;
+  sparkQuoteId?: string | null;
   id: string;
   credits: number;
   expiresAt: string;
@@ -148,6 +151,9 @@ export interface StoryTurnReceipt {
   confirmationExpiresTick?: number;
   sceneId?: string;
   npcId?: string;
+  sparkStatus?: 'held' | 'pending' | 'settled' | 'released';
+  sparkReservedSubunits?: string;
+  sparkCapturedSubunits?: string | null;
   generationCost: number | null;
   confirmationCost: 0;
 }

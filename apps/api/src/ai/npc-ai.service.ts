@@ -3,6 +3,8 @@ import type { PoolClient, QueryResultRow } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Db } from '../db';
+import { SparksAccounting, type SparkSettlement } from '../generation/sparks-accounting';
+import { sparksEnabled, sparkTariff } from '../generation/sparks-hooks';
 import { fenceGenerationAdmission } from '../generation/scope-fence';
 import { packNpcContextWindow } from '../game/npc-context-budget';
 import type { TextReserveSnapshot } from '../generation/estimates';
@@ -61,6 +63,7 @@ interface Job extends QueryResultRow {
   status: string;
   cancel_requested: boolean;
   credits: number;
+  spark_hold_id?: string | null;
   reservation_status: string;
   reservation_expires_at: Date;
   provider_upper_micros: string;
@@ -282,8 +285,32 @@ export class NpcAiEngine {
       if (recent.count >= 60) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
       const id = randomUUID(),
         expires = new Date(Date.now() + this.policy.quoteMs);
+      const sparkMode =
+        !(this.provider instanceof ManualLiveProvider) && (await sparksEnabled(c, requesterUserId));
+      if (sparkMode && !requestPlan.snapshot)
+        fail(409, 'SPARK_PRICE_UNVERIFIED', 'SPARK_PRICE_UNVERIFIED');
+      const sparkQuote = sparkMode
+        ? await new SparksAccounting().quote(c, {
+            ownerId: requesterUserId,
+            operationId: id,
+            sourceKind: 'npc',
+            sourceId: id,
+            reserveSubunits: String(requestPlan.reserveMicros),
+            expiresAt: expires.toISOString(),
+            providerQuote: {
+              ...requestPlan.snapshot!,
+              policyVersion: this.policy.version,
+              contextHash: context.contextHash,
+            },
+            tariff: sparkTariff(
+              requestPlan.snapshot!,
+              this.provider.id,
+              requestPlan.snapshot!.providerFingerprint,
+            ),
+          })
+        : null;
       await c.query(
-        `INSERT INTO npc_ai_quotes(id,campaign_id,npc_id,user_id,context_hash,purpose,provider_id,policy_version,credits,upper_micros,expires_at,provider_version,request_snapshot) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13)`,
+        `INSERT INTO npc_ai_quotes(id,campaign_id,npc_id,user_id,context_hash,purpose,provider_id,policy_version,credits,upper_micros,expires_at,provider_version,request_snapshot,spark_quote_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14)`,
         [
           id,
           scope.campaignId,
@@ -293,19 +320,22 @@ export class NpcAiEngine {
           scope.purpose ?? 'plan',
           this.provider.id,
           this.policy.version,
-          this.policy.creditPrice,
+          sparkMode ? 0 : this.policy.creditPrice,
           requestPlan.reserveMicros,
           expires,
           this.provider.version,
           requestPlan.snapshot ? JSON.stringify(requestPlan.snapshot) : null,
+          sparkQuote?.id ?? null,
         ],
       );
       return {
         id,
-        credits: this.policy.creditPrice,
+        credits: sparkMode ? 0 : this.policy.creditPrice,
+        chargeUnit: sparkMode ? ('sparks' as const) : ('credits' as const),
+        sparkReservedSubunits: sparkMode ? String(requestPlan.reserveMicros) : null,
         expiresAt: expires.toISOString(),
-        demo: true,
-        requiresConsent: this.policy.creditPrice > 0 || this.provider.external,
+        demo: !sparkMode,
+        requiresConsent: sparkMode || this.policy.creditPrice > 0 || this.provider.external,
         providerUpperMicros: requestPlan.snapshot ? null : requestPlan.reserveMicros,
         providerReserveMicros: requestPlan.reserveMicros,
         ...(requestPlan.snapshot
@@ -345,6 +375,9 @@ export class NpcAiEngine {
       purpose: job.purpose,
       status: job.status,
       credits: job.credits,
+      chargeUnit: job.spark_hold_id ? ('sparks' as const) : ('credits' as const),
+      sparkReservedSubunits: job.spark_hold_id ? String(job.provider_upper_micros) : null,
+      sparkHoldId: job.spark_hold_id ?? null,
       reservationStatus: job.reservation_status,
       code: job.result_code ?? null,
       createdAt: job.created_at.toISOString(),
@@ -473,8 +506,21 @@ export class NpcAiEngine {
       );
       if (count >= this.policy.maxQueuedPerCampaign) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
       let payer: string | null = null;
+      const sparkMode =
+        !!scope.requesterUserId &&
+        (
+          await c.query('SELECT enabled FROM spark_wallets WHERE owner_id=$1', [
+            scope.requesterUserId,
+          ])
+        ).rows[0]?.enabled === true;
+      // No Spark sponsorship policy exists yet, including mixed paid-requester/demo-payer flows.
+      if (input.sponsorId && sparkMode)
+        fail(403, 'SPARK_SPONSOR_POLICY_REQUIRED', 'SPARK_SPONSOR_POLICY_REQUIRED');
+      const ownSparkHold = sparkMode && !(this.provider instanceof ManualLiveProvider);
+      let sparkQuoteId: string | null = null;
       if (
-        (this.policy.creditPrice > 0 ||
+        (ownSparkHold ||
+          this.policy.creditPrice > 0 ||
           (this.provider.external && scope.purpose === 'narrative') ||
           scope.purpose === 'story_turn') &&
         !input.sponsorId
@@ -494,7 +540,8 @@ export class NpcAiEngine {
           q.provider_id !== this.provider.id ||
           q.provider_version !== this.provider.version ||
           q.policy_version !== this.policy.version ||
-          q.credits !== this.policy.creditPrice ||
+          q.credits !== (ownSparkHold ? 0 : this.policy.creditPrice) ||
+          (ownSparkHold && !q.spark_quote_id) ||
           Number(q.upper_micros) !== requestPlan.reserveMicros ||
           digest(q.request_snapshot ?? null) !== digest(requestPlan.snapshot) ||
           new Date(q.expires_at).getTime() <= Date.now()
@@ -505,6 +552,7 @@ export class NpcAiEngine {
         )
           fail(409, 'QUOTE_CONSUMED', 'QUOTE_CONSUMED');
         payer = scope.requesterUserId!;
+        sparkQuoteId = ownSparkHold ? q.spark_quote_id : null;
       }
       const live = await c.query(
         "SELECT id FROM npc_ai_jobs WHERE campaign_id=$1 AND npc_id=$2 AND status IN ('queued','reserved','running','result_received','validated','reconciling') FOR UPDATE",
@@ -546,7 +594,14 @@ export class NpcAiEngine {
           true,
         );
       }
-      if (payer) {
+      if (
+        input.sponsorId &&
+        payer &&
+        (await c.query('SELECT enabled FROM spark_wallets WHERE owner_id=$1', [payer])).rows[0]
+          ?.enabled === true
+      )
+        fail(403, 'SPARK_SPONSOR_POLICY_REQUIRED', 'SPARK_SPONSOR_POLICY_REQUIRED');
+      if (payer && !sparkMode) {
         const wallet = (
           await c.query('SELECT balance FROM wallets WHERE user_id=$1 FOR UPDATE', [payer])
         ).rows[0];
@@ -600,10 +655,24 @@ export class NpcAiEngine {
           this.provider.id,
           cap,
         ]);
+      // Match finalizer lock order: job/provider budget, then Spark wallet.
+      // Mode changes cannot turn an accepted demo quote into implicit paid consent (or vice versa).
+      const walletModes = new Map<string, boolean>();
+      const walletOwners = [scope.requesterUserId, input.sponsorId ? payer : null].filter(
+        (owner): owner is string => !!owner,
+      );
+      for (const owner of [...new Set(walletOwners)].sort())
+        walletModes.set(owner, await sparksEnabled(c, owner));
+      if (scope.requesterUserId && walletModes.get(scope.requesterUserId) !== sparkMode)
+        fail(409, 'SPARK_POLICY_CHANGED', 'SPARK_POLICY_CHANGED');
+      if (input.sponsorId && payer && walletModes.get(payer))
+        fail(403, 'SPARK_SPONSOR_POLICY_REQUIRED', 'SPARK_SPONSOR_POLICY_REQUIRED');
       const id = randomUUID();
+      const sparkHold =
+        sparkQuoteId && payer ? await new SparksAccounting().reserve(c, payer, sparkQuoteId) : null;
       const r = await c.query<Job>(
-        `INSERT INTO npc_ai_jobs(id,campaign_id,npc_id,operation_id,request_hash,origin,requester_user_id,payer_user_id,purpose,context_hash,context,provider_id,provider_version,policy_version,status,credits,reservation_status,reservation_expires_at,provider_upper_micros,provider_budget_status,quote_id,request_meta,sponsor_id,subject_kind,provider_external,generation_authorization_id,request_snapshot)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'reserved',$15,$16,$17,$18,'reserved',$19,$20,$21,$22,$23,$24,$25) RETURNING *`,
+        `INSERT INTO npc_ai_jobs(id,campaign_id,npc_id,operation_id,request_hash,origin,requester_user_id,payer_user_id,purpose,context_hash,context,provider_id,provider_version,policy_version,status,credits,reservation_status,reservation_expires_at,provider_upper_micros,provider_budget_status,quote_id,request_meta,sponsor_id,subject_kind,provider_external,generation_authorization_id,request_snapshot,spark_hold_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'reserved',$15,$16,$17,$18,'reserved',$19,$20,$21,$22,$23,$24,$25,$26) RETURNING *`,
         [
           id,
           scope.campaignId,
@@ -619,7 +688,7 @@ export class NpcAiEngine {
           this.provider.id,
           this.provider.version,
           this.policy.version,
-          this.policy.creditPrice,
+          sparkMode ? 0 : this.policy.creditPrice,
           payer ? 'held' : 'none',
           new Date(Date.now() + this.policy.reservationMs),
           requestPlan.reserveMicros,
@@ -636,6 +705,7 @@ export class NpcAiEngine {
           this.provider.external === true,
           generationAuthorizationId,
           requestPlan.snapshot ? JSON.stringify(requestPlan.snapshot) : null,
+          sparkHold?.id ?? null,
         ],
       );
       if (input.runtimeRequestId)
@@ -763,6 +833,10 @@ export class NpcAiEngine {
         ])
       ).rows[0];
       if (cached) {
+        await this.settleNpcSparks(c, j, {
+          outcome: 'application_cache',
+          receiptId: `cache:${j.id}`,
+        });
         await this.settleProvider(c, j, 0, false);
         await c.query(
           "UPDATE npc_ai_jobs SET status='result_received',proposal=$2,result_at=now(),reservation_status=CASE WHEN reservation_status='held' THEN 'released' ELSE reservation_status END,credits=0,result_code='CACHE_REUSED' WHERE id=$1",
@@ -835,6 +909,14 @@ export class NpcAiEngine {
           id,
           result.usage.costEvidence ?? 'reported',
         ]);
+        if (
+          result.usage.costVerifiedForSparks === false ||
+          (result.usage.cacheWriteInputTokens ?? 0) > 0
+        )
+          await this.settleNpcSparks(c, j, {
+            outcome: 'failure_policy_pending',
+            receiptId: `unpriced:${result.requestId}`,
+          });
         if (result.usage.costMicros > Number(j.provider_upper_micros)) {
           await this.settleProvider(c, j, null, true);
           await c.query(
@@ -853,13 +935,14 @@ export class NpcAiEngine {
         }
         await this.settleProvider(c, j, result.usage.costMicros, false);
         await c.query(
-          'UPDATE npc_ai_jobs SET provider_request_id=$2,input_tokens=$3,output_tokens=$4,provider_actual_micros=$5 WHERE id=$1',
+          'UPDATE npc_ai_jobs SET provider_request_id=$2,input_tokens=$3,output_tokens=$4,provider_actual_micros=$5,cached_input_tokens=$6 WHERE id=$1',
           [
             id,
             result.requestId,
             result.usage.inputTokens,
             result.usage.outputTokens,
             result.usage.costMicros,
+            result.usage.cachedInputTokens ?? null,
           ],
         );
         if (['cancelled', 'stale', 'failed', 'committed'].includes(j.status)) return;
@@ -899,6 +982,10 @@ export class NpcAiEngine {
             id,
             error.requestId,
           ]);
+        await this.settleNpcSparks(c, j, {
+          outcome: 'failure_policy_pending',
+          receiptId: `failure:${j.id}`,
+        });
         await this.settleProvider(c, j, uncertain ? null : 0, uncertain);
         await c.query(
           "UPDATE npc_ai_jobs SET status=$2,result_code=$3,reservation_status=CASE WHEN reservation_status='held' THEN 'released' ELSE reservation_status END,completed_at=now() WHERE id=$1",
@@ -913,9 +1000,33 @@ export class NpcAiEngine {
       clearTimeout(timeout);
     }
   }
+  private async settleNpcSparks(c: PoolClient, j: Job, settlement: SparkSettlement) {
+    if (!j.spark_hold_id || !j.payer_user_id) return;
+    // Wrapped jobs use their shared permit hold, never a second direct NPC hold.
+    // Fail closed on inconsistent provenance before acquiring a wallet or foreign auth lock.
+    if (this.provider instanceof ManualLiveProvider)
+      fail(409, 'SPARK_ACCOUNTING_AUTHORITY_CONFLICT', 'SPARK_ACCOUNTING_AUTHORITY_CONFLICT');
+    // Enqueue takes provider budget before wallet. All direct terminal callbacks,
+    // including cache/failure/stale paths, must preserve that order before settleProvider.
+    await c.query('SELECT * FROM npc_ai_provider_budgets WHERE provider_id=$1 FOR UPDATE', [
+      j.provider_id,
+    ]);
+    const hold = (await c.query('SELECT status FROM spark_holds WHERE id=$1', [j.spark_hold_id]))
+      .rows[0];
+    // Terminal replay is a no-op; unknown/failure outcomes require explicit reconciliation.
+    if (!hold || ['settled', 'released', 'pending'].includes(hold.status)) return;
+    await new SparksAccounting().settle(c, j.payer_user_id, j.spark_hold_id, settlement);
+  }
   private async settleProvider(c: PoolClient, j: Job, actual: number | null, unknown: boolean) {
+    // Wrapped settlement can acquire authorization/scope -> global fence. Enqueue
+    // already holds the provider budget before that fence, so acquire it first here too.
+    await c.query('SELECT * FROM npc_ai_provider_budgets WHERE provider_id=$1 FOR UPDATE', [
+      j.provider_id,
+    ]);
     if (this.provider instanceof ManualLiveProvider)
       await this.provider.session.settleJob(c, j.id, actual, unknown);
+    if (unknown)
+      await this.settleNpcSparks(c, j, { outcome: 'unknown', receiptId: `unknown:${j.id}` });
     const upper = Number(j.provider_upper_micros);
     if (j.provider_budget_status === 'reserved') {
       await c.query(
@@ -1006,6 +1117,20 @@ export class NpcAiEngine {
         purpose: j.purpose,
         requesterUserId: j.requester_user_id ?? undefined,
       });
+      if (j.spark_hold_id)
+        await this.settleNpcSparks(
+          c,
+          j,
+          j.provider_actual_micros === null
+            ? { outcome: 'unknown', receiptId: `missing:${j.id}` }
+            : {
+                outcome: 'success',
+                actualMicros: String(j.provider_actual_micros),
+                evidence:
+                  j.provider_cost_evidence === 'configured_rates' ? 'configured_rates' : 'reported',
+                receiptId: `commit:${j.id}`,
+              },
+        );
       if (j.credits > 0) {
         if (j.reservation_status !== 'held' || !j.payer_user_id)
           fail(409, 'RESERVATION_REQUIRED', 'RESERVATION_REQUIRED');
@@ -1046,8 +1171,21 @@ export class NpcAiEngine {
           new Date(Date.now() + this.policy.cacheMs),
         ],
       );
-    } else if (j.provider_budget_status === 'reserved')
-      await this.settleProvider(c, j, j.status === 'running' ? null : 0, j.status === 'running');
+    } else {
+      await this.settleNpcSparks(c, j, {
+        outcome: j.status === 'reserved' ? 'not_dispatched' : 'failure_policy_pending',
+        receiptId: `finalize:${j.id}:${status}`,
+      });
+      if (j.provider_budget_status === 'reserved')
+        await this.settleProvider(c, j, j.status === 'running' ? null : 0, j.status === 'running');
+    }
+    if (this.provider instanceof ManualLiveProvider)
+      await this.provider.session.finalizeNpcSparks(
+        c,
+        j.id,
+        status === 'committed',
+        j.provider_actual_micros === null ? null : Number(j.provider_actual_micros),
+      );
     await c.query(
       "UPDATE npc_ai_jobs SET status=$2,reservation_status=CASE WHEN reservation_status='held' THEN $3 ELSE reservation_status END,completed_at=now() WHERE id=$1",
       [id, status, status === 'committed' ? 'captured' : 'released'],
@@ -1132,6 +1270,12 @@ export class NpcAiEngine {
           [campaignId],
         )
       ).rows;
+      // A sweep can include historical providers. Lock the whole sorted financial
+      // set before any callback acquires a shared authorization/global fence.
+      await c.query(
+        'SELECT * FROM npc_ai_provider_budgets WHERE provider_id=ANY($1::text[]) ORDER BY provider_id FOR UPDATE',
+        [[...new Set(jobs.map((j) => j.provider_id))].sort()],
+      );
       for (const j of jobs) {
         if (j.status === 'running') {
           await this.settleProvider(c, j, null, true);
@@ -1166,6 +1310,11 @@ export class NpcAiEngine {
         .rows[0];
       if (!j || j.provider_budget_status !== 'unknown')
         fail(409, 'NOT_RECONCILING', 'NOT_RECONCILING');
+      // The explicit full-cost shared receipt below precedes settleProvider; it
+      // needs the same provider-before-shared-fence order even with no overrun.
+      await c.query('SELECT * FROM npc_ai_provider_budgets WHERE provider_id=$1 FOR UPDATE', [
+        j.provider_id,
+      ]);
       if (actualMicros !== null) {
         const upper = Number(j.provider_upper_micros);
         const previousOverrun = Math.max(0, Number(j.provider_actual_micros ?? 0) - upper);

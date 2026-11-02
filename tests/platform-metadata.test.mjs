@@ -1,4 +1,5 @@
 import test from 'node:test';
+import { publishPrivateFixture } from './private-release-fixture.mjs';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { execFile } from 'node:child_process';
@@ -110,6 +111,13 @@ await test('localized adventure metadata remains original, revision-bound and mo
           { title: 'No access', expectedSourceRevision: 1 },
           404,
         );
+        await author.call(
+          'POST',
+          `/studio/adventures/${story.id}/invitations`,
+          { handle: recipient.handle },
+          409,
+        );
+        await publishPrivateFixture(author.call, story.id);
         const invite = await author.call(
           'POST',
           `/studio/adventures/${story.id}/invitations`,
@@ -137,6 +145,20 @@ await test('localized adventure metadata remains original, revision-bound and mo
         assert.equal(story.sourceRevision, 2);
         assert.equal(story.translations.en.sourceRevision, 1);
         let shared = await reader.call('GET', `/adventures/${story.slug}`);
+        assert.equal(
+          selectAdventureText(shared, 'en').title,
+          `English-${suffix}`,
+          'Invited reader sees released metadata, not draft edits',
+        );
+        assert.equal(
+          selectAdventureText(
+            (await reader.call('GET', '/library')).shared.find((a) => a.id === story.id),
+            'en',
+          ).title,
+          `English-${suffix}`,
+        );
+        await publishPrivateFixture(author.call, story.id);
+        shared = await reader.call('GET', `/adventures/${story.slug}`);
         assert.equal(selectAdventureText(shared, 'en').title, `Новий-${suffix}`);
         assert.equal(selectAdventureText(shared, 'en').translationStatus, 'stale');
         assert.ok(!JSON.stringify(shared).includes(`English-${suffix}`));
@@ -178,7 +200,13 @@ await test('localized adventure metadata remains original, revision-bound and mo
     await author.call(
       'POST',
       `/admin/adventures/${story.id}/moderate`,
-      { decision: 'approve', reason: 'Approve localized metadata fixture' },
+      {
+        decision: 'approve',
+        reason: 'Approve localized metadata fixture',
+        reviewedPlayableVersionId: (
+          await author.call('GET', `/admin/adventures/${story.id}/playable-review`)
+        ).versionId,
+      },
       201,
     );
     const versionBefore = await author.call('GET', `/studio/adventures/${story.id}/versions`);
@@ -218,7 +246,13 @@ await test('localized adventure metadata remains original, revision-bound and mo
         await author.call(
           'POST',
           `/admin/adventures/${story.id}/moderate`,
-          { decision: 'approve', reason: 'Approve revised translation' },
+          {
+            decision: 'approve',
+            reason: 'Approve revised translation',
+            reviewedPlayableVersionId: (
+              await author.call('GET', `/admin/adventures/${story.id}/playable-review`)
+            ).versionId,
+          },
           201,
         );
         assert.equal(
@@ -243,7 +277,13 @@ await test('localized adventure metadata remains original, revision-bound and mo
         await author.call(
           'POST',
           `/admin/adventures/${story.id}/moderate`,
-          { decision: 'approve', reason: 'Approve original source changes' },
+          {
+            decision: 'approve',
+            reason: 'Approve original source changes',
+            reviewedPlayableVersionId: (
+              await author.call('GET', `/admin/adventures/${story.id}/playable-review`)
+            ).versionId,
+          },
           201,
         );
         const detail = await anonymous.call('GET', `/adventures/${story.slug}`);

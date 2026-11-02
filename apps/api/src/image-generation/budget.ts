@@ -1,3 +1,4 @@
+import { settleReservationSparks } from '../generation/sparks-hooks';
 import { boundedTest, checkBoundedAdmission } from '../generation/bounded-test';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
@@ -198,6 +199,10 @@ export async function releaseUndispatchedGenerationSpend(c: PoolClient, id: stri
     ).rowCount
   )
     fail(409, 'DISPATCHED_RESERVE_MUST_REMAIN', 'DISPATCHED_RESERVE_MUST_REMAIN');
+  await settleReservationSparks(c, id, {
+    outcome: 'not_dispatched',
+    receiptId: `undispatched:${id}`,
+  });
   if (row.status === 'held')
     await c.query(
       "UPDATE generation_budget_reservations SET status='released' WHERE id=$1 AND status='held'",

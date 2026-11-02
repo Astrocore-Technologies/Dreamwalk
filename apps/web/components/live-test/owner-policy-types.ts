@@ -19,6 +19,18 @@ export type PolicyProfile = {
   image: {
     model: string;
     size: string;
+    framingPolicy?: {
+      version: 1;
+      mode: 'map_aspect_reviewed_range';
+      assumptionKind: 'operator_range_ceiling_estimate';
+      maxAspectRatio: number;
+      quality: 'low' | 'medium' | 'high';
+      minPixels: number;
+      maxPixels: number;
+      maxEdge: number;
+      reviewedOutputImageTokens: number;
+      pricing: PolicyPricing;
+    };
     quality: string;
     outputs: number;
     maxPromptUtf8Bytes: number;

@@ -766,10 +766,36 @@ export class OpenAiNpcProvider implements NpcProvider {
         id: z.string().min(1).max(200),
         status: z.string(),
         service_tier: z.string().optional(),
-        usage: z.object({
-          input_tokens: z.number().int().nonnegative().max(10000000),
-          output_tokens: z.number().int().nonnegative().max(10000000),
-        }),
+        usage: z
+          .object({
+            input_tokens: z.number().int().nonnegative().max(10000000),
+            output_tokens: z.number().int().nonnegative().max(10000000),
+            input_tokens_details: z
+              .object({
+                cached_tokens: z.number().int().nonnegative().max(10000000).optional(),
+                cache_write_tokens: z.number().int().nonnegative().max(10000000).optional(),
+                cache_write_tokens_details: z
+                  .object({
+                    ttl_30m_tokens: z.number().int().nonnegative(),
+                    ttl_12h_tokens: z.number().int().nonnegative(),
+                  })
+                  .optional(),
+              })
+              .refine(
+                (d) =>
+                  !d.cache_write_tokens_details ||
+                  d.cache_write_tokens_details.ttl_30m_tokens +
+                    d.cache_write_tokens_details.ttl_12h_tokens ===
+                    d.cache_write_tokens,
+              )
+              .optional(),
+          })
+          .refine(
+            (usage) =>
+              (usage.input_tokens_details?.cached_tokens ?? 0) +
+                (usage.input_tokens_details?.cache_write_tokens ?? 0) <=
+              usage.input_tokens,
+          ),
         output: z.array(z.unknown()),
       })
       .safeParse(raw);
@@ -788,6 +814,15 @@ export class OpenAiNpcProvider implements NpcProvider {
       throw new ProviderFailure('PROVIDER_TIER_UNKNOWN', true, value.id);
     const usage = {
       inputTokens: value.usage.input_tokens,
+      ...(value.usage.input_tokens_details
+        ? { cachedInputTokens: value.usage.input_tokens_details.cached_tokens }
+        : {}),
+      cacheWriteInputTokens: value.usage.input_tokens_details?.cache_write_tokens ?? 0,
+      // Legacy profiles do not freeze a separate read-discount/write tariff.
+      // Keep their provider-budget estimate, but do not charge users as if it were exact.
+      costVerifiedForSparks:
+        (value.usage.input_tokens_details?.cached_tokens ?? 0) === 0 &&
+        (value.usage.input_tokens_details?.cache_write_tokens ?? 0) === 0,
       outputTokens: value.usage.output_tokens,
       costMicros: this.cost(value.usage.input_tokens, value.usage.output_tokens),
       costEvidence: 'configured_rates' as const,

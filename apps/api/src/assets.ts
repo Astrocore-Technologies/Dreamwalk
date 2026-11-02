@@ -103,7 +103,7 @@ export class AssetsController {
       const references = await this.db.query(
         `SELECT a.id FROM adventures a WHERE a.status<>'archived' AND (
         (a.visibility='public' AND a.published_snapshot IS NOT NULL AND (a.published_snapshot->>'coverAssetId'=$1 OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(a.published_snapshot->'publicNpcs','[]'::jsonb)) n WHERE n->>'portraitAssetId'=$1)))
-        OR (((a.visibility='private' AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id AND i.recipient_id=$2::uuid AND i.status='accepted')) OR (a.visibility='public' AND a.status='pending_review' AND $3::boolean)) AND (a.data->>'coverAssetId'=$1 OR EXISTS(SELECT 1 FROM npcs n WHERE n.owner_id=a.owner_id AND a.data->'content'->'npcIds' ? n.id::text AND n.data->>'portraitAssetId'=$1)))
+        OR (a.visibility='private' AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id AND i.recipient_id=$2::uuid AND i.status='accepted') AND EXISTS(SELECT 1 FROM adventure_private_releases pr WHERE pr.id=a.private_release_id AND (pr.snapshot->>'coverAssetId'=$1 OR EXISTS(SELECT 1 FROM jsonb_array_elements(COALESCE(pr.snapshot->'publicNpcs','[]'::jsonb)) n WHERE n->>'portraitAssetId'=$1)))) OR ((a.visibility='public' AND a.status='pending_review' AND $3::boolean) AND (a.data->>'coverAssetId'=$1 OR EXISTS(SELECT 1 FROM npcs n WHERE n.owner_id=a.owner_id AND a.data->'content'->'npcIds' ? n.id::text AND n.data->>'portraitAssetId'=$1)))
       ) UNION ALL SELECT id FROM users WHERE avatar_asset_id=$1::uuid AND deleted_at IS NULL AND settings->>'profilePublic'='true'`,
         [id, u?.id ?? null, u?.role === 'admin'],
       );

@@ -1,3 +1,6 @@
+import { StoryAuthoringController } from './story-authoring/controller';
+import { StoryNpcService } from './story-authoring/npcs';
+import { PrivateReleaseService } from './story-authoring/private-release';
 import { StoryBuildService } from './game/story-build.service';
 import { StoryBuildController } from './game/story-build.controller';
 import { storyPlanDefinition } from './game/story-plan';
@@ -59,6 +62,7 @@ class Health {
 }
 @Module({
   controllers: [
+    StoryAuthoringController,
     Health,
     LiveTestController,
     VisualAuthoringController,
@@ -75,6 +79,8 @@ class Health {
     PlayableController,
   ],
   providers: [
+    StoryNpcService,
+    PrivateReleaseService,
     Db,
     {
       provide: GenerationAuthority,

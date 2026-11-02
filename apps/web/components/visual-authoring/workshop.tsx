@@ -2,7 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
 import type { AuthoredGameDraft, GameProjection, VisualPackage } from '@dreamwalk/contracts';
-import { api, ApiError, errorMessage, useResource, type Hero } from '@/lib/client';
+import { api, ApiError, errorMessage, useResource, useClient, type Hero } from '@/lib/client';
 import {
   Button,
   ButtonLink,
@@ -18,8 +18,7 @@ import { CampaignObjectives } from '../game/campaign-objectives';
 import { GameCanvas } from '../game/game-canvas';
 import type { VisibleArtBinding } from '../assets/use-campaign-art';
 import { useVisualText, type VisualMessage } from './messages';
-import { LiveTestPanel } from '../live-test/live-test-panel';
-import type { LiveTestStatus } from '../live-test/types';
+import { LiveTestPanel, useLiveTestStatus } from '../live-test/live-test-panel';
 import { ExternalGeneration } from './external-generation';
 import { admittedConcept, type GenerationState } from './generation-types';
 import { useGenerationText } from './generation-messages';
@@ -98,7 +97,9 @@ export function VisualWorkshop() {
   const [editingMapId, setEditingMapId] = useState('');
   const [generationMode, setGenerationMode] = useState<'fixture' | 'external'>('fixture');
   const generationModeChosen = useRef(false);
-  const [liveStatus, setLiveStatus] = useState<LiveTestStatus | null>(null);
+  const { user } = useClient();
+  const live = useLiveTestStatus();
+  const liveStatus = live.status;
   const [generationState, setGenerationState] = useState<GenerationState | null>(null);
   const [generationBusy, setGenerationBusy] = useState(false),
     [visualReview, setVisualReview] = useState(false);
@@ -277,7 +278,9 @@ export function VisualWorkshop() {
       <p className={styles.note}>
         {generationMode === 'fixture' ? m('fixture') : g('externalNote')}
       </p>
-      <LiveTestPanel key={liveVersion} onStatusChange={setLiveStatus} />
+      {user?.role === 'admin' && (
+        <LiveTestPanel key={liveVersion} onStatusChange={live.setStatus} />
+      )}
       <ErrorBox message={error} />
       {notice && (
         <p role="status" className={styles.note}>
@@ -511,7 +514,10 @@ export function VisualWorkshop() {
                     disabled={busy || generationBusy}
                     onBusyChange={setPlannerBusy}
                     onApplied={refreshAppliedPlan}
-                    onBudgetRefresh={() => setLiveVersion((value) => value + 1)}
+                    onBudgetRefresh={() => {
+                      void live.refresh();
+                      setLiveVersion((value) => value + 1);
+                    }}
                   />
                 )}
               {external && (project.kind === 'character' || project.status !== 'concept') && (

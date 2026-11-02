@@ -1,14 +1,14 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { LocationImageInline } from './location-image-inline';
-import { api, ApiError, errorMessage, useResource } from '@/lib/client';
-import { useT } from '@/lib/i18n';
+import { api, ApiError, errorMessage, useResource, useClient } from '@/lib/client';
+import { useSparkCosts, SparksEquivalentNotice } from './sparks-cost';
 import { Button, ErrorBox, Field, Modal, Select, Textarea } from '../ui';
 import { AssetLibrary } from '../assets/asset-library';
 import { ImageGeneration, type PreparedStudioLocationRequest } from '../assets/image-generation';
 import { artPreviewUrl, type ArtRevision } from '../assets/types';
 import { LiveTestPanel, useLiveTestStatus } from '../live-test/live-test-panel';
-import { formatUsd, liveSessionActive } from '../live-test/types';
+import { liveSessionActive } from '../live-test/types';
 import { useLocationImageText } from './location-image-messages';
 import { ownerImageEstimateAvailable, type ImageConfiguration } from './generation-types';
 import styles from './workshop.module.css';
@@ -35,7 +35,8 @@ const estimateAllowed = (settings: Configuration) =>
   settings.live.status?.mode === 'owner' && ownerImageEstimateAvailable(settings.config);
 function LocationImageStatus({ settings, saved }: { settings: Configuration; saved: boolean }) {
   const m = useLocationImageText(),
-    { locale } = useT(),
+    { s, amount } = useSparkCosts(),
+    { user } = useClient(),
     config = settings.config;
   return (
     <div className={styles.locationImageStatus}>
@@ -43,25 +44,25 @@ function LocationImageStatus({ settings, saved }: { settings: Configuration; sav
         <p>{m('loading')}</p>
       ) : (
         <>
-          <p>
-            {m('provider')}: {config.requestProfile?.provider ?? m('notConfigured')} · {m('model')}:{' '}
-            {config.requestProfile?.model ?? m('notConfigured')}
-          </p>
+          {user?.role === 'admin' && (
+            <p>
+              {m('provider')}: {config.requestProfile?.provider ?? m('notConfigured')} ·{' '}
+              {m('model')}: {config.requestProfile?.model ?? m('notConfigured')}
+            </p>
+          )}
           {typeof config.estimatedTotalMicros === 'number' && (
             <p>
-              {m(config.requestEstimationEnabled ? 'profileEstimate' : 'estimate')}:{' '}
-              {formatUsd(config.estimatedTotalMicros, locale)}
+              {s('estimate')}: {amount(config.estimatedTotalMicros)}
             </p>
           )}
           {typeof config.reserveMicros === 'number' && (
             <p>
-              {m(config.requestEstimationEnabled ? 'profileReserve' : 'reserve')}:{' '}
-              {formatUsd(config.reserveMicros, locale)}
+              {s('reserve')}: {amount(config.reserveMicros)}
             </p>
           )}
           {verified(config) ? (
             <p>
-              {m('bound')}: {formatUsd(config.verifiedUpperMicros!, locale)}
+              {s('upper')}: {amount(config.verifiedUpperMicros)}
             </p>
           ) : (
             <p role="status">{m(estimateAllowed(settings) ? 'estimateRisk' : 'unverified')}</p>
@@ -72,11 +73,10 @@ function LocationImageStatus({ settings, saved }: { settings: Configuration; sav
               <code>{code}</code>
             </small>
           ))}
-          {saved && !liveSessionActive(settings.live.status) && (
-            <p>{m(settings.live.status?.mode === 'owner' ? 'ownerAuthorization' : 'session')}</p>
-          )}
+          {saved && !liveSessionActive(settings.live.status) && <p>{s('blocked')}</p>}
         </>
       )}
+      <SparksEquivalentNotice />
       {!saved && <p>{m('saveFirst')}</p>}
       <ErrorBox message={settings.configError} />
     </div>
@@ -102,7 +102,8 @@ export function LocationImageDialog({
   onSaved: (mapAttached: boolean) => void;
   onClose: () => void;
 }) {
-  const m = useLocationImageText();
+  const m = useLocationImageText(),
+    { user } = useClient();
   const [prepared, setPrepared] = useState<Preparation | null>(null),
     [selected, setSelected] = useState<ArtRevision | null>(null),
     [bound, setBound] = useState<ArtRevision | null>(null);
@@ -261,7 +262,7 @@ export function LocationImageDialog({
         <p>{m('intro')}</p>
         <p>{m('geometry')}</p>
         <LocationImageStatus settings={settings} saved />
-        <LiveTestPanel onStatusChange={settings.live.setStatus} />
+        {user?.role === 'admin' && <LiveTestPanel onStatusChange={settings.live.setStatus} />}
         <ErrorBox message={error} />
         {notice && <p role="status">{notice}</p>}
         {loading && <p>{m('loading')}</p>}

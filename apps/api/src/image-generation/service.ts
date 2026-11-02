@@ -1,3 +1,12 @@
+import { resolveOwnerImageProfile } from '../generation/config';
+import {
+  quoteSparks,
+  reserveSparks,
+  settleReservationSparks,
+  sparksEnabled,
+  sparkTariff,
+  sparkQuoteView,
+} from '../generation/sparks-hooks';
 import {
   estimateImageRequest,
   imagePricingProfileSnapshot,
@@ -11,7 +20,7 @@ import { resolve, basename } from 'node:path';
 import type { PoolClient, QueryResultRow } from 'pg';
 import { z } from 'zod';
 import { Db } from '../db';
-import type { GameState } from '@dreamwalk/contracts';
+import { imageFramingMatchesProfile, type GameState } from '@dreamwalk/contracts';
 import { prepareSceneMedia } from '../game/media-preparation';
 import { sourceAccessSql } from '../game/source-access';
 import { config } from '../config';
@@ -104,10 +113,10 @@ export class ImageGenerationEngine {
     z.uuid().parse(id);
     return this.db.tx(async (c) => {
       const peek = (
-        await c.query<Job>('SELECT * FROM image_generation_jobs WHERE id=$1 AND actor_id=$2', [
-          id,
-          actorId,
-        ])
+        await c.query<Job>(
+          'SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits FROM image_generation_jobs WHERE id=$1 AND actor_id=$2',
+          [id, actorId],
+        )
       ).rows[0];
       if (!peek) fail(404, 'NOT_FOUND', 'NOT_FOUND');
       await this.lockBudget(c, peek);
@@ -170,7 +179,12 @@ export class ImageGenerationEngine {
   ) {
     this.runtimeStateReader = reader;
   }
-  private async authorizeCampaign(c: PoolClient, actorId: string, input: GenerationRequest) {
+  private async authorizeCampaign(
+    c: PoolClient,
+    actorId: string,
+    input: GenerationRequest,
+    legacyFraming = false,
+  ) {
     const context = input.campaignContext!;
     // Match source mutation/erasure lock order before campaign/member locks.
     await c.query(
@@ -208,12 +222,20 @@ export class ImageGenerationEngine {
       hot && hot.dbRevision === Number(row.revision) ? hot.state : (row.state as GameState);
     if ((state.narrativeCanon?.revision ?? 0) !== context.expectedCanonRevision)
       fail(409, 'MEDIA_CONTEXT_STALE', 'MEDIA_CONTEXT_STALE');
-    const prepared = prepareSceneMedia(state, row.actor_id, row.source_version_id, {
-      kind: context.kind,
-      ...(context.entityId ? { entityId: context.entityId } : {}),
-    });
+    const prepared = prepareSceneMedia(
+      state,
+      row.actor_id,
+      row.source_version_id,
+      {
+        kind: context.kind,
+        ...(context.entityId ? { entityId: context.entityId } : {}),
+      },
+      legacyFraming ? 0 : 1,
+    );
     const title = (prepared.grounding.subject?.label ?? prepared.grounding.map.label).slice(0, 120);
     if (
+      input.framingVersion !== prepared.spec.framingVersion ||
+      hash(input.imageFraming ?? null) !== hash(prepared.spec.imageFraming ?? null) ||
       prepared.groundingHash !== context.groundingHash ||
       input.prompt !== prepared.prompt ||
       input.title !== title ||
@@ -266,6 +288,7 @@ export class ImageGenerationEngine {
     actorId: string,
     input: GenerationRequest,
     expected?: Record<string, string>,
+    legacyFraming = false,
   ) {
     await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`art-owner:${actorId}`]);
     if (
@@ -277,7 +300,7 @@ export class ImageGenerationEngine {
     )
       fail(401, 'UNAUTHORIZED', 'UNAUTHORIZED');
     if (input.studioLocationContext)
-      await authorizeStudioLocationTx(c, this.assets, actorId, input);
+      await authorizeStudioLocationTx(c, this.assets, actorId, input, legacyFraming);
     else if (input.authoringContext) {
       const p = (
         await c.query(
@@ -295,7 +318,8 @@ export class ImageGenerationEngine {
       if (!this.authoringValidator)
         fail(409, 'AUTHORING_VALIDATOR_REQUIRED', 'AUTHORING_VALIDATOR_REQUIRED');
       await this.authoringValidator!(c, actorId, input.authoringContext, input);
-    } else if (input.campaignContext) await this.authorizeCampaign(c, actorId, input);
+    } else if (input.campaignContext)
+      await this.authorizeCampaign(c, actorId, input, legacyFraming);
     else if (
       !(
         await c.query(
@@ -361,8 +385,10 @@ export class ImageGenerationEngine {
     return { hashes, refs, livePolicy };
   }
   private planning(input: GenerationRequest) {
-    const p = this.policy.ownerImageProfile;
-    if (input.mode !== 'external' || this.policy.generationMode !== 'owner' || !p) return undefined;
+    const base = this.policy.ownerImageProfile;
+    if (input.mode !== 'external' || this.policy.generationMode !== 'owner' || !base)
+      return undefined;
+    const p = resolveOwnerImageProfile(base, input.imageFraming);
     const references = input.referenceRevisionIds.length + input.privateReferenceAssetIds.length;
     if (references > p.maxReferenceImages)
       fail(409, 'IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE', 'IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE');
@@ -410,6 +436,16 @@ export class ImageGenerationEngine {
   }
   private liveGate(input: GenerationRequest) {
     if (input.mode !== 'external') return;
+    const approvedSize =
+      this.policy.ownerImageProfile?.size ?? this.capabilities?.requestProfile.size ?? '1024x1024';
+    if (
+      !imageFramingMatchesProfile(
+        input.imageFraming,
+        approvedSize,
+        this.policy.ownerImageProfile?.framingPolicy,
+      )
+    )
+      fail(409, 'IMAGE_SIZE_POLICY_REVIEW_REQUIRED', 'IMAGE_SIZE_POLICY_REVIEW_REQUIRED');
     const reserve = this.reservationMicros(input);
     if (
       !this.policy.externalEnabled ||
@@ -557,9 +593,48 @@ export class ImageGenerationEngine {
           policyHash ?? null,
         ],
       );
+      let sparkQuoteId: string | null = null;
+      if (input.mode === 'external' && (await sparksEnabled(c, actorId))) {
+        const profile = planned?.pricingProfileSnapshot;
+        if (!profile)
+          fail(409, 'SPARK_PRICING_SNAPSHOT_REQUIRED', 'SPARK_PRICING_SNAPSHOT_REQUIRED');
+        sparkQuoteId = await quoteSparks(c, {
+          ownerId: actorId,
+          operationId: id,
+          sourceKind: 'image',
+          sourceId: id,
+          reserveSubunits: String(upper),
+          expiresAt: expiresAt.toISOString(),
+          tariff: sparkTariff(
+            {
+              model: profile!.model,
+              inputMicrosPerMillion: profile!.inputTextMicrosPerMillion,
+              outputMicrosPerMillion: profile!.outputImageMicrosPerMillion,
+            },
+            this.provider.id,
+            profile!.fingerprint,
+          ),
+          providerQuote: {
+            quoteId: id,
+            requestHash,
+            pricingProfile: profile,
+            estimate: planned?.estimateSnapshot,
+            settlement: 'actual-image-micros',
+            cachePricing: 'not-quoted',
+          },
+        });
+        await c.query('UPDATE image_generation_quotes SET spark_quote_id=$2 WHERE id=$1', [
+          id,
+          sparkQuoteId,
+        ]);
+      }
       return {
         decision: 'quote',
         quote: {
+          ...(input.framingVersion
+            ? { framingVersion: input.framingVersion, imageFraming: input.imageFraming ?? null }
+            : {}),
+          ...sparkQuoteView(sparkQuoteId, String(upper)),
           id,
           mode: input.mode,
           upperMicros: costBasis === 'approved_estimate' ? null : upper,
@@ -578,6 +653,16 @@ export class ImageGenerationEngine {
           ...(planned
             ? {
                 ...planned,
+                ...(this.policy.ownerImageProfile?.framingPolicy
+                  ? {
+                      basePricingProfileId: imagePricingProfileSnapshot(
+                        this.policy.ownerImageProfile,
+                      ).id,
+                      basePricingProfileHash: imagePricingProfileSnapshot(
+                        this.policy.ownerImageProfile,
+                      ).fingerprint,
+                    }
+                  : {}),
                 estimateSnapshotId: planned.estimateSnapshot.id,
                 estimateSnapshotHash: planned.estimateSnapshot.fingerprint,
                 pricingProfileId: planned.pricingProfileSnapshot.id,
@@ -600,6 +685,14 @@ export class ImageGenerationEngine {
   private dto(j: Job) {
     return {
       id: j.id,
+      ...(j.spark_quote_id
+        ? {
+            sparkHoldId: j.spark_quote_id,
+            sparkStatus: j.spark_status,
+            sparkReservedSubunits: j.spark_reserved_subunits,
+            sparkCapturedSubunits: j.spark_captured_subunits,
+          }
+        : {}),
       operationId: j.operation_id,
       status: j.status,
       mode: j.mode,
@@ -689,7 +782,13 @@ export class ImageGenerationEngine {
         (q.cost_basis !== 'approved_estimate' || b.estimateRiskConsent !== true)
       )
         fail(409, 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED', 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED');
-      const authorization = await this.authorize(c, actorId, input, q.reference_hashes);
+      const authorization = await this.authorize(
+        c,
+        actorId,
+        input,
+        q.reference_hashes,
+        input.framingVersion === undefined,
+      );
       this.liveGate(input);
       this.assertQuotedProvider(q);
       this.assertPolicyRevision(q, authorization.livePolicy);
@@ -737,6 +836,7 @@ export class ImageGenerationEngine {
           Number(q.upper_micros),
           input.mode === 'mock',
         );
+      if (input.mode === 'external') await reserveSparks(c, actorId, q.spark_quote_id, reservation);
       const job = (
         await c.query<Job>(
           "INSERT INTO image_generation_jobs(id,actor_id,adventure_id,operation_id,quote_id,request_hash,input,reference_hashes,mode,policy_version,status,reservation_id,upper_micros,expires_at,upload_id,family_id,revision_id,cost_basis,estimated_total_micros,estimate_snapshot,pricing_profile_snapshot,generation_policy_revision,generation_policy_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *",
@@ -766,16 +866,23 @@ export class ImageGenerationEngine {
           ],
         )
       ).rows[0];
+      await c.query('UPDATE image_generation_jobs SET spark_quote_id=$2 WHERE id=$1', [
+        id,
+        q.spark_quote_id ?? null,
+      ]);
+      job.spark_quote_id = q.spark_quote_id;
+      job.spark_status = q.spark_quote_id ? 'held' : undefined;
+      job.spark_reserved_subunits = q.spark_quote_id ? String(q.upper_micros) : undefined;
       return this.dto(job);
     });
   }
   async get(actorId: string, id: string) {
     z.uuid().parse(id);
     const j = (
-      await this.db.query<Job>('SELECT * FROM image_generation_jobs WHERE id=$1 AND actor_id=$2', [
-        id,
-        actorId,
-      ])
+      await this.db.query<Job>(
+        'SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits FROM image_generation_jobs WHERE id=$1 AND actor_id=$2',
+        [id, actorId],
+      )
     )[0];
     if (!j) fail(404, 'NOT_FOUND', 'NOT_FOUND');
     return this.dto(j);
@@ -808,7 +915,7 @@ export class ImageGenerationEngine {
     return {
       jobs: (
         await this.db.query<Job>(
-          `SELECT * FROM image_generation_jobs WHERE actor_id=$1 AND adventure_id=$2
+          `SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits FROM image_generation_jobs WHERE actor_id=$1 AND adventure_id=$2
            AND ($3::text IS NULL OR input->'campaignContext'->>'campaignId'=$3) ORDER BY created_at DESC LIMIT 50`,
           [actorId, adventureId, campaignId ?? null],
         )
@@ -839,6 +946,10 @@ export class ImageGenerationEngine {
   /** Durable owner stop: later receipts settle liability but never silently re-enable generation. */
   private async stopOwnerUnknown(c: PoolClient, job: Job) {
     if (job.mode !== 'external') return;
+    await settleReservationSparks(c, job.reservation_id, {
+      outcome: 'unknown',
+      receiptId: `image:${job.id}`,
+    });
     const stopped = await c.query(
       "UPDATE live_test_sessions s SET state='stopped',stop_code=COALESCE(stop_code,'IMAGE_RESULT_UNKNOWN') FROM generation_budget_reservations r WHERE r.id=$1 AND s.scope_id=r.scope_id AND s.mode='owner' RETURNING s.scope_id",
       [job.reservation_id],
@@ -902,6 +1013,10 @@ export class ImageGenerationEngine {
             [j.id],
           );
         } else if ((j.status === 'generated' || j.status === 'unknown') && j.cancel_requested) {
+          await settleReservationSparks(c, j.reservation_id, {
+            outcome: j.status === 'unknown' ? 'unknown' : 'failure_policy_pending',
+            receiptId: `image:${j.id}`,
+          });
           await c.query(
             "UPDATE image_generation_jobs SET status=CASE WHEN actual_micros IS NULL THEN 'unknown' ELSE 'cancelled' END,quota_reserved_bytes=0,error_code='CANCELLED',updated_at=now() WHERE id=$1",
             [j.id],
@@ -934,7 +1049,13 @@ export class ImageGenerationEngine {
     try {
       claimed = await this.db.tx(async (c) => {
         const input = generationRequestSchema.parse(candidate.input),
-          auth = await this.authorize(c, candidate.actor_id, input, candidate.reference_hashes);
+          auth = await this.authorize(
+            c,
+            candidate.actor_id,
+            input,
+            candidate.reference_hashes,
+            input.framingVersion === undefined,
+          );
         this.liveGate(input);
         this.assertQuotedProvider(candidate);
         this.assertPolicyRevision(candidate, auth.livePolicy);
@@ -1082,6 +1203,25 @@ export class ImageGenerationEngine {
         await this.stopOwnerUnknown(c, j);
       if (result.actualMicros !== undefined)
         await settleGenerationSpend(c, j.reservation_id, result.actualMicros);
+      if (
+        result.actualMicros === undefined ||
+        j.status === 'unknown' ||
+        j.cancel_requested ||
+        erased ||
+        result.actualMicros > Number(j.upper_micros) ||
+        result.costVerifiedForSparks === false
+      )
+        await settleReservationSparks(c, j.reservation_id, {
+          outcome:
+            result.actualMicros === undefined || j.status === 'unknown'
+              ? 'unknown'
+              : 'failure_policy_pending',
+          receiptId: `image:${id}`,
+        });
+      await c.query('UPDATE image_generation_jobs SET spark_cost_verified=$2 WHERE id=$1', [
+        id,
+        result.costVerifiedForSparks !== false && result.actualMicros !== undefined,
+      ]);
       await c.query(
         'UPDATE image_generation_attempts SET result_received_at=now(),actual_micros=COALESCE($2,actual_micros),provider_request_id=$3 WHERE job_id=$1',
         [id, result.actualMicros ?? null, erased ? null : result.requestId],
@@ -1159,8 +1299,20 @@ export class ImageGenerationEngine {
       await this.rejectAdmission(row, 'INVALID_RASTER_OR_ALPHA');
       return;
     }
+    if (
+      row.input.imageFraming &&
+      (raster.width !== row.input.imageFraming.width ||
+        raster.height !== row.input.imageFraming.height)
+    ) {
+      await this.rejectAdmission(row, 'IMAGE_FRAMING_DIMENSIONS_MISMATCH');
+      return;
+    }
     if (row.mode === 'external' && this.policy.generationMode === 'owner') {
-      const expected = this.capabilities?.requestProfile.size.split('x').map(Number);
+      const expected = (
+        row.pricing_profile_snapshot?.size ?? this.capabilities?.requestProfile.size
+      )
+        ?.split('x')
+        .map(Number);
       if (!expected || raster.width !== expected[0] || raster.height !== expected[1]) {
         await this.rejectAdmission(row, 'IMAGE_PROFILE_DIMENSIONS_MISMATCH');
         return;
@@ -1174,6 +1326,7 @@ export class ImageGenerationEngine {
           row.actor_id,
           input,
           row.reference_hashes,
+          input.framingVersion === undefined,
         );
         this.assertPolicyRevision(row, admissionAuthorization.livePolicy);
         if (this.policy.generationMode === 'owner') {
@@ -1203,6 +1356,12 @@ export class ImageGenerationEngine {
           raster,
           String(attempt.provider),
         );
+        await settleReservationSparks(c, j.reservation_id, {
+          outcome: 'success',
+          actualMicros: String(j.actual_micros),
+          evidence: 'configured_rates',
+          receiptId: `image:${id}`,
+        });
         await c.query(
           "UPDATE image_generation_jobs SET status='admitted',admitted_revision_id=$2,quota_reserved_bytes=0,error_code=NULL,updated_at=now() WHERE id=$1",
           [id, admitted.id],
@@ -1221,10 +1380,18 @@ export class ImageGenerationEngine {
     }
   }
   private async rejectAdmission(row: Job, errorCode: string) {
-    await this.db.query(
-      "UPDATE image_generation_jobs SET status='rejected',quota_reserved_bytes=0,error_code=$2,updated_at=now() WHERE id=$1 AND status='generated'",
-      [row.id, errorCode],
-    );
+    await this.db.tx(async (c) => {
+      await this.lockBudget(c, row);
+      await c.query('SELECT id FROM image_generation_jobs WHERE id=$1 FOR UPDATE', [row.id]);
+      await settleReservationSparks(c, row.reservation_id, {
+        outcome: 'failure_policy_pending',
+        receiptId: `image:${row.id}`,
+      });
+      await c.query(
+        "UPDATE image_generation_jobs SET status='rejected',quota_reserved_bytes=0,error_code=$2,updated_at=now() WHERE id=$1 AND status='generated'",
+        [row.id, errorCode],
+      );
+    });
     if (row.quarantine_filename)
       await this.db.query(
         'INSERT INTO image_generation_cleanup(filename,job_id) VALUES($1,$2) ON CONFLICT DO NOTHING',

@@ -2,6 +2,7 @@
 import { useEffect, useState } from 'react';
 import { api } from '@/lib/client';
 import { artPreviewUrl } from './types';
+import type { ImageFraming } from '@dreamwalk/contracts';
 export type VisibleArtBinding = {
   slot: string;
   revisionId: string;
@@ -12,6 +13,7 @@ export type VisibleArtBinding = {
   url: string;
   attribution: string;
   licenseLabel: string;
+  imageFraming?: ImageFraming;
 };
 /** Only the audience-filtered campaign endpoint. Never load an author's full manifest. */
 export function useCampaignArt(campaignId: string, mapId: string) {

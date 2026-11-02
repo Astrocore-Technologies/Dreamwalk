@@ -44,8 +44,8 @@ export class StoryBuildService {
     const npcs = content.npcIds.length
       ? (
           await c.query(
-            'SELECT id,data FROM npcs WHERE owner_id=$1 AND id=ANY($2::uuid[]) ORDER BY id FOR SHARE',
-            [owner, content.npcIds],
+            'SELECT id,data FROM npcs WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND (story_id IS NULL OR story_id=$3) ORDER BY id FOR SHARE',
+            [owner, content.npcIds, id],
           )
         ).rows
       : [];
@@ -78,6 +78,7 @@ export class StoryBuildService {
     });
     const source: StoryPlanSource = {
       title: story.data.title ?? story.title,
+      synopsis: story.data.synopsis ?? story.synopsis ?? '',
       content,
       npcs: npcs.map((n) => ({
         id: n.id,
@@ -151,16 +152,41 @@ export class StoryBuildService {
     return async (c: PoolClient, b: AuthoringTextBinding) => {
       await this.lock(c, owner);
       const r = await this.own(c, owner, b.projectId);
+      const current = await this.source(c, owner, r.adventure_id);
       if (
         r.status !== 'prepared' ||
         r.project_status === 'cancelled' ||
         b.projectRevision !== 1 ||
         b.sourceHash !== r.source_hash ||
         b.readsetHash !== digest(r.source_snapshot.source) ||
-        (await this.source(c, owner, r.adventure_id)).hash !== r.source_hash
+        current.hash !== r.source_hash ||
+        // Older immutable preparations omitted synopsis despite hashing the full story.
+        // Never quote the new prompt with silently incomplete source: reprepare instead.
+        (r.source_snapshot.source.synopsis === undefined && !!current.source.synopsis)
       )
         fail(409, 'STORY_CONTEXT_STALE', 'STORY_CONTEXT_STALE');
     };
+  }
+  private sameAuthorSource(a: StoryPlanSource, b: StoryPlanSource) {
+    return (
+      digest({ title: a.title, synopsis: a.synopsis ?? '', content: a.content, npcs: a.npcs }) ===
+      digest({ title: b.title, synopsis: b.synopsis ?? '', content: b.content, npcs: b.npcs })
+    );
+  }
+  async latest(owner: string, adventureId: string) {
+    z.uuid().parse(adventureId);
+    const story = await this.db.query('SELECT id FROM adventures WHERE id=$1 AND owner_id=$2', [
+      adventureId,
+      owner,
+    ]);
+    if (!story.length) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+    const row = (
+      await this.db.query(
+        'SELECT project_id FROM story_playable_builds WHERE adventure_id=$1 AND owner_id=$2 ORDER BY created_at DESC LIMIT 1',
+        [adventureId, owner],
+      )
+    )[0];
+    return row ? this.state(owner, row.project_id) : null;
   }
   async state(owner: string, id: string) {
     return this.db.tx(async (c) => {
@@ -168,10 +194,11 @@ export class StoryBuildService {
       const r = await this.own(c, owner, id);
       const jobs = (
         await c.query(
-          'SELECT id,status,error_code,actual_micros FROM live_authoring_text_jobs WHERE project_id=$1 AND actor_id=$2 ORDER BY created_at DESC LIMIT 8',
+          'SELECT j.id,j.status,j.error_code,j.actual_micros,h.status AS "sparkStatus",h.reserved_subunits AS "sparkReservedSubunits",h.captured_subunits AS "sparkCapturedSubunits" FROM live_authoring_text_jobs j LEFT JOIN spark_holds h ON h.id=j.spark_quote_id WHERE j.project_id=$1 AND j.actor_id=$2 ORDER BY j.created_at DESC LIMIT 8',
           [id, owner],
         )
       ).rows;
+      const current = await this.source(c, owner, r.adventure_id);
       return {
         id,
         status: r.status,
@@ -181,8 +208,8 @@ export class StoryBuildService {
         jobs,
         automaticDispatch: false,
         sourceCurrent:
-          r.status === 'applied' ||
-          (await this.source(c, owner, r.adventure_id)).hash === r.source_hash,
+          this.sameAuthorSource(current.source, r.source_snapshot.source) &&
+          (r.status === 'applied' || current.hash === r.source_hash),
       };
     });
   }

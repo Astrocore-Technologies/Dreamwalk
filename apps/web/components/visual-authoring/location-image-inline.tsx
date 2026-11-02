@@ -1,7 +1,9 @@
 'use client';
+import { imageFramingEvidenceMatches } from '@dreamwalk/contracts';
+import { ImageFramingNotice } from './image-framing-notice';
 import { useEffect, useRef, useState } from 'react';
-import { api, errorMessage } from '@/lib/client';
-import { useT } from '@/lib/i18n';
+import { api, errorMessage, useClient } from '@/lib/client';
+import { useSparkCosts, SparkQuotePrice, SparkQuoteNotice, SparkReceiptCost } from './sparks-cost';
 import { Button, ErrorBox, Select, Field } from '../ui';
 import { useAssetText } from '../assets/messages';
 import { useImageText } from '../assets/image-messages';
@@ -9,7 +11,6 @@ import type { ArtRevision } from '../assets/types';
 import { artPreviewUrl } from '../assets/types';
 import type { PreparedStudioLocationRequest } from '../assets/image-generation';
 import {
-  formatUsd,
   imageSessionActive,
   generationAuthorizationId,
   generationRemaining,
@@ -27,6 +28,10 @@ type Preparation = {
   playable: { revision: number; artRevision: number; maps: { id: string; label: string }[] };
 };
 type Job = {
+  sparkStatus?: string;
+  sparkReservedSubunits?: string;
+  sparkCapturedSubunits?: string | null;
+
   id: string;
   status: string;
   studioLocationId?: string;
@@ -58,7 +63,8 @@ export function LocationImageInline(p: Props) {
     g = useImageText(),
     a = useAssetText(),
     l = useLocationImageText(),
-    { locale } = useT();
+    { s, amount } = useSparkCosts(),
+    { user } = useClient();
   const [attested, setAttested] = useState(false),
     [share, setShare] = useState(false),
     [quote, setQuote] = useState<Quoted | null>(null),
@@ -99,6 +105,7 @@ export function LocationImageInline(p: Props) {
   const estimate = quote?.quote.upperMicros === null;
   const matched =
     !!quote &&
+    imageFramingEvidenceMatches(quote.preparation.request, quote.quote) &&
     (estimate
       ? ownerImageQuoteMatches(quote.quote, config, status)
       : quote.quote.upperMicros === config?.verifiedUpperMicros);
@@ -228,7 +235,11 @@ export function LocationImageInline(p: Props) {
             },
           }),
         });
-        if (stamp === epoch.current && response.quote) {
+        if (
+          stamp === epoch.current &&
+          response.quote &&
+          imageFramingEvidenceMatches(preparation.request, response.quote)
+        ) {
           setQuote({ preparation, quote: response.quote, key, matches: response.matches });
           setBinding(preparation);
           setMapId(
@@ -355,13 +366,20 @@ export function LocationImageInline(p: Props) {
       data-location-art={p.locationId}
       aria-label={l('title')}
     >
-      {config?.requestProfile && (
+      {user?.role === 'admin' && config?.requestProfile && (
         <small>
           {config.requestProfile.model} · {config.requestProfile.size} ·{' '}
           {config.requestProfile.quality}
         </small>
       )}
       <ErrorBox message={error || p.settings.configError || p.settings.live.error} />
+      {binding && (
+        <ImageFramingNotice
+          {...binding.request}
+          approvedSize={config?.requestProfile?.size}
+          approvedPolicy={config?.requestProfile?.framingPolicy}
+        />
+      )}
       {!p.saved && <p>{l('saveFirst')}</p>}
       {stopped ? (
         <p role="status">{m('blocked')}</p>
@@ -394,12 +412,19 @@ export function LocationImageInline(p: Props) {
       {busy && !lock.current && <small role="status">{m('preparing')}</small>}
       {quoteCurrent && quote && (
         <p>
-          {g('estimatedCost')}:{' '}
-          {formatUsd(quote.quote.estimatedTotalMicros ?? quote.quote.upperMicros ?? 0, locale)} ·{' '}
-          {g('reserveCost')}: {formatUsd(reserve, locale)}
+          {s('estimate')}: {amount(quote.quote.estimatedTotalMicros ?? quote.quote.upperMicros)} ·{' '}
+          {s('reserve')}: {amount(reserve)}
         </p>
       )}
-      {quoteCurrent && <small>{m('consent')}</small>}
+      {quoteCurrent && (
+        <>
+          <>
+            {quote.quote.sparks && <SparkQuotePrice quote={quote.quote} />}
+            <SparkQuoteNotice quote={quote.quote} />
+          </>
+          <small>{m('consent')}</small>
+        </>
+      )}
       <Button
         type="button"
         busy={busy}
@@ -418,6 +443,13 @@ export function LocationImageInline(p: Props) {
       {jobs.some((j) => ['queued', 'dispatched'].includes(j.status)) && (
         <p role="status">{m('pending')}</p>
       )}
+      {jobs
+        .filter((job) => job.sparkStatus)
+        .map((job) => (
+          <p key={job.id}>
+            <SparkReceiptCost receipt={{ ...job, generationCost: null }} />
+          </p>
+        ))}
       {savedImage && (
         <div className={styles.generationItem}>
           <h4>{l('current')}</h4>
@@ -436,10 +468,11 @@ export function LocationImageInline(p: Props) {
             .map((j) => (
               <div key={j.id} data-image-job-status={j.status}>
                 <p>
-                  {g(j.status as 'unknown')} · {formatUsd(j.heldMicros, locale)}
+                  {g(j.status as 'unknown')} · {s('reserve')}: {amount(j.heldMicros)}
                 </p>
                 {j.diagnostic?.requestId && <code>{j.diagnostic.requestId}</code>}
-                {j.status === 'unknown' &&
+                {user?.role === 'admin' &&
+                  j.status === 'unknown' &&
                   j.diagnostic?.httpStatus === 403 &&
                   ['model_not_found', 'model_access_denied'].includes(
                     j.diagnostic.providerCode ?? '',
@@ -503,7 +536,7 @@ export function LocationImageInline(p: Props) {
           {m('refresh')}
         </Button>
         <Button type="button" variant="ghost" disabled={!p.saved || busy} onClick={p.onOpen}>
-          {m('settings')}
+          {m('library')}
         </Button>
       </div>
     </section>

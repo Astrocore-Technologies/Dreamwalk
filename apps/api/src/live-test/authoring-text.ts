@@ -1,3 +1,10 @@
+import {
+  quoteSparks,
+  reserveSparks,
+  settleReservationSparks,
+  sparkTariff,
+  sparkQuoteView,
+} from '../generation/sparks-hooks';
 import { assertBoundedTextSource } from '../generation/bounded-test';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient, QueryResultRow } from 'pg';
@@ -91,6 +98,14 @@ export class AuthoringTextEngine {
         : row.status;
     return {
       id: row.id,
+      ...(row.spark_quote_id
+        ? {
+            sparkHoldId: row.spark_quote_id,
+            sparkStatus: row.spark_status,
+            sparkReservedSubunits: row.spark_reserved_subunits,
+            sparkCapturedSubunits: row.spark_captured_subunits,
+          }
+        : {}),
       projectId: row.project_id,
       policyRevision: row.generation_policy_revision ?? null,
       policyHash: row.generation_policy_hash ?? null,
@@ -121,6 +136,7 @@ export class AuthoringTextEngine {
   private quoteDto(row: QueryResultRow) {
     return {
       id: row.id,
+      ...sparkQuoteView(row.spark_quote_id, String(row.upper_micros)),
       policyRevision: row.generation_policy_revision ?? null,
       policyHash: row.generation_policy_hash ?? null,
       upperMicros: row.request_snapshot ? null : Number(row.upper_micros),
@@ -234,6 +250,27 @@ export class AuthoringTextEngine {
           ],
         )
       ).rows[0];
+      const sparkQuoteId = await quoteSparks(c, {
+        ownerId,
+        operationId: id,
+        sourceKind: 'text',
+        sourceId: id,
+        reserveSubunits: String(row.upper_micros),
+        expiresAt: expiresAt.toISOString(),
+        tariff: sparkTariff(snapshot ?? this.live.textProfile(), 'openai', this.provider.version),
+        providerQuote: {
+          quoteId: id,
+          providerVersion: this.provider.version,
+          requestHash,
+          profile: this.live.textProfile(),
+          requestSnapshot: snapshot,
+        },
+      });
+      await c.query('UPDATE live_authoring_text_quotes SET spark_quote_id=$2 WHERE id=$1', [
+        id,
+        sparkQuoteId,
+      ]);
+      row.spark_quote_id = sparkQuoteId;
       return this.quoteDto(row);
     });
   }
@@ -251,7 +288,7 @@ export class AuthoringTextEngine {
     return this.db.tx(async (c) => {
       const previous = (
         await c.query<AuthoringJob>(
-          'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.operation_id=$2',
+          'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.operation_id=$2',
           [ownerId, value.operationId],
         )
       ).rows[0];
@@ -272,7 +309,7 @@ export class AuthoringTextEngine {
       // A concurrent identical request may have committed while this transaction waited for the owner lock.
       const serializedPrevious = (
         await c.query<AuthoringJob>(
-          'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.operation_id=$2',
+          'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.operation_id=$2',
           [ownerId, value.operationId],
         )
       ).rows[0];
@@ -311,6 +348,7 @@ export class AuthoringTextEngine {
         `manual-authoring-text:${id}`,
         Number(locked.upper_micros),
       );
+      await reserveSparks(c, ownerId, locked.spark_quote_id, reservation);
       const job = (
         await c.query<AuthoringJob>(
           "INSERT INTO live_authoring_text_jobs(id,actor_id,session_id,project_id,operation_id,quote_id,request_hash,project_revision,source_hash,readset_hash,context_hash,context,provider_version,reservation_id,status,request_snapshot,generation_policy_revision,generation_policy_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'queued',$15,$16,$17) RETURNING *",
@@ -335,7 +373,17 @@ export class AuthoringTextEngine {
           ],
         )
       ).rows[0];
-      return this.dto({ ...job, budget_upper_micros: String(quote.upper_micros) });
+      await c.query('UPDATE live_authoring_text_jobs SET spark_quote_id=$2 WHERE id=$1', [
+        id,
+        locked.spark_quote_id ?? null,
+      ]);
+      return this.dto({
+        ...job,
+        spark_quote_id: locked.spark_quote_id,
+        spark_status: locked.spark_quote_id ? 'held' : undefined,
+        spark_reserved_subunits: locked.spark_quote_id ? String(quote.upper_micros) : undefined,
+        budget_upper_micros: String(quote.upper_micros),
+      });
     });
   }
   async get(ownerId: string, id: string) {
@@ -343,7 +391,7 @@ export class AuthoringTextEngine {
     z.uuid().parse(id);
     const row = (
       await this.db.query<AuthoringJob>(
-        'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
+        'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
         [id, ownerId],
       )
     )[0];
@@ -355,7 +403,7 @@ export class AuthoringTextEngine {
     z.uuid().parse(projectId);
     return (
       await this.db.query<AuthoringJob>(
-        'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.project_id=$2 ORDER BY j.created_at DESC LIMIT 20',
+        'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.project_id=$2 ORDER BY j.created_at DESC LIMIT 20',
         [ownerId, projectId],
       )
     ).map((j) => this.dto(j));
@@ -380,6 +428,15 @@ export class AuthoringTextEngine {
       if (!['queued', 'dispatched', 'unknown'].includes(job.status)) return;
       if (undispatchedOnly && (job.status !== 'queued' || job.dispatched_at !== null)) return;
       await this.live.settleLiveSpend(c, job.session_id, job.reservation_id, actual, code);
+      await settleReservationSparks(c, job.reservation_id, {
+        outcome:
+          job.status === 'queued' && !job.dispatched_at
+            ? 'not_dispatched'
+            : known
+              ? 'failure_policy_pending'
+              : 'unknown',
+        receiptId: `authoring:${id}`,
+      });
       const erased = job.error_code === 'DATA_ERASED' || job.context_hash === 'erased';
       const requestId =
         error instanceof ProviderFailure &&
@@ -405,7 +462,7 @@ export class AuthoringTextEngine {
     z.uuid().parse(id);
     const row = (
       await this.db.query<AuthoringJob>(
-        'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
+        'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
         [id, ownerId],
       )
     )[0];
@@ -427,6 +484,16 @@ export class AuthoringTextEngine {
           0,
           'AUTHORING_CANCELLED_UNDISPATCHED',
         );
+      if (job.status === 'queued')
+        await settleReservationSparks(c, job.reservation_id, {
+          outcome: 'not_dispatched',
+          receiptId: `authoring:${id}`,
+        });
+      if (job.status === 'generated' || job.status === 'dispatched')
+        await settleReservationSparks(c, job.reservation_id, {
+          outcome: job.status === 'dispatched' ? 'unknown' : 'failure_policy_pending',
+          receiptId: `authoring:${id}`,
+        });
       await c.query(
         "UPDATE live_authoring_text_jobs SET cancel_requested=true,status=CASE WHEN status='dispatched' THEN status ELSE 'cancelled' END,actual_micros=CASE WHEN status='queued' THEN 0 ELSE actual_micros END,error_code='AUTHORING_CANCELLED',updated_at=now() WHERE id=$1",
         [id],
@@ -447,7 +514,7 @@ export class AuthoringTextEngine {
       claimed = await this.db.tx(async (c) => {
         const row = (
           await c.query<AuthoringJob>(
-            'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
+            'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
             [id, ownerId],
           )
         ).rows[0];
@@ -456,7 +523,7 @@ export class AuthoringTextEngine {
         await this.lockSource(c, ownerId);
         const serialized = (
           await c.query<AuthoringJob>(
-            'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
+            'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
             [id, ownerId],
           )
         ).rows[0];
@@ -585,6 +652,21 @@ export class AuthoringTextEngine {
         row.status === 'unknown' ||
         row.deadline_at === null ||
         row.deadline_at.getTime() <= Date.now();
+      if (
+        late ||
+        errorCode ||
+        erased ||
+        row.cancel_requested ||
+        (result.usage as { costVerifiedForSparks?: boolean }).costVerifiedForSparks === false
+      )
+        await settleReservationSparks(c, row.reservation_id, {
+          outcome: late ? 'unknown' : 'failure_policy_pending',
+          receiptId: `authoring:${id}`,
+        });
+      await c.query('UPDATE live_authoring_text_jobs SET spark_cost_evidence=$2 WHERE id=$1', [
+        id,
+        result.usage.costEvidence,
+      ]);
       const status =
         erased || row.cancel_requested
           ? 'cancelled'
@@ -617,7 +699,7 @@ export class AuthoringTextEngine {
   ) {
     const current = (
       await this.db.query<AuthoringJob>(
-        'SELECT j.*,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
+        'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
         [id, ownerId],
       )
     )[0];
@@ -659,16 +741,35 @@ export class AuthoringTextEngine {
         )
           throw new Error('cost not settled');
         const applied = await commit(c, this.binding(row), row.proposal);
+        await settleReservationSparks(c, row.reservation_id, {
+          outcome: 'success',
+          actualMicros: String(row.actual_micros),
+          evidence: row.spark_cost_evidence === 'reported' ? 'reported' : 'configured_rates',
+          receiptId: `authoring:${id}`,
+        });
         await c.query(
           "UPDATE live_authoring_text_jobs SET status='committed',result=$2,updated_at=now() WHERE id=$1",
           [id, JSON.stringify(applied ?? null)],
         );
       });
-    } catch {
-      await this.db.query(
-        "UPDATE live_authoring_text_jobs SET status='stale',proposal=NULL,result=NULL,error_code='AUTHORING_STALE',updated_at=now() WHERE id=$1 AND status='generated'",
-        [id],
-      );
+    } catch (error) {
+      // A stable public validation category only; never persist raw model/source details.
+      const errorCode =
+        error instanceof Error && error.message === 'STORY_MAP_INTENT_MISMATCH'
+          ? 'STORY_MAP_INTENT_MISMATCH'
+          : 'AUTHORING_STALE';
+      await this.db.tx(async (c) => {
+        await this.live.lockAuthorization(c, current.session_id);
+        await c.query('SELECT id FROM live_authoring_text_jobs WHERE id=$1 FOR UPDATE', [id]);
+        await settleReservationSparks(c, current.reservation_id, {
+          outcome: 'failure_policy_pending',
+          receiptId: `authoring:${id}`,
+        });
+        await c.query(
+          "UPDATE live_authoring_text_jobs SET status='stale',proposal=NULL,result=NULL,error_code=$2,updated_at=now() WHERE id=$1 AND status='generated'",
+          [id, errorCode],
+        );
+      });
     }
   }
 }

@@ -7,9 +7,11 @@ import {
   legacyRealtimeLaunch,
   readProjection,
 } from './support/map-actions';
+import { profileOwnerReload } from './support/renderer-diagnostics';
 import { exposeDiscoveryFixtures } from './support/discovery-fixtures';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+
 async function account(page: Page, index: number) {
   const handle = `story_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const response = await page.request.post('/api/v1/auth/register', {
@@ -116,26 +118,30 @@ test('four players retain the legacy realtime Observatory ending with owned hero
       await expect(guest).toHaveURL(new RegExp(`/game/${id}$`));
       await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
     }
-    for (const [index, page] of pages.entries()) {
-      await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
-        'data-objective-status',
-        'active',
-      );
-      await expect(page.getByTestId('objective-epilogue')).toHaveCount(0);
-      for (let i = 1; i <= 4; i++) {
-        if (i !== index + 1)
-          await expect(page.getByText(`PRIVATE_HERO_${i}`, { exact: true })).toHaveCount(0);
-      }
-      const privateDetails = page.getByTestId('campaign-hero').locator('details');
-      const ownNote = privateDetails.getByText(`PRIVATE_HERO_${index + 1}`, { exact: true });
-      await expect(ownNote).toHaveCount(1);
-      await expect(privateDetails).not.toHaveAttribute('open', '');
-      await expect(ownNote).not.toBeVisible();
-      await privateDetails.locator('summary').click();
-      await expect(ownNote).toBeVisible();
-      await privateDetails.locator('summary').click();
-      await expect(ownNote).not.toBeVisible();
-    }
+    // Independent clients inspect only their own local disclosure state. Keep each
+    // page's full assertion/open/close order, without serializing unrelated clients.
+    await Promise.all(
+      pages.map(async (page, index) => {
+        await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
+          'data-objective-status',
+          'active',
+        );
+        await expect(page.getByTestId('objective-epilogue')).toHaveCount(0);
+        for (let i = 1; i <= 4; i++) {
+          if (i !== index + 1)
+            await expect(page.getByText(`PRIVATE_HERO_${i}`, { exact: true })).toHaveCount(0);
+        }
+        const privateDetails = page.getByTestId('campaign-hero').locator('details');
+        const ownNote = privateDetails.getByText(`PRIVATE_HERO_${index + 1}`, { exact: true });
+        await expect(ownNote).toHaveCount(1);
+        await expect(privateDetails).not.toHaveAttribute('open', '');
+        await expect(ownNote).not.toBeVisible();
+        await privateDetails.locator('summary').click();
+        await expect(ownNote).toBeVisible();
+        await privateDetails.locator('summary').click();
+        await expect(ownNote).not.toBeVisible();
+      }),
+    );
     await test.step(
       'Capture the initial rendered room',
       async () => {
@@ -234,25 +240,107 @@ test('four players retain the legacy realtime Observatory ending with owned hero
       },
       { timeout: 30000 },
     );
-    for (const page of pages) {
+    await Promise.all(
+      pages.map(async (page) => {
+        await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
+          'data-objective-status',
+          'achieved',
+        );
+        await expect(page.getByTestId('objective-epilogue')).toBeVisible();
+      }),
+    );
+    await Promise.all(
+      guests.map(async (guest) => {
+        await expect(guest.locator('[data-scene-profile="observatory-interior-v1"]')).toBeVisible();
+        expect((await readProjection(guest, id)).entities.some((e) => e.id === 'journal')).toBe(
+          false,
+        );
+      }),
+    );
+    // Persistence is per-client, not a simultaneous four-WebGL cold-start benchmark.
+    // Keep all four contexts live, but let each real reload finish before starting
+    // the next; no reload retry, renderer bypass or additional timeout budget.
+    for (const [index, page] of pages.entries()) {
+      // Inspect the restored map temporarily without changing this player's reading position.
+      const viewport = await page.locator('[data-renderer-active]').evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { x: scrollX, y: scrollY, offscreen: rect.bottom <= 0 || rect.top >= innerHeight };
+      });
+      const finishProfile = index === 0 ? await profileOwnerReload(page, test.info()) : undefined;
+      try {
+        await page.reload();
+        // Restored scroll may leave the map offscreen, where rendering is correctly paused.
+        // Reveal it as a user would before asserting its actual restored scene.
+        await page
+          .getByRole('group', { name: 'Карта приключения', exact: true })
+          .scrollIntoViewIfNeeded();
+        // A restored HTTP projection can show the ending before Pixi/socket startup.
+        // Use the existing 15s expectation bound for actual readiness on every client,
+        // not force-clicking a toolbar while reconnect banners still move its layout.
+        await expect
+          .poll(() =>
+            page.evaluate(
+              (expectedScene) => {
+                const host = document.querySelector<HTMLElement>('[data-camera-scale]');
+                const canvas = host?.querySelector('canvas');
+                const bounds = canvas?.getBoundingClientRect();
+                const scale = Number(host?.dataset.cameraScale);
+                return {
+                  connected:
+                    document.querySelector('[data-connected]')?.getAttribute('data-connected') ===
+                    'true',
+                  rendered:
+                    !!canvas &&
+                    canvas.width > 0 &&
+                    canvas.height > 0 &&
+                    !!bounds &&
+                    bounds.width > 0 &&
+                    bounds.height > 0 &&
+                    Number.isFinite(scale) &&
+                    scale > 0 &&
+                    host?.dataset.sceneProfile === expectedScene,
+                };
+              },
+              index === 0 ? 'observatory-roof-v1' : 'observatory-interior-v1',
+            ),
+          )
+          .toEqual({ connected: true, rendered: true });
+      } finally {
+        await finishProfile?.();
+      }
       await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
         'data-objective-status',
         'achieved',
       );
-      await expect(page.getByTestId('objective-epilogue')).toBeVisible();
-    }
-    for (const guest of guests) {
-      await expect(guest.locator('[data-scene-profile="observatory-interior-v1"]')).toBeVisible();
-      expect((await readProjection(guest, id)).entities.some((e) => e.id === 'journal')).toBe(
-        false,
+      await page.evaluate(
+        ({ x, y }) => window.scrollTo({ left: x, top: y, behavior: 'instant' }),
+        viewport,
       );
+      await expect
+        .poll(() =>
+          page.evaluate(
+            ({ x, y }) => Math.max(Math.abs(scrollX - x), Math.abs(scrollY - y)),
+            viewport,
+          ),
+        )
+        .toBeLessThan(1);
+      const restoredOffscreen = await page.locator('[data-renderer-active]').evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.bottom <= 0 || rect.top >= innerHeight;
+      });
+      if (viewport.offscreen && restoredOffscreen)
+        await expect(page.locator('[data-renderer-active]')).toHaveAttribute(
+          'data-renderer-active',
+          'false',
+        );
     }
-    await Promise.all(pages.map((p) => p.reload()));
-    for (const page of pages)
-      await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
-        'data-objective-status',
-        'achieved',
-      );
+    await owner
+      .getByRole('group', { name: 'Карта приключения', exact: true })
+      .scrollIntoViewIfNeeded();
+    await expect(owner.locator('[data-renderer-active]')).toHaveAttribute(
+      'data-renderer-active',
+      'true',
+    );
     await expect((await inventory(owner)).locator('[data-inventory-id="journal"]')).toHaveCount(1);
     await capture(owner, 'sample-adventure-ending-desktop.png');
     await owner.setViewportSize({ width: 390, height: 844 });

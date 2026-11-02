@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { imageFramingSchema } from '@dreamwalk/contracts';
 import type { OwnerImageProfile } from '../generation/config';
 export const authoringContextSchema = z
   .object({
@@ -13,6 +14,8 @@ export type AuthoringContext = z.infer<typeof authoringContextSchema>;
 export const generationRequestSchema = z
   .object({
     adventureId: z.uuid().optional(),
+    framingVersion: z.literal(1).optional(),
+    imageFraming: imageFramingSchema.optional(),
     liveTestSessionId: z.uuid().optional(),
     generationAuthorizationId: z.uuid().optional(),
     studioLocationContext: z
@@ -65,6 +68,14 @@ export const generationRequestSchema = z
       !v.generationAuthorizationId ||
       v.liveTestSessionId === v.generationAuthorizationId,
     { message: 'GENERATION_AUTHORIZATION_MISMATCH' },
+  )
+  .refine(
+    (v) =>
+      !v.imageFraming ||
+      (v.framingVersion === 1 &&
+        v.kind === 'background' &&
+        !!(v.studioLocationContext || v.campaignContext)),
+    { message: 'MAP_IMAGE_FRAMING_CONTEXT_REQUIRED' },
   )
   .refine((v) => !v.studioLocationContext || !!v.adventureId)
   .refine(

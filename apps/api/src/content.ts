@@ -47,22 +47,22 @@ function checkEditRevision(row: Record<string, unknown>, expected: number | unde
   if (expected !== undefined && Number(row.edit_revision) !== expected)
     fail(409, 'STALE_STATE', 'Draft changed in another editor. Reload before saving.');
 }
-export const adventureSelect = `SELECT a.*,u.name AS author_name,u.handle AS author_handle,(SELECT count(*)::int FROM favorites f WHERE f.adventure_id=a.id) AS favorite_count FROM adventures a JOIN users u ON u.id=a.owner_id`;
+export const adventureSelect = `SELECT a.*,(SELECT r.snapshot FROM adventure_private_releases r WHERE r.id=a.private_release_id) AS private_snapshot,u.name AS author_name,u.handle AS author_handle,(SELECT count(*)::int FROM favorites f WHERE f.adventure_id=a.id) AS favorite_count FROM adventures a JOIN users u ON u.id=a.owner_id`;
 export const publicAdventureSql =
   "a.visibility='public' AND a.published_snapshot IS NOT NULL AND a.status<>'archived'";
 export const readableAdventureSql = (userParameter: string) =>
-  `(a.owner_id=${userParameter} OR (${publicAdventureSql}) OR (a.visibility='private' AND a.status<>'archived' AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id AND i.recipient_id=${userParameter} AND i.status='accepted')))`;
+  `(a.owner_id=${userParameter} OR (${publicAdventureSql}) OR (a.visibility='private' AND a.private_release_id IS NOT NULL AND a.status<>'archived' AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id AND i.recipient_id=${userParameter} AND i.status='accepted')))`;
 export function adventureView(
   row: Record<string, unknown>,
   usePublished = false,
   reader = false,
 ): Adventure {
-  const data = (
-    usePublished && row.published_snapshot ? row.published_snapshot : row.data
-  ) as Record<string, unknown>;
+  const released = row.visibility === 'private' ? row.private_snapshot : row.published_snapshot;
+  const snapshot = usePublished && released ? released : null;
+  const data = (snapshot ?? row.data) as Record<string, unknown>;
   const metadata = {
-    title: (usePublished && row.published_snapshot ? data.title : row.title) as string,
-    synopsis: (usePublished && row.published_snapshot ? data.synopsis : row.synopsis) as string,
+    title: (snapshot ? data.title : row.title) as string,
+    synopsis: (snapshot ? data.synopsis : row.synopsis) as string,
     sourceLanguage: (data.sourceLanguage ?? 'ru') as Locale,
     sourceRevision: Number(data.sourceRevision ?? 1),
     translations: (data.translations ?? {}) as MetadataTranslations,
@@ -74,17 +74,17 @@ export function adventureView(
     id: row.id,
     ownerId: row.owner_id,
     slug: row.slug,
-    title: usePublished && row.published_snapshot ? data.title : row.title,
-    synopsis: usePublished && row.published_snapshot ? data.synopsis : row.synopsis,
-    genre: usePublished && row.published_snapshot ? data.genre : row.genre,
-    status: usePublished && row.published_snapshot ? 'published' : row.status,
+    title: snapshot ? data.title : row.title,
+    synopsis: snapshot ? data.synopsis : row.synopsis,
+    genre: snapshot ? data.genre : row.genre,
+    status: snapshot ? 'published' : row.status,
     visibility: row.visibility,
     version: row.version,
     editRevision: !usePublished && !reader ? Number(row.edit_revision ?? 1) : undefined,
     author: { name: row.author_name, handle: row.author_handle },
     playableVersionId: (usePublished
       ? data.playableVersionId
-      : (row.published_snapshot as Record<string, unknown> | null)?.playableVersionId) as
+      : (released as Record<string, unknown> | null)?.playableVersionId) as
       string | null | undefined,
     favoriteCount: row.favorite_count ?? 0,
     createdAt: (row.created_at as Date).toISOString(),
@@ -125,14 +125,19 @@ export class Content {
       if (user?.role === 'admin' && row.status === 'pending_review') return 'reviewer';
       return row.published_snapshot ? 'public' : null;
     }
-    if (!user) return null;
+    if (!user || !row.private_release_id) return null;
     const invites = await this.db.query(
       "SELECT id FROM adventure_invitations WHERE adventure_id=$1 AND recipient_id=$2 AND status='accepted'",
       [row.id, user.id],
     );
     return invites.length ? 'invited' : null;
   }
-  async validateReferences(userId: string, data: z.infer<typeof adventureSchema>, publish = false) {
+  async validateReferences(
+    userId: string,
+    data: z.infer<typeof adventureSchema>,
+    publish = false,
+    storyId?: string,
+  ) {
     await this.auth.ownedAsset(userId, data.coverAssetId);
     if (data.playersMin > data.playersMax)
       fail(400, 'VALIDATION_FAILED', 'Минимум игроков не может превышать максимум.');
@@ -149,8 +154,8 @@ export class Content {
       fail(400, 'VALIDATION_FAILED', 'Стартовая сцена не найдена.');
     if (c.npcIds.length) {
       const rows = await this.db.query(
-        'SELECT id FROM npcs WHERE id=ANY($1::uuid[]) AND owner_id=$2',
-        [c.npcIds, userId],
+        'SELECT id FROM npcs WHERE id=ANY($1::uuid[]) AND owner_id=$2 AND (story_id IS NULL OR story_id=$3)',
+        [c.npcIds, userId, storyId ?? null],
       );
       if (rows.length !== new Set(c.npcIds).size)
         fail(403, 'FORBIDDEN', 'Можно использовать только своих NPC.');
@@ -204,9 +209,9 @@ export class Content {
       )
         data.status = 'draft';
       if (data.visibility !== old.visibility && data.status !== 'archived') data.status = 'draft';
-      await this.validateReferences(userId, data);
+      await this.validateReferences(userId, data, false, id);
       await c.query(
-        'UPDATE adventures SET title=$2,synopsis=$3,genre=$4,status=$5,data=$6,visibility=$7,published_snapshot=CASE WHEN visibility<>$7 THEN NULL ELSE published_snapshot END,updated_at=now() WHERE id=$1',
+        'UPDATE adventures SET title=$2,synopsis=$3,genre=$4,status=$5,data=$6,visibility=$7,published_snapshot=CASE WHEN visibility<>$7 THEN NULL ELSE published_snapshot END,private_release_id=CASE WHEN visibility<>$7 THEN NULL ELSE private_release_id END,updated_at=now() WHERE id=$1',
         [
           id,
           data.title,
@@ -305,12 +310,13 @@ export class ContentController {
     const u = publishedOnly ? null : await this.auth.current(req);
     const access = publishedOnly ? 'public' : await this.content.access(row, u);
     if (!access) fail(404, 'NOT_FOUND', 'Приключение не найдено.');
-    const usePublished = access === 'public';
+    const usePublished = access === 'public' || access === 'invited';
     const result = adventureView(row, usePublished, access !== 'owner');
     const npcIds = result.content.npcIds;
     let npcPreview: Record<string, unknown>[];
-    if (usePublished && row.published_snapshot) {
-      npcPreview = ((row.published_snapshot as Record<string, unknown>).publicNpcs ?? []) as Record<
+    if (usePublished) {
+      const releaseSnapshot = access === 'invited' ? row.private_snapshot : row.published_snapshot;
+      npcPreview = ((releaseSnapshot as Record<string, unknown>).publicNpcs ?? []) as Record<
         string,
         unknown
       >[];
@@ -334,14 +340,15 @@ export class ContentController {
         ...n,
         ...safeNpcMetadata(n as unknown as import('@dreamwalk/contracts').NpcMetadata),
       })),
-      versions: publishedOnly
-        ? []
-        : (
-            await this.db.query(
-              'SELECT id,version,created_at FROM adventure_versions WHERE adventure_id=$1 ORDER BY version DESC',
-              [row.id],
-            )
-          ).map(camel),
+      versions:
+        access !== 'owner'
+          ? []
+          : (
+              await this.db.query(
+                'SELECT id,version,created_at FROM adventure_versions WHERE adventure_id=$1 ORDER BY version DESC',
+                [row.id],
+              )
+            ).map(camel),
     };
   }
   @Get('creators/:handle')
@@ -389,18 +396,23 @@ export class ContentController {
     );
     const shared = await this.db.query(
       adventureSelect +
-        " JOIN adventure_invitations i ON i.adventure_id=a.id WHERE i.recipient_id=$1 AND i.status='accepted' AND a.visibility='private' AND a.status<>'archived' ORDER BY i.updated_at DESC",
+        " JOIN adventure_invitations i ON i.adventure_id=a.id WHERE i.recipient_id=$1 AND i.status='accepted' AND a.visibility='private' AND a.private_release_id IS NOT NULL AND a.status<>'archived' ORDER BY i.updated_at DESC",
       [u.id],
     );
     return {
-      favorites: favorites.map((r) =>
-        adventureView(r, r.visibility === 'public' && r.owner_id !== u.id, r.owner_id !== u.id),
-      ),
+      favorites: favorites.map((r) => adventureView(r, r.owner_id !== u.id, r.owner_id !== u.id)),
       shared: shared.map((r) => ({
-        ...adventureView(r, false, true),
+        ...adventureView(r, true, true),
         access: 'invited',
         readOnly: true,
       })),
+      privatePublished: (
+        await this.db.query(
+          adventureSelect +
+            " WHERE a.owner_id=$1 AND a.visibility='private' AND a.private_release_id IS NOT NULL AND a.status<>'archived' ORDER BY a.updated_at DESC",
+          [u.id],
+        )
+      ).map((r) => adventureView(r, true)),
       drafts: (
         await this.db.query(adventureSelect + ' WHERE a.owner_id=$1 ORDER BY a.updated_at DESC', [
           u.id,
@@ -493,7 +505,10 @@ export class ContentController {
   ) {
     const u = await this.auth.require(req);
     const row = (
-      await this.db.query('SELECT * FROM npcs WHERE id=$1 AND owner_id=$2', [id, u.id])
+      await this.db.query('SELECT * FROM npcs WHERE id=$1 AND owner_id=$2 AND story_id IS NULL', [
+        id,
+        u.id,
+      ])
     )[0];
     if (!row) fail(404, 'NOT_FOUND', 'NPC не найден.');
     return entityView(row);
@@ -530,9 +545,10 @@ export class ContentController {
   private async listEntities(table: 'heroes' | 'npcs', req: Request) {
     const u = await this.auth.require(req);
     return (
-      await this.db.query(`SELECT * FROM ${table} WHERE owner_id=$1 ORDER BY updated_at DESC`, [
-        u.id,
-      ])
+      await this.db.query(
+        `SELECT * FROM ${table} WHERE owner_id=$1 ${table === 'npcs' ? 'AND story_id IS NULL' : ''} ORDER BY updated_at DESC`,
+        [u.id],
+      )
     ).map(entityView);
   }
   private async createEntity(table: 'heroes' | 'npcs', body: unknown, req: Request) {
@@ -621,7 +637,10 @@ export class ContentController {
       fail(400, 'VALIDATION_FAILED', 'Model not found.');
     return this.db.tx(async (c) => {
       const old = (
-        await c.query('SELECT * FROM npcs WHERE id=$1 AND owner_id=$2 FOR UPDATE', [id, user.id])
+        await c.query(
+          'SELECT * FROM npcs WHERE id=$1 AND owner_id=$2 AND story_id IS NULL FOR UPDATE',
+          [id, user.id],
+        )
       ).rows[0];
       if (!old) fail(404, 'NOT_FOUND', 'NPC not found.');
       checkEditRevision(old, input.expectedEditRevision);
@@ -674,7 +693,10 @@ export class ContentController {
       .parse(body);
     return this.db.tx(async (c) => {
       const row = (
-        await c.query('SELECT * FROM npcs WHERE id=$1 AND owner_id=$2 FOR UPDATE', [id, user.id])
+        await c.query(
+          'SELECT * FROM npcs WHERE id=$1 AND owner_id=$2 AND story_id IS NULL FOR UPDATE',
+          [id, user.id],
+        )
       ).rows[0];
       if (!row) fail(404, 'NOT_FOUND', 'NPC not found.');
       checkEditRevision(row, b.expectedEditRevision);
@@ -713,7 +735,10 @@ export class ContentController {
       );
       if (used.length) fail(409, 'STATE_CONFLICT', 'Сначала удалите NPC из приключений.');
     }
-    await this.db.query(`DELETE FROM ${table} WHERE id=$1 AND owner_id=$2`, [id, u.id]);
+    await this.db.query(
+      `DELETE FROM ${table} WHERE id=$1 AND owner_id=$2 ${table === 'npcs' ? 'AND story_id IS NULL' : ''}`,
+      [id, u.id],
+    );
     return { ok: true };
   }
   @Get('studio/adventures')
@@ -871,16 +896,60 @@ export class ContentController {
     req: Request,
   ) {
     const u = await this.auth.require(req),
-      row = await this.content.own(id, u.id);
-    return this.createAdventure(
-      {
+      newId = randomUUID();
+    await this.db.tx(async (c) => {
+      const row = (
+        await c.query('SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 FOR UPDATE', [id, u.id])
+      ).rows[0];
+      if (!row) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      const data = adventureSchema.parse({
         ...row.data,
         title: `${row.title} — копия`.slice(0, 120),
         status: 'draft',
         visibility: 'private',
-      },
-      req,
-    );
+        sourceRevision: 1,
+        translations: {},
+      });
+      const npcs = (
+        await c.query(
+          'SELECT * FROM npcs WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND (story_id IS NULL OR story_id=$3) FOR SHARE',
+          [u.id, data.content.npcIds, id],
+        )
+      ).rows;
+      if (npcs.length !== new Set(data.content.npcIds).size) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+      await c.query(
+        'INSERT INTO adventures(id,owner_id,slug,title,synopsis,genre,status,data,visibility) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9)',
+        [
+          newId,
+          u.id,
+          `story-${newId.slice(0, 8)}`,
+          data.title,
+          data.synopsis,
+          data.genre,
+          'draft',
+          JSON.stringify({ ...data, content: { ...data.content, npcIds: [] } }),
+          'private',
+        ],
+      );
+      const copies = new Map<string, string>();
+      for (const npc of npcs) {
+        const npcId = randomUUID();
+        copies.set(npc.id, npcId);
+        await c.query(
+          'INSERT INTO npcs(id,owner_id,story_id,source_template_id,data) VALUES($1,$2,$3,$4,$5)',
+          [
+            npcId,
+            u.id,
+            newId,
+            npc.story_id ? npc.source_template_id : npc.id,
+            JSON.stringify(npc.data),
+          ],
+        );
+      }
+      data.content.npcIds = data.content.npcIds.map((npcId) => copies.get(npcId)!);
+      await c.query('UPDATE adventures SET data=$2 WHERE id=$1', [newId, JSON.stringify(data)]);
+    });
+    return adventureView(await this.content.own(newId, u.id));
   }
   @Get('studio/adventures/:id/versions')
   async versions(
@@ -914,7 +983,7 @@ export class ContentController {
       if (row.visibility !== 'public') fail(400, 'VALIDATION_FAILED', 'Public visibility required');
       if (row.status === 'pending_review') return;
       if (row.status === 'published') fail(409, 'STATE_CONFLICT', 'Save changes before submission');
-      await this.content.validateReferences(u.id, adventureSchema.parse(row.data), true);
+      await this.content.validateReferences(u.id, adventureSchema.parse(row.data), true, id);
       const gameVersion = await this.playable.freeze(c, row, 'review');
       await c.query(
         "UPDATE adventures SET status='pending_review',submitted_game_version_id=$2,updated_at=now() WHERE id=$1",

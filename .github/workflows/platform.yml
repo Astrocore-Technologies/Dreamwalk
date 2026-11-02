@@ -43,6 +43,10 @@ jobs:
       - run: npm run test:unit
       - name: Game rules, UI projection and autosave controller tests
         run: npm run test:game
+      - name: Private authoring, provisional legal copy and Sparks UI contracts
+        run: node --import tsx --test tests/game/private-authoring-privacy.test.mjs tests/game/story-builder-authoring.test.mjs tests/game/story-npc-editor.test.mjs tests/game/closed-test-legal.test.mjs tests/game/sparks-receipts-ui.test.mjs tests/game/map-camera.test.mjs tests/game/map-actions-harness.test.mjs tests/game/renderer-activity.test.mjs
+      - name: Map-shaped image quotes and reviewed range policy (synthetic transports)
+        run: node --test tests/game/image-framing.test.cjs tests/game/story-map-intent.test.cjs tests/game/manifest-framing.test.cjs
       - name: Deterministic NPC behavior rubric and bounded local benchmark
         run: npm run test:npc:eval
       - name: Semantic NPC context and disclosure regression
@@ -73,6 +77,19 @@ jobs:
       # disposable cluster. Keep its serial tests: they share runtime resources.
       - name: Game runtime and isolated PostgreSQL integration
         run: npm run test:game:integration
+      - name: Private release and opt-in Sparks accounting (disposable databases)
+        run: node --test tests/game/private-release.integration.test.cjs tests/game/story-local-npcs.test.cjs tests/game/sparks-accounting.test.cjs tests/game/sparks-dispatch.integration.test.cjs tests/game/npc-sparks.integration.test.cjs
+      - name: Private authoring HTTP persistence journey (synthetic only)
+        run: STORY_AUTHORING_HTTP=1 node scripts/test-story-authoring.mjs
+      - name: Private authoring browser journey (synthetic only)
+        run: node scripts/test-story-authoring.mjs
+      - name: Save synthetic authoring browser screenshots
+        if: always()
+        uses: actions/upload-artifact@v4
+        with:
+          name: private-authoring-browser-evidence
+          path: test-results/story-authoring/
+          if-no-files-found: ignore
       - name: Durable isolated evaluation ledger and crash recovery
         run: node scripts/test-live-story-pg.mjs
       - name: Zero-network story evaluation rehearsal

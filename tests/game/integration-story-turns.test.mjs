@@ -1,3 +1,4 @@
+import { releasePrivateFixture } from './support-authored.mjs';
 /** Unified turns through real authentication, PostgreSQL and delayed local-only provider jobs. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
@@ -56,10 +57,7 @@ await test(
         { expectedRevision: 0, draft: createCompleteObservatoryDraft() },
         'PUT',
       );
-      const version = await owner.request(
-        `/studio/adventures/${privateStory.id}/playable-versions`,
-        { expectedRevision: 1 },
-      );
+      const version = await releasePrivateFixture(owner, privateStory.id);
       const sourceInvite = await owner.request(
         `/studio/adventures/${privateStory.id}/invitations`,
         { handle: guest.handle },
@@ -67,7 +65,7 @@ await test(
       await guest.request(`/invitations/${sourceInvite.id}/respond`, { decision: 'accept' });
       const privateCampaign = await owner.request('/game/campaigns', {
         turnBased: false,
-        playableVersionId: version.versionId,
+        playableVersionId: version.playableVersionId,
       });
       await owner.request(`/game/campaigns/${privateCampaign.campaignId}/invitations`, {
         username: guest.handle,

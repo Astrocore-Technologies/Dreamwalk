@@ -133,7 +133,12 @@ function PolicyComparison({
         label: m('policyImageProfile'),
         read: (p) =>
           p
-            ? [p.image.size, p.image.quality, p.image.outputs].join(' / ')
+            ? [
+                p.image.size,
+                p.image.quality,
+                p.image.outputs,
+                ...(p.image.framingPolicy ? [JSON.stringify(p.image.framingPolicy)] : []),
+              ].join(' / ')
             : m('reserveUnavailable'),
       },
       {

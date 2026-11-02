@@ -3,7 +3,11 @@ import { AssetLibrary } from './assets/asset-library';
 import { useAssetText } from './assets/messages';
 import { AutosaveStatus } from './studio/autosave-status';
 import { useDraftAutosave } from '@/lib/use-draft-autosave';
-import { PlayableMapEditor } from './studio/playable-map-editor';
+import { StoryPlayableBuilder } from './visual-authoring/story-playable-builder';
+import { LocationMapIntent } from './studio/location-map-intent';
+import { StoryNpcEditor } from './studio/story-npc-editor';
+import { PrivateRelease } from './studio/private-release';
+import { CharacterSpriteControl } from './visual-authoring/character-sprite-control';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
@@ -377,15 +381,13 @@ function MediaPicker({
 
 function AdventureEditor({ id }: { id: string }) {
   const locationImages = useLocationImageConfiguration();
-  const [locationImageId, setLocationImageId] = useState<string | null>(null),
-    [locationArtEpoch, setLocationArtEpoch] = useState(0);
+  const [locationImageId, setLocationImageId] = useState<string | null>(null);
   const date = useDate();
   const { t, taxonomy, locale } = useT();
   const router = useRouter(),
     { toast, user } = useClient(),
     isNew = id === 'new';
   const resource = useResource<Adventure>(isNew ? null : `/studio/adventures/${id}`),
-    npcs = useResource<Npc[]>('/npcs'),
     genres = useResource<string[]>('/genres'),
     tagDefinitions = useResource<ControlledTag[]>('/tags');
   const [draft, setDraft] = useState<AdventureDraft>(() => ({
@@ -396,13 +398,11 @@ function AdventureEditor({ id }: { id: string }) {
     })),
     [step, setStep] = useState(0),
     [dirty, setDirty] = useState(false),
-    [playableDirty, setPlayableDirty] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [confirm, setConfirm] = useState<'submit' | 'leave' | 'archive' | null>(null),
     [versionsOpen, setVersionsOpen] = useState(false);
   const [hydration, setHydration] = useState(0);
-  const playableFlush = useRef<(() => Promise<void>) | null>(null);
   const baseline = useRef<AdventureDraft | null>(null);
   const acknowledged = useRef<Adventure | null>(null);
   const reloadAllowed = useRef(false);
@@ -450,6 +450,14 @@ function AdventureEditor({ id }: { id: string }) {
       resource.reload();
     }
   }
+  function refreshStoryAuthoring() {
+    void api<Adventure>(`/studio/adventures/${id}`)
+      .then((fresh) => {
+        reloadAllowed.current = true;
+        resource.setData((current) => (current?.id === fresh.id ? fresh : current));
+      })
+      .catch((err) => setError(errorMessage(err)));
+  }
   function refreshArtModeration() {
     // A loading reload unmounts the playable editor and loses its unsaved draft.
     // Art binding changes moderation state, not narrative input or its CAS revision.
@@ -468,7 +476,7 @@ function AdventureEditor({ id }: { id: string }) {
       })
       .catch((err) => setError(errorMessage(err)));
   }
-  useDirtyWarning(dirty || playableDirty);
+  useDirtyWarning(dirty);
   const change = <K extends keyof AdventureDraft>(key: K, value: AdventureDraft[K]) => {
     setDraft((d) => ({ ...d, [key]: value }));
     setDirty(true);
@@ -486,7 +494,6 @@ function AdventureEditor({ id }: { id: string }) {
     try {
       if (!isNew) {
         const saved = await autosave.flush();
-        if (playableFlush.current) await playableFlush.current();
         toast(t('Черновик сохранён'));
         return saved;
       }
@@ -512,7 +519,6 @@ function AdventureEditor({ id }: { id: string }) {
     if (!saved) return;
     setBusy(true);
     try {
-      if (playableFlush.current) await playableFlush.current();
       const result = await api<Adventure>(`/studio/adventures/${saved.id}/submit`, {
         method: 'POST',
         body: '{}',
@@ -530,7 +536,6 @@ function AdventureEditor({ id }: { id: string }) {
     setError('');
     try {
       await autosave.flush();
-      if (playableFlush.current) await playableFlush.current();
       const copy = await api<Adventure>(`/studio/adventures/${id}/duplicate`, {
         method: 'POST',
         body: '{}',
@@ -549,7 +554,6 @@ function AdventureEditor({ id }: { id: string }) {
     setConfirm(null);
     try {
       const saved = await autosave.flush();
-      if (playableFlush.current) await playableFlush.current();
       const result = await api<Adventure>(`/studio/adventures/${id}`, {
         method: 'PATCH',
         body: JSON.stringify({ status, expectedEditRevision: saved.editRevision }),
@@ -585,14 +589,14 @@ function AdventureEditor({ id }: { id: string }) {
       <div className="row">
         <Button
           variant="ghost"
-          onClick={() => (dirty || playableDirty ? setConfirm('leave') : router.push('/studio'))}
+          onClick={() => (dirty ? setConfirm('leave') : router.push('/studio'))}
         >
           <ArrowLeft size={16} />
           {t('В мастерскую')}
         </Button>
         <Badge tone={status === 'published' ? 'green' : ''}>{t(statuses[status])}</Badge>
         <span className="muted">
-          {dirty || playableDirty
+          {dirty
             ? t('Есть несохранённые изменения')
             : isNew
               ? t('Новая история')
@@ -924,17 +928,29 @@ function AdventureEditor({ id }: { id: string }) {
                         }
                       />
                     </Field>
+                    <LocationMapIntent
+                      value={location.mapIntent}
+                      onChange={(mapIntent) =>
+                        content(
+                          'locations',
+                          draft.content.locations.map((l) =>
+                            l.id === location.id ? { ...l, mapIntent } : l,
+                          ),
+                        )
+                      }
+                    />
                     <LocationImageAction
                       settings={locationImages}
                       adventureId={id}
                       locationId={location.id}
-                      sourceKey={JSON.stringify([location.name, location.description])}
+                      sourceKey={JSON.stringify([
+                        location.name,
+                        location.description,
+                        location.mapIntent,
+                      ])}
                       beforePrepare={autosave.flush}
-                      playableDirty={playableDirty}
-                      onSaved={(attached) => {
-                        if (attached) setLocationArtEpoch((value) => value + 1);
-                        refreshArtModeration();
-                      }}
+                      playableDirty={false}
+                      onSaved={refreshArtModeration}
                       saved={!isNew}
                       disabled={busy}
                       onOpen={() => setLocationImageId(location.id)}
@@ -968,60 +984,8 @@ function AdventureEditor({ id }: { id: string }) {
                 </Button>
               </div>
             )}
-            {step === 3 && (
-              <div className="stack">
-                <div className="notice">
-                  {t(
-                    'NPC — жители вашего мира. Герои игроков создаются отдельно в разделе «Мои герои».',
-                  )}
-                </div>
-                <ErrorBox message={npcs.error} retry={npcs.reload} />
-                {npcs.loading ? (
-                  <Loading />
-                ) : npcs.data?.length ? (
-                  <div className={styles.npcSelection}>
-                    {npcs.data.map((n) => (
-                      <label className={styles.npcOption} key={n.id}>
-                        <input
-                          type="checkbox"
-                          checked={draft.content.npcIds.includes(n.id)}
-                          onChange={(e) =>
-                            content(
-                              'npcIds',
-                              e.target.checked
-                                ? [...draft.content.npcIds, n.id]
-                                : draft.content.npcIds.filter((id) => id !== n.id),
-                            )
-                          }
-                        />
-                        <span className={styles.avatar}>{selectNpcText(n, locale).name[0]}</span>
-                        <span>
-                          <strong>{selectNpcText(n, locale).name}</strong>
-                          <small>{selectNpcText(n, locale).role || t('Житель мира')}</small>
-                        </span>
-                      </label>
-                    ))}
-                  </div>
-                ) : (
-                  <p className="muted">
-                    {t(
-                      'У вас пока нет NPC. Сохраните черновик, затем создайте персонажа в библиотеке.',
-                    )}
-                  </p>
-                )}
-                <Link
-                  href="/studio/npcs/new"
-                  className="text-link"
-                  target="_blank"
-                  rel="noopener noreferrer"
-                >
-                  <Plus size={16} />
-                  {t('Создать NPC в новой вкладке')}
-                </Link>
-                <Button variant="ghost" type="button" onClick={npcs.reload}>
-                  {t('Обновить библиотеку')}
-                </Button>
-              </div>
+            {step === 3 && isNew && (
+              <p>{t('Сначала сохраните историю и выбранный режим доступа.')}</p>
             )}
             {step === 4 && (
               <div className="stack">
@@ -1384,35 +1348,33 @@ function AdventureEditor({ id }: { id: string }) {
           locationId={locationImageId}
           settings={locationImages}
           beforePrepare={autosave.flush}
-          playableDirty={playableDirty}
+          playableDirty={false}
           onClose={() => setLocationImageId(null)}
-          onSaved={(mapAttached) => {
-            if (mapAttached) setLocationArtEpoch((value) => value + 1);
-            refreshArtModeration();
-          }}
+          onSaved={refreshArtModeration}
         />
       )}
-      <div hidden={step !== 2 && step !== 6}>
-        <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
-          {isNew ? (
-            <div className="notice">
-              {t('Сначала сохрани историю, затем добавь игровую карту.')}
-            </div>
-          ) : (
-            <PlayableMapEditor
-              adventureId={id}
-              artEpoch={locationArtEpoch}
-              title={draft.title}
-              npcs={npcs.data || []}
-              locations={draft.content.locations}
-              onDirty={setPlayableDirty}
-              flushRef={playableFlush}
-              onArtSaved={refreshArtModeration}
-              preview={step === 6}
-            />
-          )}
-        </fieldset>
-      </div>
+      {!isNew && step === 3 && (
+        <StoryNpcEditor
+          adventureId={id}
+          selectedNpcIds={draft.content.npcIds}
+          beforeEdit={autosave.flush}
+          onChanged={refreshStoryAuthoring}
+        />
+      )}
+      {!isNew && (step === 2 || step === 6) && (
+        <StoryPlayableBuilder
+          adventureId={id}
+          beforePrepare={autosave.flush}
+          onApplied={refreshArtModeration}
+        />
+      )}
+      {!isNew && step === 7 && draft.visibility === 'private' && (
+        <PrivateRelease
+          adventureId={id}
+          beforePublish={autosave.flush}
+          onPublished={refreshArtModeration}
+        />
+      )}
       {step === 7 &&
         draft.visibility === 'private' &&
         (isNew || resource.data?.visibility !== 'private' ? (
@@ -1866,6 +1828,9 @@ function NpcEditor({ id }: { id: string }) {
           </div>
         </fieldset>
       </form>
+      {!isNew && !dirty && (
+        <CharacterSpriteControl target={{ kind: 'npc', id }} onSaved={resource.reload} />
+      )}
       {leave && (
         <Modal title={t('Есть несохранённые изменения')} onClose={() => setLeave(false)}>
           <p>{t('Остаться в редакторе или выйти без сохранения?')}</p>

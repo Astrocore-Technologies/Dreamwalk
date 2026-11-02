@@ -1,7 +1,14 @@
+import {
+  savePrivateFixture,
+  launchPrivateFixture,
+  authoringRequest,
+} from './support/private-authoring';
+import { turnRulesSchema } from '@dreamwalk/contracts';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { createAuthoredDraft } from '@dreamwalk/game-core';
 import type { GameProjection } from '@dreamwalk/contracts';
+import { readProjection, reconfirmKnownStale } from './support/map-actions';
 
 /** Split coverage: removed legacy start control uses explicit API reconfirmation;
  * current planning/reload/end controls are still exercised through the browser. */
@@ -40,7 +47,9 @@ async function beginLegacyCoordinationWithExplicitReconfirmation(page: Page, cam
   }
 }
 
-test('Studio authored layout persists and launches its own pinned campaign', async ({ page }) => {
+test('Studio narrative autosave plus API-authored fixture launches its pinned campaign', async ({
+  page,
+}) => {
   test.setTimeout(90000);
   const mapName = 'M'.repeat(120);
   await page.setViewportSize({ width: 390, height: 844 });
@@ -98,41 +107,25 @@ test('Studio authored layout persists and launches its own pinned campaign', asy
     `Autosaved courtyard ${suffix}`,
   );
 
-  await page.getByRole('button', { name: /Локации$/ }).click();
-  const editor = page.getByRole('region', { name: 'Игровая карта', exact: true });
-  await editor.getByRole('button', { name: 'Шаблон: внутренний двор', exact: true }).click();
-  // Studio launches the current turn-based player/world loop.
-  await editor.getByLabel('Пошаговый режим Dreamwalk', { exact: true }).check();
-  await editor.getByLabel('Название карты', { exact: true }).fill(mapName);
-  await editor.getByLabel('Инструмент карты', { exact: true }).selectOption('spawn');
-  await editor.getByRole('button', { name: /^Клетка 4, 2:/ }).click();
-  await editor.getByLabel('Инструмент карты', { exact: true }).selectOption('wall');
-  await editor.getByRole('button', { name: /^Клетка 1, 1:/ }).click();
-  await editor.getByLabel('Объект на карте', { exact: true }).selectOption('object:key');
-  await editor.getByLabel('Название', { exact: true }).fill('Browser copper key');
-  await editor.getByLabel('Объект на карте', { exact: true }).selectOption('npc:keeper');
-  const saved = page.waitForResponse(
-    (r) =>
-      r.url().endsWith('/playable-draft') &&
-      r.request().method() === 'PUT' &&
-      r
-        .request()
-        .postDataJSON()
-        ?.draft?.npcs?.some((entry: { sourceNpcId?: string }) => entry.sourceNpcId === npcId),
-  );
-  await editor.getByLabel('Персонаж из библиотеки', { exact: true }).selectOption(npcId);
-  expect((await saved).ok()).toBeTruthy();
-  await expect(
-    editor.locator('[data-autosave-scope="map"][data-autosave-status="saved"]'),
-  ).toBeVisible();
+  // Removed map-template controls are covered by a validated API fixture, not browser authoring.
+  const draft = createAuthoredDraft('courtyard');
+  draft.turnRules = turnRulesSchema.parse({});
+  draft.maps[0].label = mapName;
+  draft.maps[0].spawns[0] = { x: 4, y: 2 };
+  draft.maps[0].blocked.push({ x: 1, y: 1 });
+  draft.objects.find((entry) => entry.id === 'key')!.label = 'Browser copper key';
+  draft.npcs[0].sourceNpcId = npcId;
+  const fixture = await savePrivateFixture(page, adventureId, draft);
   await page.reload();
-  await page.getByRole('button', { name: /Локации$/ }).click();
-  await expect(editor.getByLabel('Название карты', { exact: true })).toHaveValue(mapName);
-  await editor.getByLabel('Объект на карте', { exact: true }).selectOption('object:key');
-  await expect(editor.getByLabel('Название', { exact: true })).toHaveValue('Browser copper key');
-  await editor.getByRole('button', { name: 'Сохранить и проверить в игре', exact: true }).click();
-  await expect(page).toHaveURL(/\/game\/[a-f0-9-]+$/);
-  const campaignId = new URL(page.url()).pathname.split('/').at(-1)!;
+  const persisted = await authoringRequest(
+    page,
+    `/studio/adventures/${adventureId}/playable-draft`,
+  );
+  expect(persisted.draft.maps[0].label).toBe(mapName);
+  expect(persisted.draft.objects.find((entry: { id: string }) => entry.id === 'key').label).toBe(
+    'Browser copper key',
+  );
+  const campaignId = await launchPrivateFixture(page, adventureId, true);
   await expect(page.getByText('Подключено', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: mapName, exact: true, level: 1 })).toBeVisible();
   await expect(page.locator('canvas')).toBeVisible();
@@ -166,23 +159,8 @@ test('Studio authored layout persists and launches its own pinned campaign', asy
   expect((await readTurn())?.ownTurn).toBe(true);
   const campaignUrl = page.url();
   await page.goto(adventureUrl);
-  await page.getByRole('button', { name: /Локации$/ }).click();
-  const edited = page.waitForResponse(
-    (r) =>
-      r.url().endsWith('/playable-draft') &&
-      r.request().method() === 'PUT' &&
-      r
-        .request()
-        .postDataJSON()
-        ?.draft?.maps?.some(
-          (entry: { label: string }) => entry.label === 'Unpublished changed map',
-        ),
-  );
-  await editor.getByLabel('Название карты', { exact: true }).fill('Unpublished changed map');
-  expect((await edited).ok()).toBeTruthy();
-  await expect(
-    editor.locator('[data-autosave-scope="map"][data-autosave-status="saved"]'),
-  ).toBeVisible();
+  fixture.draft.maps[0].label = 'Unpublished changed map';
+  await savePrivateFixture(page, adventureId, fixture.draft);
   await page.goto(campaignUrl);
   await expect(page.getByRole('heading', { name: mapName, exact: true, level: 1 })).toBeVisible();
   await page.reload();
@@ -212,21 +190,8 @@ test('explicit realtime authored campaign retains coordination recovery and pers
   const storyId = (await storyResponse.json()).id;
   const draft = createAuthoredDraft('courtyard');
   delete draft.turnRules;
-  const saved = await page.request.put(`/api/v1/studio/adventures/${storyId}/playable-draft`, {
-    data: { expectedRevision: 0, draft },
-  });
-  expect(saved.ok()).toBeTruthy();
-  const version = await page.request.post(
-    `/api/v1/studio/adventures/${storyId}/playable-versions`,
-    { data: { expectedRevision: (await saved.json()).revision } },
-  );
-  expect(version.ok()).toBeTruthy();
-  const created = await page.request.post('/api/v1/game/campaigns', {
-    data: { playableVersionId: (await version.json()).versionId, turnBased: false },
-  });
-  expect(created.ok()).toBeTruthy();
-  const campaignId = (await created.json()).campaignId;
-  await page.goto(`/game/${campaignId}`);
+  await savePrivateFixture(page, storyId, draft);
+  const campaignId = await launchPrivateFixture(page, storyId, false);
   await expect(page.getByText('Подключено', { exact: true })).toBeVisible();
   const snapshot = await page.request.get(`/api/v1/game/campaigns/${campaignId}/snapshot`);
   expect(snapshot.ok()).toBeTruthy();
@@ -235,7 +200,33 @@ test('explicit realtime authored campaign retains coordination recovery and pers
   const planning = page.getByRole('region', { name: 'Планирование раунда', exact: true });
   await expect(planning.getByRole('heading', { name: 'Раунд 1', exact: true })).toBeVisible();
   await planning.getByRole('button', { name: 'Ждать', exact: true }).click();
-  await planning.getByRole('button', { name: 'Подтвердить намерение', exact: true }).click();
+  const beforeIntent = await readProjection(page, campaignId);
+  const encounter = beforeIntent.encounter!;
+  expect(encounter.round).toBe(1);
+  expect(encounter.intents[beforeIntent.actorId]).toBeUndefined();
+  const confirm = planning.getByRole('button', { name: 'Подтвердить намерение', exact: true });
+  // The keeper's normal tick-20 patrol can advance the world revision between
+  // planning and confirmation. Only a proven no-effect stale receipt permits a
+  // new visible decision; never retry an unknown outcome or a different round.
+  await reconfirmKnownStale(
+    page,
+    campaignId,
+    {
+      type: 'encounter.intent',
+      intent: {
+        encounterId: encounter.id,
+        generation: encounter.generation,
+        round: encounter.round,
+        intentRevision: 1,
+        action: { kind: 'wait' },
+        ready: true,
+      },
+    },
+    () => confirm.click(),
+    async () => {
+      await expect(confirm).toBeEnabled();
+    },
+  );
   await expect(planning.getByRole('heading', { name: 'Раунд 2', exact: true })).toBeVisible();
   await page.reload();
   await expect(planning.getByRole('heading', { name: 'Раунд 2', exact: true })).toBeVisible();

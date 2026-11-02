@@ -63,6 +63,33 @@ export class AdminController {
   ) {
     return this.walletFor((await this.auth.require(req)).id);
   }
+  @Get('sparks/wallet')
+  async sparksWallet(@Req() req: Request) {
+    const owner = (await this.auth.require(req)).id;
+    const row = (
+      await this.db.query(
+        'SELECT enabled,balance_subunits,held_subunits FROM spark_wallets WHERE owner_id=$1',
+        [owner],
+      )
+    )[0];
+    const balance = BigInt(row?.balance_subunits ?? '0'),
+      held = BigInt(row?.held_subunits ?? '0');
+    return {
+      enabled: row?.enabled ?? false,
+      balanceSubunits: balance.toString(),
+      heldSubunits: held.toString(),
+      availableSubunits: (balance - held).toString(),
+      subunitsPerSpark: '10000',
+      rateVersion: 'api-cent-1-spark-v1',
+      purchaseAvailable: false,
+      ledger: (
+        await this.db.query(
+          'SELECT id,kind,amount_subunits,created_at FROM spark_ledger WHERE owner_id=$1 ORDER BY id DESC LIMIT 100',
+          [owner],
+        )
+      ).map(camel),
+    };
+  }
   @Get('store/packages')
   packages() {
     return [
@@ -198,13 +225,14 @@ export class AdminController {
     return (
       await this.db.query(
         adventureSelect +
-          ` WHERE ($1='' OR a.status=$1) AND ((a.visibility='public' AND (a.status IN('pending_review','published') OR a.published_snapshot IS NOT NULL)) OR ${readableAdventureSql('$2')}) ORDER BY a.updated_at DESC LIMIT 200`,
+          ` WHERE ($1='' OR CASE WHEN a.visibility='private' AND a.owner_id<>$2 THEN 'published' ELSE a.status END=$1) AND ((a.visibility='public' AND (a.status IN('pending_review','published') OR a.published_snapshot IS NOT NULL)) OR ${readableAdventureSql('$2')}) AND (a.owner_id=$2 OR a.visibility<>'private' OR EXISTS(SELECT 1 FROM adventure_private_releases pr WHERE pr.id=a.private_release_id AND pr.adventure_id=a.id AND pr.owner_id=a.owner_id)) ORDER BY a.updated_at DESC LIMIT 200`,
         [status, u.id],
       )
     ).map((r) =>
       adventureView(
         r,
-        r.owner_id !== u.id && r.visibility === 'public' && r.status !== 'pending_review',
+        r.owner_id !== u.id && (r.visibility === 'private' || r.status !== 'pending_review'),
+        r.owner_id !== u.id && r.visibility === 'private',
       ),
     );
   }
@@ -212,7 +240,26 @@ export class AdminController {
   async npcs(@Req() req: Request) {
     const u = await this.auth.admin(req);
     const rows = await this.db.query(
-      `SELECT n.id,n.owner_id,n.data,n.created_at,n.updated_at FROM npcs n WHERE n.owner_id=$1 OR EXISTS(SELECT 1 FROM adventures a WHERE a.owner_id=n.owner_id AND a.data->'content'->'npcIds' ? n.id::text AND ((a.visibility='public' AND a.status IN('pending_review','published')) OR (a.visibility='private' AND a.status<>'archived' AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id AND i.recipient_id=$1 AND i.status='accepted')))) ORDER BY n.updated_at DESC LIMIT 200`,
+      `WITH visible AS (
+        SELECT n.id::text AS id,n.owner_id,n.data,n.created_at,n.updated_at,
+          CASE WHEN n.owner_id=$1 THEN 0 ELSE 1 END AS priority
+        FROM npcs n WHERE n.owner_id=$1 OR EXISTS(
+          SELECT 1 FROM adventures a WHERE a.owner_id=n.owner_id
+          AND (n.story_id IS NULL OR n.story_id=a.id)
+          AND a.data->'content'->'npcIds' ? n.id::text
+          AND a.visibility='public' AND a.status IN('pending_review','published'))
+        UNION ALL
+        SELECT npc->>'id',a.owner_id,npc,pr.created_at,pr.created_at,2
+        FROM adventures a JOIN adventure_private_releases pr
+          ON pr.id=a.private_release_id AND pr.adventure_id=a.id AND pr.owner_id=a.owner_id
+        CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(pr.snapshot->'publicNpcs')='array'
+          THEN pr.snapshot->'publicNpcs' ELSE '[]'::jsonb END) AS npc
+        WHERE a.owner_id<>$1 AND a.visibility='private' AND a.status<>'archived'
+          AND npc->>'id' IS NOT NULL
+          AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id
+            AND i.recipient_id=$1 AND i.status='accepted')
+      ), chosen AS (SELECT DISTINCT ON (id) * FROM visible ORDER BY id,priority,updated_at DESC)
+      SELECT id,owner_id,data,created_at,updated_at FROM chosen ORDER BY updated_at DESC,id LIMIT 200`,
       [u.id],
     );
     return rows.map((r) => {
@@ -250,6 +297,7 @@ export class AdminController {
         pre.owner_id as string,
         adventureSchema.parse(pre.data),
         true,
+        id,
       );
     await this.db.tx(async (c) => {
       await this.art.lockAuthor(c, String(pre.owner_id));
@@ -270,6 +318,7 @@ export class AdminController {
           row.owner_id as string,
           adventureSchema.parse(row.data),
           true,
+          id,
         );
         const version = Number(row.version) + 1;
         const npcRows = (
@@ -335,7 +384,8 @@ export class AdminController {
     return (
       await this.db.query(
         `SELECT r.*,CASE
-      WHEN a.owner_id=$1 OR (a.visibility='private' AND a.status<>'archived' AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id AND i.recipient_id=$1 AND i.status='accepted')) THEN a.title
+      WHEN a.owner_id=$1 THEN a.title
+      WHEN a.visibility='private' AND a.private_release_id IS NOT NULL AND a.status<>'archived' AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id AND i.recipient_id=$1 AND i.status='accepted') THEN (SELECT pr.snapshot->>'title' FROM adventure_private_releases pr WHERE pr.id=a.private_release_id)
       WHEN a.visibility='public' AND a.status='pending_review' THEN a.title
       WHEN a.visibility='public' AND a.published_snapshot IS NOT NULL AND a.status<>'archived' THEN a.published_snapshot->>'title'
       ELSE NULL END AS adventure_title
