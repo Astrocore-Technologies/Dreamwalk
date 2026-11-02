@@ -216,12 +216,12 @@ function fixture(enabled = true, mode = 'success') {
           outputTokens: 1,
           costMicros: mode === 'overrun' ? 101 : 30,
           costEvidence: 'configured_rates',
-          ...(['unpriced', 'cached-read'].includes(mode)
+          ...(['unpriced', 'cached-read', 'unpriced-asserted'].includes(mode)
             ? {
                 ...(mode === 'cached-read'
                   ? { cachedInputTokens: 2 }
                   : { cacheWriteInputTokens: 2 }),
-                costVerifiedForSparks: false,
+                costVerifiedForSparks: mode === 'unpriced-asserted',
               }
             : {}),
         },
@@ -309,7 +309,16 @@ test('enabled engine quotes/reserves once under replay, dispatches, commits actu
     f.restore();
   }
 });
-for (const mode of ['cache', 'cancel', 'failure', 'stale', 'unpriced', 'cached-read', 'overrun'])
+for (const mode of [
+  'cache',
+  'cancel',
+  'failure',
+  'stale',
+  'unpriced',
+  'cached-read',
+  'unpriced-asserted',
+  'overrun',
+])
   test(`enabled NPC ${mode} preserves correct liability`, async () => {
     const f = fixture(true, mode);
     try {
@@ -318,7 +327,7 @@ for (const mode of ['cache', 'cancel', 'failure', 'stale', 'unpriced', 'cached-r
       else {
         await f.engine.run(job.id, async () => true);
         if (mode === 'stale') await f.db.tx((c) => f.engine.finalize(c, job.id, 'stale'));
-        if (['unpriced', 'cached-read'].includes(mode))
+        if (['unpriced', 'cached-read', 'unpriced-asserted'].includes(mode))
           await f.db.tx((c) => f.engine.finalize(c, job.id, 'committed'));
       }
       assert.equal(f.state.balance, 1000n);
@@ -628,3 +637,192 @@ for (const mode of ['mixed-disabled', 'mixed-missing'])
       f.restore();
     }
   });
+
+test('both Responses adapters settle explicitly priced disjoint cache categories and pin request TTL', async () => {
+  const { OpenAiNpcProvider } = require('../../apps/api/dist/ai/openai-provider');
+  const {
+    BoundedAuthoringTextProvider,
+  } = require('../../apps/api/dist/live-test/authoring-provider');
+  const cachePricing = {
+    cachedInputMicrosPerMillion: 10000,
+    cacheWrite30mMicrosPerMillion: 125000,
+    cacheWrite12hMicrosPerMillion: 250000,
+  };
+  const cfg = {
+    enabled: true,
+    apiKey: 'synthetic-only',
+    model: 'synthetic',
+    version: 'v1',
+    contextTokens: 1000,
+    maxInputBytes: 64000,
+    maxOutputTokens: 100,
+    maxResponseBytes: 64000,
+    inputMicrosPerMillion: 100000,
+    outputMicrosPerMillion: 500000,
+    upperMicros: 1000,
+    cachePricing,
+  };
+  const definition = {
+    version: 'v1',
+    schema: { type: 'object' },
+    instructions: 'Synthetic',
+    validateProposal: (x) => x,
+  };
+  for (const [details, expected] of [
+    [{ cached_tokens: 80, cache_write_tokens: 0 }, 8],
+    [{ cached_tokens: 0, cache_write_tokens: 80 }, 17],
+    [
+      {
+        cached_tokens: 20,
+        cache_write_tokens: 80,
+        cache_write_tokens_details: { ttl_30m_tokens: 50, ttl_12h_tokens: 30 },
+      },
+      19,
+    ],
+    [undefined, null],
+    [{}, null],
+    [{ cached_tokens: 0 }, null],
+    [{ cache_write_tokens: 0 }, null],
+    [{ cached_tokens: 0, cache_write_tokens: 0 }, 15],
+    [{ cached_tokens: 0, cache_write_tokens: 101 }, null],
+    [
+      {
+        cache_write_tokens: 80,
+        cache_write_tokens_details: { ttl_30m_tokens: 50, ttl_12h_tokens: 31 },
+      },
+      null,
+    ],
+  ])
+    for (const kind of ['npc', 'authoring']) {
+      let bodies = [];
+      const transport = async (_url, opts) => {
+        bodies.push(JSON.parse(opts.body));
+        return new Response(
+          JSON.stringify({
+            id: 'fixture',
+            status: 'completed',
+            service_tier: 'default',
+            usage: { input_tokens: 100, output_tokens: 10, input_tokens_details: details },
+            output: [
+              {
+                type: 'message',
+                content: [{ type: 'output_text', text: JSON.stringify({ text: 'Hello' }) }],
+              },
+            ],
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      };
+      const provider =
+        kind === 'npc'
+          ? new OpenAiNpcProvider(cfg, transport)
+          : new BoundedAuthoringTextProvider(definition, 'synthetic-only', transport, cfg);
+      const request = {
+        jobId: randomUUID(),
+        purpose: 'speech',
+        context: { contextHash: 'fixture', replyLocale: 'en' },
+        signal: new AbortController().signal,
+        maxCostMicros: 100000,
+      };
+      if (expected === null)
+        await assert.rejects(
+          provider.generate(request),
+          (e) => e.code === 'PROVIDER_USAGE_UNKNOWN',
+        );
+      else {
+        const result = await provider.generate(request);
+        assert.equal(result.usage.costMicros, expected);
+        assert.equal(result.usage.costVerifiedForSparks, true);
+      }
+      assert.deepEqual(bodies[0].prompt_cache_options, { mode: 'implicit', ttl: '30m' });
+      assert.equal(bodies[0].service_tier, 'default');
+    }
+  const original = new OpenAiNpcProvider(cfg);
+  const changed = new OpenAiNpcProvider({
+    ...cfg,
+    cachePricing: { ...cachePricing, cachedInputMicrosPerMillion: 10001 },
+  });
+  assert.notEqual(original.version, changed.version);
+  const legacy = { ...cfg };
+  delete legacy.cachePricing;
+  assert.equal(
+    new OpenAiNpcProvider(legacy).version,
+    new OpenAiNpcProvider({ ...legacy, cachePricing: undefined }).version,
+  );
+});
+
+test('cache tariffs are copied immutably and changed tariffs reject old quote snapshots before transport', async () => {
+  const { OpenAiNpcProvider } = require('../../apps/api/dist/ai/openai-provider');
+  const {
+    BoundedAuthoringTextProvider,
+  } = require('../../apps/api/dist/live-test/authoring-provider');
+  const cachePricing = {
+    cachedInputMicrosPerMillion: 10000,
+    cacheWrite30mMicrosPerMillion: 125000,
+    cacheWrite12hMicrosPerMillion: 250000,
+  };
+  const profile = {
+    enabled: true,
+    apiKey: 'synthetic-only',
+    model: 'synthetic',
+    version: 'v1',
+    contextTokens: 100000,
+    maxInputBytes: 64000,
+    maxOutputTokens: 100,
+    maxResponseBytes: 64000,
+    inputMicrosPerMillion: 100000,
+    outputMicrosPerMillion: 500000,
+    upperMicros: 100000,
+    cachePricing,
+    estimation: {
+      kind: 'operator_heuristic',
+      textTokensPerKiBUtf8: 1024,
+      textProtocolTokens: 100,
+      marginBps: 1000,
+      fixedMarginMicros: 100,
+    },
+    pricing: {
+      source: 'synthetic',
+      reviewedAt: new Date(Date.now() - 1000).toISOString(),
+      validUntil: new Date(Date.now() + 60000).toISOString(),
+    },
+  };
+  const context = { contextHash: 'fixture', replyLocale: 'en' };
+  let calls = 0;
+  const transport = async () => {
+    calls++;
+    throw Error('must not dispatch');
+  };
+  const definition = {
+    version: 'v1',
+    schema: { type: 'object' },
+    instructions: 'Synthetic',
+    validateProposal: (x) => x,
+  };
+  for (const kind of ['npc', 'authoring']) {
+    const make = (p) =>
+      kind === 'npc'
+        ? new OpenAiNpcProvider(p, transport)
+        : new BoundedAuthoringTextProvider(definition, 'synthetic-only', transport, p);
+    const original = make(profile);
+    const prepare = (p) =>
+      kind === 'npc' ? p.prepareTextRequest('speech', context) : p.prepareTextRequest(context);
+    const snapshot = prepare(original).snapshot;
+    const oldRate = cachePricing.cachedInputMicrosPerMillion;
+    cachePricing.cachedInputMicrosPerMillion++;
+    assert.equal(prepare(original).snapshot.cachePricing.cachedInputMicrosPerMillion, oldRate);
+    const changed = make(profile);
+    await assert.rejects(
+      changed.generate({
+        jobId: randomUUID(),
+        purpose: 'speech',
+        context,
+        signal: new AbortController().signal,
+        maxCostMicros: 100000,
+        textReservationSnapshot: snapshot,
+      }),
+      (e) => e.code === 'PROVIDER_REQUEST_SNAPSHOT_CHANGED',
+    );
+  }
+  assert.equal(calls, 0);
+});

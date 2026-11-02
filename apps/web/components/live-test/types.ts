@@ -17,9 +17,10 @@ export type LiveTestStatus = {
   expiresAt: string | null;
   pricingValidUntil?: string | null;
   stopCode?: string | null;
-  capMicros: number;
-  textCapMicros?: number;
-  imageCapMicros?: number;
+  allowance?: 'unlimited';
+  capMicros: number | null;
+  textCapMicros?: number | null;
+  imageCapMicros?: number | null;
   textUsedMicros?: number;
   imageUsedMicros?: number;
   textRemainingMicros?: number;

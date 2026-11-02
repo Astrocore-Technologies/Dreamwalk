@@ -4,6 +4,7 @@ import { readFile } from 'node:fs/promises';
 import {
   GenerationResponseScope,
   generationExpired,
+  generationRemaining,
   imageQuoteAuthorizationAvailable,
   liveSessionActive,
   liveRequestConsentFence,
@@ -146,4 +147,34 @@ test('image quote form admits active release before its first authorization ID e
     s,
     /const valid =[\s\S]*imageQuoteAuthorizationAvailable\(grant, authorizationId, now\)/,
   );
+});
+
+test('unlimited release allowance uses real wallet availability without inventing a numeric ceiling', async () => {
+  const status = {
+    ...release,
+    allowance: 'unlimited',
+    capMicros: null,
+    textCapMicros: null,
+    imageCapMicros: null,
+    imagesEnabled: true,
+    remainingMicros: 12345,
+    textRemainingMicros: 12345,
+    imageRemainingMicros: 12345,
+  };
+  assert.equal(liveSessionActive(status, now), true);
+  assert.equal(imageQuoteAuthorizationAvailable(status, undefined, now), true);
+  assert.equal(generationRemaining(status, 'text'), 12345);
+  assert.equal(generationRemaining(status, 'image'), 12345);
+  assert.equal(liveSessionActive({ ...status, remainingMicros: 0 }, now), false);
+  assert.equal(
+    imageQuoteAuthorizationAvailable({ ...status, enabled: false }, undefined, now),
+    false,
+  );
+  const source = await readFile(
+    new URL('../../apps/web/components/live-test/live-test-panel.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /status.allowance === 'unlimited'/);
+  assert.match(source, /sparkAmount\(status.remainingMicros\)/);
+  assert.match(source, /value === null \? '—'/);
 });

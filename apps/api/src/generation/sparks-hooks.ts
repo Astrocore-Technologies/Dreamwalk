@@ -5,6 +5,7 @@ import { createSparkTariffSnapshot, type SparkTariffSnapshot } from '@dreamwalk/
 import { SparksAccounting, type SparkQuoteInput, type SparkSettlement } from './sparks-accounting';
 import { fail } from '../errors';
 import { fenceGenerationAdmission } from './scope-fence';
+import type { TextPricing } from './text-pricing';
 const accounting = new SparksAccounting();
 export async function sparksEnabled(c: PoolClient, ownerId: string) {
   return (
@@ -13,17 +14,23 @@ export async function sparksEnabled(c: PoolClient, ownerId: string) {
   );
 }
 export function sparkTariff(
-  profile: { model: string; inputMicrosPerMillion: number; outputMicrosPerMillion: number },
+  profile: TextPricing & { model: string },
   provider: string,
   version: string,
 ): SparkTariffSnapshot {
-  // Existing profiles price all input identically; do not invent a cache discount/write tariff.
+  // The full mixed-TTL tariff also lives in the immutable providerQuote snapshot.
+  // Legacy profiles do not acquire an invented cache discount/write price.
   return createSparkTariffSnapshot({
     provider,
     model: profile.model,
     providerRateVersion: version,
     inputMicrosPerMillion: String(profile.inputMicrosPerMillion),
-    cachedInputMicrosPerMillion: String(profile.inputMicrosPerMillion),
+    cachedInputMicrosPerMillion: String(
+      profile.cachePricing?.cachedInputMicrosPerMillion ?? profile.inputMicrosPerMillion,
+    ),
+    ...(profile.cachePricing
+      ? { cacheWriteMicrosPerMillion: String(profile.cachePricing.cacheWrite30mMicrosPerMillion) }
+      : {}),
     outputMicrosPerMillion: String(profile.outputMicrosPerMillion),
   });
 }

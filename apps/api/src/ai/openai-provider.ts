@@ -1,3 +1,8 @@
+import {
+  textUsageCostMicros,
+  textInputReserveRate,
+  type TextCachePricing,
+} from '../generation/text-pricing';
 import { modelContext, evidenceCounter, countOpenAiInput } from './text-preflight';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -57,6 +62,7 @@ export interface OpenAiNpcConfig {
   /** Operator-verified current rate, integer USD micro-units per million tokens. No guessed prices. */
   inputMicrosPerMillion: number;
   outputMicrosPerMillion: number;
+  cachePricing?: TextCachePricing;
 }
 const object = (properties: Record<string, unknown>) => ({
   type: 'object',
@@ -334,6 +340,7 @@ export function buildOpenAiNpcRequestBody(
     | 'model'
     | 'serviceTier'
     | 'reasoningEffort'
+    | 'cachePricing'
     | 'maxOutputTokens'
     | 'estimation'
     | 'contextBudgetTokens'
@@ -388,6 +395,7 @@ export function buildOpenAiNpcRequestBody(
   return JSON.stringify({
     model: config.model,
     service_tier: config.serviceTier ?? 'default',
+    ...(config.cachePricing ? { prompt_cache_options: { mode: 'implicit', ttl: '30m' } } : {}),
     ...(config.contextBudgetTokens !== undefined ? { truncation: 'disabled' } : {}),
     ...(config.reasoningEffort ? { reasoning: { effort: config.reasoningEffort } } : {}),
     store: false,
@@ -428,6 +436,7 @@ export function prepareOpenAiNpcTextRequest(
     maxOutputTokens: config.maxOutputTokens,
     inputMicrosPerMillion: config.inputMicrosPerMillion,
     outputMicrosPerMillion: config.outputMicrosPerMillion,
+    ...(config.cachePricing ? { cachePricing: config.cachePricing } : {}),
     ...(config.estimation ? { estimation: config.estimation } : {}),
     ...(config.pricing ? { pricing: config.pricing } : {}),
   };
@@ -472,8 +481,15 @@ export class OpenAiNpcProvider implements NpcProvider {
       if (!config.estimation) throw new Error('TEXT_CONTEXT_PLANNING_REQUIRED');
       contextWindow({ ...config, contextTokens: config.maxModelInputTokens ?? 0 });
     }
+    if (
+      config.cachePricing &&
+      Object.values(config.cachePricing).some((rate) => !Number.isSafeInteger(rate) || rate < 0)
+    )
+      throw new Error('INVALID_OPENAI_CACHE_PRICING');
+    textUsageCostMicros(config, { inputTokens: 0, outputTokens: 0 });
     this.config = Object.freeze({
       ...config,
+      ...(config.cachePricing ? { cachePricing: Object.freeze({ ...config.cachePricing }) } : {}),
       ...(config.estimation ? { estimation: Object.freeze({ ...config.estimation }) } : {}),
       ...(config.pricing ? { pricing: Object.freeze({ ...config.pricing }) } : {}),
     });
@@ -497,6 +513,7 @@ export class OpenAiNpcProvider implements NpcProvider {
             maxResponseBytes: config.maxResponseBytes,
             inputMicrosPerMillion: config.inputMicrosPerMillion,
             outputMicrosPerMillion: config.outputMicrosPerMillion,
+            ...(config.cachePricing ? { cachePricing: config.cachePricing } : {}),
             ...(config.estimation
               ? { estimation: config.estimation, pricing: config.pricing }
               : {}),
@@ -528,13 +545,14 @@ export class OpenAiNpcProvider implements NpcProvider {
         .slice(0, 16);
   }
   private cost(input: number, output: number) {
-    const cost =
-      (BigInt(input) * BigInt(this.config.inputMicrosPerMillion) +
-        BigInt(output) * BigInt(this.config.outputMicrosPerMillion) +
-        999999n) /
-      1000000n;
-    if (cost > BigInt(Number.MAX_SAFE_INTEGER)) throw new ProviderFailure('USAGE_OVERFLOW', true);
-    return Number(cost);
+    return textUsageCostMicros(
+      {
+        ...this.config,
+        inputMicrosPerMillion: textInputReserveRate(this.config),
+        cachePricing: undefined,
+      },
+      { inputTokens: input, outputTokens: output },
+    ).costMicros;
   }
   private body(purpose: ProviderRequest['purpose'], context: unknown) {
     return buildOpenAiNpcRequestBody(this.config, purpose, context);
@@ -595,7 +613,7 @@ export class OpenAiNpcProvider implements NpcProvider {
       BigInt(maxCostMicros) * 1000000n -
       BigInt(this.config.maxOutputTokens) * BigInt(this.config.outputMicrosPerMillion);
     if (available <= 0n) return 0;
-    const tokenBytes = Number(available / BigInt(this.config.inputMicrosPerMillion));
+    const tokenBytes = Number(available / BigInt(textInputReserveRate(this.config)));
     const emptyBytes = Math.max(
       ...(
         [
@@ -628,6 +646,7 @@ export class OpenAiNpcProvider implements NpcProvider {
         maxOutputTokens: this.config.maxOutputTokens,
         inputMicrosPerMillion: this.config.inputMicrosPerMillion,
         outputMicrosPerMillion: this.config.outputMicrosPerMillion,
+        ...(this.config.cachePricing ? { cachePricing: this.config.cachePricing } : {}),
         estimation: this.config.estimation,
         ...(this.config.pricing ? { pricing: this.config.pricing } : {}),
       };
@@ -816,19 +835,37 @@ export class OpenAiNpcProvider implements NpcProvider {
     // cannot be settled using the configured Standard rates or retried blindly.
     if (value.service_tier !== 'default')
       throw new ProviderFailure('PROVIDER_TIER_UNKNOWN', true, value.id);
+    const details = value.usage.input_tokens_details;
+    if (
+      this.config.cachePricing &&
+      (details?.cached_tokens === undefined || details.cache_write_tokens === undefined)
+    )
+      throw new ProviderFailure('PROVIDER_USAGE_UNKNOWN', true, value.id);
+    const cached = details?.cached_tokens ?? 0,
+      writes = details?.cache_write_tokens ?? 0;
+    // Our configured request uses implicit 30m and has no per-breakpoint overrides.
+    // The official single-TTL usage examples omit the optional lifetime breakdown.
+    const write30m = details?.cache_write_tokens_details?.ttl_30m_tokens ?? writes;
+    const write12h = details?.cache_write_tokens_details?.ttl_12h_tokens ?? 0;
     const usage = {
       inputTokens: value.usage.input_tokens,
       ...(value.usage.input_tokens_details
         ? { cachedInputTokens: value.usage.input_tokens_details.cached_tokens }
         : {}),
       cacheWriteInputTokens: value.usage.input_tokens_details?.cache_write_tokens ?? 0,
-      // Legacy profiles do not freeze a separate read-discount/write tariff.
-      // Keep their provider-budget estimate, but do not charge users as if it were exact.
-      costVerifiedForSparks:
-        (value.usage.input_tokens_details?.cached_tokens ?? 0) === 0 &&
-        (value.usage.input_tokens_details?.cache_write_tokens ?? 0) === 0,
+      ...(details?.cache_write_tokens_details || this.config.cachePricing
+        ? {
+            cacheWriteInputTokensDetails: { ttl30mTokens: write30m, ttl12hTokens: write12h },
+          }
+        : {}),
       outputTokens: value.usage.output_tokens,
-      costMicros: this.cost(value.usage.input_tokens, value.usage.output_tokens),
+      ...textUsageCostMicros(this.config, {
+        inputTokens: value.usage.input_tokens,
+        outputTokens: value.usage.output_tokens,
+        cachedInputTokens: cached,
+        cacheWriteInputTokens: writes,
+        cacheWriteInputTokensDetails: { ttl30mTokens: write30m, ttl12hTokens: write12h },
+      }),
       costEvidence: 'configured_rates' as const,
     };
     const failed = (code: string): ProviderResult => ({

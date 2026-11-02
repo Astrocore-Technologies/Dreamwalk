@@ -21,6 +21,12 @@ export const liveMessages = {
     'Generation settings changed. Refresh and request a new estimate.',
     'Налаштування генерації змінилися. Оновіть сторінку й отримайте нову оцінку.',
   ],
+  releaseUnlimited: [
+    'Общий потолок расходов не задан. Генерация оплачивается Искрами.',
+    'There is no aggregate spending ceiling. Generation is paid with Sparks.',
+    'Загальну межу витрат не встановлено. Генерація оплачується Іскрами.',
+  ],
+  releaseWalletAvailable: ['Доступно в кошельке', 'Available in wallet', 'Доступно в гаманці'],
   releaseTitle: ['Генерация', 'Generation', 'Генерація'],
   releaseReady: ['Генерация доступна', 'Generation is available', 'Генерація доступна'],
   releaseUnavailable: [

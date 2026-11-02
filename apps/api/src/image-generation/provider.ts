@@ -283,8 +283,11 @@ export class OwnerOpenAiImageProvider implements ImageProvider {
       !Number.isSafeInteger(requestEstimate.reserveMicros) ||
       requestEstimate.reserveMicros < requestEstimate.estimatedTotalMicros ||
       requestEstimate.estimatedTotalMicros <= 0 ||
-      requestEstimate.reserveMicros > this.config.imageCapMicros ||
-      requestEstimate.reserveMicros > this.config.totalCapMicros
+      (!(this.config.mode === 'release' && this.config.allowance === 'unlimited') &&
+        (this.config.imageCapMicros === null ||
+          this.config.totalCapMicros === null ||
+          requestEstimate.reserveMicros > this.config.imageCapMicros ||
+          requestEstimate.reserveMicros > this.config.totalCapMicros))
     )
       throw new Error('INVALID_IMAGE_PROVIDER_POLICY');
     const apiKey = this.dependencies.resolveApiKey();

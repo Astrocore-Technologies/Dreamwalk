@@ -84,6 +84,8 @@ try {
     'integration-release-budget.test.mjs',
     'integration-release-authority.test.mjs',
     'integration-release-npc.test.mjs',
+    'release-cache-accounting.test.mjs',
+    'release-unlimited-budget.test.mjs',
     'integration-owner-generation.test.mjs',
     'integration-recovery.test.mjs',
     'integration-retained-rejections.test.mjs',
@@ -106,7 +108,12 @@ try {
   files = files.filter((file) => file !== ownerFile);
   // Owner admission fixtures need a fresh scope. Legacy budget tests below
   // deliberately retain unknown liabilities; never erase them to admit a new owner.
+  // Release fixtures also deliberately seed enormous historical spend or pending holds.
+  // Give each financial-policy scenario its own database rather than editing its ledger.
   for (const isolatedFile of [
+    'integration-release-npc.test.mjs',
+    'release-cache-accounting.test.mjs',
+    'release-unlimited-budget.test.mjs',
     'integration-request-estimates.test.mjs',
     'integration-retained-rejections.test.mjs',
     'integration-recovery.test.mjs',

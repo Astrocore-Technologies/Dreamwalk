@@ -6,6 +6,7 @@ import {
   sparkQuoteView,
 } from '../generation/sparks-hooks';
 import { assertBoundedTextSource } from '../generation/bounded-test';
+import { textUsageCostMicros } from '../generation/text-pricing';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient, QueryResultRow } from 'pg';
 import { z } from 'zod';
@@ -658,6 +659,21 @@ export class AuthoringTextEngine {
       await this.db.query<AuthoringJob>('SELECT * FROM live_authoring_text_jobs WHERE id=$1', [id])
     )[0];
     if (!current) return;
+    let cacheCostVerified = true;
+    if (
+      (result.usage.cachedInputTokens ?? 0) > 0 ||
+      (result.usage.cacheWriteInputTokens ?? 0) > 0
+    ) {
+      try {
+        cacheCostVerified =
+          !!current.request_snapshot?.cachePricing &&
+          result.usage.costVerifiedForSparks === true &&
+          textUsageCostMicros(current.request_snapshot, result.usage).costMicros ===
+            result.usage.costMicros;
+      } catch {
+        cacheCostVerified = false;
+      }
+    }
     const generated = await this.db.tx(async (c) => {
       await this.live.settleLiveSpend(
         c,
@@ -683,16 +699,17 @@ export class AuthoringTextEngine {
         errorCode ||
         erased ||
         row.cancel_requested ||
-        (result.usage as { costVerifiedForSparks?: boolean }).costVerifiedForSparks === false
+        (result.usage as { costVerifiedForSparks?: boolean }).costVerifiedForSparks === false ||
+        !cacheCostVerified
       )
         await settleReservationSparks(c, row.reservation_id, {
           outcome: late ? 'unknown' : 'failure_policy_pending',
           receiptId: `authoring:${id}`,
         });
-      await c.query('UPDATE live_authoring_text_jobs SET spark_cost_evidence=$2 WHERE id=$1', [
-        id,
-        result.usage.costEvidence,
-      ]);
+      await c.query(
+        'UPDATE live_authoring_text_jobs SET spark_cost_evidence=$2,provider_usage=COALESCE(provider_usage,$3::jsonb) WHERE id=$1',
+        [id, result.usage.costEvidence, JSON.stringify(result.usage)],
+      );
       const status =
         erased || row.cancel_requested
           ? 'cancelled'

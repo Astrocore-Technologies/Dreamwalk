@@ -1,5 +1,6 @@
 /** Operator planning heuristics, not official tokenization, reference pricing rules, or invoice bounds. */
 import { createHash } from 'node:crypto';
+import { textInputReserveRate, type TextCachePricing } from './text-pricing';
 import {
   measureTextContext,
   assertTextContext,
@@ -24,6 +25,7 @@ export interface PricingEvidence {
   validUntil: string;
 }
 export interface TextEstimateProfile {
+  cachePricing?: TextCachePricing;
   model: string;
   contextTokens: number;
   contextBudgetTokens?: number;
@@ -64,6 +66,7 @@ export interface ImageEstimateProfile {
   reserveMicros?: number;
 }
 export interface TextReserveSnapshot {
+  cachePricing?: TextCachePricing;
   contextWindow?: TextContextMeasurement;
   schemaVersion: 1;
   id: string;
@@ -232,13 +235,14 @@ export function estimateTextRequest(
     inputTokens = bodyTokens + protocolTokens;
   if (p && inputTokens + BigInt(profile.maxOutputTokens) > BigInt(profile.contextTokens))
     throw new RequestEstimationError('GENERATION_CONTEXT_ESTIMATE_EXCEEDED');
-  const inputMicros = cost(inputTokens, profile.inputMicrosPerMillion),
+  const reserveInputRate = textInputReserveRate(profile);
+  const inputMicros = cost(inputTokens, reserveInputRate),
     outputMicros = cost(BigInt(profile.maxOutputTokens), profile.outputMicrosPerMillion);
   // Legacy computes the old single rounded combined amount, retaining its historical reserve semantics.
   const estimated = p
     ? inputMicros + outputMicros
     : ceil(
-        inputTokens * integer(profile.inputMicrosPerMillion, 1) +
+        inputTokens * integer(reserveInputRate, 1) +
           BigInt(profile.maxOutputTokens) * integer(profile.outputMicrosPerMillion, 1),
         1000000n,
       );
@@ -259,6 +263,7 @@ export function estimateTextRequest(
     model: profile.model,
     inputMicrosPerMillion: profile.inputMicrosPerMillion,
     outputMicrosPerMillion: profile.outputMicrosPerMillion,
+    ...(profile.cachePricing ? { cachePricing: { ...profile.cachePricing } } : {}),
     ...(profile.pricing ? { pricing: { ...profile.pricing } } : {}),
     inputMicros: numeric(inputMicros),
     outputMicros: numeric(outputMicros),
