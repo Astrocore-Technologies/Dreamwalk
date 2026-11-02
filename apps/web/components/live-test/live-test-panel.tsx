@@ -1,6 +1,7 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError, useClient } from '@/lib/client';
+import { SPARKS_REFRESH_EVENT } from '@/lib/sparks-wallet';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox } from '../ui';
 import {
@@ -25,6 +26,7 @@ import styles from './live-test.module.css';
 import { TextRequestReserve } from './request-reserve';
 import { TextCountPreflight } from './text-count-preflight';
 import { OwnerPolicyReview } from './owner-policy-review';
+import { useSparkCosts } from '../visual-authoring/sparks-cost';
 
 export function useLiveTestStatus() {
   const { user } = useClient();
@@ -40,7 +42,11 @@ export function useLiveTestStatus() {
   identity.current = owner;
   const setStatus = useCallback(
     (value: LiveTestStatus | null) => {
-      if (identity.current === owner) setSnapshot({ owner, status: value, error: '' });
+      if (identity.current === owner) {
+        if (value?.ownerId !== undefined && value.ownerId !== owner)
+          setSnapshot({ owner, status: null, error: 'ACCOUNT_CHANGED' });
+        else setSnapshot({ owner, status: value, error: '' });
+      }
     },
     [owner],
   );
@@ -50,6 +56,10 @@ export function useLiveTestStatus() {
     try {
       const value = await api<LiveTestStatus>('/generation/status');
       if (current === epoch.current && identity.current === owner) {
+        if (value.ownerId !== undefined && value.ownerId !== owner) {
+          setSnapshot({ owner, status: null, error: 'ACCOUNT_CHANGED' });
+          return;
+        }
         setSnapshot({ owner, status: value, error: '' });
       }
     } catch (e) {
@@ -70,6 +80,18 @@ export function useLiveTestStatus() {
       epoch.current++;
     };
   }, [owner, refresh, setStatus]);
+  useEffect(() => {
+    if (!owner) return;
+    const changed = () => {
+      void refresh();
+    };
+    window.addEventListener('focus', changed);
+    window.addEventListener(SPARKS_REFRESH_EVENT, changed);
+    return () => {
+      window.removeEventListener('focus', changed);
+      window.removeEventListener(SPARKS_REFRESH_EVENT, changed);
+    };
+  }, [owner, refresh]);
   // Hide the previous account's status during the render before effect cleanup.
   return {
     status: snapshot.owner === owner ? snapshot.status : null,
@@ -95,6 +117,7 @@ export function LiveTestPanel({
   const scopeKey = JSON.stringify({ owner: user?.id ?? null, campaignId, turnFence });
   responseScope.update(scopeKey);
   const m = useLiveText(),
+    { amount: sparkAmount } = useSparkCosts(),
     { locale } = useT();
   const [claimConsent, setClaimConsent] = useState(false),
     [busy, setBusy] = useState(false),
@@ -122,7 +145,7 @@ export function LiveTestPanel({
     return () => clearInterval(timer);
   }, []);
   const authorizationKey = JSON.stringify({
-    id: generationAuthorizationId(status),
+    id: status?.mode === 'release' ? user?.id : generationAuthorizationId(status),
     mode: status?.mode,
     state: status?.state,
     cap: status?.capMicros,
@@ -168,15 +191,33 @@ export function LiveTestPanel({
       </section>
     ) : null;
   const ownerMode = status.mode === 'owner',
+    releaseMode = status.mode === 'release',
     active = liveSessionActive(status, now),
     expired = generationExpired(status, now),
     pricingCurrent = generationPricingCurrent(status, now);
 
-  const money = (value: number) => formatUsd(value, locale);
+  const releaseReason = (code: string) => {
+    switch (code) {
+      case 'SPARK_WALLET_NOT_ENABLED':
+        return m('walletNotEnabled');
+      case 'INSUFFICIENT_SPARKS':
+        return m('insufficientSparks');
+      case 'GENERATION_ACCOUNT_REVIEW_REQUIRED':
+        return m('accountReview');
+      case 'GENERATION_POLICY_CHANGED':
+        return m('policyChanged');
+      case 'GENERATION_PRICING_EXPIRED':
+        return m('pricingExpired');
+      default:
+        return m('releaseUnavailable');
+    }
+  };
+  const money = (value: number) => (releaseMode ? sparkAmount(value) : formatUsd(value, locale));
   async function claim() {
     if (
       !status ||
       inFlight.current ||
+      releaseMode ||
       !claimConsent ||
       !status.enabled ||
       !ownerClaimFingerprintCurrent(status) ||
@@ -259,9 +300,11 @@ export function LiveTestPanel({
       await api(`/generation/campaigns/${campaignId}/requests/${requestId}/consent`, {
         method: 'POST',
         body: JSON.stringify({
-          ...(ownerMode
-            ? { authorizationId: generationAuthorizationId(status) }
-            : { sessionId: status.sessionId }),
+          ...(releaseMode
+            ? {}
+            : ownerMode
+              ? { authorizationId: generationAuthorizationId(status) }
+              : { sessionId: status.sessionId }),
           operationId: operations.current.get(key),
           turnFence: batch.turnFence,
           ...consentFence,
@@ -298,106 +341,141 @@ export function LiveTestPanel({
   return (
     <section
       className={styles.panel}
-      aria-label={m(ownerMode ? 'ownerTitle' : 'title')}
-      data-testid="live-test-panel"
-      data-generation-mode={ownerMode ? 'owner' : 'manual'}
+      aria-label={m(releaseMode ? 'releaseTitle' : ownerMode ? 'ownerTitle' : 'title')}
+      data-testid={releaseMode ? 'release-generation-panel' : 'live-test-panel'}
+      data-generation-mode={status.mode ?? 'manual'}
     >
-      <h2>{m(ownerMode ? 'ownerTitle' : 'title')}</h2>
-      <p className={styles.note}>{m(ownerMode ? 'ownerIntro' : 'intro')}</p>
-      <dl className={styles.budget}>
-        {(
-          [
-            ['cap', status.capMicros],
-            ['used', status.usedMicros],
-            ['held', status.heldMicros],
-            ['remaining', status.remainingMicros],
-          ] as const
-        ).map(([key, value]) => (
-          <div key={key}>
-            <dt>{m(key)}</dt>
-            <dd>{money(value)}</dd>
-          </div>
-        ))}
-      </dl>
-      {ownerMode && (
-        <p className={styles.note}>
-          {m('textRemaining')}: {money(generationRemaining(status, 'text'))} · {m('imageRemaining')}
-          : {money(generationRemaining(status, 'image'))}
-        </p>
-      )}
-      <p>
-        {m(
-          expired
-            ? 'expired'
-            : status.state === 'active'
-              ? ownerMode
-                ? 'ownerActive'
-                : 'active'
-              : status.state === 'unclaimed'
-                ? ownerMode
-                  ? 'ownerUnclaimed'
-                  : 'unclaimed'
-                : ownerMode
-                  ? 'ownerStopped'
-                  : 'stopped',
-        )}
-      </p>
-      {ownerMode ? (
-        <p className={styles.note}>{m('ownerDuration')}</p>
-      ) : status.expiresAt ? (
-        <p className={styles.note}>
-          {m('expiry')}: {new Date(status.expiresAt).toLocaleString(locale)}
-        </p>
-      ) : null}
-      {status.pricingValidUntil && (
-        <p className={styles.note}>
-          {m('pricingExpiry')}: {new Date(status.pricingValidUntil).toLocaleString(locale)}
-        </p>
-      )}
-      {!pricingCurrent && <p role="status">{m('pricingExpired')}</p>}
-      <p className={styles.note}>{m('debit')}</p>
-      <p className={styles.note}>
-        {m('model')}: {status.text.model}
-      </p>
-      <p className={styles.note}>
-        {m('historical')}: {status.priorHeldReservations}
-      </p>
-      <p className={styles.note}>
-        {m(
-          status.imagesEnabled ? 'imageAvailable' : ownerMode ? 'imageUnavailable' : 'imageBlocked',
-        )}
-      </p>
-      {status.imageBlockCode && (
-        <small>
-          <code>{status.imageBlockCode}</code>
-        </small>
-      )}
-      {status.stopCode && (
-        <p role="status">
-          <code>{status.stopCode}</code>
-        </p>
-      )}
-      <ErrorBox message={error || statusError ? `${m('failure')} (${error || statusError})` : ''} />
-      {status.state === 'unclaimed' && !expired && pricingCurrent && status.enabled && (
+      {releaseMode ? (
         <>
-          <label className={styles.check}>
-            <input
-              type="checkbox"
-              checked={claimConsent}
-              onChange={(e) => setClaimConsent(e.target.checked)}
-            />
-            {m(ownerMode ? 'ownerClaimConsent' : 'claimConsent')}
-          </label>
-          <Button
-            type="button"
-            busy={busy}
-            disabled={!claimConsent || !ownerClaimFingerprintCurrent(status)}
-            onClick={() => void claim()}
-          >
-            {m(ownerMode ? 'ownerClaim' : 'claim')}
-          </Button>
+          <h2>{m('releaseTitle')}</h2>
+          <p>{m(active ? 'releaseReady' : 'releaseUnavailable')}</p>
+          <p className={styles.note}>{m('releaseBilling')}</p>
+          {!pricingCurrent && <p role="status">{m('pricingExpired')}</p>}
+          {status.stopCode && (
+            <p role="status">
+              {releaseReason(status.stopCode)}{' '}
+              <small>
+                <code>{status.stopCode}</code>
+              </small>
+            </p>
+          )}
+          {!status.imagesEnabled && status.imageBlockCode && (
+            <p role="status">
+              {releaseReason(status.imageBlockCode)}{' '}
+              <small>
+                <code>{status.imageBlockCode}</code>
+              </small>
+            </p>
+          )}
+        </>
+      ) : (
+        <>
+          <h2>{m(ownerMode ? 'ownerTitle' : 'title')}</h2>
+          <p className={styles.note}>{m(ownerMode ? 'ownerIntro' : 'intro')}</p>
+          <dl className={styles.budget}>
+            {(
+              [
+                ['cap', status.capMicros],
+                ['used', status.usedMicros],
+                ['held', status.heldMicros],
+                ['remaining', status.remainingMicros],
+              ] as const
+            ).map(([key, value]) => (
+              <div key={key}>
+                <dt>{m(key)}</dt>
+                <dd>{money(value)}</dd>
+              </div>
+            ))}
+          </dl>
+          {ownerMode && (
+            <p className={styles.note}>
+              {m('textRemaining')}: {money(generationRemaining(status, 'text'))} ·{' '}
+              {m('imageRemaining')}: {money(generationRemaining(status, 'image'))}
+            </p>
+          )}
+          <p>
+            {m(
+              expired
+                ? 'expired'
+                : status.state === 'active'
+                  ? ownerMode
+                    ? 'ownerActive'
+                    : 'active'
+                  : status.state === 'unclaimed'
+                    ? ownerMode
+                      ? 'ownerUnclaimed'
+                      : 'unclaimed'
+                    : ownerMode
+                      ? 'ownerStopped'
+                      : 'stopped',
+            )}
+          </p>
+          {ownerMode ? (
+            <p className={styles.note}>{m('ownerDuration')}</p>
+          ) : status.expiresAt ? (
+            <p className={styles.note}>
+              {m('expiry')}: {new Date(status.expiresAt).toLocaleString(locale)}
+            </p>
+          ) : null}
+          {status.pricingValidUntil && (
+            <p className={styles.note}>
+              {m('pricingExpiry')}: {new Date(status.pricingValidUntil).toLocaleString(locale)}
+            </p>
+          )}
+          {!pricingCurrent && <p role="status">{m('pricingExpired')}</p>}
+          <p className={styles.note}>{m('debit')}</p>
+          <p className={styles.note}>
+            {m('model')}: {status.text.model}
+          </p>
+          <p className={styles.note}>
+            {m('historical')}: {status.priorHeldReservations}
+          </p>
+          <p className={styles.note}>
+            {m(
+              status.imagesEnabled
+                ? 'imageAvailable'
+                : ownerMode
+                  ? 'imageUnavailable'
+                  : 'imageBlocked',
+            )}
+          </p>
+          {status.imageBlockCode && (
+            <small>
+              <code>{status.imageBlockCode}</code>
+            </small>
+          )}
+          {status.stopCode && (
+            <p role="status">
+              <code>{status.stopCode}</code>
+            </p>
+          )}
         </>
       )}
+      <ErrorBox message={error || statusError ? `${m('failure')} (${error || statusError})` : ''} />
+      {!releaseMode &&
+        status.state === 'unclaimed' &&
+        !expired &&
+        pricingCurrent &&
+        status.enabled && (
+          <>
+            <label className={styles.check}>
+              <input
+                type="checkbox"
+                checked={claimConsent}
+                onChange={(e) => setClaimConsent(e.target.checked)}
+              />
+              {m(ownerMode ? 'ownerClaimConsent' : 'claimConsent')}
+            </label>
+            <Button
+              type="button"
+              busy={busy}
+              disabled={!claimConsent || !ownerClaimFingerprintCurrent(status)}
+              onClick={() => void claim()}
+            >
+              {m(ownerMode ? 'ownerClaim' : 'claim')}
+            </Button>
+          </>
+        )}
       <Button
         type="button"
         variant="secondary"

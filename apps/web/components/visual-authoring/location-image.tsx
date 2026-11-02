@@ -32,7 +32,8 @@ const verified = (config: ImageConfiguration | null) =>
   Number.isFinite(config.verifiedUpperMicros) &&
   config.verifiedUpperMicros >= 0;
 const estimateAllowed = (settings: Configuration) =>
-  settings.live.status?.mode === 'owner' && ownerImageEstimateAvailable(settings.config);
+  (settings.live.status?.mode === 'owner' || settings.live.status?.mode === 'release') &&
+  ownerImageEstimateAvailable(settings.config);
 function LocationImageStatus({ settings, saved }: { settings: Configuration; saved: boolean }) {
   const m = useLocationImageText(),
     { s, amount } = useSparkCosts(),
@@ -76,7 +77,7 @@ function LocationImageStatus({ settings, saved }: { settings: Configuration; sav
           {saved && !liveSessionActive(settings.live.status) && <p>{s('blocked')}</p>}
         </>
       )}
-      <SparksEquivalentNotice />
+      {settings.live.status?.mode !== 'release' && <SparksEquivalentNotice />}
       {!saved && <p>{m('saveFirst')}</p>}
       <ErrorBox message={settings.configError} />
     </div>

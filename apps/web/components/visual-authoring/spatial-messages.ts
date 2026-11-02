@@ -1,6 +1,11 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const spatialMessages = {
+  releaseUnavailable: [
+    'Планирование сейчас недоступно. Проверьте баланс Искр и сообщение об ошибке.',
+    'Planning is currently unavailable. Check your Sparks balance and the error message.',
+    'Планування зараз недоступне. Перевірте баланс Іскор і повідомлення про помилку.',
+  ],
   ownerUnavailable: [
     'Текстовое планирование недоступно. Проверь серверную модель, разрешение владельца и доступный бюджет.',
     'Text planning is unavailable. Check the server model, owner authorization and available budget.',

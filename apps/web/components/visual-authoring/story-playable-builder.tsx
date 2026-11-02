@@ -249,12 +249,16 @@ export function StoryPlayableBuilder({
         if (kind === 'quote') {
           if (fresh.status !== 'prepared' || fresh.jobs.length) return;
           setQuote(null);
-          const s = await api<{ sessionId: string; generationAuthorizationId?: string }>(
-            '/generation/status',
-          );
+          const s = await api<{
+            sessionId: string | null;
+            authorizationId?: string | null;
+            generationAuthorizationId?: string;
+          }>('/generation/status');
           if (!active()) return;
           const path = '/story-builds/' + id + '/quote';
-          const body = { sessionId: s.generationAuthorizationId ?? s.sessionId };
+          const body = {
+            sessionId: s.authorizationId ?? s.generationAuthorizationId ?? s.sessionId ?? undefined,
+          };
           const result = (await mutate(path, body)) as Quote;
           if (!active()) return;
           setQuote({ ...result, buildId: fresh.id, sourceHash: fresh.sourceHash });

@@ -1,4 +1,5 @@
-/** Transactional opt-in usage accounting. No wallet creation, funding or activation. */
+/** Transactional usage accounting: mandatory in release, opt-in for historical modes.
+ * No wallet creation, funding or activation. */
 import type { PoolClient } from 'pg';
 import { createSparkTariffSnapshot, type SparkTariffSnapshot } from '@dreamwalk/contracts';
 import { SparksAccounting, type SparkQuoteInput, type SparkSettlement } from './sparks-accounting';
@@ -26,8 +27,15 @@ export function sparkTariff(
     outputMicrosPerMillion: String(profile.outputMicrosPerMillion),
   });
 }
-export async function quoteSparks(c: PoolClient, input: SparkQuoteInput) {
-  if (!(await sparksEnabled(c, input.ownerId))) return null;
+export async function quoteSparks(
+  c: PoolClient,
+  input: SparkQuoteInput,
+  options: { required?: boolean } = {},
+) {
+  if (!(await sparksEnabled(c, input.ownerId))) {
+    if (options.required) fail(409, 'SPARK_WALLET_NOT_ENABLED', 'SPARK_WALLET_NOT_ENABLED');
+    return null;
+  }
   const wallet = (
     await c.query('SELECT balance_subunits,held_subunits FROM spark_wallets WHERE owner_id=$1', [
       input.ownerId,
@@ -45,8 +53,22 @@ export async function reserveSparks(
   ownerId: string,
   quoteId: string | null,
   reservationId: string,
+  options: { required?: boolean } = {},
 ) {
+  // Defense in depth: a missed caller option must never turn release spending into
+  // legacy opt-in accounting. The persisted scope, not request JSON, decides.
+  const required =
+    options.required ||
+    !!(
+      await c.query(
+        "SELECT 1 FROM generation_budget_reservations r JOIN live_test_sessions s ON s.scope_id=r.scope_id AND s.mode='release' WHERE r.id=$1 AND r.actor_id=$2",
+        [reservationId, ownerId],
+      )
+    ).rowCount;
+  if (required && !(await sparksEnabled(c, ownerId)))
+    fail(409, 'SPARK_WALLET_NOT_ENABLED', 'SPARK_WALLET_NOT_ENABLED');
   if (!quoteId) {
+    if (required) fail(409, 'SPARK_QUOTE_REQUIRED', 'SPARK_QUOTE_REQUIRED');
     if (await sparksEnabled(c, ownerId)) fail(409, 'SPARK_QUOTE_REQUIRED', 'SPARK_QUOTE_REQUIRED');
     return;
   }

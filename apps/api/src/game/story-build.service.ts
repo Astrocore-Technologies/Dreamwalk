@@ -225,7 +225,7 @@ export class StoryBuildService {
     });
   }
   async quote(owner: string, id: string, input: unknown) {
-    const b = op.extend({ sessionId: z.uuid() }).parse(input);
+    const b = op.extend({ sessionId: z.uuid().optional() }).parse(input);
     const data = await this.db.tx(async (c) => {
       await this.lock(c, owner);
       const r = await this.own(c, owner, id);

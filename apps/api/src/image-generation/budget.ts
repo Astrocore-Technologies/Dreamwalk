@@ -1,3 +1,4 @@
+import { aggregateGenerationExposure } from '../generation/aggregate-exposure';
 import { settleReservationSparks } from '../generation/sparks-hooks';
 import { boundedTest, checkBoundedAdmission } from '../generation/bounded-test';
 import { randomUUID } from 'node:crypto';
@@ -42,36 +43,67 @@ export async function reserveGenerationSpend(
   const scope = (
     await c.query('SELECT * FROM generation_budget_scopes WHERE id=$1 FOR UPDATE', [policy.scopeId])
   ).rows[0];
-  const extension = !mock ? await boundedTest(c, policy.generationAuthorizationId) : undefined;
+  const extension =
+    !mock && policy.generationMode !== 'release'
+      ? await boundedTest(c, policy.generationAuthorizationId)
+      : undefined;
   if (!mock) {
     await fenceGenerationAdmission(c);
-    const admittedExtension = (
-      await c.query('SELECT scope_id FROM bounded_authoring_tests LIMIT 1')
-    ).rows[0];
-    if (admittedExtension && (!extension || extension.scope_id !== policy.scopeId))
-      fail(409, 'BOUNDED_TEST_SESSION_REQUIRED', 'BOUNDED_TEST_SESSION_REQUIRED');
-    if (
-      extension &&
-      (extension.scope_id !== policy.scopeId ||
-        extension.owner_id !== actorId ||
-        policy.generationPolicyHash !== extension.policy_hash ||
-        policy.generationPolicyRevision !== 1)
-    )
-      fail(409, 'GENERATION_AUTHORIZATION_MISMATCH', 'GENERATION_AUTHORIZATION_MISMATCH');
-    // A pre-existing ordinary authority prevents reviving a legacy allowance under
-    // another scope, actor or provider mode. This read takes no foreign row locks.
-    const owner = (
-      await c.query("SELECT * FROM live_test_sessions WHERE mode='owner' ORDER BY id LIMIT 1")
-    ).rows[0];
-    if (
-      !extension &&
-      owner &&
-      (owner.scope_id !== policy.scopeId ||
-        owner.owner_id !== actorId ||
-        policy.generationMode !== 'owner' ||
-        policy.generationAuthorizationId !== owner.id)
-    )
-      fail(409, 'GENERATION_AUTHORITY_IMMUTABLE', 'GENERATION_AUTHORITY_IMMUTABLE');
+    if (policy.generationMode === 'release') {
+      // Per-actor release admission never inherits an owner's singleton test grant.
+      // Historical reservations are not rewritten and still count toward aggregate exposure.
+      const authorization = (
+        await c.query(
+          'SELECT owner_id,scope_id,state,mode,config_hash,policy_revision,policy_hash FROM live_test_sessions WHERE id=$1',
+          [policy.generationAuthorizationId],
+        )
+      ).rows[0];
+      if (
+        !authorization ||
+        authorization.mode !== 'release' ||
+        authorization.state !== 'active' ||
+        authorization.owner_id !== actorId ||
+        authorization.scope_id !== policy.scopeId ||
+        policy.scopeId !== `release:${actorId}` ||
+        authorization.config_hash !== policy.generationConfigFingerprint ||
+        authorization.policy_revision !== policy.generationPolicyRevision ||
+        authorization.policy_hash !== policy.generationPolicyHash
+      )
+        fail(409, 'GENERATION_AUTHORIZATION_MISMATCH', 'GENERATION_AUTHORIZATION_MISMATCH');
+      if (
+        !Number.isSafeInteger(policy.releaseAggregateCapMicros) ||
+        policy.releaseAggregateCapMicros! <= 0
+      )
+        fail(409, 'RELEASE_AGGREGATE_CAP_REQUIRED', 'RELEASE_AGGREGATE_CAP_REQUIRED');
+    } else {
+      const admittedExtension = (
+        await c.query('SELECT scope_id FROM bounded_authoring_tests LIMIT 1')
+      ).rows[0];
+      if (admittedExtension && (!extension || extension.scope_id !== policy.scopeId))
+        fail(409, 'BOUNDED_TEST_SESSION_REQUIRED', 'BOUNDED_TEST_SESSION_REQUIRED');
+      if (
+        extension &&
+        (extension.scope_id !== policy.scopeId ||
+          extension.owner_id !== actorId ||
+          policy.generationPolicyHash !== extension.policy_hash ||
+          policy.generationPolicyRevision !== 1)
+      )
+        fail(409, 'GENERATION_AUTHORIZATION_MISMATCH', 'GENERATION_AUTHORIZATION_MISMATCH');
+      // A pre-existing ordinary authority prevents reviving a legacy allowance under
+      // another scope, actor or provider mode. This read takes no foreign row locks.
+      const owner = (
+        await c.query("SELECT * FROM live_test_sessions WHERE mode='owner' ORDER BY id LIMIT 1")
+      ).rows[0];
+      if (
+        !extension &&
+        owner &&
+        (owner.scope_id !== policy.scopeId ||
+          owner.owner_id !== actorId ||
+          policy.generationMode !== 'owner' ||
+          policy.generationAuthorizationId !== owner.id)
+      )
+        fail(409, 'GENERATION_AUTHORITY_IMMUTABLE', 'GENERATION_AUTHORITY_IMMUTABLE');
+    }
   }
   let retainedIds: string[] = [];
   if (
@@ -111,6 +143,13 @@ export async function reserveGenerationSpend(
     )
       fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
     return prior.id as string;
+  }
+  if (!mock && policy.generationMode === 'release') {
+    // The global fence serializes cross-actor admissions and late receipts. It is
+    // a financial ceiling, not a global 'one error stops everybody' circuit.
+    const aggregate = await aggregateGenerationExposure(c);
+    if (aggregate.totalMicros + BigInt(upperMicros) > BigInt(policy.releaseAggregateCapMicros!))
+      fail(409, 'GENERATION_AGGREGATE_BUDGET_EXCEEDED', 'GENERATION_AGGREGATE_BUDGET_EXCEEDED');
   }
   if (extension) await checkBoundedAdmission(c, extension, actorId, upperMicros, kind);
   if (policy.costBasis === 'approved_estimate' && !scope.serialize_outstanding) {

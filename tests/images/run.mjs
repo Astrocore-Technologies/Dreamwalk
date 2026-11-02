@@ -77,9 +77,13 @@ try {
     '--test',
     'tests/images/config.test.mjs',
     'tests/images/owner-config.test.mjs',
+    'tests/images/release-runtime.test.mjs',
     'tests/images/request-estimates.test.mjs',
   ]);
   let files = [
+    'integration-release-budget.test.mjs',
+    'integration-release-authority.test.mjs',
+    'integration-release-npc.test.mjs',
     'integration-owner-generation.test.mjs',
     'integration-recovery.test.mjs',
     'integration-retained-rejections.test.mjs',

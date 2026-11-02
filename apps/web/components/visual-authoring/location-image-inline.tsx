@@ -96,7 +96,7 @@ export function LocationImageInline(p: Props) {
     source: p.sourceKey,
     share,
     attested,
-    authorization: generationAuthorizationId(status),
+    authorization: status?.mode === 'release' ? user?.id : generationAuthorizationId(status),
     policy: status?.policyHash,
     revision: status?.policyRevision,
     config,
@@ -115,7 +115,7 @@ export function LocationImageInline(p: Props) {
     setReviewed(false);
     setQuote(null);
     epoch.current++;
-  }, [p.sourceKey]);
+  }, [p.sourceKey, user?.id]);
   useEffect(() => {
     let active = true;
     if (p.saved)
@@ -139,7 +139,7 @@ export function LocationImageInline(p: Props) {
     return () => {
       active = false;
     };
-  }, [p.adventureId, p.locationId, p.saved]);
+  }, [p.adventureId, p.locationId, p.saved, user?.id]);
   useEffect(() => {
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
@@ -201,7 +201,7 @@ export function LocationImageInline(p: Props) {
       active = false;
       clearInterval(timer);
     };
-  }, [p.adventureId, p.locationId, p.saved, refresh]);
+  }, [p.adventureId, p.locationId, p.saved, refresh, user?.id]);
   useEffect(() => {
     const stamp = ++epoch.current;
     setQuote(null);
@@ -224,7 +224,10 @@ export function LocationImageInline(p: Props) {
           method: 'POST',
           body: JSON.stringify({
             ...preparation.request,
-            generationAuthorizationId: generationAuthorizationId(status),
+            generationAuthorizationId:
+              status?.mode === 'release'
+                ? undefined
+                : (generationAuthorizationId(status) ?? undefined),
             declineReuse: true,
             rights: {
               basis: 'generated',

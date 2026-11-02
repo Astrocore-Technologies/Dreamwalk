@@ -65,7 +65,7 @@ export function ExternalGeneration({
     } catch (e) {
       if (stamp === epoch.current) setError(e instanceof ApiError ? e.code : 'NETWORK_ERROR');
     }
-  }, [project.id, project.revision]);
+  }, [project.id, project.revision, user?.id]);
   useEffect(() => {
     void refresh();
     return () => {
@@ -118,7 +118,8 @@ export function ExternalGeneration({
     allowed =
       !!config?.externalEnabled && !!session?.imagesEnabled && liveSessionActive(session, now);
   const ownerReferencesUnavailable =
-    session?.mode === 'owner' && config?.requestProfile?.maxReferenceImages === 0;
+    (session?.mode === 'owner' || session?.mode === 'release') &&
+    config?.requestProfile?.maxReferenceImages === 0;
   const label = (key: string) => (key in generationMessages ? g(key as GenerationMessage) : key);
   const roles = [
     ...new Set([...(state?.requiredRoles ?? []), ...(state?.items.map((item) => item.role) ?? [])]),
@@ -132,7 +133,17 @@ export function ExternalGeneration({
       <h3>{g('stages')}</h3>
       <p>{g('manual')}</p>
       {ownerReferencesUnavailable && <p role="status">{g('ownerReferencesUnavailable')}</p>}
-      {!allowed && <p role="status">{g(session?.mode === 'owner' ? 'ownerBlocked' : 'blocked')}</p>}
+      {!allowed && (
+        <p role="status">
+          {g(
+            session?.mode === 'release'
+              ? 'releaseBlocked'
+              : session?.mode === 'owner'
+                ? 'ownerBlocked'
+                : 'blocked',
+          )}
+        </p>
+      )}
       {user?.role === 'admin' && config?.requestProfile && (
         <small>
           {config.requestProfile.provider} · {config.requestProfile.model} ·{' '}
@@ -173,7 +184,8 @@ export function ExternalGeneration({
             quote.upperMicros >= 0 &&
             quote.upperMicros === config?.verifiedUpperMicros,
           estimatedQuote =
-            session?.mode === 'owner' && ownerImageQuoteMatches(quote, config, session),
+            (session?.mode === 'owner' || session?.mode === 'release') &&
+            ownerImageQuoteMatches(quote, config, session),
           dispatchableCost = validBound || estimatedQuote,
           reserve = estimatedQuote ? quote?.reserveMicros : quote?.upperMicros,
           immutable = !!job || !!item?.revisionId || !!item?.dispatchOperationId,
@@ -317,7 +329,8 @@ export function ExternalGeneration({
                       expectedRevision: project.revision,
                       role,
                       ...(decline[role] ? { declineReuse: true } : {}),
-                      liveTestSessionId: session?.sessionId,
+                      liveTestSessionId:
+                        session?.mode === 'release' ? undefined : (session?.sessionId ?? undefined),
                     },
                     role,
                   )

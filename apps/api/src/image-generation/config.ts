@@ -1,5 +1,5 @@
 /** Server-owned image provider configuration. No dotenv/files, URLs, or credential values in DTOs. */
-import { type OwnerGenerationConfig } from '../generation/config';
+import { type OwnerGenerationConfig, type ReleaseGenerationConfig } from '../generation/config';
 import { imagePricingProfileSnapshot } from '../generation/estimates';
 import { LIVE_TEXT } from '../live-test/config';
 import { createHash } from 'node:crypto';
@@ -95,7 +95,7 @@ export interface ImageCapabilities {
   mockAvailable: boolean;
   externalEnabled: boolean;
   externalBlockReasons: string[];
-  generationMode?: 'owner';
+  generationMode?: 'owner' | 'release';
   ownerEstimateEnabled?: true;
   requestEstimationEnabled?: boolean;
   estimatePolicyKind?: 'operator_heuristic' | 'legacy_fixed';
@@ -364,7 +364,7 @@ export function createImageRuntime(
 
 /** Pure adapter configuration. Neither this function nor its constructor resolves a credential or claims DB consent. */
 export function createOwnerImageRuntime(
-  config: OwnerGenerationConfig,
+  config: OwnerGenerationConfig | ReleaseGenerationConfig,
   dependencies: {
     resolveApiKey: () => string | undefined;
     fetchImpl?: typeof fetch;
@@ -374,11 +374,13 @@ export function createOwnerImageRuntime(
   const p = config.image;
   const policy: ImagePolicy = Object.freeze({
     ...defaultImagePolicy,
-    version: `owner-image-policy-v1:${config.configFingerprint}`,
-    generationMode: 'owner',
+    version: `${config.mode}-image-policy-v1:${config.configFingerprint}`,
+    generationMode: config.mode,
     ownerImageProfile: p,
     generationConfigFingerprint: config.configFingerprint,
-    scopeId: LIVE_TEXT.scopeId,
+    // Release authorization supplies the actor scope before any reservation.
+    scopeId: config.mode === 'release' ? 'release-unbound' : LIVE_TEXT.scopeId,
+    ...(config.mode === 'release' ? { releaseAggregateCapMicros: config.aggregateCapMicros } : {}),
     externalEnabled: true,
     approved: true,
     externalExpiresAt: p.pricing.validUntil,
@@ -399,7 +401,7 @@ export function createOwnerImageRuntime(
       mockAvailable: true,
       externalEnabled: true,
       externalBlockReasons: [],
-      generationMode: 'owner',
+      generationMode: config.mode,
       ownerEstimateEnabled: true,
       requestEstimationEnabled: !!p.estimation,
       estimatePolicyKind: p.estimation ? 'operator_heuristic' : 'legacy_fixed',

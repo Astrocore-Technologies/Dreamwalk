@@ -183,6 +183,12 @@ export interface OwnerGenerationConfig {
   /** Quote/profile identity only. Never use this value as a new financial scope. */
   readonly configFingerprint: string;
 }
+export type ReleaseGenerationConfig = Omit<OwnerGenerationConfig, 'mode' | 'ownerHandle'> & {
+  readonly mode: 'release';
+  readonly aggregateCapMicros: number;
+};
+export type ConfiguredGenerationConfig = OwnerGenerationConfig | ReleaseGenerationConfig;
+
 export class OwnerGenerationConfigurationError extends Error {
   constructor(public readonly code: string) {
     super(code);
@@ -321,4 +327,44 @@ export function resolveOwnerImageProfile(
   return framing && profile.framingPolicy?.mode === 'map_aspect_reviewed_range'
     ? { ...profile, size: framing.size }
     : profile;
+}
+
+/** Release deliberately has no account handle or expiring test grant. Reuses the strict
+ * pricing validator; financial scope identity is never derived from this profile. */
+export function readGenerationConfig(
+  env: Record<string, string | undefined>,
+  now = Date.now(),
+): ConfiguredGenerationConfig | { mode: 'disabled' } {
+  if (env.GENERATION_MODE !== 'release') return readOwnerGenerationConfig(env, now);
+  const raw = env.GENERATION_CONFIG_JSON;
+  if (!raw || Buffer.byteLength(raw, 'utf8') > 16000) invalid('GENERATION_CONFIG_INVALID');
+  let value: Record<string, unknown>;
+  try {
+    value = JSON.parse(raw);
+  } catch {
+    invalid('GENERATION_CONFIG_INVALID');
+  }
+  if (!value || typeof value !== 'object' || Array.isArray(value))
+    invalid('GENERATION_CONFIG_INVALID');
+  const { aggregateCapMicros, ...profile } = value;
+  const aggregate = positiveMicros.safeParse(aggregateCapMicros);
+  if (!aggregate.success) invalid('GENERATION_AGGREGATE_CAP_REQUIRED');
+  const legacy = readOwnerGenerationConfig(
+    {
+      GENERATION_MODE: 'owner',
+      GENERATION_OWNER_HANDLE: 'release_profile',
+      GENERATION_OWNER_CONFIG_JSON: JSON.stringify(profile),
+    },
+    now,
+  );
+  if (legacy.mode !== 'owner') invalid('GENERATION_CONFIG_INVALID');
+  if (aggregate.data < legacy.totalCapMicros) invalid('GENERATION_AGGREGATE_CAP_INVALID');
+  const { ownerHandle: _handle, configFingerprint: _fingerprint, ...validated } = legacy;
+  void _handle;
+  void _fingerprint;
+  const configured = { ...validated, mode: 'release' as const, aggregateCapMicros: aggregate.data };
+  return Object.freeze({
+    ...configured,
+    configFingerprint: createHash('sha256').update(JSON.stringify(configured)).digest('hex'),
+  });
 }
