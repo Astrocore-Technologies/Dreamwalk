@@ -44,6 +44,9 @@ await test('homepage discovery always uses immutable approved snapshots, includi
     await admin.request(`/admin/adventures/${story.id}/moderate`, {
       decision: 'approve',
       reason: 'Isolated homepage acceptance',
+      reviewedPlayableVersionId: (
+        await admin.request(`/admin/adventures/${story.id}/playable-review`)
+      ).versionId,
     });
     await t.test(
       'published view returns public read-only approved NPCs and rejects private fields',
