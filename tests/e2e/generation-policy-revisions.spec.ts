@@ -1059,6 +1059,9 @@ async function preflightFixture(page: Page, locale: Locale, unreviewed = false, 
           },
         },
       });
+    // Read-only readiness is not token counting, consent or provider dispatch.
+    if (method === 'GET' && path.endsWith(`/game/campaigns/${id}/world-generation`))
+      return route.fulfill({ json: { available: false, pending: false } });
     if (path.endsWith(`/game/campaigns/${id}/hero`)) return route.fulfill({ json: { hero: null } });
     if (path.endsWith(`/game/campaigns/${id}/chat`))
       return route.fulfill({ json: { messages: [] } });
