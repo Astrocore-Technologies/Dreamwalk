@@ -28,8 +28,8 @@ await test(
     let game;
     try {
       await startApi();
-      const owner = await client().register(),
-        guest = await client().register();
+      const owner = await client().registerLegacyFixture(),
+        guest = await client().registerLegacyFixture();
       const fixtures = [];
       for (let i = 0; i < 6; i++) {
         const story = await owner.request('/studio/adventures', storyInput());

@@ -483,6 +483,8 @@ await test(
       await t.test(
         'explicit sponsor attempt cap causes free local fallback without extra provider job',
         async () => {
+          // This subtest specifically exercises the pre-Sparks sponsor policy.
+          const owner = await client().registerLegacyFixture();
           const g = await fixture(owner),
             cid = g.campaignId;
           await moveTo(owner, cid, { x: 3, y: 2 });

@@ -45,7 +45,7 @@ await test(
   async (t) => {
     try {
       await startApi();
-      const a = await client().register();
+      const a = await client().registerLegacyFixture();
       await db.query("UPDATE users SET role='admin' WHERE id=$1", [a.user.id]);
       await db.query('UPDATE wallets SET balance=1000 WHERE user_id=$1', [a.user.id]);
       const { campaignId } = await a.request('/game/campaigns', { template: 'observatory-v1' });
@@ -526,7 +526,7 @@ await test(
         'operator metrics require admin and contain only counters, never private prompts',
         async () => {
           await client().request('/admin/npc-ai/metrics', undefined, 'GET', 401);
-          const ordinary = await client().register();
+          const ordinary = await client().registerLegacyFixture();
           await ordinary.request('/admin/npc-ai/metrics', undefined, 'GET', 403);
           const report = await a.request('/admin/npc-ai/metrics');
           assert.ok(Array.isArray(report.counts));

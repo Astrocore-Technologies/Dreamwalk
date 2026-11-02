@@ -22,6 +22,10 @@ New wallets use `enabled=true` to enforce the existing Sparks quote/reserve chec
 `false` is the old opt-out accounting path, not a spending block. This does not
 activate any provider, purchase, consent, generation policy or shared budget.
 Existing wallets and all provider controls remain unchanged. Anti-farming is deferred.
+The exact built-in no-network mock provider with zero simulated cost and zero credit/
+provider policy price remains a free simulation: it does not create a Sparks hold or
+require new paid consent. External providers, wrappers, subclasses and nonzero mock
+policies receive no such exemption; missing verified pricing remains fail-closed.
 
 The wallet endpoint returns only the authenticated owner's ID. UI checks that owner
 before rendering and discards outdated responses after account changes. Successful

@@ -51,6 +51,9 @@ export class MockNpcProvider implements NpcProvider {
       proposal?: unknown;
     } = {},
   ) {}
+  isFreeSimulation() {
+    return (this.options.costMicros ?? 0) === 0;
+  }
   async generate(request: ProviderRequest): Promise<ProviderResult> {
     if (this.options.delayMs)
       await new Promise<void>((resolve, reject) => {

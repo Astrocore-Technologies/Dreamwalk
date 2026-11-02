@@ -93,6 +93,36 @@ function client() {
         assert.ok(response.ok, `${method} ${path}: ${response.status}/${value.code ?? 'unknown'}`);
       return value;
     },
+    /** Explicit pre-Sparks fixture for legacy demo/sponsorship contract tests only.
+     * New-account tests MUST keep register(); never disable a registered starter wallet.
+     */
+    async registerLegacyFixture() {
+      const { hashPassword } = await import('../../apps/api/dist/auth.js');
+      const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
+      this.handle = `legacy_${suffix}`;
+      this.email = `legacy-${suffix}@example.test`;
+      const password = `Synthetic-${randomUUID()}!`,
+        id = randomUUID();
+      const c = await db.connect();
+      try {
+        await c.query('BEGIN');
+        await c.query(
+          'INSERT INTO users(id,email,password_hash,name,handle) VALUES($1,$2,$3,$4,$5)',
+          [id, this.email, await hashPassword(password), 'Legacy Game QA', this.handle],
+        );
+        await c.query('INSERT INTO wallets(user_id) VALUES($1)', [id]);
+        await c.query('COMMIT');
+      } catch (error) {
+        await c.query('ROLLBACK');
+        throw error;
+      } finally {
+        c.release();
+      }
+      this.user = (
+        await this.request('/auth/login', { email: this.email, password }, 'POST', 201)
+      ).user;
+      return this;
+    },
     async register() {
       const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
       this.handle = `game_${suffix}`;

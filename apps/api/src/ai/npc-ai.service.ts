@@ -249,6 +249,19 @@ export class NpcAiEngine {
     )
       fail(403, 'FORBIDDEN', 'FORBIDDEN');
   }
+  /** Only the exact built-in, zero-cost/zero-credit simulator may skip paid admission.
+   * Arbitrary non-external adapters, subclasses and priced mock fixtures still need a quote.
+   */
+  private isFreeBuiltInSimulation() {
+    return (
+      this.provider instanceof MockNpcProvider &&
+      Object.getPrototypeOf(this.provider) === MockNpcProvider.prototype &&
+      this.provider.isFreeSimulation() &&
+      this.provider.external === false &&
+      this.policy.creditPrice === 0 &&
+      this.policy.providerUpperMicros === 0
+    );
+  }
   private requestPlan(scope: AiScope, context: DecisionContext) {
     const snapshot =
       this.provider.prepareTextRequest?.(scope.purpose ?? 'plan', context)?.snapshot ?? null;
@@ -286,7 +299,9 @@ export class NpcAiEngine {
       const id = randomUUID(),
         expires = new Date(Date.now() + this.policy.quoteMs);
       const sparkMode =
-        !(this.provider instanceof ManualLiveProvider) && (await sparksEnabled(c, requesterUserId));
+        !(this.provider instanceof ManualLiveProvider) &&
+        !this.isFreeBuiltInSimulation() &&
+        (await sparksEnabled(c, requesterUserId));
       if (sparkMode && !requestPlan.snapshot)
         fail(409, 'SPARK_PRICE_UNVERIFIED', 'SPARK_PRICE_UNVERIFIED');
       const sparkQuote = sparkMode
@@ -528,7 +543,10 @@ export class NpcAiEngine {
       // No Spark sponsorship policy exists yet, including mixed paid-requester/demo-payer flows.
       if (input.sponsorId && sparkMode)
         fail(403, 'SPARK_SPONSOR_POLICY_REQUIRED', 'SPARK_SPONSOR_POLICY_REQUIRED');
-      const ownSparkHold = sparkMode && !(this.provider instanceof ManualLiveProvider);
+      const ownSparkHold =
+        sparkMode &&
+        !(this.provider instanceof ManualLiveProvider) &&
+        !this.isFreeBuiltInSimulation();
       let sparkQuoteId: string | null = null;
       if (
         (ownSparkHold ||

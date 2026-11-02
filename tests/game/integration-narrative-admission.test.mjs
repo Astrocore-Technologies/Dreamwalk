@@ -25,8 +25,8 @@ await test(
     let game;
     try {
       await startApi();
-      const a = await client().register(),
-        b = await client().register();
+      const a = await client().registerLegacyFixture(),
+        b = await client().registerLegacyFixture();
       const story = await a.request('/adventures/old-observatory?view=published');
       const ids = [];
       for (let i = 0; i < 13; i++) {
