@@ -287,7 +287,11 @@ test('image authoring shows equivalents, keeps consent/caps, and separates admin
   );
   assert.match(inline, /reserve > generationRemaining/);
   assert.match(inline, /!quoteCurrent/);
-  assert.match(inline, /!attested/);
+  assert.match(inline, /attested: true/);
+  assert.match(inline, /<ImageConfirmation/);
+  assert.match(inline, /cancelledQuotes\.current\.has\(confirmedQuoteId\)/);
+  assert.match(inline, /confirmedQuoteId !== quote\?\.quote\.id/);
+  assert.match(inline, /consent: true/);
   assert.match(inline, /\{m\('library'\)\}/);
   assert.doesNotMatch(inline, /formatUsd|m\('settings'\)/);
   const dialog = await readFile('apps/web/components/visual-authoring/location-image.tsx', 'utf8');
@@ -298,6 +302,8 @@ test('image authoring shows equivalents, keeps consent/caps, and separates admin
   assert.match(images, /SparkQuoteNotice/);
   assert.match(helper, /SparksEquivalentNotice/);
   assert.match(images, /quoteBudgetAvailable/);
-  assert.match(images, /!consent/);
+  assert.match(images, /<ImageConfirmation/);
+  assert.match(images, /confirmedQuoteId !== quote\?\.id/);
+  assert.match(images, /consent: true/);
   assert.doesNotMatch(images, /g\('usd'\)/);
 });

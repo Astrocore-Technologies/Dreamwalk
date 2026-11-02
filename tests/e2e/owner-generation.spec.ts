@@ -51,8 +51,8 @@ async function fixture(
     });
   const authorizationId = randomUUID(),
     locationId = randomUUID(),
-    revisionId = randomUUID(),
-    quoteId = randomUUID();
+    revisionId = randomUUID();
+  let quoteId = randomUUID();
   const story = await page.request.post('/api/v1/studio/adventures', {
     data: {
       title: 'Synthetic owner generation',
@@ -310,6 +310,8 @@ async function fixture(
         status.sessionId = authorizationId;
       }
       calls.quote++;
+      // Production creates a fresh immutable quote for each explicit estimate.
+      quoteId = randomUUID();
       return route.fulfill({
         json: {
           decision: 'quote',
