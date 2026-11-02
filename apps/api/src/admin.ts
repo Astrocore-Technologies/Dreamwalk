@@ -67,9 +67,18 @@ export class AdminController {
   @Get('sparks/wallet')
   async sparksWallet(@Req() req: Request) {
     const owner = (await this.auth.require(req)).id;
+    return this.sparksWalletFor(owner);
+  }
+  private async sparksWalletFor(owner: string) {
     const row = (
       await this.db.query(
-        'SELECT enabled,balance_subunits,held_subunits FROM spark_wallets WHERE owner_id=$1',
+        `SELECT w.enabled,w.balance_subunits,w.held_subunits,
+          COALESCE((SELECT json_agg(entry) FROM (
+            SELECT id::text,kind,amount_subunits::text,created_at,
+              CASE WHEN kind IN ('admin_credit','admin_debit') THEN evidence->>'reason' END AS reason
+            FROM spark_ledger WHERE owner_id=$1 ORDER BY id DESC LIMIT 100
+          ) entry),'[]'::json) AS ledger
+         FROM (SELECT $1::uuid AS owner_id) owner LEFT JOIN spark_wallets w USING(owner_id)`,
         [owner],
       )
     )[0];
@@ -84,12 +93,7 @@ export class AdminController {
       subunitsPerSpark: '10000',
       rateVersion: 'api-cent-1-spark-v1',
       purchaseAvailable: false,
-      ledger: (
-        await this.db.query(
-          'SELECT id,kind,amount_subunits,created_at FROM spark_ledger WHERE owner_id=$1 ORDER BY id DESC LIMIT 100',
-          [owner],
-        )
-      ).map(camel),
+      ledger: row.ledger.map(camel),
     };
   }
   @Get('store/packages')
@@ -645,52 +649,88 @@ export class AdminController {
           amount: z
             .number()
             .int()
-            .min(-100000)
-            .max(100000)
+            .min(-922337203685477)
+            .max(922337203685477)
             .refine((n) => n !== 0),
           reason: z.string().trim().min(3).max(500),
           idempotencyKey: z.string().min(8).max(120),
         })
         .strict()
         .parse(body);
+    const delta = BigInt(b.amount) * 10000n;
+    const eventKey = `admin-adjust:v1:${b.idempotencyKey}`;
     await this.db.tx(async (c) => {
-      await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [b.idempotencyKey]);
-      const prior = (await c.query('SELECT * FROM ledger WHERE source_key=$1', [b.idempotencyKey]))
+      await c.query('SELECT pg_advisory_xact_lock(hashtext($1))', [eventKey]);
+      const prior = (await c.query('SELECT * FROM spark_ledger WHERE event_key=$1', [eventKey]))
         .rows[0];
       if (prior) {
-        if (prior.user_id !== b.userId || prior.amount !== b.amount || prior.reason !== b.reason)
+        if (
+          prior.owner_id !== b.userId ||
+          prior.kind !== (delta > 0n ? 'admin_credit' : 'admin_debit') ||
+          BigInt(prior.amount_subunits) !== (delta > 0n ? delta : -delta) ||
+          prior.evidence.reason !== b.reason ||
+          prior.evidence.actorId !== u.id
+        )
           fail(409, 'STATE_CONFLICT', 'Ключ операции уже использован с другими данными.');
         return;
       }
-      const wallet = (
+      const target = (
         await c.query(
-          'SELECT w.balance FROM wallets w JOIN users u ON u.id=w.user_id WHERE user_id=$1 AND u.deleted_at IS NULL FOR UPDATE OF w',
+          'SELECT id,starter_sparks_eligible FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE',
           [b.userId],
         )
       ).rows[0];
-      if (!wallet) fail(404, 'NOT_FOUND', 'Кошелёк не найден.');
-      const held = Number(
-        (
-          await c.query(
-            "SELECT COALESCE(SUM(credits),0)::bigint AS total FROM npc_ai_jobs WHERE payer_user_id=$1 AND reservation_status='held'",
-            [b.userId],
-          )
-        ).rows[0].total,
-      );
-      if (wallet.balance + b.amount < held)
-        fail(409, 'INSUFFICIENT_CREDITS', 'Недостаточно демонстрационных Искр.');
-      await c.query('UPDATE wallets SET balance=balance+$2 WHERE user_id=$1', [b.userId, b.amount]);
+      if (!target) fail(404, 'NOT_FOUND', 'Кошелёк не найден.');
+      // Do not create a wallet before the recipient's verification-only welcome gift.
+      if (target.starter_sparks_eligible)
+        fail(
+          409,
+          'SPARKS_RECIPIENT_VERIFICATION_REQUIRED',
+          'Сначала получатель должен подтвердить почту.',
+        );
       await c.query(
-        'INSERT INTO ledger(user_id,amount,reason,source_key,actor_id) VALUES($1,$2,$3,$4,$5)',
-        [b.userId, b.amount, b.reason, b.idempotencyKey, u.id],
+        'INSERT INTO spark_wallets(owner_id,enabled) VALUES($1,true) ON CONFLICT(owner_id) DO NOTHING',
+        [b.userId],
+      );
+      const wallet = (
+        await c.query(
+          'SELECT balance_subunits,held_subunits FROM spark_wallets WHERE owner_id=$1 FOR UPDATE',
+          [b.userId],
+        )
+      ).rows[0];
+      const next = BigInt(wallet.balance_subunits) + delta;
+      if (next < BigInt(wallet.held_subunits))
+        fail(409, 'INSUFFICIENT_SPARKS', 'Недостаточно Искр.');
+      if (next > 9223372036854775807n)
+        fail(409, 'STATE_CONFLICT', 'Баланс превышает допустимую точность.');
+      // Enforce actual Sparks accounting for explicitly adjusted wallets, never free-provider opt-out.
+      await c.query('UPDATE spark_wallets SET balance_subunits=$2,enabled=true WHERE owner_id=$1', [
+        b.userId,
+        next.toString(),
+      ]);
+      const evidence = {
+        actorId: u.id,
+        reason: b.reason,
+        amount: b.amount,
+        idempotencyKey: b.idempotencyKey,
+      };
+      await c.query(
+        'INSERT INTO spark_ledger(owner_id,hold_id,event_key,kind,amount_subunits,evidence) VALUES($1,NULL,$2,$3,$4,$5)',
+        [
+          b.userId,
+          eventKey,
+          delta > 0n ? 'admin_credit' : 'admin_debit',
+          (delta > 0n ? delta : -delta).toString(),
+          JSON.stringify(evidence),
+        ],
       );
       await c.query('INSERT INTO audit(actor_id,action,target_id,details) VALUES($1,$2,$3,$4)', [
         u.id,
-        'wallet.adjust',
+        'sparks.adjust',
         b.userId,
-        JSON.stringify({ amount: b.amount, reason: b.reason, sourceKey: b.idempotencyKey }),
+        JSON.stringify(evidence),
       ]);
     });
-    return this.walletFor(b.userId);
+    return this.sparksWalletFor(b.userId);
   }
 }

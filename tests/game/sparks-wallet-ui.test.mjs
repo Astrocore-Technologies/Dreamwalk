@@ -76,3 +76,56 @@ test('header is scoped to account and refreshes after mutations and asynchronous
     /sparks\.data\?\.(?:available|held)Subunits \?\? '0'/,
   );
 });
+
+test('wallet and admin UI use actual Sparks without duplicate explanation or demo cards', async () => {
+  const source = (path) => readFile(new URL(`../../apps/web/${path}`, import.meta.url), 'utf8');
+  const personal = await source('components/personal.tsx');
+  const page = personal.slice(
+    personal.indexOf('export function WalletPage()'),
+    personal.indexOf('export function NotificationsPage()'),
+  );
+  assert.match(page, /useSparksWallet\(user\?\.id\)/);
+  assert.match(page, /formatSparkSubunits\(sparks.data.availableSubunits, locale\)/);
+  assert.doesNotMatch(
+    page,
+    /\/wallet|DEMO|Магия без сюрпризов|Искры за использование AI|Зарезервировано искр|Тестовая операция/,
+  );
+  const admin = (await source('components/admin.tsx')).split('function AdminCredits()')[1];
+  assert.match(admin, /readSparksWallet\(wallet, userId\)/);
+  assert.match(admin, /formatSparkSubunits\(result.availableSubunits, locale\)/);
+  assert.doesNotMatch(admin, /DEMO|demo ledger|demo Искр|Тестовая валюта/);
+  assert.equal(
+    readSparksWallet(
+      {
+        ...wallet,
+        ledger: [
+          {
+            id: '2',
+            kind: 'admin_credit',
+            amountSubunits: '1000000',
+            createdAt: '2026-11-02',
+            reason: 'Reward',
+          },
+        ],
+      },
+      'first',
+    ).ledger[0].reason,
+    'Reward',
+  );
+});
+test('hidden NPC controls retain saved profile/model fields in both editor drafts', async () => {
+  const standalone = await readFile(
+    new URL('../../apps/web/components/studio.tsx', import.meta.url),
+    'utf8',
+  );
+  const scoped = await readFile(
+    new URL('../../apps/web/components/studio/story-npc-editor.tsx', import.meta.url),
+    'utf8',
+  );
+  for (const source of [standalone, scoped]) {
+    assert.doesNotMatch(source, /<NpcCharacterProfile|label=\{t\('Стиль поведения'\)\}/);
+  }
+  assert.match(standalone, /characterProfile: n.characterProfile/);
+  assert.match(standalone, /modelProfileId: n.modelProfileId/);
+  assert.match(scoped, /Object.entries\(data\).*key in npcSchema.shape/);
+});

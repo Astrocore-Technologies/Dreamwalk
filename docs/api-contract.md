@@ -40,7 +40,7 @@ Base `/api/v1`; cookie `dreamwalk_session`, HttpOnly SameSite=Lax. Browser reque
 
 ## Wallet/admin
 
-- GET `/wallet` -> `{balance,mode:'demo',ledger:[{id,amount,reason,sourceKey,createdAt}]}`.
+- GET `/wallet` (legacy adapter compatibility only; not the visible Sparks balance) -> `{balance,mode:'demo',ledger:[{id,amount,reason,sourceKey,createdAt}]}`.
 - GET `/store/packages` -> `[{id,name,credits,demo:true,available:false}]`; there is NO checkout endpoint.
 - Admin routes require admin DB role. GET `/admin/overview` -> counts. GET `/admin/users?q=`, `/admin/adventures?status=`, `/admin/npcs`, `/admin/reports`, `/admin/audit`, `/admin/models`, `/admin/runtimes` -> arrays.
 - POST `/admin/adventures/:id/moderate` `{decision:'approve'|'reject'|'quarantine',reason}` -> Adventure. Approve snapshots immutable version and publishes; rejection returns draft.
@@ -48,7 +48,8 @@ Base `/api/v1`; cookie `dreamwalk_session`, HttpOnly SameSite=Lax. Browser reque
 - PATCH `/admin/reports/:id` `{status:'resolved'|'dismissed',resolution}` -> report.
 - POST/PATCH `/admin/models[/:id]` `{key,name,description,instructions,enabled}` -> ModelProfile (version increments). Initial Green Apple and Cookie.
 - POST/PATCH `/admin/runtimes[/:id]` `{name,provider:'mock'|'openai'|'local',model,enabled,endpointId:'mock'|'openai'|'local',maxInputTokens,maxOutputTokens,timeoutMs,concurrency}` -> RuntimeProfile. Non-mock must remain disabled in this milestone; fixed endpoint identifiers prevent SSRF; no API keys accepted.
-- POST `/admin/credits` `{userId,amount,reason,idempotencyKey}` -> wallet. Integer nonzero amount, bounded ±100000; atomic, nonnegative; repeat same key/payload no duplicate, mismatched replay 409. Append-only ledger; compensation via new signed entry. Every admin mutation audited.
+- GET `/sparks/wallet` -> actual authenticated owner wallet: `{ownerId,enabled,balanceSubunits,heldSubunits,availableSubunits,subunitsPerSpark:"10000",ledger}`. Subunits and ledger IDs are exact integer strings; one consistent database snapshot. Ledger reason is exposed only for administrator adjustments.
+- POST `/admin/credits` `{userId,amount,reason,idempotencyKey}` -> actual Sparks wallet (same DTO). Amount is a nonzero whole number of Sparks, restricted only to exact bigint denomination representability; atomic credit/debit cannot consume held funds or overflow bigint. Replay is bound to actor, recipient, amount and reason; matching retry does not mutate, mismatch is409. Immutable `admin_credit`/`admin_debit` entries and audit are committed together. A successful explicit adjustment enables Sparks accounting, not generation or payments. Pending verification-only gift recipients must verify first (409); no legacy conversion or automatic backfill.
 
 ## Additional safety semantics
 

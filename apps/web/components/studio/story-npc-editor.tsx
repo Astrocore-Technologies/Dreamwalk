@@ -1,10 +1,9 @@
 'use client';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
-import { npcSchema, type Adventure, type ModelProfile, type Npc } from '@dreamwalk/contracts';
+import { npcSchema, type Adventure, type Npc } from '@dreamwalk/contracts';
 import { api, ApiError, assetUrl, errorMessage, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Field, Input, Modal, Panel, Select, Textarea, UploadField } from '../ui';
-import { NpcCharacterProfile } from './npc-character-profile';
 import { CharacterSpriteControl } from '../visual-authoring/character-sprite-control';
 
 const messages = {
@@ -108,7 +107,6 @@ export function StoryNpcEditor({
   const base = `/studio/adventures/${adventureId}/npcs`;
   const locals = useResource<{ npcs: LocalNpc[]; storyEditRevision: number }>(base);
   const templates = useResource<Npc[]>('/npcs');
-  const models = useResource<ModelProfile[]>('/models');
   const [editing, setEditing] = useState<LocalNpc | 'new' | null>(null);
   const [draft, setDraft] = useState<Draft>(() => ({
     ...npcSchema.parse({ name: 'New NPC', sourceLanguage: locale }),
@@ -366,26 +364,6 @@ export function StoryNpcEditor({
                   />
                 </Field>
               ))}
-              <NpcCharacterProfile
-                value={draft.characterProfile}
-                onChange={(value) => change('characterProfile', value)}
-              />
-              <Field label={t('Стиль поведения')}>
-                <Select
-                  value={draft.modelProfileId ?? ''}
-                  onChange={(event) => change('modelProfileId', event.target.value || null)}
-                >
-                  <option value="">{t('Без предпочтения')}</option>
-                  {models.data
-                    ?.filter((model) => model.enabled)
-                    .map((model) => (
-                      <option key={model.id} value={model.id}>
-                        {model.name}
-                      </option>
-                    ))}
-                </Select>
-              </Field>
-              <ErrorBox message={models.error} retry={models.reload} />
               <UploadField
                 label={t('Загрузить портрет')}
                 onUploaded={(asset) => {

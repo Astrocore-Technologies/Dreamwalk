@@ -408,9 +408,9 @@ await test('platform persistence, ownership, moderation and accounting', async (
       );
       await player.request('DELETE', `/favorites/${adventure.id}`);
     });
-    await t.test('demo ledger is idempotent, append-only and concurrency-safe', async () => {
-      const before = await player.request('GET', '/wallet');
-      assert.equal(before.mode, 'demo');
+    await t.test('real Sparks ledger is idempotent, append-only and concurrency-safe', async () => {
+      const before = await player.request('GET', '/sparks/wallet');
+      const legacyBefore = await player.request('GET', '/wallet');
       const grant = {
         userId: playerUser.id,
         amount: 37,
@@ -419,10 +419,10 @@ await test('platform persistence, ownership, moderation and accounting', async (
       };
       await admin.request('POST', '/admin/credits', grant, 201);
       await admin.request('POST', '/admin/credits', grant, 201);
-      let wallet = await player.request('GET', '/wallet');
-      assert.equal(wallet.balance, before.balance + 37);
+      let wallet = await player.request('GET', '/sparks/wallet');
+      assert.equal(wallet.balanceSubunits, (BigInt(before.balanceSubunits) + 370000n).toString());
       await admin.request('POST', '/admin/credits', { ...grant, amount: 38 }, 409);
-      const debit = -wallet.balance;
+      const debit = -Number(BigInt(wallet.balanceSubunits) / 10000n);
       const responses = await Promise.all(
         [1, 2].map(async (index) =>
           fetch(`${base}/admin/credits`, {
@@ -438,18 +438,21 @@ await test('platform persistence, ownership, moderation and accounting', async (
         ),
       );
       assert.deepEqual(responses.map((res) => res.status).sort(), [201, 409]);
-      wallet = await player.request('GET', '/wallet');
-      assert.equal(wallet.balance, 0);
+      wallet = await player.request('GET', '/sparks/wallet');
+      assert.equal(wallet.balanceSubunits, '0');
       assert.ok(wallet.ledger.length >= before.ledger.length + 2);
       await assert.rejects(
-        pool.query('UPDATE ledger SET amount=amount+1 WHERE user_id=$1', [playerUser.id]),
-        /Append-only/,
+        pool.query('UPDATE spark_ledger SET amount_subunits=amount_subunits+1 WHERE owner_id=$1', [
+          playerUser.id,
+        ]),
+        /immutable/,
       );
       const totals = await pool.query(
-        'SELECT COALESCE(sum(amount),0)::int AS total FROM ledger WHERE user_id=$1',
+        "SELECT COALESCE(sum(CASE WHEN kind IN ('starter_grant','admin_credit') THEN amount_subunits WHEN kind IN ('capture','admin_debit') THEN -amount_subunits ELSE 0 END),0)::text AS total FROM spark_ledger WHERE owner_id=$1",
         [playerUser.id],
       );
-      assert.equal(totals.rows[0].total, wallet.balance);
+      assert.equal(totals.rows[0].total, wallet.balanceSubunits);
+      assert.deepEqual(await player.request('GET', '/wallet'), legacyBefore);
     });
     await t.test(
       'runtime configuration refuses external endpoints and live generation',

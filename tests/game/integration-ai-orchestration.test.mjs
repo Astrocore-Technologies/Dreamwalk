@@ -166,15 +166,9 @@ await test(
             1,
           );
           await e.cancel(results.find((r) => r.status === 'fulfilled').value.id);
-          const key = randomUUID(),
-            body = {
-              userId: a.user.id,
-              amount: 10,
-              reason: 'demo test topup',
-              idempotencyKey: key,
-            };
-          await a.request('/admin/credits', body);
-          await a.request('/admin/credits', body);
+          // This suite exercises the historical synthetic adapter's legacy wallet.
+          // Public admin adjustments now fund actual Sparks, never this fixture balance.
+          await db.query('UPDATE wallets SET balance=13 WHERE user_id=$1', [a.user.id]);
           assert.equal((await e.wallet(a.user.id)).balance, 13);
           await db.query('UPDATE wallets SET balance=1000 WHERE user_id=$1', [a.user.id]);
         },

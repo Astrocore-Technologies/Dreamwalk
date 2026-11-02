@@ -10,7 +10,7 @@ import { useT } from '@/lib/i18n';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useState } from 'react';
-import { ArrowUpRight, Bell, BookOpen, Feather, Plus, Sparkles, UserRound } from 'lucide-react';
+import { ArrowUpRight, Bell, Feather, Plus, Sparkles, UserRound } from 'lucide-react';
 import {
   api,
   useResource,
@@ -21,7 +21,7 @@ import {
   type Adventure,
   type Hero,
 } from '@/lib/client';
-import type { Wallet, Invitation } from '@dreamwalk/contracts';
+import type { Invitation } from '@dreamwalk/contracts';
 import { formatSparkSubunits, selectAdventureText } from '@dreamwalk/contracts';
 import { AdventureCard } from './public';
 import {
@@ -522,144 +522,65 @@ export function HeroesPage() {
 export function WalletPage() {
   const date = useDate();
   const { t: tr, locale } = useT();
-  const wallet = useResource<Wallet & { available?: number; reserved?: number }>('/wallet');
   const { user } = useClient();
   const sparks = useSparksWallet(user?.id);
-  const balanceText = sparksBalanceMessages[locale];
-  const pricing =
+  const text = sparksBalanceMessages[locale];
+  const labels =
     locale === 'ru'
-      ? [
-          'Искры за использование AI',
-          'Доступно',
-          'Удерживается',
-          'Учёт подготовлен, но платный кошелёк не активирован. Демонстрационный баланс ниже не конвертируется.',
-          'Выбранная схема: $5 = 200 искр; 1 цент расходов API = 1 искра. Наценка уже включена. Покупки пока недоступны.',
-        ]
+      ? {
+          admin_credit: 'Начисление администратором',
+          admin_debit: 'Списание администратором',
+          reserve: 'Резерв',
+          capture: 'Списано',
+          release: 'Возврат резерва',
+          pending: 'На сверке',
+          empty: 'Здесь появятся начисления и расходы искр.',
+        }
       : locale === 'uk'
-        ? [
-            'Іскри за використання AI',
-            'Доступно',
-            'Утримується',
-            'Облік підготовлено, але платний гаманець не активовано. Демонстраційний баланс нижче не конвертується.',
-            'Обрана схема: $5 = 200 іскор; 1 цент витрат API = 1 іскра. Націнку вже включено. Покупки поки недоступні.',
-          ]
-        : [
-            'AI usage Sparks',
-            'Available',
-            'Held',
-            'Accounting is prepared but the paid wallet is not active. The demo balance below is not converted.',
-            'Selected design: $5 = 200 Sparks; 1 API-cost cent = 1 Spark. Markup is already included. Purchases are unavailable.',
-          ];
+        ? {
+            admin_credit: 'Нарахування адміністратором',
+            admin_debit: 'Списання адміністратором',
+            reserve: 'Резерв',
+            capture: 'Списано',
+            release: 'Повернення резерву',
+            pending: 'На звірці',
+            empty: 'Тут з’являться нарахування та витрати іскор.',
+          }
+        : {
+            admin_credit: 'Administrator credit',
+            admin_debit: 'Administrator debit',
+            reserve: 'Reserved',
+            capture: 'Charged',
+            release: 'Reservation released',
+            pending: 'Pending reconciliation',
+            empty: 'Sparks credits and usage will appear here.',
+          };
+  const kinds: Record<string, string> = { ...labels, starter_grant: text.starter };
   return (
     <>
       <PageHeading
         eyebrow={tr('НЕМНОГО МАГИИ НА БУДУЩЕЕ')}
         title={tr('Мои искры')}
-        description={balanceText.description}
+        description={text.description}
       />
-      <Panel>
-        <h2>{pricing[0]}</h2>
-        {sparks.data ? (
-          <>
-            <p>
-              {pricing[1]}: {formatSparkSubunits(sparks.data.availableSubunits, locale)} ✦ ·{' '}
-              {pricing[2]}: {formatSparkSubunits(sparks.data.heldSubunits, locale)} ✦
-            </p>
-            <p>
-              {sparks.data?.enabled
-                ? locale === 'ru'
-                  ? 'Оплата из этого кошелька включена отдельной политикой. Демонстрационный баланс остаётся отдельно.'
-                  : locale === 'uk'
-                    ? 'Оплату з цього гаманця ввімкнено окремою політикою. Демонстраційний баланс залишається окремо.'
-                    : 'This wallet is enabled by a separate charging policy. Demo balances remain separate.'
-                : pricing[3]}
-            </p>
-          </>
-        ) : (
-          <p role="status">{sparks.unavailable ? '—' : balanceText.loading}</p>
-        )}
-        <p>{pricing[4]}</p>
-        {!!sparks.data?.ledger?.length && (
-          <ul>
-            {sparks.data.ledger.map((entry) => (
-              <li key={entry.id}>
-                {(
-                  {
-                    starter_grant: balanceText.starter,
-                    reserve: locale === 'ru' ? 'Резерв' : locale === 'uk' ? 'Резерв' : 'Reserved',
-                    capture: locale === 'ru' ? 'Списано' : locale === 'uk' ? 'Списано' : 'Captured',
-                    release:
-                      locale === 'ru' ? 'Освобождено' : locale === 'uk' ? 'Звільнено' : 'Released',
-                    pending:
-                      locale === 'ru'
-                        ? 'На сверке'
-                        : locale === 'uk'
-                          ? 'На звірці'
-                          : 'Pending reconciliation',
-                  } as Record<string, string>
-                )[entry.kind] ?? entry.kind}
-                : {formatSparkSubunits(entry.amountSubunits, locale)} ✦ · {date(entry.createdAt)}
-              </li>
-            ))}
-          </ul>
-        )}
-        <ErrorBox
-          message={sparks.unavailable ? balanceText.unavailable : ''}
-          retry={sparks.reload}
-        />
-      </Panel>
-      <div className="wallet-layout">
-        <section className="balance-card">
-          <div className="row">
-            <Sparkles size={24} />
-            <Badge>{tr('DEMO · НЕ ДЕНЬГИ')}</Badge>
-          </div>
-          <p>{tr('Доступно искр')}</p>
-          <h2>
-            {wallet.loading
-              ? '…'
-              : (wallet.data?.available ?? wallet.data?.balance ?? 0).toLocaleString(locale)}
-            <span>✦</span>
-          </h2>
-          <small>
-            {tr('Зарезервировано искр')}: {(wallet.data?.reserved ?? 0).toLocaleString(locale)}
-            <br />
-            {tr('Тестовые операции не имеют денежной стоимости.')}
-            <br />
-            {tr('Реальные покупки отключены.')}
-          </small>
-        </section>
-        <Panel>
-          <h2>{tr('Магия без сюрпризов')}</h2>
-          <ul className="plain-list">
-            <li>
-              <BookOpen size={18} />
-              {tr('Читать миры и готовить героев — бесплатно')}
-            </li>
-            <li>
-              <ShieldCheckIcon />
-              {tr('Стоимость будущего действия будет видна заранее')}
-            </li>
-            <li>
-              <Sparkles size={18} />
-              {tr('Без подписки, скрытых списаний и платных повторов')}
-            </li>
-          </ul>
-          <p className="muted">
-            {locale === 'ru'
-              ? 'Генерация требует отдельной цены и согласия; доступность зависит от настроек владельца и защитных лимитов.'
-              : locale === 'uk'
-                ? 'Генерація потребує окремої ціни та згоди; доступність залежить від налаштувань власника й захисних лімітів.'
-                : 'Generation requires a quote and consent; availability depends on owner configuration and safety limits.'}
-          </p>
-        </Panel>
-      </div>
+      <section className="balance-card" aria-label={text.available}>
+        <Sparkles size={24} />
+        <p>{text.available}</p>
+        <h2 aria-live="polite" data-testid="wallet-sparks-balance">
+          {sparks.data
+            ? formatSparkSubunits(sparks.data.availableSubunits, locale)
+            : sparks.unavailable
+              ? '—'
+              : '…'}
+          <span>✦</span>
+        </h2>
+      </section>
+      <ErrorBox message={sparks.unavailable ? text.unavailable : ''} retry={sparks.reload} />
       <Panel>
         <h2>{tr('История операций')}</h2>
-        <ErrorBox message={wallet.error} retry={wallet.reload} />
-        {wallet.loading ? (
+        {!sparks.data && !sparks.unavailable ? (
           <Loading />
-        ) : wallet.data?.ledger.length ? (
+        ) : sparks.data?.ledger.length ? (
           <div className="table-wrap">
             <table>
               <thead>
@@ -670,36 +591,32 @@ export function WalletPage() {
                 </tr>
               </thead>
               <tbody>
-                {wallet.data.ledger.map((entry) => (
-                  <tr key={entry.id}>
-                    <td>
-                      {entry.reason}
-                      <small className="cell-subtitle">{tr('Тестовая операция')}</small>
-                    </td>
-                    <td>{date(entry.createdAt)}</td>
-                    <td className={entry.amount > 0 ? 'positive' : ''}>
-                      {entry.amount > 0 ? '+' : ''}
-                      {entry.amount}
-                    </td>
-                  </tr>
-                ))}
+                {sparks.data.ledger.map((entry) => {
+                  const credit = ['starter_grant', 'admin_credit'].includes(entry.kind);
+                  const debit = ['capture', 'admin_debit'].includes(entry.kind);
+                  return (
+                    <tr key={entry.id}>
+                      <td>
+                        {kinds[entry.kind]}
+                        {entry.reason && <small className="cell-subtitle">{entry.reason}</small>}
+                      </td>
+                      <td>{date(entry.createdAt)}</td>
+                      <td className={credit ? 'positive' : ''}>
+                        {credit ? '+' : debit ? '−' : ''}
+                        {formatSparkSubunits(entry.amountSubunits, locale, 'exact')}
+                      </td>
+                    </tr>
+                  );
+                })}
               </tbody>
             </table>
           </div>
-        ) : (
-          <Empty
-            title={tr('Здесь пока тихо')}
-            description={tr(
-              'История тестовых начислений и списаний появится здесь. Баланс изменяет только администратор.',
-            )}
-          />
-        )}
+        ) : sparks.data ? (
+          <Empty title={tr('Здесь пока тихо')} description={labels.empty} />
+        ) : null}
       </Panel>
     </>
   );
-}
-function ShieldCheckIcon() {
-  return <span aria-hidden="true">◇</span>;
 }
 export function NotificationsPage() {
   const date = useDate();
