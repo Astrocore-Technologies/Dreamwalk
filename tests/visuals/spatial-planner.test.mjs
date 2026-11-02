@@ -241,7 +241,7 @@ await test(
           assert.equal(p.projection.turn, undefined);
           p = await visuals.preview(owner, p.id, {
             ...mutation(p),
-            action: { kind: 'move_to', target: { x: 12, y: 4 } },
+            action: { kind: 'move_to', target: { x: spatialFixture().connection.door.x, y: 4 } },
           });
           p = await visuals.preview(owner, p.id, {
             ...mutation(p),
