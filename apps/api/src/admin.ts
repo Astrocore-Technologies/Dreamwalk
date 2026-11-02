@@ -76,6 +76,7 @@ export class AdminController {
     const balance = BigInt(row?.balance_subunits ?? '0'),
       held = BigInt(row?.held_subunits ?? '0');
     return {
+      ownerId: owner,
       enabled: row?.enabled ?? false,
       balanceSubunits: balance.toString(),
       heldSubunits: held.toString(),

@@ -1,4 +1,5 @@
 'use client';
+import { SPARKS_REFRESH_EVENT } from './sparks-wallet';
 import { useT, getLocale, tr } from './i18n';
 import { formatDate } from './locales';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
@@ -55,6 +56,11 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
       error?.code || 'REQUEST_FAILED',
     );
   }
+  if (
+    typeof window !== 'undefined' &&
+    !['GET', 'HEAD'].includes((options.method ?? 'GET').toUpperCase())
+  )
+    window.dispatchEvent(new Event(SPARKS_REFRESH_EVENT));
   return data as T;
 }
 export function useResource<T>(path: string | null) {

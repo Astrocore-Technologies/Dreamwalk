@@ -47,7 +47,7 @@ test('login identity fits existing registration contract without changing histor
   assert.equal(registerSchema.parse(signup).name, legacy.handle);
   assert.equal(registerSchema.safeParse({ ...signup, handle: 'not a valid login' }).success, false);
 });
-test('signup has only login, email and password and shell keeps creation without promo/prototype', async () => {
+test('signup has only login, email and password and shell keeps Studio without duplicate creation or early-access footer', async () => {
   const account = await readFile(
     new URL('../../apps/web/components/account.tsx', import.meta.url),
     'utf8',
@@ -63,8 +63,11 @@ test('signup has only login, email and password and shell keeps creation without
     'utf8',
   );
   assert.doesNotMatch(shell, /studio-promo|Игровой прототип|mini-tag|user\.name/);
-  assert.match(shell, /href="\/studio\/adventures\/new"/);
-  assert.match(shell, /Платформа · ранний доступ/);
+  assert.doesNotMatch(shell, /href="\/studio\/adventures\/new"/);
+  assert.match(shell, /href="\/studio"/);
+  assert.doesNotMatch(shell, /sidebar-footer|Платформа · ранний доступ/);
+  assert.match(shell, /href="\/account\/settings"/);
+  assert.match(shell, /href="\/help"/);
   for (const file of ['public.tsx', 'home/home-page.tsx']) {
     const source = await readFile(
       new URL(`../../apps/web/components/${file}`, import.meta.url),

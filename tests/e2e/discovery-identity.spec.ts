@@ -46,7 +46,8 @@ test('normal discovery hides editorial fixtures, retains user story cards and cr
     userStory.slug,
   );
   await expect(page.locator('.studio-promo')).toHaveCount(0);
-  await expect(page.locator('a[href="/studio/adventures/new"]').first()).toBeVisible();
+  await expect(page.locator('#main-sidebar a[href="/studio/adventures/new"]')).toHaveCount(0);
+  await expect(page.locator('#main-sidebar a[href="/studio"]')).toBeVisible();
   await expect(page.locator('nav a[href="/game"]')).toHaveCount(0);
   await page.goto('/explore');
   for (const slug of ['old-observatory', 'whispering-forest', 'tidekeepers', 'city-of-lanterns']) {
