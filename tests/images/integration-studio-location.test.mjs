@@ -25,7 +25,9 @@ await test(
   async (t) => {
     try {
       await startApi();
-      const owner = await client().register(),
+      // The injected historical external adapter below intentionally has no priced
+      // Sparks profile; model a pre-Sparks account, never disable a new starter wallet.
+      const owner = await client().registerLegacyFixture(),
         other = await client().register();
       const input = storyInput();
       input.content.locations[0].name = 'Large house';

@@ -1,4 +1,6 @@
 'use client';
+import { useSparksWallet } from '@/lib/use-sparks-wallet';
+import { sparksBalanceMessages } from './sparks-balance';
 import { CharacterSpriteControl } from './visual-authoring/character-sprite-control';
 import { useVisualText } from './visual-authoring/messages';
 import { readStoryReturn, storyWithHero } from './story-return';
@@ -521,12 +523,9 @@ export function WalletPage() {
   const date = useDate();
   const { t: tr, locale } = useT();
   const wallet = useResource<Wallet & { available?: number; reserved?: number }>('/wallet');
-  const sparks = useResource<{
-    enabled: boolean;
-    availableSubunits: string;
-    heldSubunits: string;
-    ledger: { id: string; kind: string; amountSubunits: string; createdAt: string }[];
-  }>('/sparks/wallet');
+  const { user } = useClient();
+  const sparks = useSparksWallet(user?.id);
+  const balanceText = sparksBalanceMessages[locale];
   const pricing =
     locale === 'ru'
       ? [
@@ -556,25 +555,29 @@ export function WalletPage() {
       <PageHeading
         eyebrow={tr('НЕМНОГО МАГИИ НА БУДУЩЕЕ')}
         title={tr('Мои искры')}
-        description={tr(
-          'Искры — валюта будущих AI-приключений. Сейчас здесь только тестовый баланс.',
-        )}
+        description={balanceText.description}
       />
       <Panel>
         <h2>{pricing[0]}</h2>
-        <p>
-          {pricing[1]}: {formatSparkSubunits(sparks.data?.availableSubunits ?? '0', locale)} ✦ ·{' '}
-          {pricing[2]}: {formatSparkSubunits(sparks.data?.heldSubunits ?? '0', locale)} ✦
-        </p>
-        <p>
-          {sparks.data?.enabled
-            ? locale === 'ru'
-              ? 'Оплата из этого кошелька включена отдельной политикой. Демонстрационный баланс остаётся отдельно.'
-              : locale === 'uk'
-                ? 'Оплату з цього гаманця ввімкнено окремою політикою. Демонстраційний баланс залишається окремо.'
-                : 'This wallet is enabled by a separate charging policy. Demo balances remain separate.'
-            : pricing[3]}
-        </p>
+        {sparks.data ? (
+          <>
+            <p>
+              {pricing[1]}: {formatSparkSubunits(sparks.data.availableSubunits, locale)} ✦ ·{' '}
+              {pricing[2]}: {formatSparkSubunits(sparks.data.heldSubunits, locale)} ✦
+            </p>
+            <p>
+              {sparks.data?.enabled
+                ? locale === 'ru'
+                  ? 'Оплата из этого кошелька включена отдельной политикой. Демонстрационный баланс остаётся отдельно.'
+                  : locale === 'uk'
+                    ? 'Оплату з цього гаманця ввімкнено окремою політикою. Демонстраційний баланс залишається окремо.'
+                    : 'This wallet is enabled by a separate charging policy. Demo balances remain separate.'
+                : pricing[3]}
+            </p>
+          </>
+        ) : (
+          <p role="status">{sparks.unavailable ? '—' : balanceText.loading}</p>
+        )}
         <p>{pricing[4]}</p>
         {!!sparks.data?.ledger?.length && (
           <ul>
@@ -582,6 +585,7 @@ export function WalletPage() {
               <li key={entry.id}>
                 {(
                   {
+                    starter_grant: balanceText.starter,
                     reserve: locale === 'ru' ? 'Резерв' : locale === 'uk' ? 'Резерв' : 'Reserved',
                     capture: locale === 'ru' ? 'Списано' : locale === 'uk' ? 'Списано' : 'Captured',
                     release:
@@ -599,7 +603,10 @@ export function WalletPage() {
             ))}
           </ul>
         )}
-        <ErrorBox message={sparks.error} retry={sparks.reload} />
+        <ErrorBox
+          message={sparks.unavailable ? balanceText.unavailable : ''}
+          retry={sparks.reload}
+        />
       </Panel>
       <div className="wallet-layout">
         <section className="balance-card">

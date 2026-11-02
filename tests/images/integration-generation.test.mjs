@@ -61,7 +61,11 @@ await test(
     try {
       await startApi();
       const owner = await client().register(),
-        other = await client().register();
+        other = await client().register(),
+        legacy = await client().registerLegacyFixture();
+      // This injected historical external adapter has no priced Sparks snapshot.
+      // Keep its legacy account separate; never disable a registered starter wallet.
+      const legacyStory = await createStory(legacy);
       const stories = [];
       for (let i = 0; i < 15; i++) stories.push(await createStory(owner));
       const ownArt = await uploadFixture(owner),
@@ -104,6 +108,16 @@ await test(
           );
           assert.ok(done.revisionId);
           assert.equal(done.actualMicros, 0);
+          assert.deepEqual(
+            (
+              await db.query(
+                'SELECT enabled,balance_subunits,held_subunits FROM spark_wallets WHERE owner_id=$1',
+                [owner.user.id],
+              )
+            ).rows[0],
+            { enabled: true, balance_subunits: '500000', held_subunits: '0' },
+            'The built-in zero-cost fixture must not consume starter Sparks',
+          );
           await other.request(`/image-generation/jobs/${j.id}`, undefined, 'GET', 404);
           const receipt = await owner.request(`/asset-library/revisions/${done.revisionId}`);
           assert.equal(receipt.mime, 'image/webp');
@@ -175,15 +189,25 @@ await test(
             estimatedTotalMicros: 45880,
             operationalReserveMicros: 100000,
           });
-          const q = await e.quote(owner.user.id, input(stories[0].id, { mode: 'external' }));
+          await assert.rejects(
+            e.quote(owner.user.id, input(stories[0].id, { mode: 'external' })),
+            code('SPARK_PRICING_SNAPSHOT_REQUIRED'),
+          );
+          assert.equal(calls, 0, 'Missing pricing never reaches an external provider');
+          assert.equal(
+            (await db.query('SELECT 1 FROM spark_wallets WHERE owner_id=$1', [legacy.user.id]))
+              .rowCount,
+            0,
+          );
+          const q = await e.quote(legacy.user.id, input(legacyStory.id, { mode: 'external' }));
           assert.equal(q.quote.upperMicros, null);
           assert.equal(q.quote.verifiedUpperMicros, null);
           assert.equal(q.quote.reserveMicros, 100000);
           assert.equal(q.quote.estimatedTotalMicros, 45880);
           assert.equal(q.quote.costBasis, 'approved_estimate');
           const body = { quoteId: q.quote.id, operationId: randomUUID(), consent: true };
-          const j = await e.enqueue(owner.user.id, body);
-          assert.equal((await e.enqueue(owner.user.id, body)).id, j.id);
+          const j = await e.enqueue(legacy.user.id, body);
+          assert.equal((await e.enqueue(legacy.user.id, body)).id, j.id);
           assert.equal(j.verifiedUpperMicros, null);
           assert.equal(j.costBasis, 'approved_estimate');
           const stored = await row(j.id);
@@ -191,7 +215,7 @@ await test(
           assert.equal(Number(stored.estimated_total_micros), 45880);
           await e.workOnce();
           assert.equal(calls, 1);
-          const reconstructed = await engine().get(owner.user.id, j.id);
+          const reconstructed = await engine().get(legacy.user.id, j.id);
           assert.equal(reconstructed.costBasis, 'approved_estimate');
           assert.equal(reconstructed.verifiedUpperMicros, null);
           assert.equal(reconstructed.actualMicros, 5000);

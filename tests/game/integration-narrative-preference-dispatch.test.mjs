@@ -14,7 +14,7 @@ test(
     const database = new Db();
     try {
       await startApi();
-      const user = await client().register();
+      const user = await client().registerLegacyFixture();
       const source = await user.request('/adventures/old-observatory?view=published');
       const { campaignId } = await user.request('/game/campaigns', {
         playableVersionId: source.playableVersionId,

@@ -24,6 +24,7 @@ import {
   type User,
 } from '@dreamwalk/contracts';
 import { Db, camel } from './db';
+import { grantRegistrationSparks } from './generation/starter-sparks';
 import { config } from './config';
 import { fail } from './errors';
 import { mailEnabled, sendAccountMail } from './mail';
@@ -155,6 +156,7 @@ export class AccountController {
         [b.email, hash, b.name, b.handle, JSON.stringify(settingsSchema.parse({}))],
       );
       await c.query('INSERT INTO wallets(user_id) VALUES($1)', [r.rows[0].id]);
+      await grantRegistrationSparks(c, r.rows[0].id);
       await c.query(
         "INSERT INTO notifications(user_id,title,message,type,payload) VALUES($1,'','','welcome','{}')",
         [r.rows[0].id],

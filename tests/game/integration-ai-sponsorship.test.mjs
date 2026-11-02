@@ -23,8 +23,8 @@ await test(
   async (t) => {
     try {
       await startApi();
-      const owner = await client().register(),
-        other = await client().register();
+      const owner = await client().registerLegacyFixture(),
+        other = await client().registerLegacyFixture();
       await db.query('UPDATE wallets SET balance=100 WHERE user_id=$1', [owner.user.id]);
       const { campaignId } = await owner.request('/game/campaigns', { template: 'observatory-v1' });
       const mock = new MockNpcProvider({ costMicros: 4 });

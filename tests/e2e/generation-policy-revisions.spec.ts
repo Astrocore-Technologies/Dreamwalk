@@ -260,6 +260,19 @@ async function fixture(
     if (method === 'GET' && path === '/api/v1/taxonomy')
       return route.fulfill({ json: { genres: [], tags: [], genreDefinitions: [], revision: 0 } });
     if (method === 'GET' && path === '/api/v1/auth/me') return route.fulfill({ json: { user } });
+    // Header balance is a read-only local fixture, never a paid provider request.
+    if (method === 'GET' && path === '/api/v1/sparks/wallet')
+      return route.fulfill({
+        json: {
+          ownerId: userId,
+          enabled: true,
+          balanceSubunits: '500000',
+          heldSubunits: '0',
+          availableSubunits: '500000',
+          subunitsPerSpark: '10000',
+          ledger: [],
+        },
+      });
     if (
       method === 'GET' &&
       [

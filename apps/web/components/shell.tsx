@@ -1,4 +1,5 @@
 'use client';
+import { SparksBalance } from './sparks-balance';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
@@ -111,10 +112,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
           )}
         </nav>
         <div className="sidebar-bottom">
-          <Link className="nav-item" href="/studio/adventures/new" onClick={() => setMenu(false)}>
-            <Feather size={18} />
-            {tr('Создать историю')}
-          </Link>
           <Link className="nav-item" href="/account/settings" onClick={() => setMenu(false)}>
             <Settings size={18} />
             {tr('Настройки')}
@@ -123,10 +120,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
             <CircleHelp size={18} />
             {tr('Помощь и поддержка')}
           </Link>
-          <div className="sidebar-footer">
-            <span className="online-dot" />
-            {tr('Платформа · ранний доступ')}
-          </div>
         </div>
       </aside>
       {menu && (
@@ -202,7 +195,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 <Link href="/wallet" className="wallet-chip">
                   <Sparkles size={15} />
                   <span>{tr('Искры')}</span>
-                  <small>DEMO</small>
+                  <SparksBalance key={user.id} ownerId={user.id} />
                 </Link>
                 <Link href="/notifications" className="icon-button" aria-label={tr('Уведомления')}>
                   <Bell size={19} />
