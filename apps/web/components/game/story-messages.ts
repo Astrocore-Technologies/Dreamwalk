@@ -35,7 +35,7 @@ export const storyMessages = {
   confirm: ['Подтвердить ход', 'Confirm turn', 'Підтвердити хід'],
   dismiss: ['Отмена', 'Cancel', 'Скасувати'],
   estimatedCost: ['Примерно {amount} Искр', 'About {amount} Sparks', 'Приблизно {amount} Іскор'],
-  freeTurn: ['Без списания Искр', 'No Sparks charge', 'Без списання Іскор'],
+  freeTurn: ['Искры не списываются', 'No Sparks charge', 'Іскри не списуються'],
   worldEstimate: [
     'Мир готовит следующий ход. Подтверди стоимость дополнительных ответов.',
     'The world is preparing its next turn. Review the cost of additional responses.',

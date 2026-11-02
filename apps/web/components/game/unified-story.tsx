@@ -656,7 +656,9 @@ export function UnifiedStory({
                     })}
                   </p>
                 )}
-                {prepared.result.quote.demo && <small>{h('demo')}</small>}
+                {prepared.result.quote.demo && prepared.result.quote.credits > 0 && (
+                  <small>{h('demo')}</small>
+                )}
                 <div className={styles.actions}>
                   <Button
                     type="submit"
