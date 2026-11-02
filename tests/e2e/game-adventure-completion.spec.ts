@@ -261,6 +261,11 @@ test('four players retain the legacy realtime Observatory ending with owned hero
     // Keep all four contexts live, but let each real reload finish before starting
     // the next; no reload retry, renderer bypass or additional timeout budget.
     for (const [index, page] of pages.entries()) {
+      // Inspect the restored map temporarily without changing this player's reading position.
+      const viewport = await page.locator('[data-renderer-active]').evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return { x: scrollX, y: scrollY, offscreen: rect.bottom <= 0 || rect.top >= innerHeight };
+      });
       const finishProfile = index === 0 ? await profileOwnerReload(page, test.info()) : undefined;
       try {
         await page.reload();
@@ -307,7 +312,35 @@ test('four players retain the legacy realtime Observatory ending with owned hero
         'data-objective-status',
         'achieved',
       );
+      await page.evaluate(
+        ({ x, y }) => window.scrollTo({ left: x, top: y, behavior: 'instant' }),
+        viewport,
+      );
+      await expect
+        .poll(() =>
+          page.evaluate(
+            ({ x, y }) => Math.max(Math.abs(scrollX - x), Math.abs(scrollY - y)),
+            viewport,
+          ),
+        )
+        .toBeLessThan(1);
+      const restoredOffscreen = await page.locator('[data-renderer-active]').evaluate((element) => {
+        const rect = element.getBoundingClientRect();
+        return rect.bottom <= 0 || rect.top >= innerHeight;
+      });
+      if (viewport.offscreen && restoredOffscreen)
+        await expect(page.locator('[data-renderer-active]')).toHaveAttribute(
+          'data-renderer-active',
+          'false',
+        );
     }
+    await owner
+      .getByRole('group', { name: 'Карта приключения', exact: true })
+      .scrollIntoViewIfNeeded();
+    await expect(owner.locator('[data-renderer-active]')).toHaveAttribute(
+      'data-renderer-active',
+      'true',
+    );
     await expect((await inventory(owner)).locator('[data-inventory-id="journal"]')).toHaveCount(1);
     await capture(owner, 'sample-adventure-ending-desktop.png');
     await owner.setViewportSize({ width: 390, height: 844 });
