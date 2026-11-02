@@ -139,6 +139,7 @@ function GeneratedRevision({
 }
 export function ImageGeneration({
   adventureId,
+  heroPortrait,
   liveTestSessionId,
   authorization,
   preparedRequest,
@@ -148,7 +149,8 @@ export function ImageGeneration({
   onSelected,
   onAdmitted,
 }: {
-  adventureId: string;
+  adventureId?: string;
+  heroPortrait?: { draftId: string; prompt: string; title: string };
   liveTestSessionId?: string;
   authorization?: LiveTestStatus | null;
   preparedRequest?: PreparedStudioLocationRequest;
@@ -173,12 +175,12 @@ export function ImageGeneration({
   const modeChosen = useRef(false);
   const library = useResource<ArtRevision[]>('/asset-library');
   const [mode, setMode] = useState<'mock' | 'external'>(externalOnly ? 'external' : 'mock');
-  const [prompt, setPrompt] = useState(''),
-    [title, setTitle] = useState(''),
+  const [prompt, setPrompt] = useState(heroPortrait?.prompt ?? ''),
+    [title, setTitle] = useState(heroPortrait?.title ?? ''),
     [background, setBackground] = useState<'opaque' | 'transparent'>(
       spec.kind === 'sprite' || spec.kind === 'object' ? 'transparent' : 'opaque',
     ),
-    [license, setLicense] = useState(''),
+    [license, setLicense] = useState(heroPortrait ? 'Private generated hero portrait' : ''),
     [attribution, setAttribution] = useState(''),
     [allowReuse, setAllowReuse] = useState(false),
     [attested, setAttested] = useState(false),
@@ -209,6 +211,7 @@ export function ImageGeneration({
     ['top-down', 'portrait', 'unrestricted'].includes(spec.camera);
   const request = {
     adventureId,
+    ...(heroPortrait ? { heroPortraitContext: { draftId: heroPortrait.draftId } } : {}),
     prompt: prompt.trim(),
     title: title.trim(),
     kind: spec.kind,
@@ -221,7 +224,7 @@ export function ImageGeneration({
       basis: 'generated' as const,
       licenseLabel: license.trim(),
       attribution: attribution.trim(),
-      allowAuthorReuse: allowReuse,
+      allowAuthorReuse: heroPortrait ? false : allowReuse,
       attested: true as const,
     },
     mode: externalOnly ? ('external' as const) : mode,
@@ -305,7 +308,9 @@ export function ImageGeneration({
       pending = true;
       try {
         const result = await api<{ jobs: Job[] }>(
-          `/image-generation/jobs?adventureId=${adventureId}`,
+          heroPortrait
+            ? '/image-generation/hero-portraits'
+            : `/image-generation/jobs?adventureId=${adventureId}`,
         );
         if (active) {
           const scopedJobs = preparedRequest
@@ -342,6 +347,7 @@ export function ImageGeneration({
   }, [
     user?.id,
     adventureId,
+    heroPortrait?.draftId,
     preparedRequest?.studioLocationContext.locationId,
     preparedRequest?.studioLocationContext.sourceHash,
   ]);
@@ -585,6 +591,7 @@ export function ImageGeneration({
           <label>
             <input
               type="checkbox"
+              disabled={!!heroPortrait}
               checked={allowReuse}
               onChange={(event) => setAllowReuse(event.target.checked)}
             />
@@ -644,7 +651,11 @@ export function ImageGeneration({
             <div key={revision.id}>
               <p>{revision.metadata.title}</p>
               {onSelected && (
-                <Button type="button" disabled={busy} onClick={() => onSelected(revision)}>
+                <Button
+                  type="button"
+                  disabled={busy || (!!heroPortrait && !revision.owned)}
+                  onClick={() => onSelected(revision)}
+                >
                   {a('use')}
                 </Button>
               )}

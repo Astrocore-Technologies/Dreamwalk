@@ -922,3 +922,15 @@ See `npc-character-quality.md` for the deterministic three-character fixture and
 separate, not-yet-authorized real-model acceptance procedure. New characterization is
 opt-in for authored NPCs; existing/generated NPCs retain their existing behavior unless
 explicitly authored. No external card import, TTS, new emotional art or paid calls.
+
+### Hero portrait creation (implementation, not production activation)
+
+The New Hero/edit-hero modal can prepare a drawn portrait from an editable prompt seeded
+with name, backstory and traits; private notes are not included. It reuses the image
+quote, explicit consent, Sparks reservation/settlement, durable job and private library
+pipeline. A draft context is scoped by authenticated actor, never used as a hero ID or
+ownership proof. No hero is silently created or modified: the owner previews/selects
+an owned portrait revision, then explicitly saves the hero. Closing the modal retains
+completed artwork in the private library and recovered portrait history, without retrying
+or charging for selection. Production availability still depends on the configured image
+generation policy; this change does not enable providers or make live requests.
