@@ -32,6 +32,7 @@ import { InvitationsController } from './invitations';
 import { DataRequestsController } from './data-requests';
 import { Errors } from './errors';
 import { config } from './config';
+import { ingressAllowed } from './ingress';
 import { PlayableService } from './game/playable.service';
 import { PlayableController } from './game/playable.controller';
 import { GameService } from './game/game.service';
@@ -127,6 +128,22 @@ async function bootstrap() {
     .setLiveAuthorizer((client, owner, sessionId, input) =>
       app.get(GenerationAuthority).authorizeImage(client, owner, sessionId, input),
     );
+  app.use((req: Request, res: Response, next: NextFunction) => {
+    // Health exposes no private data; all other paths require the trusted web ingress.
+    if (req.method === 'GET' && req.path === '/api/v1/health') return next();
+    if (
+      !ingressAllowed(
+        req.headers['x-dreamwalk-ingress'],
+        config.DREAMWALK_INGRESS_SECRET,
+        config.DREAMWALK_REQUIRE_INGRESS_SECRET,
+      )
+    ) {
+      res.setHeader('Cache-Control', 'no-store');
+      res.status(403).json({ code: 'FORBIDDEN', message: 'Forbidden', retryable: false });
+      return;
+    }
+    next();
+  });
   app.use(json({ limit: '256kb' }));
   app.useGlobalFilters(new Errors());
   const windows = new Map<
@@ -186,6 +203,6 @@ async function bootstrap() {
   });
   app.enableShutdownHooks();
   attachGameSockets(app.getHttpServer(), app.get(GameService));
-  await app.listen(config.API_PORT, '127.0.0.1');
+  await app.listen(config.API_PORT, config.API_HOST);
 }
 void bootstrap();
