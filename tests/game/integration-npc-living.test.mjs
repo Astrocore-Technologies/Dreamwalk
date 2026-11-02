@@ -362,6 +362,7 @@ await test(
           const f7 = await setup(owner),
             cid = f7.campaignId;
           await moveTo(owner, cid, { x: 3, y: 2 });
+          let lastPresenceAt = 0;
           for (let i = 0; i < 140; i++) {
             const response = await command(owner, cid, {
               protocolVersion: 1,
@@ -378,7 +379,12 @@ await test(
                 async () => {
                   // SQL polling is not player presence. Keep the online actor active while
                   // draining; otherwise the 5-second offline freeze can stop this very queue.
-                  await snapshot(owner, cid);
+                  // Heartbeat below the offline threshold without turning each SQL poll
+                  // into an HTTP request that exhausts the real per-session rate limit.
+                  if (Date.now() - lastPresenceAt >= 2000) {
+                    await snapshot(owner, cid);
+                    lastPresenceAt = Date.now();
+                  }
                   return db.query(
                     "SELECT count(*) FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id WHERE r.campaign_id=$1 AND (r.status='queued' OR j.status IN ('reserved','running','result_received','validated'))",
                     [cid],
