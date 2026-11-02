@@ -112,6 +112,14 @@ export function UnifiedStory({
   const currentDraft = useRef(draftKey);
   currentDraft.current = draftKey;
   const path = `/game/campaigns/${campaignId}/turns`;
+  useEffect(() => {
+    const invalidate = (event: Event) => {
+      const detail = (event as CustomEvent<{ campaignId?: string }>).detail;
+      if (detail?.campaignId === campaignId) setPrepared(null);
+    };
+    window.addEventListener('dreamwalk:narrative-preferences-updated', invalidate);
+    return () => window.removeEventListener('dreamwalk:narrative-preferences-updated', invalidate);
+  }, [campaignId]);
   const refresh = useCallback(async () => {
     if (polling.current) return;
     polling.current = true;

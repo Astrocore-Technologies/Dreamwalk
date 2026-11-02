@@ -1,7 +1,12 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { adventureSchema, authoredGameDraftSchema, safeNpcMetadata } from '@dreamwalk/contracts';
+import {
+  adventureSchema,
+  authoredGameDraftSchema,
+  safeNpcMetadata,
+  readerStoryContent,
+} from '@dreamwalk/contracts';
 import { Db } from '../db';
 import { PlayableService } from '../game/playable.service';
 import { fail } from '../errors';
@@ -91,11 +96,17 @@ export class PrivateReleaseService {
       if (rows.length !== new Set(data.content.npcIds).size)
         fail(400, 'VALIDATION_FAILED', 'VALIDATION_FAILED');
       const publicNpcs = rows.map((row) => {
-        const { secrets: _secrets, biography: _biography, ...safe } = row.data;
+        const {
+          secrets: _secrets,
+          biography: _biography,
+          characterProfile: _characterProfile,
+          ...safe
+        } = row.data;
         return { ...safe, ...safeNpcMetadata(row.data), id: row.id };
       });
       const snapshot = {
         ...data,
+        content: readerStoryContent(data.content),
         status: 'published',
         visibility: 'private',
         playableVersionId,

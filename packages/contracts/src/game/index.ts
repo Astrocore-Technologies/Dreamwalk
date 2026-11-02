@@ -1,3 +1,5 @@
+import type { NarrativePreferences } from './narrative-corrections';
+export * from './narrative-corrections';
 import {
   worldItemDefinitionsSchema,
   worldItemRulesSchema,
@@ -332,6 +334,8 @@ export const objectiveProjectionSchema = publicObjectiveCopySchema
 export type ObjectiveProjection = z.infer<typeof objectiveProjectionSchema>;
 
 export interface GameState {
+  /** Server-private, requester-scoped presentation state; never included in player projections. */
+  narrativePreferences?: Record<string, NarrativePreferences>;
   worldItemDefinitions?: WorldItemDefinition[];
   worldItemRules?: WorldItemRules;
   turnController?: TurnController;
@@ -794,6 +798,22 @@ export const authoredGameDraftSchema = z
             characterAnimation: characterAnimationSchema.optional(),
             goal: z.enum(['patrol', 'help']),
             personality: npcPersonalitySchema.optional(),
+            /** Author-only provenance permits clearing a source profile without erasing manual setup. */
+            characterSource: z
+              .object({
+                version: z.literal(1),
+                npcId: z.uuid(),
+                baseline: z
+                  .object({
+                    goal: z.enum(['patrol', 'help']),
+                    personality: npcPersonalitySchema.optional(),
+                    initialGoals: z.array(npcGoalDefinitionSchema).max(4).optional(),
+                    promiseTemplates: z.array(npcPromiseTemplateSchema).max(4).optional(),
+                  })
+                  .strict(),
+              })
+              .strict()
+              .optional(),
             initialFacts: z.array(npcAuthoredFactSchema).max(16).optional(),
             initialGoals: z.array(npcGoalDefinitionSchema).max(4).optional(),
             promiseTemplates: z.array(npcPromiseTemplateSchema).max(4).optional(),

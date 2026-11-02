@@ -1,7 +1,12 @@
 import { seedCompleteObservatory } from './game/seed-observatory';
 import { Pool } from 'pg';
 import { isDeepStrictEqual } from 'node:util';
-import { settingsSchema, adventureSchema, npcSchema } from '@dreamwalk/contracts';
+import {
+  settingsSchema,
+  adventureSchema,
+  npcSchema,
+  readerStoryContent,
+} from '@dreamwalk/contracts';
 import { randomUUID } from 'node:crypto';
 // Curated first-party demo text only; no automatic translation provider.
 const npcCopy: Record<string, { ru: string[]; en: string[]; uk: string[] }> = {
@@ -440,10 +445,15 @@ async function main() {
         ? (await db.query('SELECT id,data FROM npcs WHERE id=ANY($1::uuid[])', [ids])).rows
         : [];
       const publicNpcs = npcRows.map((n) => {
-        const { secrets: _secrets, biography: _biography, ...safe } = n.data;
+        const {
+          secrets: _secrets,
+          biography: _biography,
+          characterProfile: _characterProfile,
+          ...safe
+        } = n.data;
         return { ...safe, id: n.id };
       });
-      const snapshot = { ...data, publicNpcs };
+      const snapshot = { ...data, content: readerStoryContent(data.content), publicNpcs };
       const id = randomUUID();
       await db.query(
         "INSERT INTO adventures(id,owner_id,slug,title,synopsis,genre,status,version,data,published_snapshot,visibility) VALUES($1,$2,$3,$4,$5,$6,$7,1,$8,$9,'public')",

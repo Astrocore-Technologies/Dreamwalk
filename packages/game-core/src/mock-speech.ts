@@ -26,6 +26,40 @@ export const mockAcknowledgement: Record<Locale, string> = {
   ru: 'Я вас слышу. Продолжайте, пожалуйста.',
 };
 
+/** Deterministic fixture wording, not a measured model-quality result. It never
+ * quotes private examples, asserts a new fact, promises an action or speaks for a player. */
+export function mockCharacterAcknowledgement(
+  locale: Locale,
+  performance: { stance: string; register: string; humor: string; cadence: string },
+): string {
+  const variants = {
+    reserved: {
+      en: 'I heard you. I will consider it.',
+      ru: 'Просьба понятна. Нужно это обдумать.',
+      uk: 'Прохання зрозуміле. Потрібно це обміркувати.',
+    },
+    friendly: {
+      en: 'I am listening. Tell me what matters to you.',
+      ru: 'Я слушаю. Расскажи, что для тебя важно.',
+      uk: 'Я слухаю. Розкажи, що для тебе важливо.',
+    },
+    firm: {
+      en: 'I heard the request. That is not a promise.',
+      ru: 'Просьба понятна. Но это ещё не обещание.',
+      uk: 'Прохання зрозуміле. Але це ще не обіцянка.',
+    },
+    guarded: {
+      en: 'I am listening, but I remain cautious.',
+      ru: 'Я слушаю, но сохраняю осторожность.',
+      uk: 'Я слухаю, але зберігаю обережність.',
+    },
+  } as const;
+  const stance =
+    performance.stance in variants ? (performance.stance as keyof typeof variants) : 'reserved';
+  if (performance.cadence === 'brief') return variants[stance][locale].split('. ')[0] + '.';
+  return variants[stance][locale];
+}
+
 export function mockFactReply(
   npcId: string,
   observationId: string,

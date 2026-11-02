@@ -1,4 +1,5 @@
 import {
+  readNarrativePreferences,
   storyTurnInputSchema,
   storyTurnProposalSchema,
   narrativeActionSchema,
@@ -151,6 +152,7 @@ function safeSpeech(
     requested,
     undefined,
     replyLocale,
+    actorId,
   );
   const current = safe.claims.find((c) => c.observationId === marker);
   if (!current) throw new Error('FORBIDDEN');
@@ -264,6 +266,9 @@ export function buildStoryTurnContext(
     mode,
     channel: input.channel,
     replyLocale: input.replyLocale ?? 'en',
+    ...(state.narrativePreferences?.[actorId]
+      ? { narrativePreferences: readNarrativePreferences(state, actorId) }
+      : {}),
     targetNpcId: input.targetNpcId ?? null,
     segments: parsed.segments,
     mapId: actor.mapId,

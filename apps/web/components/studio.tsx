@@ -5,6 +5,8 @@ import { AutosaveStatus } from './studio/autosave-status';
 import { useDraftAutosave } from '@/lib/use-draft-autosave';
 import { StoryPlayableBuilder } from './visual-authoring/story-playable-builder';
 import { LocationMapIntent } from './studio/location-map-intent';
+import { StoryLorebookEditor } from './studio/story-lorebook-editor';
+import { NpcCharacterProfile } from './studio/npc-character-profile';
 import { StoryNpcEditor } from './studio/story-npc-editor';
 import { PrivateRelease } from './studio/private-release';
 import { CharacterSpriteControl } from './visual-authoring/character-sprite-control';
@@ -1361,6 +1363,17 @@ function AdventureEditor({ id }: { id: string }) {
           onChanged={refreshStoryAuthoring}
         />
       )}
+      {step === 3 && (
+        <StoryLorebookEditor
+          adventureId={isNew ? undefined : id}
+          value={draft.content.lorebook}
+          selectedNpcIds={draft.content.npcIds}
+          locations={draft.content.locations}
+          onChange={(value) => content('lorebook', value)}
+          beforePreview={autosave.flush}
+          disabled={busy}
+        />
+      )}
       {!isNew && (step === 2 || step === 6) && (
         <StoryPlayableBuilder
           adventureId={id}
@@ -1543,6 +1556,8 @@ function toNpcDraft(n: Npc): NpcDraft {
     age: n.age,
     role: n.role,
     personality: n.personality,
+    characterProfile: n.characterProfile,
+    characterPackageVersionId: n.characterPackageVersionId,
     appearance: n.appearance,
     biography: n.biography,
     secrets: n.secrets,
@@ -1773,6 +1788,10 @@ function NpcEditor({ id }: { id: string }) {
                   onChange={(e) => change('greeting', e.target.value)}
                 />
               </Field>
+              <NpcCharacterProfile
+                value={draft.characterProfile}
+                onChange={(value) => change('characterProfile', value)}
+              />
               <Field label={t('Стиль поведения')}>
                 <Select
                   value={draft.modelProfileId || ''}

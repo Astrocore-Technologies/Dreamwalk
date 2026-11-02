@@ -1,5 +1,7 @@
 import { z } from 'zod';
 import { mapIntentSchema } from './game/map-intent';
+import { npcCharacterProfileSchema, storyLorebookSchema } from './npc-authoring';
+export * from './npc-authoring';
 export * from './game/map-intent';
 export const idSchema = z.string().uuid();
 const text = (max = 1000) => z.string().trim().max(max);
@@ -261,6 +263,7 @@ export function safeNpcMetadata(npc: NpcMetadata): NpcMetadata {
 }
 export const npcSchema = z
   .object({
+    characterProfile: npcCharacterProfileSchema.nullable().optional(),
     characterPackageVersionId: z.uuid().nullable().optional(),
     description: text(4000).default(''),
     sourceLanguage: localeSchema.default('ru'),
@@ -298,6 +301,7 @@ export const sceneSchema = z.object({
   description: text(6000).default(''),
 });
 export const contentSchema = z.object({
+  lorebook: storyLorebookSchema.optional(),
   world: text(12000).default(''),
   rules: text(8000).default(''),
   locations: z.array(locationSchema).max(30).default([]),

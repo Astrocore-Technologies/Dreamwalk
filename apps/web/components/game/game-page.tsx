@@ -15,6 +15,7 @@ import { HeroSelection, useHeroSelection, useHeroText, CampaignHero } from './he
 import { useLaunchGate } from './use-launch-gate';
 import { localizedProjection } from './localized-projection';
 import { CampaignObjectives } from './campaign-objectives';
+import { NarrativePreferences } from './narrative-preferences';
 import { GameCanvas } from './game-canvas';
 import { TurnControls } from './turn-controls';
 import { useTurnText } from './turn-messages';
@@ -467,6 +468,11 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
         }
         onEnd={() => void game.command({ type: 'turn.end' })}
         onReaction={(decision) => void game.command({ type: 'turn.reaction', decision })}
+      />
+      <NarrativePreferences
+        key={campaignId}
+        campaignId={campaignId}
+        disabled={!connected || game.busy || storyBusy}
       />
       <div className={styles.playGrid}>
         <div className={styles.sceneColumn}>

@@ -355,6 +355,18 @@ export class NpcAiEngine {
   private async turnAuthorized(c: PoolClient, campaignId: string, context: DecisionContext) {
     const row = (await c.query('SELECT state FROM game_campaigns WHERE id=$1', [campaignId]))
       .rows[0];
+    // Contexts are server-built. Bind presentation to the explicit recipient, never
+    // an arbitrary audience member. Check before cache lookup and again at dispatch.
+    const actorId =
+      typeof context.actorId === 'string'
+        ? context.actorId
+        : typeof context.recipientId === 'string'
+          ? context.recipientId
+          : undefined;
+    if (actorId && row?.state?.entities?.[actorId]?.kind === 'player') {
+      const current = row.state.narrativePreferences?.[actorId];
+      if (digest(current ?? null) !== digest(context.narrativePreferences ?? null)) return false;
+    } else if (context.narrativePreferences !== undefined) return false;
     const turn = row?.state?.turnController;
     if (!turn) return true;
     const fence = context.turnFence as

@@ -341,7 +341,11 @@ await test(
             inputMicrosPerMillion: 1000000,
             outputMicrosPerMillion: 2000000,
           };
-          const upper = 12000;
+          // Packing reserves the largest complete request envelope across purposes,
+          // including story-turn schemas and safety/character guidance, not just speech.
+          // Leave room for a substantial escaped UTF-8 history after that fixed overhead;
+          // the transport below still enforces the complete-body ceiling at dispatch.
+          const upper = 24000;
           let calls = 0;
           const p = new OpenAiNpcProvider(config, async (_url, init) => {
             calls++;

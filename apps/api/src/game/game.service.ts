@@ -1,3 +1,4 @@
+import { NarrativeCorrections } from './narrative-corrections';
 import { npcPublicReplySchema } from '@dreamwalk/contracts';
 import { StoryTurnRuntime } from './story-turn-runtime';
 import { resolveReplyLocale } from './reply-locale';
@@ -196,6 +197,7 @@ function canonical(value: unknown): unknown {
 export class GameService implements OnModuleDestroy {
   private live = new Map<string, Live>();
   private story: StoryTurnRuntime;
+  private corrections: NarrativeCorrections<Live>;
   private queues = new Map<string, Promise<unknown>>();
   // COMMIT visibility precedes the continuation that publishes its in-memory checkpoint.
   private publications = new Map<string, Promise<void>>();
@@ -221,6 +223,22 @@ export class GameService implements OnModuleDestroy {
     @Inject(AssetReuseService) private art: AssetReuseService,
     @Optional() @Inject(ImageGenerationService) images?: ImageGenerationService,
   ) {
+    this.corrections = new NarrativeCorrections(this.db, {
+      access: (req, id) => this.access(req, id),
+      serial: <T>(id: string, work: () => Promise<T>) => this.serial(id, work),
+      load: (id) => this.load(id),
+      persist: (id, live, state, extra, preflight) =>
+        this.persist(
+          id,
+          live,
+          state,
+          'narrative.preferences.updated',
+          undefined,
+          extra,
+          undefined,
+          preflight,
+        ),
+    });
     this.story = new StoryTurnRuntime(this.db, this.ai, {
       serial: <T>(id: string, work: () => Promise<T>) => this.serial(id, work),
       access: (req, id) => this.access(req, id),
@@ -373,6 +391,9 @@ export class GameService implements OnModuleDestroy {
     };
     this.live.set(id, live);
     return live;
+  }
+  narrativePreferences(req: Request, id: string, body?: unknown) {
+    return this.corrections.preferences(req, id, body);
   }
   storyFeed(req: Request, id: string) {
     return this.story.feed(req, id);
@@ -1163,6 +1184,7 @@ export class GameService implements OnModuleDestroy {
       requestedFactIds,
       deferredSpeechId,
       replyLocale,
+      recipientId,
     );
     const currentUtterance = replyToObservationId
       ? publicContext.claims.find((c) => c.observationId === replyToObservationId)
@@ -2809,7 +2831,9 @@ export class GameService implements OnModuleDestroy {
     preflight?: (c: import('pg').PoolClient) => Promise<void>,
   ) {
     const seq = live.eventSeq + 1;
+    const presentationOnly = kind === 'narrative.preferences.updated';
     const retentionDue =
+      !presentationOnly &&
       !live.paused &&
       state.rulesetVersion === 'hybrid-v3' &&
       state.tick - live.lastRetentionTick >= 100;
@@ -2837,7 +2861,7 @@ export class GameService implements OnModuleDestroy {
         if (prepare) state = await prepare(c, state);
         // Completion is derived from committed world state and currently authorized party members.
         // It shares the same transaction as the action result, checkpoint and idempotency receipt.
-        if (state.objectives?.length && !live.paused) {
+        if (!presentationOnly && state.objectives?.length && !live.paused) {
           const members = (
             await c.query(
               `SELECT m.actor_id FROM game_members m JOIN game_campaigns c ON c.id=m.campaign_id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('m.user_id')} FOR SHARE OF m,u`,
@@ -2898,7 +2922,7 @@ export class GameService implements OnModuleDestroy {
               JSON.stringify(operation.response),
             ],
           );
-        await archiveNpcEpisodes(c, id, state);
+        if (!presentationOnly) await archiveNpcEpisodes(c, id, state);
         if (extra) await extra(c);
         if (retentionDue) await pruneNpcMemory(c, id, state, seq);
         savedClock = live.paused

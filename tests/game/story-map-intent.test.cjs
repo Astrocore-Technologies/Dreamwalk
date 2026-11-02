@@ -84,7 +84,7 @@ test('actual compiler enforces wide/tall and exact dimensions, never silently re
   assert.equal(mapMatchesIntent(undefined, 8, 8), true);
   assert.match(storyPlanDefinition.instructions, /synopsis/);
   assert.match(storyPlanDefinition.instructions, /override priorDraft geometry/);
-  assert.match(storyPlanDefinition.version, /v2/);
+  assert.equal(storyPlanDefinition.version, 'authored-story-plan-v3-character-profile');
 });
 test('real source preparation forwards synopsis and map intent into exact provider body, and invalidates changed source', async () => {
   const configModule = require.resolve('../../apps/api/dist/config');

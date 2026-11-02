@@ -13,6 +13,13 @@ export class StoryAuthoringController {
   @Get('npcs') async list(@Req() r: Request, @Param('id') id: string) {
     return this.npcs.list((await this.auth.require(r)).id, id);
   }
+  @Post('lore-preview') async previewLore(
+    @Req() r: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.npcs.previewLore((await this.auth.require(r)).id, id, body);
+  }
   @Post('npcs') async create(@Req() r: Request, @Param('id') id: string, @Body() body: unknown) {
     return this.npcs.create((await this.auth.require(r)).id, id, body);
   }

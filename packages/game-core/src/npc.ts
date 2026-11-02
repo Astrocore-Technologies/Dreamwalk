@@ -1,3 +1,4 @@
+import { characterAppraisal } from './character';
 import { reviseNpcBelief } from './living-reasoning';
 import { npcActionAllowed } from './living-policy';
 import { recordLivingNpcEvents, communicateNpcObservations } from './living';
@@ -26,7 +27,12 @@ export function createMockNpcPlan(state: GameState, id: string): unknown {
         !brain.facts.some((f) => f.kind === 'helped' && f.targetId === e.id),
     )
     .sort((a, b) => a.id.localeCompare(b.id))[0];
-  if (brain.goal === 'help' && recipient && npc.inventory?.length) {
+  const appraisal = brain.living && characterAppraisal(brain.living, undefined, id);
+  if (
+    (appraisal ? appraisal.response === 'assist' : brain.goal === 'help') &&
+    recipient &&
+    npc.inventory?.length
+  ) {
     if (!near(npc, recipient)) {
       const target = [
         { x: recipient.x - 1, y: recipient.y },

@@ -1,4 +1,56 @@
 import { z } from 'zod';
+/** Opt-in authored behavior version. Free prose stays in private decision context. */
+export const npcCharacterizationSchema = z
+  .object({
+    version: z.literal(1),
+    motives: z
+      .array(
+        z
+          .object({
+            kind: z.enum(['protect', 'belong', 'discover', 'prosper', 'duty', 'care']),
+            priority: z.number().int().min(1).max(5),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(4),
+    reactions: z
+      .array(
+        z
+          .object({
+            trigger: z.enum(['threat', 'help', 'betrayal', 'request', 'uncertainty']),
+            response: z.enum(['observe', 'assist', 'warn', 'withdraw', 'refuse']),
+            publicStance: z.enum(['reserved', 'friendly', 'firm', 'guarded']),
+          })
+          .strict(),
+      )
+      .max(5),
+    publicVoice: z
+      .object({
+        cadence: z.enum(['brief', 'balanced', 'elaborate']),
+        register: z.enum(['plain', 'formal', 'colloquial']),
+        humor: z.enum(['none', 'dry', 'playful']),
+      })
+      .strict(),
+    dialogueExamples: z
+      .array(
+        z
+          .object({
+            situation: z.enum(['greeting', 'thanks', 'refusal', 'danger']),
+            text: z.string().trim().min(1).max(240),
+          })
+          .strict(),
+      )
+      .max(4),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (new Set(value.motives.map((m) => m.kind)).size !== value.motives.length)
+      ctx.addIssue({ code: 'custom', message: 'Duplicate motive', path: ['motives'] });
+    if (new Set(value.reactions.map((r) => r.trigger)).size !== value.reactions.length)
+      ctx.addIssue({ code: 'custom', message: 'Duplicate reaction trigger', path: ['reactions'] });
+  });
+export type NpcCharacterization = z.infer<typeof npcCharacterizationSchema>;
 /** Server-private cognition. Never serialize this structure as a player projection. */
 export const npcPersonalitySchema = z
   .object({
@@ -22,6 +74,7 @@ export const npcPersonalitySchema = z
       .max(6),
     speechStyle: z.string().trim().max(200),
     publicSpeechStyle: z.enum(['neutral', 'warm', 'formal', 'terse', 'wry']).optional(),
+    characterization: npcCharacterizationSchema.optional(),
     biography: z.string().trim().max(2000).optional(),
     habits: z
       .array(z.enum(['observe_before_acting', 'keep_promises', 'share_warnings']))
@@ -95,6 +148,8 @@ export interface NpcObservation {
   title?: string;
   definitionText?: string;
   publicQuestion?: string;
+  relevanceTopics?: string[];
+  relevanceMapId?: string;
 }
 export interface NpcBelief {
   id: string;
@@ -112,6 +167,14 @@ export interface NpcRelationship {
   alertness: number;
   debt: number;
   evidenceIds: string[];
+  /** Present only for opt-in characterization; never a player HUD projection. */
+  character?: {
+    affinity: number;
+    respect: number;
+    fear: number;
+    lastChangedTick: number;
+    stage: 'hostile' | 'wary' | 'neutral' | 'cooperative' | 'trusted';
+  };
 }
 export interface NpcObligation {
   id: string;
@@ -229,6 +292,8 @@ export interface PrivateNpcUtterance extends NpcUtterance {
 }
 
 const livingId = z.string().regex(/^[a-zA-Z][a-zA-Z0-9_-]{0,63}$/);
+// Generated story NPC entity IDs are source UUIDs; authored goal/item IDs stay bounded.
+const livingEntityReference = z.union([livingId, z.uuid()]);
 export const npcConditionSchema = z.discriminatedUnion('kind', [
   z.object({ kind: z.literal('always') }).strict(),
   z
@@ -244,10 +309,10 @@ export const npcConditionSchema = z.discriminatedUnion('kind', [
         'actor_seen',
         'actor_departed',
       ]),
-      targetId: livingId.optional(),
+      targetId: livingEntityReference.optional(),
     })
     .strict(),
-  z.object({ kind: z.literal('near_entity'), entityId: livingId }).strict(),
+  z.object({ kind: z.literal('near_entity'), entityId: livingEntityReference }).strict(),
   z.object({ kind: z.literal('owns_item'), itemId: livingId }).strict(),
   z.object({ kind: z.literal('recipient_near') }).strict(),
   z
@@ -262,8 +327,14 @@ export const npcAuthoredFactSchema = z
     title: z.string().trim().min(1).max(120),
     text: z.string().trim().min(1).max(1000),
     disclosure: z.enum(['never', 'asked', 'trusted', 'public']),
-    topicEntityId: livingId.optional(),
+    topicEntityId: livingEntityReference.optional(),
     publicQuestion: z.string().trim().min(1).max(120).optional(),
+    relevanceTopics: z.array(z.string().trim().min(1).max(40)).max(6).optional(),
+    relevanceMapId: z
+      .string()
+      .regex(/^[\w-]{1,100}$/)
+      .refine((id) => !Object.prototype.hasOwnProperty.call(Object.prototype, id))
+      .optional(),
   })
   .strict();
 export const npcGoalDefinitionSchema = z
@@ -271,7 +342,7 @@ export const npcGoalDefinitionSchema = z
     id: livingId,
     kind: z.enum(['patrol', 'guard', 'investigate', 'assist']),
     itemId: livingId.optional(),
-    targetId: livingId.optional(),
+    targetId: livingEntityReference.optional(),
     priority: z.number().int().min(1).max(5),
     motivation: z.enum(['duty', 'kindness', 'curiosity', 'routine']),
     when: z.array(npcConditionSchema).max(4),
@@ -284,7 +355,7 @@ export const npcGoalDefinitionSchema = z
   .strict();
 export type NpcGoalDefinition = z.infer<typeof npcGoalDefinitionSchema>;
 export const npcPromisedActionSchema = z
-  .object({ kind: z.enum(['open', 'inspect']), targetId: livingId })
+  .object({ kind: z.enum(['open', 'inspect']), targetId: livingEntityReference })
   .strict();
 export type NpcPromisedAction = z.infer<typeof npcPromisedActionSchema>;
 export const npcPromiseTemplateSchema = z
@@ -309,6 +380,8 @@ export interface NpcAffect {
   alertness: number;
   mood: 'calm' | 'curious' | 'alarmed' | 'grateful';
   lastUpdatedTick: number;
+  /** Characterized mood holds use game ticks, never a paid/background timer. */
+  moodUntilTick?: number;
 }
 export interface NpcGoalPolicy {
   motivation: 'duty' | 'kindness' | 'curiosity' | 'promise' | 'routine';

@@ -49,6 +49,8 @@ jobs:
         run: node --test tests/game/image-framing.test.cjs tests/game/story-map-intent.test.cjs tests/game/manifest-framing.test.cjs
       - name: Deterministic NPC behavior rubric and bounded local benchmark
         run: npm run test:npc:eval
+      - name: Authored character quality and safe provider presentation (zero external calls)
+        run: node scripts/evaluate-character-quality.mjs && node --test tests/game/character-provider.test.cjs tests/game/character-authoring.test.cjs && node --import tsx --test tests/game/npc-character-ui.test.mjs
       - name: Semantic NPC context and disclosure regression
         run: node --test tests/game/npc-semantic-context.test.cjs tests/game/npc-reply-binding.test.cjs tests/game/authoring-provider.test.cjs tests/game/live-secret-loader.test.mjs
       - name: Safe image provider error diagnostics

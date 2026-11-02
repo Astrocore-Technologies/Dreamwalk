@@ -7,6 +7,9 @@ import { z } from 'zod';
 import {
   authoredGameDraftSchema,
   gameActionSchema,
+  contentSchema,
+  npcSchema,
+  validateStoryLoreReferences,
   type PlayablePackage,
 } from '@dreamwalk/contracts';
 import {
@@ -24,6 +27,7 @@ import { fail } from '../errors';
 
 export { sourceAccessSql, sourceLiveSql } from './source-access';
 import { AssetReuseService } from '../assets/reuse.service';
+import { applyAuthoredCharacters } from './character-authoring';
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === 'object')
@@ -268,9 +272,7 @@ export class PlayableService {
     }
     if (expectedRevision !== undefined && expectedRevision !== Number(row.revision))
       fail(409, 'STALE_STATE', 'STALE_STATE');
-    const draft = authoredGameDraftSchema.parse(row.draft),
-      compiled = compilePlayableDraft(draft);
-    if (!compiled.playable) fail(400, 'INVALID_MAP', compiled.errors.join(';'));
+    const draft = authoredGameDraftSchema.parse(row.draft);
     await this.validateNpcReferences(c, String(story.owner_id), draft, String(story.id));
     this.validateLocations(story, draft);
     const ids = draft.npcs.flatMap((n) => (n.sourceNpcId ? [n.sourceNpcId] : []));
@@ -283,13 +285,19 @@ export class PlayableService {
         ).rows
       : [];
     const narrative = story.data as Record<string, unknown>;
-    const content = (narrative.content ?? {}) as {
-      rules?: string;
-      boundaries?: string[];
-      locations?: { id: string; description: string }[];
-      scenes?: { id: string; description: string }[];
-      startSceneId?: string;
-    };
+    const content = contentSchema.parse(narrative.content ?? {});
+    if (!validateStoryLoreReferences(content))
+      fail(400, 'VALIDATION_FAILED', 'INVALID_LORE_REFERENCE');
+    applyAuthoredCharacters(
+      draft,
+      npcDefinitions.map((row) => ({
+        id: String(row.id),
+        characterProfile: npcSchema.parse(row.data).characterProfile,
+      })),
+      content.lorebook,
+    );
+    const compiled = compilePlayableDraft(authoredGameDraftSchema.parse(draft));
+    if (!compiled.playable) fail(400, 'INVALID_MAP', compiled.errors.join(';'));
     for (const map of draft.maps) {
       const description = content.locations?.find(
         (l) => l.id === map.sourceLocationId,
@@ -305,6 +313,7 @@ export class PlayableService {
             appearance?: string;
             personality?: string;
             biography?: string;
+            characterProfile?: unknown;
             characterPackageVersionId?: string;
           }
         | undefined;
@@ -330,7 +339,7 @@ export class PlayableService {
         appearance: (source.appearance ?? '').slice(0, 4000),
       };
       const memory = compiled.playable!.npcBrains[npc.id].living;
-      if (memory)
+      if (memory && (!source.characterProfile || memory.personality.biography === undefined))
         memory.personality.biography = [source.personality, source.biography]
           .filter(Boolean)
           .join('\n')

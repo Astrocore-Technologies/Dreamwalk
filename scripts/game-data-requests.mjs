@@ -61,6 +61,7 @@ export function redactTurnControlState(value, actorId, { cancelAllDeferred = fal
 /** Remove erased-player cognition, not merely replace its identifier with a stable pseudonym. */
 export function purgeLivingNpcReferences(state, actorId, archivedRoots = [], archivedIds = []) {
   if (!state || typeof state !== 'object') return state;
+  if (state.narrativePreferences) delete state.narrativePreferences[actorId];
   // A retold observation can live in another NPC's journal without repeating the
   // original actor field. Erase the causal root across the campaign, not per NPC.
   const roots = new Set(archivedRoots);
@@ -283,6 +284,12 @@ export async function exportGameData(client, userId) {
       [userId],
     )
   ).rows;
+  const preferenceOperations = (
+    await client.query(
+      'SELECT campaign_id,operation_id,result,created_at FROM game_narrative_preference_operations WHERE requester_user_id=$1 ORDER BY created_at',
+      [userId],
+    )
+  ).rows;
   const partyMessages = (
     await client.query(
       'SELECT id,campaign_id,text,created_at FROM game_party_chat WHERE sender_user_id=$1 ORDER BY created_at',
@@ -307,6 +314,10 @@ export async function exportGameData(client, userId) {
     const actor = state.entities?.[actor_id];
     return {
       ...metadata,
+      ownNarrativePreferences: state.narrativePreferences?.[actor_id] ?? null,
+      ownNarrativePreferenceHistory: preferenceOperations.filter(
+        (operation) => operation.campaign_id === metadata.id,
+      ),
       ownNarrativeTurns: narrativeTurns.filter((turn) => turn.campaign_id === metadata.id),
       ownStoryTurns: storyTurns.filter((turn) => turn.campaign_id === metadata.id),
       ownHero: heroes.find((hero) => hero.campaign_id === metadata.id) ?? null,
@@ -351,6 +362,10 @@ export async function purgeGameData(client, userId) {
   await purgeManualLiveData(client, userId, campaigns);
   await purgeNpcAiData(client, userId, campaigns);
   for (const campaign of campaigns) {
+    await client.query(
+      'DELETE FROM game_narrative_preference_operations WHERE campaign_id=$1 AND ($2::boolean OR requester_user_id=$3)',
+      [campaign.id, campaign.source_owned, userId],
+    );
     const hasStoryTurns = await purgeStoryTurnData(client, campaign.id, userId);
     const hasNarrative = hasStoryTurns || Boolean(campaign.state?.narrativeCanon?.turns?.length);
     if (hasNarrative) {
