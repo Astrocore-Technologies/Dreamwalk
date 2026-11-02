@@ -84,8 +84,8 @@ test(
       rooms: [
         {
           locationId: 'inn',
-          width: 12,
-          height: 12,
+          width: 24,
+          height: 24,
           spawns: [
             { x: 1, y: 1 },
             { x: 2, y: 1 },
