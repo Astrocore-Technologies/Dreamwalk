@@ -23,7 +23,7 @@ test('hosted HTTP proxy overwrites ingress header and keeps secrets request-only
     });
     const response = proxy(
       new NextRequest(
-        'https://web.example.test/api/v1/auth/me?x=1&x-vercel-protection-bypass=synthetic-url-secret&x-vercel-set-bypass-cookie=true',
+        'https://web.example.test/api/v1/auth/me?x=1&_vercel_share=synthetic-share-one&x=2&x-vercel-protection-bypass=synthetic-url-secret&x-vercel-set-bypass-cookie=true&_vercel_share=synthetic-share-two',
         {
           headers: {
             cookie: 'dreamwalk_session=fixture; platform_protection=must-not-forward',
@@ -40,7 +40,7 @@ test('hosted HTTP proxy overwrites ingress header and keeps secrets request-only
     );
     assert.equal(
       response.headers.get('x-middleware-rewrite'),
-      'https://api.example.test/api/v1/auth/me?x=1',
+      'https://api.example.test/api/v1/auth/me?x=1&x=2',
     );
     assert.equal(response.headers.get('x-middleware-request-x-dreamwalk-ingress'), secret);
     assert.equal(response.headers.get('x-dreamwalk-ingress'), null);

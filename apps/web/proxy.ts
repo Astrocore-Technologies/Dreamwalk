@@ -24,6 +24,7 @@ export function proxy(request: NextRequest) {
   // Temporary share/bypass URL credentials must stop at the platform boundary.
   target.searchParams.delete('x-vercel-protection-bypass');
   target.searchParams.delete('x-vercel-set-bypass-cookie');
+  target.searchParams.delete('_vercel_share');
   const headers = new Headers(request.headers);
   // Platform authorization is consumed by Vercel, never by the application API.
   // Strip it explicitly rather than relying on a particular edge runtime to do so.
