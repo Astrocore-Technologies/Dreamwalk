@@ -129,6 +129,10 @@ test('Studio narrative autosave plus API-authored fixture launches its pinned ca
   await expect(page.getByText('Подключено', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: mapName, exact: true, level: 1 })).toBeVisible();
   await expect(page.locator('canvas')).toBeVisible();
+  await expect(page.locator('[data-battlemap-grid]')).toHaveAttribute(
+    'data-battlemap-grid',
+    '24x24',
+  );
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth)).toBe(
     true,
   );

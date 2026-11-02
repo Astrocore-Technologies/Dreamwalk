@@ -922,3 +922,15 @@ See `npc-character-quality.md` for the deterministic three-character fixture and
 separate, not-yet-authorized real-model acceptance procedure. New characterization is
 opt-in for authored NPCs; existing/generated NPCs retain their existing behavior unless
 explicitly authored. No external card import, TTS, new emotional art or paid calls.
+
+## Fixed battlemap and creature-size update (2026-11-02)
+
+The latest owner request supersedes the earlier optional map proportions/no-grid
+presentation: newly built maps use 24×24 cells, mandatory deterministic engine
+grid, constant visual scale, and full surroundings composition. Existing saves
+and immutable geometry are preserved. Creature size is validated independently
+of raster dimensions; large/huge creatures occupy 2×2/3×3 cells for movement,
+collision and edge interaction range, without changing action budgets or damage.
+See [battlemap-layout.md](battlemap-layout.md) for compatibility boundaries and
+verification scope. This source change does not perform paid generation or a
+production update.

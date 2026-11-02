@@ -1,4 +1,5 @@
 import {
+  footprintDistance,
   readNarrativePreferences,
   storyTurnInputSchema,
   storyTurnProposalSchema,
@@ -195,7 +196,7 @@ export function buildStoryTurnContext(
       !state.npcBrains?.[npc.id]?.living ||
       npc.encounterId ||
       !visible(state, actor, npc) ||
-      Math.abs(npc.x - actor.x) + Math.abs(npc.y - actor.y) > 1
+      footprintDistance(npc, actor) > 1
     )
       throw new Error('OUT_OF_RANGE');
   }

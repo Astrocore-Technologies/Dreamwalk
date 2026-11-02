@@ -1,4 +1,5 @@
 import {
+  footprintDistance,
   npcItemIntentsSchema,
   worldItemRulesSchema,
   type GameState,
@@ -15,8 +16,7 @@ const fail = (state: GameState, error: GameResult['error']): GameResult => ({
   error,
 });
 const rules = (s: GameState) => worldItemRulesSchema.parse(s.worldItemRules ?? { version: 1 });
-const distance = (a: { x: number; y: number }, b: { x: number; y: number }) =>
-  Math.abs(a.x - b.x) + Math.abs(a.y - b.y);
+const distance = footprintDistance;
 function surface(
   s: GameState,
   npc: GameEntity,

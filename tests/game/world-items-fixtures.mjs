@@ -153,8 +153,8 @@ export async function bridgeFixture(db, owner) {
   assert.equal(JSON.stringify(row.source_snapshot.source.npcs).includes('SOURCE_SECRET'), false);
   const room = (id) => ({
     locationId: id,
-    width: 10,
-    height: 8,
+    width: 24,
+    height: 24,
     spawns: [
       { x: 2, y: 2 },
       { x: 3, y: 2 },

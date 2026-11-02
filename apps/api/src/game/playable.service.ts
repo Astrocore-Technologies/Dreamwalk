@@ -6,6 +6,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import {
   authoredGameDraftSchema,
+  fixedMapExtentsAllowed,
   gameActionSchema,
   contentSchema,
   npcSchema,
@@ -207,12 +208,15 @@ export class PlayableService {
       this.validateLocations(story, input.draft);
       const current = (
         await c.query(
-          'SELECT revision FROM adventure_game_drafts WHERE adventure_id=$1 FOR UPDATE',
+          'SELECT revision,draft FROM adventure_game_drafts WHERE adventure_id=$1 FOR UPDATE',
           [id],
         )
       ).rows[0];
       if (Number(current?.revision ?? 0) !== input.expectedRevision)
         fail(409, 'STALE_STATE', 'STALE_STATE');
+      const prior = authoredGameDraftSchema.safeParse(current?.draft);
+      if (!fixedMapExtentsAllowed(input.draft.maps, prior.success ? prior.data.maps : []))
+        fail(400, 'INVALID_MAP', 'New maps must use the fixed 24x24 extent');
       await c.query(
         'INSERT INTO adventure_game_drafts(adventure_id,revision,draft) VALUES($1,1,$2) ON CONFLICT(adventure_id) DO UPDATE SET revision=adventure_game_drafts.revision+1,draft=EXCLUDED.draft,updated_at=now()',
         [id, JSON.stringify(input.draft)],

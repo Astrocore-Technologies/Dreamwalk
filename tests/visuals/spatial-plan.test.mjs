@@ -18,11 +18,11 @@ const {
   turnRulesSchema,
   narrativeConstraintsSchema,
 } = require('../../packages/contracts/dist/index.js');
-await test('spatial outputs determine geometry and public canon, not a renamed fixed template', () => {
+await test('spatial outputs vary focal geometry and canon within one fixed battlemap extent', () => {
   const library = validateSpatialPlan(spatialFixture()),
     garden = validateSpatialPlan(spatialFixture('greenhouse'));
-  assert.equal(library.plan.maps[0].width, 14);
-  assert.equal(garden.plan.maps[0].width, 18);
+  assert.equal(library.plan.maps[0].width, 24);
+  assert.equal(garden.plan.maps[0].width, 24);
   assert.notDeepEqual(
     library.plan.maps[0].composition.layers,
     garden.plan.maps[0].composition.layers,
@@ -63,17 +63,36 @@ await test('invalid bounds, duplicate identities, overlaps and unreachable exits
   cases.push(p);
   p = spatialFixture();
   p.furniture = [];
-  p.rooms[0].blocked = Array.from({ length: 10 }, (_, i) => ({ x: 6, y: i + 1 }));
+  p.rooms[0].blocked = [
+    { x: 1, y: 10 },
+    { x: 2, y: 10 },
+    { x: 3, y: 10 },
+    { x: 4, y: 10 },
+    { x: 4, y: 9 },
+    { x: 4, y: 8 },
+    { x: 4, y: 7 },
+    { x: 3, y: 7 },
+    { x: 2, y: 7 },
+    { x: 1, y: 7 },
+  ];
   cases.push(p);
   for (const value of cases) assert.throws(() => validateSpatialPlan(value));
 });
 await test('a stationary NPC cannot be the only passage through a wall', () => {
   const p = spatialFixture();
   p.furniture = [];
-  p.npc.point = { x: 6, y: 5 };
-  p.rooms[0].blocked = Array.from({ length: 10 }, (_, i) => ({ x: 6, y: i + 1 })).filter(
-    (point) => point.y !== 5,
-  );
+  p.npc.point = { x: 4, y: 8 };
+  p.rooms[0].blocked = [
+    { x: 1, y: 10 },
+    { x: 2, y: 10 },
+    { x: 3, y: 10 },
+    { x: 4, y: 10 },
+    { x: 4, y: 9 },
+    { x: 4, y: 7 },
+    { x: 3, y: 7 },
+    { x: 2, y: 7 },
+    { x: 1, y: 7 },
+  ];
   assert.throws(() => validateSpatialPlan(p), /occupied-exit-path/);
 });
 await test('author rules and private protected constraints are pinned server-side, public profiles survive projection', () => {
@@ -139,4 +158,14 @@ await test('author rules and private protected constraints are pinned server-sid
       }),
     /author-forbidden-role/,
   );
+});
+
+await test('large NPC reserves every occupied cell even against non-solid rugs', () => {
+  const p = spatialFixture();
+  p.npc.tokenSize = 'large';
+  p.npc.point = { x: 15, y: 15 };
+  p.furniture = [
+    { id: 'rug', room: p.npc.room, name: 'Rug', visual: 'rug', x: 16, y: 16, width: 1, height: 1 },
+  ];
+  assert.throws(() => validateSpatialPlan(p), /furniture-overlap/);
 });

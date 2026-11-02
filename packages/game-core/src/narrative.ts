@@ -1,4 +1,6 @@
 import {
+  BATTLEMAP_CELLS,
+  footprintOverlaps,
   readNarrativePreferences,
   narrativeConstraintsSchema,
   localeSchema,
@@ -235,14 +237,15 @@ export function applyNarrativeProposal(
       return error(state, 'INVALID_ACTION');
     const blocked: { x: number; y: number }[] = [];
     if (scene.template === 'room')
-      for (let y = 0; y < 8; y++)
-        for (let x = 0; x < 10; x++)
-          if (x === 0 || y === 0 || x === 9 || y === 7) blocked.push({ x, y });
+      for (let y = 0; y < BATTLEMAP_CELLS; y++)
+        for (let x = 0; x < BATTLEMAP_CELLS; x++)
+          if (x === 0 || y === 0 || x === BATTLEMAP_CELLS - 1 || y === BATTLEMAP_CELLS - 1)
+            blocked.push({ x, y });
     next.maps[sceneId!] = {
       id: sceneId!,
       label: scene.name,
-      width: 10,
-      height: 8,
+      width: BATTLEMAP_CELLS,
+      height: BATTLEMAP_CELLS,
       blocked,
       spawns: [{ x: 2, y: 3 }],
       exits: [
@@ -287,12 +290,13 @@ export function applyNarrativeProposal(
     const mapId = n.placement === 'new_scene' ? sceneId : actor.mapId;
     if (!mapId) return error(state, 'INVALID_ACTION');
     const map = next.maps[mapId];
+    const proposedFootprint = { ...n.spawn, kind: 'npc', tokenSize: n.tokenSize };
     if (
       !walkable(next, mapId, n.spawn, undefined, true) ||
-      map.exits.some((e) => e.x === n.spawn.x && e.y === n.spawn.y) ||
-      map.spawns.some((e) => e.x === n.spawn.x && e.y === n.spawn.y) ||
+      map.exits.some((e) => footprintOverlaps(proposedFootprint, e)) ||
+      map.spawns.some((e) => footprintOverlaps(proposedFootprint, e)) ||
       Object.values(next.entities).some(
-        (e) => e.mapId === mapId && !e.ownerId && e.x === n.spawn.x && e.y === n.spawn.y,
+        (e) => e.mapId === mapId && !e.ownerId && footprintOverlaps(proposedFootprint, e),
       ) ||
       (n.placement === 'current' &&
         !context.availableConnections.some((c) => c.x === n.spawn.x && c.y === n.spawn.y))
@@ -304,6 +308,7 @@ export function applyNarrativeProposal(
       id: npcId!,
       kind: 'npc',
       label: n.name,
+      tokenSize: n.tokenSize ?? 'medium',
       visual: 'traveler',
       mapId,
       ...n.spawn,
@@ -331,6 +336,7 @@ export function applyNarrativeProposal(
     )
       return error(state, 'FORBIDDEN');
     next.entities[npcId!] = npc;
+    if (!walkable(next, mapId, npc, npc.id, true)) return error(state, 'PATH_BLOCKED');
     next.npcBrains ??= {};
     next.npcBrains[npcId!] = {
       living: createLivingMemory({

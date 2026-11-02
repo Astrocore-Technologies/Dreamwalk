@@ -3,6 +3,12 @@ import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Compass, Moon, Radio, UsersRound } from 'lucide-react';
+import {
+  adjacentFootprintAnchors,
+  footprintInside,
+  occupiedCells,
+  footprintOverlaps,
+} from '@dreamwalk/contracts';
 import type { GameAction, GameEntity, GamePoint } from '@dreamwalk/contracts';
 import { api, errorMessage, useClient, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
@@ -304,20 +310,20 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
     const blocked = new Set(p.map.blocked.map((point) => `${point.x},${point.y}`));
     for (const door of p.entities)
       if (door.kind === 'door' && !door.open) blocked.add(`${door.x},${door.y}`);
-    const points = [
-      { x: entity.x - 1, y: entity.y },
-      { x: entity.x + 1, y: entity.y },
-      { x: entity.x, y: entity.y - 1 },
-      { x: entity.x, y: entity.y + 1 },
-    ]
-      .filter(
-        (point) =>
-          point.x >= 0 &&
-          point.y >= 0 &&
-          point.x < p.map.width &&
-          point.y < p.map.height &&
-          !blocked.has(`${point.x},${point.y}`),
-      )
+    const points = adjacentFootprintAnchors(own, entity)
+      .filter((point) => {
+        const placed = { ...own, ...point };
+        return (
+          footprintInside(placed, { x: 0, y: 0, width: p.map.width, height: p.map.height }) &&
+          occupiedCells(placed).every((cell) => !blocked.has(`${cell.x},${cell.y}`)) &&
+          !p.entities.some(
+            (other) =>
+              other.id !== own.id &&
+              (other.kind === 'npc' || other.kind === 'player') &&
+              footprintOverlaps(placed, other),
+          )
+        );
+      })
       .sort(
         (a, b) =>
           Math.abs(a.x - own.x) +

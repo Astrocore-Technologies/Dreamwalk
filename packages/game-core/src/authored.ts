@@ -1,5 +1,9 @@
 import { initializeTurnController } from './turns';
 import {
+  BATTLEMAP_CELLS,
+  footprintCells,
+  adjacentFootprintAnchors,
+  type GameEntity,
   authoredGameDraftSchema,
   bundledGameAssetManifest,
   type AuthoredGameDraft,
@@ -53,6 +57,10 @@ export function createAuthoredDraft(
         },
       ],
     };
+  }
+  for (const map of maps) {
+    map.width = BATTLEMAP_CELLS;
+    map.height = BATTLEMAP_CELLS;
   }
   const mapId = maps[0].id;
   return {
@@ -178,6 +186,7 @@ export function compilePlayableDraft(input: unknown): {
     entities[n.id] = {
       id: n.id,
       kind: 'npc',
+      ...(n.tokenSize ? { tokenSize: n.tokenSize } : {}),
       ...(n.characterAnimation
         ? { characterAnimation: structuredClone(n.characterAnimation) }
         : {}),
@@ -446,6 +455,17 @@ export function compilePlayableDraft(input: unknown): {
   for (const e of Object.values(open.entities)) if (e.kind === 'door' && !e.locked) e.open = true;
   const entrances = new Map<string, { x: number; y: number }[]>();
   if (maps[d.startMapId]) entrances.set(d.startMapId, [...maps[d.startMapId].spawns]);
+  // Creature-held objects are reachable at a free adjacent edge, not by walking
+  // into the carrier's occupied cells. Legacy 1x1 reachability stays unchanged.
+  const reachableLocation = (
+    mapId: string,
+    point: { x: number; y: number } & Partial<GameEntity>,
+  ) =>
+    (entrances.get(mapId) ?? []).some((spawn) =>
+      (footprintCells(point) > 1 ? adjacentFootprintAnchors(spawn, point) : [point]).some(
+        (target) => findPath(open, mapId, spawn, target) !== null,
+      ),
+    );
   const keys = new Set<string>();
   let changed = true;
   for (let iteration = 0; changed && iteration < 128; iteration++) {
@@ -454,7 +474,7 @@ export function compilePlayableDraft(input: unknown): {
       (entrances.get(mapId) ?? []).some((sp) => findPath(open, mapId, sp, p) !== null);
     for (const item of Object.values(open.entities).filter((e) => e.kind === 'item')) {
       const place = item.ownerId ? open.entities[item.ownerId] : item;
-      if (place && reachable(place.mapId, place) && !keys.has(item.id)) {
+      if (place && reachableLocation(place.mapId, place) && !keys.has(item.id)) {
         keys.add(item.id);
         changed = true;
       }
@@ -496,8 +516,7 @@ export function compilePlayableDraft(input: unknown): {
         errors.push(`exit:${exit.id}:unreachable`);
 
   // Objective dependencies are private, author-validated data, not model-generated victory.
-  const objectiveReachable = (mapId: string, point: { x: number; y: number }) =>
-    (entrances.get(mapId) ?? []).some((spawn) => findPath(open, mapId, spawn, point) !== null);
+  const objectiveReachable = reachableLocation;
   for (const objective of d.objectives ?? [])
     for (const condition of objective.completion.conditions) {
       const prefix = `objective:${objective.id}`;

@@ -1,5 +1,5 @@
 import { NarrativeCorrections } from './narrative-corrections';
-import { npcPublicReplySchema } from '@dreamwalk/contracts';
+import { npcPublicReplySchema, footprintDistance } from '@dreamwalk/contracts';
 import { StoryTurnRuntime } from './story-turn-runtime';
 import { resolveReplyLocale } from './reply-locale';
 import { mediaPreparationSchema, prepareSceneMedia } from './media-preparation';
@@ -1126,9 +1126,7 @@ export class GameService implements OnModuleDestroy {
     if (
       !npc ||
       !recipient ||
-      (!deferred &&
-        (npc.mapId !== recipient.mapId ||
-          Math.abs(npc.x - recipient.x) + Math.abs(npc.y - recipient.y) > 1)) ||
+      (!deferred && (npc.mapId !== recipient.mapId || footprintDistance(npc, recipient) > 1)) ||
       npc.encounterId ||
       recipient.encounterId
     )

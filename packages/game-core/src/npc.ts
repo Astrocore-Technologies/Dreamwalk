@@ -1,3 +1,4 @@
+import { footprintDistance, adjacentFootprintAnchors } from '@dreamwalk/contracts';
 import { characterAppraisal } from './character';
 import { reviseNpcBelief } from './living-reasoning';
 import { npcActionAllowed } from './living-policy';
@@ -12,7 +13,7 @@ import {
 } from '@dreamwalk/contracts';
 import { applyAction, findPath, visible, walkable } from './index';
 const result = (state: GameState, events: GameEvent[] = []): GameResult => ({ state, events });
-const near = (a: GameEntity, b: GameEntity) => Math.abs(a.x - b.x) + Math.abs(a.y - b.y) <= 1;
+const near = (a: GameEntity, b: GameEntity) => footprintDistance(a, b) <= 1;
 /** Deterministic free provider. Inputs contain observed facts, never arbitrary code/tools. */
 export function createMockNpcPlan(state: GameState, id: string): unknown {
   const npc = state.entities[id],
@@ -34,12 +35,9 @@ export function createMockNpcPlan(state: GameState, id: string): unknown {
     npc.inventory?.length
   ) {
     if (!near(npc, recipient)) {
-      const target = [
-        { x: recipient.x - 1, y: recipient.y },
-        { x: recipient.x + 1, y: recipient.y },
-        { x: recipient.x, y: recipient.y - 1 },
-        { x: recipient.x, y: recipient.y + 1 },
-      ].find((p) => walkable(state, npc.mapId, p, id) && findPath(state, npc.mapId, npc, p, id));
+      const target = adjacentFootprintAnchors(npc, recipient).find(
+        (p) => walkable(state, npc.mapId, p, id) && findPath(state, npc.mapId, npc, p, id),
+      );
       if (target) actions.push({ kind: 'move_to', target });
     }
     actions.push({ kind: 'give', targetId: recipient.id, itemId: npc.inventory[0] });

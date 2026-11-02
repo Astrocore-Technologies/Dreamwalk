@@ -67,8 +67,8 @@ function fixture() {
     rooms: [
       {
         locationId: 'room',
-        width: 12,
-        height: 10,
+        width: 24,
+        height: 24,
         spawns: [
           { x: 2, y: 2 },
           { x: 3, y: 2 },

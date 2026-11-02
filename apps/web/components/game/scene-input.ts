@@ -1,3 +1,4 @@
+import { footprintOverlaps } from '@dreamwalk/contracts';
 import type { GameProjection } from '@dreamwalk/contracts';
 /** Clicking a visible NPC selects a recipient; only a free floor click requests movement. */
 export function sceneClick(
@@ -15,7 +16,7 @@ export function sceneClick(
   )
     return null;
   const npc = projection.entities.find(
-    (entry) => entry.kind === 'npc' && entry.x === x && entry.y === y,
+    (entry) => entry.kind === 'npc' && footprintOverlaps(entry, { x, y }),
   );
   if (npc) return { kind: 'npc', npcId: npc.id };
   if (

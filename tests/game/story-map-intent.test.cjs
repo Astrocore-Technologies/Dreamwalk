@@ -66,25 +66,20 @@ test('optional dimension/aspect intent survives normal content validation; legac
     assert.equal(mapIntentSchema.safeParse(invalid).success, false);
   assert.equal(mapIntentSchema.safeParse({ kind: 'aspect', width: 16, height: 9 }).success, true);
 });
-test('actual compiler enforces wide/tall and exact dimensions, never silently resizes or accepts square mismatch', () => {
-  for (const [intent, w, h] of [
-    [{ kind: 'aspect', width: 2, height: 1 }, 16, 8],
-    [{ kind: 'aspect', width: 1, height: 2 }, 8, 16],
-    [{ kind: 'dimensions', width: 21, height: 9 }, 21, 9],
+test('new maps have fixed extent regardless of legacy focal-area intent', () => {
+  for (const intent of [
+    undefined,
+    { kind: 'aspect', width: 2, height: 1 },
+    { kind: 'dimensions', width: 21, height: 9 },
   ]) {
-    const compiled = compileStoryPlan(source(intent), plan(w, h));
-    assert.equal(compiled.draft.maps[0].width, w);
-    assert.equal(compiled.draft.maps[0].height, h);
-    assert.throws(
-      () => compileStoryPlan(source(intent), plan(8, 8)),
-      /^Error: STORY_MAP_INTENT_MISMATCH$/,
-    );
+    const compiled = compileStoryPlan(source(intent), plan(24, 24));
+    assert.equal(compiled.draft.maps[0].width, 24);
+    assert.equal(compiled.draft.maps[0].height, 24);
+    assert.throws(() => compileStoryPlan(source(intent), plan(8, 8)));
   }
-  assert.equal(compileStoryPlan(source(), plan(8, 8)).draft.maps[0].width, 8);
   assert.equal(mapMatchesIntent(undefined, 8, 8), true);
-  assert.match(storyPlanDefinition.instructions, /synopsis/);
-  assert.match(storyPlanDefinition.instructions, /override priorDraft geometry/);
-  assert.equal(storyPlanDefinition.version, 'authored-story-plan-v3-character-profile');
+  assert.match(storyPlanDefinition.instructions, /24x24/);
+  assert.match(storyPlanDefinition.instructions, /surroundings/);
 });
 test('real source preparation forwards synopsis and map intent into exact provider body, and invalidates changed source', async () => {
   const configModule = require.resolve('../../apps/api/dist/config');
@@ -133,14 +128,14 @@ test('real source preparation forwards synopsis and map intent into exact provid
   assert.equal(service.sameAuthorSource(prepared.source, changed.source), false);
   const old = source();
   assert.equal(service.sameAuthorSource(old, { ...old, synopsis: '' }), true);
-  assert.equal(compileStoryPlan(old, plan(8, 8)).draft.maps[0].height, 8);
+  assert.equal(compileStoryPlan(old, plan(24, 24)).draft.maps[0].height, 24);
   data = structuredClone(data);
   data.content.locations[0].mapIntent = { kind: 'aspect', width: 1, height: 2 };
   const reshaped = await service.source(c, 'owner', 'story');
   assert.notEqual(reshaped.hash, changed.hash);
   assert.equal(service.sameAuthorSource(changed.source, reshaped.source), false);
 });
-test('ordinary location UI offers optional intent without grid/movement changes and fences image preparation', () => {
+test('ordinary location UI explains mandatory fixed map and fences image preparation', () => {
   const { readFileSync } = require('node:fs');
   const studio = readFileSync('apps/web/components/studio.tsx', 'utf8'),
     control = readFileSync('apps/web/components/studio/location-map-intent.tsx', 'utf8');
@@ -149,8 +144,8 @@ test('ordinary location UI offers optional intent without grid/movement changes 
     studio,
     /JSON.stringify\(\[\s*location.name,\s*location.description,\s*location.mapIntent,?\s*\]\)/,
   );
-  assert.match(control, /mapIntentSchema.safeParse/);
-  assert.match(control, /onBlur=\{save\}/);
+  assert.match(control, /24 × 24/);
+  assert.doesNotMatch(control, /<Select|<Input|onBlur/);
   assert.doesNotMatch(control, /api\(|fetch\(|gameAction|showGrid/);
 });
 test('old prepared snapshot missing nonempty synopsis must reprepare before a new quote; empty legacy source remains compatible', async () => {

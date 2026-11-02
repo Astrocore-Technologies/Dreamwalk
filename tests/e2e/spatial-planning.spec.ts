@@ -59,8 +59,8 @@ function plan() {
   const first = draft.maps[0],
     second = draft.maps[1];
   first.label = 'Quiet research room';
-  first.width = 14;
-  first.height = 11;
+  first.width = 24;
+  first.height = 24;
   first.composition = {
     version: 1,
     provenance: 'original-drawn-fixture',
@@ -68,8 +68,8 @@ function plan() {
   };
   first.blocked.push(...[2, 3, 4, 5].map((x) => ({ x, y: 7 })));
   second.label = 'Herb annex';
-  second.width = 11;
-  second.height = 9;
+  second.width = 24;
+  second.height = 24;
   second.composition = {
     version: 1,
     provenance: 'original-drawn-fixture',

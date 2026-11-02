@@ -17,7 +17,12 @@ import {
   createAuthoredDraft,
   createCompleteObservatoryDraft,
 } from '@dreamwalk/game-core';
-import { turnRulesSchema, type AuthoredGameDraft, type Npc } from '@dreamwalk/contracts';
+import {
+  tokenSizeSchema,
+  turnRulesSchema,
+  type AuthoredGameDraft,
+  type Npc,
+} from '@dreamwalk/contracts';
 import { api, ApiError, errorMessage, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Field, Input, Loading, Select } from '@/components/ui';
@@ -62,7 +67,10 @@ export function PlayableMapEditor({
   onArtSaved?: () => void;
   artEpoch?: number;
 }) {
-  const { t } = useT();
+  const { t, locale } = useT();
+  const creatureSizeLabel = { ru: 'Размер существа', uk: 'Розмір істоти', en: 'Creature size' }[
+    locale
+  ];
   const visualText = useVisualText();
   const artText = useAssetText();
   const objectiveText = useObjectiveText();
@@ -791,6 +799,41 @@ export function PlayableMapEditor({
                             {npcs.map((value) => (
                               <option key={value.id} value={value.id}>
                                 {value.name}
+                              </option>
+                            ))}
+                          </Select>
+                        </Field>
+                        <Field label={creatureSizeLabel}>
+                          <Select
+                            aria-label={creatureSizeLabel}
+                            value={npc.tokenSize ?? 'medium'}
+                            onChange={(event) =>
+                              patchSelected({
+                                tokenSize: tokenSizeSchema.parse(event.target.value),
+                              })
+                            }
+                          >
+                            {tokenSizeSchema.options.map((size, index) => (
+                              <option key={size} value={size}>
+                                {
+                                  {
+                                    ru: [
+                                      'Крошечный',
+                                      'Маленький',
+                                      'Средний',
+                                      'Большой',
+                                      'Огромный',
+                                    ],
+                                    uk: [
+                                      'Крихітний',
+                                      'Маленький',
+                                      'Середній',
+                                      'Великий',
+                                      'Величезний',
+                                    ],
+                                    en: ['Tiny', 'Small', 'Medium', 'Large', 'Huge'],
+                                  }[locale][index]
+                                }
                               </option>
                             ))}
                           </Select>

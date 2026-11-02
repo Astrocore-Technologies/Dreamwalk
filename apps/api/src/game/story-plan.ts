@@ -1,7 +1,8 @@
 import { z } from 'zod';
 import {
   contentSchema,
-  mapMatchesIntent,
+  BATTLEMAP_CELLS,
+  tokenSizeSchema,
   worldItemDefinitionsSchema,
   npcItemStockSchema,
   authoredGameDraftSchema,
@@ -28,8 +29,8 @@ export const storyPlanSchema = z
         z
           .object({
             locationId: id,
-            width: z.number().int().min(8).max(24),
-            height: z.number().int().min(8).max(24),
+            width: z.literal(BATTLEMAP_CELLS),
+            height: z.literal(BATTLEMAP_CELLS),
             spawns: z.array(point).length(4),
             blocked: z.array(point).max(64),
             surfaces: z
@@ -58,6 +59,7 @@ export const storyPlanSchema = z
         z
           .object({
             sourceNpcId: z.uuid(),
+            tokenSize: tokenSizeSchema.optional(),
             locationId: id,
             x: z.number().int().min(1).max(23),
             y: z.number().int().min(1).max(23),
@@ -118,8 +120,7 @@ export function compileStoryPlan(source: StoryPlanSource, value: unknown) {
     startMapId: start,
     maps: proposal.rooms.map((r) => {
       const l = content.locations.find((l) => l.id === r.locationId)!;
-      if (!mapMatchesIntent(l.mapIntent, r.width, r.height))
-        throw Error('STORY_MAP_INTENT_MISMATCH');
+      // Legacy mapIntent describes the focal location, never the fixed canvas extent.
       const blocked = [...r.blocked];
       for (const f of r.surfaces)
         if (f.solid)
@@ -145,6 +146,7 @@ export function compileStoryPlan(source: StoryPlanSource, value: unknown) {
       return {
         id: s.id,
         sourceNpcId: s.id,
+        tokenSize: n.tokenSize ?? 'medium',
         label: s.name,
         mapId: n.locationId,
         x: n.x,
@@ -221,9 +223,9 @@ export function removeNullFields(v: unknown): unknown {
       : v;
 }
 export const storyPlanDefinition: AuthoringTextDefinition = {
-  version: 'authored-story-plan-v3-character-profile',
+  version: 'authored-story-plan-v4-battlemap',
   schema: nullableStrict(z.toJSONSchema(storyPlanSchema)),
   instructions:
-    'Create the opening playable spatial plan from this author story, not a new story. Output only JSON. Preserve EXACTLY all supplied source location and NPC IDs, names and identities. Place every source NPC once, choose its location from story/context; do not replace it with a helper or add NPCs or quests. Connect all source locations bidirectionally. Every spawn, NPC and passage must be reachable on walkable interior floor. Solid furniture adds collision, keep passages clear. Use table/counter/shelf surfaces when the story calls for them. Choose only plausible benign physical item definitions and finite NPC stock supported by the story; no arbitrary powers, private facts or executable code. Item restoreVitality is bounded 0..3, nonedible items restore 0. The AI only proposes; author review and server validation are required. Honor geometry described in the synopsis, world, rules and each location description. Do not turn every room into the minimum 8x8 square: choose dimensions and orientation appropriate to the author intent. Explicit location.mapIntent is authoritative: dimensions requires exactly its width and height; aspect requires that exact width:height ratio, choosing feasible integer dimensions within 8..24. These constraints override priorDraft geometry. With no explicit intent, infer suitable proportions from the description; do not invent a fixed widescreen ratio. Prior drafts are continuity context, not permission to ignore new geometry intent. Four spawns must be distinct; rooms 8..24 cells, at most four locations/eight NPCs. Do not narrate success, add fetch quests, rename source characters or create pixel art. Opening and constraints describe an ongoing story, not a fixed script.',
+    'Create the opening playable spatial plan from this author story, not a new story. Output only JSON. Preserve EXACTLY all supplied source location and NPC IDs, names and identities. Place every source NPC once, choose its location from story/context; do not replace it with a helper or add NPCs or quests. Connect all source locations bidirectionally. Every spawn, NPC and passage must be reachable on walkable interior floor. Solid furniture adds collision, keep passages clear. Use table/counter/shelf surfaces when the story calls for them. Choose only plausible benign physical item definitions and finite NPC stock supported by the story; no arbitrary powers, private facts or executable code. Item restoreVitality is bounded 0..3, nonedible items restore 0. The AI only proposes; author review and server validation are required. Honor geometry described in the synopsis, world, rules and each location description. Every map is exactly 24x24 cells at the same scale. A small location occupies only part of the map: center it and fill the remaining area with canon-compatible surroundings (a small lake inside a larger cave, not an enlarged lake). Legacy location.mapIntent describes the focal area, not canvas dimensions. Four spawns must be distinct. At most four locations/eight NPCs. Set tokenSize from explicit public appearance: tiny/small/medium/large/huge; small goblins must not occupy a medium footprint. Default medium when size is unspecified. Large tokens occupy 2x2 cells, huge 3x3; reserve their full walkable footprint, all other sizes occupy 1x1. Do not narrate success, add fetch quests, rename source characters or create pixel art. Opening and constraints describe an ongoing story, not a fixed script.',
   validateProposal: (v) => storyPlanSchema.parse(removeNullFields(v)),
 };
