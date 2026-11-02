@@ -105,7 +105,9 @@ export type GenerationRequest = z.infer<typeof generationRequestSchema>;
 export interface ImagePolicy {
   /** Image-only authority exception; never supplied by request JSON. Holds remain fully accounted. */
   preserveModelRejectionHolds?: true;
-  generationMode?: 'owner';
+  generationMode?: 'owner' | 'release';
+  /** Explicit operator aggregate exposure ceiling, independent of the actor's Sparks wallet. */
+  releaseAggregateCapMicros?: number;
   generationPolicyRevision?: number;
   generationPolicyHash?: string;
   ownerImageProfile?: OwnerImageProfile;

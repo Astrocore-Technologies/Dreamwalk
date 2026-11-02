@@ -2,7 +2,11 @@ import { resolveOwnerImageProfile } from '../generation/config';
 import { estimateImageRequest } from '../generation/estimates';
 import sharp from 'sharp';
 import { imageFramingMatchesProfile } from '@dreamwalk/contracts';
-import { ownerPricingIsCurrent, type OwnerGenerationConfig } from '../generation/config';
+import {
+  ownerPricingIsCurrent,
+  type OwnerGenerationConfig,
+  type ReleaseGenerationConfig,
+} from '../generation/config';
 import { ImageProviderFailure, safeImageErrorDiagnostic } from './error-diagnostics';
 import { createHash } from 'node:crypto';
 import { generationRequestSchema, type GenerationRequest } from './contracts';
@@ -203,7 +207,7 @@ export class OpenAiImageProvider implements ImageProvider {
 export class OwnerOpenAiImageProvider implements ImageProvider {
   readonly id: string;
   constructor(
-    private config: OwnerGenerationConfig,
+    private config: OwnerGenerationConfig | ReleaseGenerationConfig,
     private dependencies: {
       resolveApiKey: () => string | undefined;
       fetchImpl?: typeof fetch;
@@ -211,7 +215,7 @@ export class OwnerOpenAiImageProvider implements ImageProvider {
     },
   ) {
     this.config = structuredClone(config);
-    this.id = `openai-owner-images-v1:${config.configFingerprint}`;
+    this.id = `openai-${config.mode}-images-v1:${config.configFingerprint}`;
   }
   async generate(
     request: GenerationRequest,

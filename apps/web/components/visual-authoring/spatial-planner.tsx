@@ -1,8 +1,9 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import { api, ApiError } from '@/lib/client';
+import { api, ApiError, useClient } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox } from '../ui';
+import { useSparkCosts } from './sparks-cost';
 import { GameCanvas } from '../game/game-canvas';
 import {
   generationRemaining,
@@ -30,6 +31,8 @@ export function SpatialPlanner({
   onApplied: () => Promise<void>;
   onBudgetRefresh: () => void;
 }) {
+  const { amount: sparkAmount } = useSparkCosts();
+  const { user } = useClient();
   const m = useSpatialText(),
     visual = useVisualText(),
     { locale } = useT();
@@ -65,7 +68,7 @@ export function SpatialPlanner({
     } catch (e) {
       if (stamp === epoch.current) setError(e instanceof ApiError ? e.code : 'NETWORK_ERROR');
     }
-  }, [project.id, project.revision]);
+  }, [project.id, project.revision, user?.id]);
   useEffect(() => {
     mounted.current = true;
     void refresh();
@@ -137,7 +140,8 @@ export function SpatialPlanner({
     proposalFence &&
     project.status === 'concept';
   const proposalJob = state?.jobs.find((job) => job.result?.proposalId === proposal?.id);
-  const money = (value: number) => formatUsd(value, locale);
+  const money = (value: number) =>
+    session?.mode === 'release' ? sparkAmount(value) : formatUsd(value, locale);
   const statusText = (value: string) =>
     value in spatialMessages ? m(value as SpatialMessage) : value;
   return (
@@ -147,7 +151,15 @@ export function SpatialPlanner({
       <p>{m('noRetry')}</p>
       {state && <small>{state.model}</small>}
       {!sessionAvailable && (
-        <p role="status">{m(session?.mode === 'owner' ? 'ownerUnavailable' : 'unavailable')}</p>
+        <p role="status">
+          {m(
+            session?.mode === 'release'
+              ? 'releaseUnavailable'
+              : session?.mode === 'owner'
+                ? 'ownerUnavailable'
+                : 'unavailable',
+          )}
+        </p>
       )}
       {state?.blockers.map((code) => (
         <small key={code}>
@@ -182,7 +194,7 @@ export function SpatialPlanner({
         onClick={() =>
           void mutate(`${prefix}/quote`, {
             expectedRevision: project.revision,
-            sessionId: session?.sessionId,
+            sessionId: session?.mode === 'release' ? undefined : (session?.sessionId ?? undefined),
           })
         }
       >

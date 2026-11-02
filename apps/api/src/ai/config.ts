@@ -3,7 +3,7 @@ import { LIVE_TEXT, readLiveTestConfig } from '../live-test/config';
 import { OpenAiNpcProvider } from './openai-provider';
 import { HttpJsonNpcProvider, MockNpcProvider } from './provider';
 import type { AiPolicy, NpcProvider } from './types';
-import { readOwnerGenerationConfig } from '../generation/config';
+import { readGenerationConfig } from '../generation/config';
 const flag = z
   .enum(['true', 'false'])
   .default('false')
@@ -13,13 +13,13 @@ export function readNpcAiConfiguration(env: NodeJS.ProcessEnv = process.env): {
   provider: NpcProvider;
   policy: Partial<AiPolicy>;
 } {
-  const owner = readOwnerGenerationConfig(env);
-  if (owner.mode === 'owner') {
+  const owner = readGenerationConfig(env);
+  if (owner.mode !== 'disabled') {
     if (env.LIVE_TEST_ENABLED === 'true') throw new Error('GENERATION_MODES_CONFLICT');
     const apiKey = env.NPC_AI_API_KEY ?? env.OPENAI_API_KEY;
     if (!apiKey) throw new Error('GENERATION_CREDENTIAL_REQUIRED');
     const profile = owner.text;
-    const version = `owner-text:${owner.configFingerprint}`;
+    const version = `${owner.mode}-text:${owner.configFingerprint}`;
     return {
       provider: new OpenAiNpcProvider({
         enabled: true,
@@ -47,7 +47,8 @@ export function readNpcAiConfiguration(env: NodeJS.ProcessEnv = process.env): {
         killSwitch: env.NPC_AI_KILL_SWITCH === 'true',
         creditPrice: 0,
         providerUpperMicros: profile.upperMicros,
-        providerCapMicros: owner.textCapMicros,
+        providerCapMicros:
+          owner.mode === 'release' ? owner.aggregateCapMicros : owner.textCapMicros,
         timeoutMs: 60000,
         version,
       },

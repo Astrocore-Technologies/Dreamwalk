@@ -54,7 +54,7 @@ test('signup has only login, email and password and shell keeps Studio without d
   );
   const auth = account.slice(0, account.indexOf('export function OnboardingPage'));
   assert.doesNotMatch(auth, /name="name"|Как тебя называть|Адрес профиля/);
-  assert.match(auth, /if \(signup\) data.name = data.handle/);
+  assert.match(auth, /if \(signup\) \{\s*data.name = data.handle;\s*data.language = locale;/);
   assert.match(auth, /name="handle"/);
   assert.match(auth, /name="email"/);
   assert.match(auth, /name="password"/);

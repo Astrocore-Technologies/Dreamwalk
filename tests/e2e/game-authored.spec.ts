@@ -172,7 +172,13 @@ test('Studio narrative autosave plus API-authored fixture launches its pinned ca
 test('explicit realtime authored campaign retains coordination recovery and persisted rounds', async ({
   page,
 }) => {
-  test.setTimeout(90000);
+  test.setTimeout(process.env.CI ? 160000 : 90000);
+  if (process.env.CI) {
+    // CI runs one worker against one shared API/IP. Earlier scenarios can exhaust
+    // its real 600/minute window; begin this scenario after a quiet full window,
+    // before any mutation. Keep runtime limits and unknown-outcome rules intact.
+    await new Promise((resolve) => setTimeout(resolve, 61000));
+  }
   const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
   const registered = await page.request.post('/api/v1/auth/register', {
     data: {

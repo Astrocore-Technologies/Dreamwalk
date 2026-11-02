@@ -270,7 +270,7 @@ export const compactSpatialPlanSchema = z
   .strict();
 export type CompactSpatialPlan = z.infer<typeof compactSpatialPlanSchema>;
 export const spatialQuoteRequestSchema = visualMutationSchema
-  .extend({ sessionId: z.uuid() })
+  .extend({ sessionId: z.uuid().optional() })
   .strict();
 export const spatialDispatchRequestSchema = visualMutationSchema
   .extend({ quoteId: z.uuid(), consent: z.literal(true) })

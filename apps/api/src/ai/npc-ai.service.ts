@@ -4,11 +4,13 @@ import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Db } from '../db';
 import { SparksAccounting, type SparkSettlement } from '../generation/sparks-accounting';
-import { sparksEnabled, sparkTariff } from '../generation/sparks-hooks';
+import { sparksEnabled, sparkTariff, settleReservationSparks } from '../generation/sparks-hooks';
 import { fenceGenerationAdmission } from '../generation/scope-fence';
 import { packNpcContextWindow } from '../game/npc-context-budget';
 import type { TextReserveSnapshot } from '../generation/estimates';
 import { GenerationAuthority } from '../generation/service';
+import { ReleaseGenerationProvider } from '../generation/release-provider';
+import { reserveGenerationSpend, settleGenerationSpend } from '../image-generation/budget';
 import { ManualLiveProvider } from '../live-test/provider';
 import { fail } from '../errors';
 import { npcTelemetrySnapshot } from '../game/npc-telemetry';
@@ -64,6 +66,8 @@ interface Job extends QueryResultRow {
   cancel_requested: boolean;
   credits: number;
   spark_hold_id?: string | null;
+  generation_authorization_id?: string | null;
+  generation_reservation_id?: string | null;
   reservation_status: string;
   reservation_expires_at: Date;
   provider_upper_micros: string;
@@ -128,7 +132,12 @@ export class NpcAiEngine {
       throw new Error('INVALID_AI_LIMITS');
   }
   private async excludeLegacyOwnerBypass(c: PoolClient) {
-    if (!this.provider.external || this.provider instanceof ManualLiveProvider) return;
+    if (
+      !this.provider.external ||
+      this.provider instanceof ManualLiveProvider ||
+      this.provider instanceof ReleaseGenerationProvider
+    )
+      return;
     // Caller owns its target provider-budget row before the shared admission fence.
     // No owner/session/shared-scope row is locked here, so owner claim cannot invert locks.
     await fenceGenerationAdmission(c);
@@ -176,7 +185,8 @@ export class NpcAiEngine {
     return this.provider.requestAuthorized?.(id, context) ?? Promise.resolve(false);
   }
   async rejectManualUnqueuedRequest(c: PoolClient, requestId: string, code: string) {
-    return this.provider instanceof ManualLiveProvider
+    return this.provider instanceof ManualLiveProvider ||
+      this.provider instanceof ReleaseGenerationProvider
       ? this.provider.session.rejectUndispatchedRequest(c, requestId, code)
       : false;
   }
@@ -187,7 +197,7 @@ export class NpcAiEngine {
       enabled: !this.policy.killSwitch && (!this.provider.external || this.policy.externalApproved),
       externalCallsEnabled:
         this.provider.external && this.policy.externalApproved && !this.policy.killSwitch,
-      demo: true,
+      demo: !(this.provider instanceof ReleaseGenerationProvider),
       creditPrice: this.policy.creditPrice,
       providerUpperMicros: this.policy.providerUpperMicros,
       sponsorLimits: {
@@ -298,6 +308,12 @@ export class NpcAiEngine {
       if (recent.count >= 60) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
       const id = randomUUID(),
         expires = new Date(Date.now() + this.policy.quoteMs);
+      if (this.provider instanceof ReleaseGenerationProvider) {
+        this.provider.session.release!.current();
+        await this.provider.session.release!.actor(c, requesterUserId);
+        if (!(await sparksEnabled(c, requesterUserId)))
+          fail(409, 'SPARK_WALLET_NOT_ENABLED', 'SPARK_WALLET_NOT_ENABLED');
+      }
       const sparkMode =
         !(this.provider instanceof ManualLiveProvider) &&
         !this.isFreeBuiltInSimulation() &&
@@ -395,6 +411,9 @@ export class NpcAiEngine {
     );
   }
   private dto(job: Job) {
+    const sparkCharged =
+      !!job.spark_hold_id ||
+      (this.provider instanceof ReleaseGenerationProvider && !!job.generation_reservation_id);
     return {
       id: job.id,
       npcId: job.npc_id,
@@ -402,13 +421,15 @@ export class NpcAiEngine {
       purpose: job.purpose,
       status: job.status,
       credits: job.credits,
-      chargeUnit: job.spark_hold_id ? ('sparks' as const) : ('credits' as const),
-      sparkReservedSubunits: job.spark_hold_id ? String(job.provider_upper_micros) : null,
+      chargeUnit: sparkCharged ? ('sparks' as const) : ('credits' as const),
+      sparkReservedSubunits: sparkCharged ? String(job.provider_upper_micros) : null,
       sparkHoldId: job.spark_hold_id ?? null,
       reservationStatus: job.reservation_status,
       code: job.result_code ?? null,
       createdAt: job.created_at.toISOString(),
-      demo: true,
+      demo: !(
+        this.provider instanceof ReleaseGenerationProvider && job.provider_id === this.provider.id
+      ),
     };
   }
   async replay(
@@ -466,7 +487,7 @@ export class NpcAiEngine {
       runtimeRequestId: input.runtimeRequestId ?? null,
     });
     return this.db.tx(async (c) => {
-      const generationAuthorizationId =
+      let generationAuthorizationId =
         this.provider instanceof ManualLiveProvider
           ? await this.provider.session.preparedAuthorizationId(c)
           : null;
@@ -516,6 +537,30 @@ export class NpcAiEngine {
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
         return this.dto(previous);
       }
+      const releaseProvider =
+        this.provider instanceof ReleaseGenerationProvider ? this.provider : null;
+      const hasReleasePermit =
+        releaseProvider &&
+        input.runtimeRequestId &&
+        (
+          await c.query('SELECT 1 FROM live_test_text_permits WHERE request_id=$1', [
+            input.runtimeRequestId,
+          ])
+        ).rowCount;
+      const releasePermit = hasReleasePermit
+        ? await releaseProvider.session.preparedReleaseAuthorization(
+            c,
+            input.runtimeRequestId,
+            scope.campaignId,
+            context,
+            scope.requesterUserId,
+          )
+        : null;
+      if (releaseProvider && !scope.requesterUserId && !releasePermit)
+        fail(403, 'GENERATION_EXPLICIT_PAYER_REQUIRED', 'GENERATION_EXPLICIT_PAYER_REQUIRED');
+      if (releaseProvider && input.sponsorId)
+        fail(403, 'SPARK_SPONSOR_POLICY_REQUIRED', 'SPARK_SPONSOR_POLICY_REQUIRED');
+      if (releasePermit) generationAuthorizationId = releasePermit.authorizationId;
       if (!(await this.turnAuthorized(c, scope.campaignId, context)))
         fail(409, 'TURN_PHASE_STALE', 'TURN_PHASE_STALE');
       if (this.policy.killSwitch || (this.provider.external && !this.policy.externalApproved))
@@ -543,13 +588,17 @@ export class NpcAiEngine {
       // No Spark sponsorship policy exists yet, including mixed paid-requester/demo-payer flows.
       if (input.sponsorId && sparkMode)
         fail(403, 'SPARK_SPONSOR_POLICY_REQUIRED', 'SPARK_SPONSOR_POLICY_REQUIRED');
+      if (releaseProvider && scope.requesterUserId && !sparkMode)
+        fail(409, 'SPARK_WALLET_NOT_ENABLED', 'SPARK_WALLET_NOT_ENABLED');
       const ownSparkHold =
         sparkMode &&
         !(this.provider instanceof ManualLiveProvider) &&
+        !releasePermit &&
         !this.isFreeBuiltInSimulation();
       let sparkQuoteId: string | null = null;
       if (
         (ownSparkHold ||
+          (releasePermit && input.quoteId) ||
           this.policy.creditPrice > 0 ||
           (this.provider.external && scope.purpose === 'narrative') ||
           scope.purpose === 'story_turn') &&
@@ -584,6 +633,7 @@ export class NpcAiEngine {
         payer = scope.requesterUserId!;
         sparkQuoteId = ownSparkHold ? q.spark_quote_id : null;
       }
+      if (releasePermit) payer = releasePermit.payerId;
       const live = await c.query(
         "SELECT id FROM npc_ai_jobs WHERE campaign_id=$1 AND npc_id=$2 AND status IN ('queued','reserved','running','result_received','validated','reconciling') FOR UPDATE",
         [scope.campaignId, scope.npcId],
@@ -631,7 +681,7 @@ export class NpcAiEngine {
           ?.enabled === true
       )
         fail(403, 'SPARK_SPONSOR_POLICY_REQUIRED', 'SPARK_SPONSOR_POLICY_REQUIRED');
-      if (payer && !sparkMode) {
+      if (payer && !sparkMode && !releaseProvider) {
         const wallet = (
           await c.query('SELECT balance FROM wallets WHERE user_id=$1 FOR UPDATE', [payer])
         ).rows[0];
@@ -655,6 +705,19 @@ export class NpcAiEngine {
           this.provider.id,
         ])
       ).rows[0];
+      let releasePolicy: Awaited<
+        ReturnType<NonNullable<GenerationAuthority['release']>['policy']>
+      > | null = null;
+      if (releaseProvider) {
+        if (!payer)
+          fail(403, 'GENERATION_EXPLICIT_PAYER_REQUIRED', 'GENERATION_EXPLICIT_PAYER_REQUIRED');
+        releasePolicy = await releaseProvider.session.release!.policy(
+          c,
+          payer!,
+          generationAuthorizationId ?? undefined,
+        );
+        generationAuthorizationId = releasePolicy.generationAuthorizationId!;
+      }
       await this.excludeLegacyOwnerBypass(c);
       if (budget.blocked) fail(503, 'PROVIDER_DISABLED', 'PROVIDER_DISABLED');
       const liabilities =
@@ -698,11 +761,42 @@ export class NpcAiEngine {
       if (input.sponsorId && payer && walletModes.get(payer))
         fail(403, 'SPARK_SPONSOR_POLICY_REQUIRED', 'SPARK_SPONSOR_POLICY_REQUIRED');
       const id = randomUUID();
+      let generationReservationId: string | null = null;
+      if (releaseProvider && releasePolicy) {
+        if (releasePermit) {
+          const permit = (
+            await c.query(
+              "SELECT reservation_id FROM live_test_text_permits WHERE request_id=$1 AND session_id=$2 AND state='authorized'",
+              [input.runtimeRequestId, generationAuthorizationId],
+            )
+          ).rows[0];
+          if (!permit) fail(409, 'GENERATION_PERMIT_CHANGED', 'GENERATION_PERMIT_CHANGED');
+          generationReservationId = permit.reservation_id;
+        } else {
+          if (!sparkQuoteId || !payer) fail(409, 'SPARK_QUOTE_REQUIRED', 'SPARK_QUOTE_REQUIRED');
+          generationReservationId = await reserveGenerationSpend(
+            c,
+            requestPlan.snapshot?.costBasis === 'operator_estimate'
+              ? {
+                  ...releasePolicy,
+                  verifiedUpperMicros: null,
+                  costBasis: 'approved_estimate',
+                  estimatedTotalMicros: requestPlan.snapshot.estimatedTotalMicros,
+                  operationalReserveMicros: requestPlan.reserveMicros,
+                }
+              : releasePolicy,
+            payer!,
+            'text',
+            `release-npc:${id}`,
+            requestPlan.reserveMicros,
+          );
+        }
+      }
       const sparkHold =
         sparkQuoteId && payer ? await new SparksAccounting().reserve(c, payer, sparkQuoteId) : null;
       const r = await c.query<Job>(
-        `INSERT INTO npc_ai_jobs(id,campaign_id,npc_id,operation_id,request_hash,origin,requester_user_id,payer_user_id,purpose,context_hash,context,provider_id,provider_version,policy_version,status,credits,reservation_status,reservation_expires_at,provider_upper_micros,provider_budget_status,quote_id,request_meta,sponsor_id,subject_kind,provider_external,generation_authorization_id,request_snapshot,spark_hold_id)
-      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'reserved',$15,$16,$17,$18,'reserved',$19,$20,$21,$22,$23,$24,$25,$26) RETURNING *`,
+        `INSERT INTO npc_ai_jobs(id,campaign_id,npc_id,operation_id,request_hash,origin,requester_user_id,payer_user_id,purpose,context_hash,context,provider_id,provider_version,policy_version,status,credits,reservation_status,reservation_expires_at,provider_upper_micros,provider_budget_status,quote_id,request_meta,sponsor_id,subject_kind,provider_external,generation_authorization_id,request_snapshot,spark_hold_id,generation_reservation_id)
+      VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'reserved',$15,$16,$17,$18,'reserved',$19,$20,$21,$22,$23,$24,$25,$26,$27) RETURNING *`,
         [
           id,
           scope.campaignId,
@@ -736,8 +830,17 @@ export class NpcAiEngine {
           generationAuthorizationId,
           requestPlan.snapshot ? JSON.stringify(requestPlan.snapshot) : null,
           sparkHold?.id ?? null,
+          generationReservationId,
         ],
       );
+      if (generationReservationId && sparkHold) {
+        const linked = await c.query(
+          'UPDATE generation_budget_reservations SET spark_quote_id=$2 WHERE id=$1 AND actor_id=$3 AND spark_quote_id IS NULL',
+          [generationReservationId, sparkHold.id, payer],
+        );
+        if (linked.rowCount !== 1)
+          fail(409, 'SPARK_RESERVATION_CONFLICT', 'SPARK_RESERVATION_CONFLICT');
+      }
       if (input.runtimeRequestId)
         await c.query(
           "UPDATE game_npc_decision_requests SET status='scheduled',job_id=$2 WHERE id=$1",
@@ -779,7 +882,7 @@ export class NpcAiEngine {
       balance: r?.balance ?? 0,
       reserved: Number(r?.reserved ?? 0),
       available: (r?.balance ?? 0) - Number(r?.reserved ?? 0),
-      demo: true,
+      demo: !(this.provider instanceof ReleaseGenerationProvider),
     };
   }
   async runNext(campaignId: string, isActive: () => Promise<boolean>) {
@@ -788,8 +891,8 @@ export class NpcAiEngine {
     try {
       await this.sweep(campaignId);
       const rows = await this.db.query<Job>(
-        "SELECT * FROM npc_ai_jobs WHERE campaign_id=$1 AND status='reserved' AND NOT cancel_requested ORDER BY created_at LIMIT 1",
-        [campaignId],
+        "SELECT * FROM npc_ai_jobs WHERE campaign_id=$1 AND status='reserved' AND ($2::text IS NULL OR provider_id=$2) AND NOT cancel_requested ORDER BY created_at LIMIT 1",
+        [campaignId, this.provider instanceof ReleaseGenerationProvider ? this.provider.id : null],
       );
       if (rows[0]) await this.run(rows[0].id, isActive);
     } finally {
@@ -797,6 +900,12 @@ export class NpcAiEngine {
     }
   }
   async run(id: string, isActive: () => Promise<boolean>) {
+    if (this.provider instanceof ReleaseGenerationProvider) {
+      const identity = (
+        await this.db.query('SELECT provider_id FROM npc_ai_jobs WHERE id=$1', [id])
+      )[0];
+      if (!identity || identity.provider_id !== this.provider.id) return;
+    }
     if (this.policy.killSwitch || !(await isActive())) return;
     if (this.provider.canDispatchJob && !(await this.provider.canDispatchJob(id))) return;
     const claimed = await this.db.tx(async (c) => {
@@ -818,6 +927,11 @@ export class NpcAiEngine {
         ).rows[0];
         if (!budget) fail(409, 'PROVIDER_BUDGET_MISSING', 'PROVIDER_BUDGET_MISSING');
         await this.excludeLegacyOwnerBypass(c);
+        if (this.provider instanceof ReleaseGenerationProvider)
+          await this.provider.session.release!.active(
+            c,
+            j.generation_authorization_id ?? undefined,
+          );
       }
       if (
         j.provider_id !== this.provider.id ||
@@ -948,10 +1062,19 @@ export class NpcAiEngine {
             receiptId: `unpriced:${result.requestId}`,
           });
         if (result.usage.costMicros > Number(j.provider_upper_micros)) {
-          await this.settleProvider(c, j, null, true);
+          await this.settleProvider(
+            c,
+            j,
+            this.provider instanceof ReleaseGenerationProvider ? result.usage.costMicros : null,
+            !(this.provider instanceof ReleaseGenerationProvider),
+          );
           await c.query(
-            'UPDATE npc_ai_provider_budgets SET blocked=true,overrun_micros=overrun_micros+$2 WHERE provider_id=$1',
-            [j.provider_id, result.usage.costMicros - Number(j.provider_upper_micros)],
+            'UPDATE npc_ai_provider_budgets SET blocked=blocked OR $3,overrun_micros=overrun_micros+$2 WHERE provider_id=$1',
+            [
+              j.provider_id,
+              result.usage.costMicros - Number(j.provider_upper_micros),
+              !(this.provider instanceof ReleaseGenerationProvider),
+            ],
           );
           await c.query(
             'UPDATE npc_ai_jobs SET provider_actual_micros=$2,provider_request_id=$3 WHERE id=$1',
@@ -977,7 +1100,10 @@ export class NpcAiEngine {
         );
         if (['cancelled', 'stale', 'failed', 'committed'].includes(j.status)) return;
         if (result.failureCode) {
-          if (result.failureCode === 'PROVIDER_LIMIT_VIOLATION')
+          if (
+            result.failureCode === 'PROVIDER_LIMIT_VIOLATION' &&
+            !(this.provider instanceof ReleaseGenerationProvider)
+          )
             await c.query('UPDATE npc_ai_provider_budgets SET blocked=true WHERE provider_id=$1', [
               j.provider_id,
             ]);
@@ -1041,6 +1167,13 @@ export class NpcAiEngine {
     await c.query('SELECT * FROM npc_ai_provider_budgets WHERE provider_id=$1 FOR UPDATE', [
       j.provider_id,
     ]);
+    if (this.provider instanceof ReleaseGenerationProvider) {
+      if (!j.generation_reservation_id || !j.generation_authorization_id)
+        fail(409, 'SPARK_ACCOUNTING_AUTHORITY_CONFLICT', 'SPARK_ACCOUNTING_AUTHORITY_CONFLICT');
+      await this.provider.session.lockAuthorization(c, j.generation_authorization_id!);
+      await settleReservationSparks(c, j.generation_reservation_id!, settlement);
+      return;
+    }
     const hold = (await c.query('SELECT status FROM spark_holds WHERE id=$1', [j.spark_hold_id]))
       .rows[0];
     // Terminal replay is a no-op; unknown/failure outcomes require explicit reconciliation.
@@ -1053,20 +1186,52 @@ export class NpcAiEngine {
     await c.query('SELECT * FROM npc_ai_provider_budgets WHERE provider_id=$1 FOR UPDATE', [
       j.provider_id,
     ]);
+    if (
+      !(this.provider instanceof ManualLiveProvider) &&
+      !(this.provider instanceof ReleaseGenerationProvider)
+    )
+      await fenceGenerationAdmission(c);
     if (this.provider instanceof ManualLiveProvider)
       await this.provider.session.settleJob(c, j.id, actual, unknown);
+    if (this.provider instanceof ReleaseGenerationProvider) {
+      if (!j.generation_authorization_id || !j.generation_reservation_id)
+        fail(409, 'GENERATION_RESERVATION_REQUIRED', 'GENERATION_RESERVATION_REQUIRED');
+      await this.provider.session.lockAuthorization(c, j.generation_authorization_id!);
+      if (j.spark_hold_id) {
+        if (actual !== null) await settleGenerationSpend(c, j.generation_reservation_id!, actual);
+        if (
+          unknown ||
+          actual === null ||
+          (actual !== null && actual > Number(j.provider_upper_micros))
+        ) {
+          await c.query(
+            "UPDATE live_test_sessions SET state='stopped',stop_code=COALESCE(stop_code,'GENERATION_ACCOUNT_REVIEW_REQUIRED') WHERE id=$1",
+            [j.generation_authorization_id],
+          );
+          await c.query(
+            'UPDATE generation_budget_scopes SET blocked=true WHERE id=(SELECT scope_id FROM live_test_sessions WHERE id=$1)',
+            [j.generation_authorization_id],
+          );
+        }
+      } else await this.provider.session.settleJob(c, j.id, actual, unknown);
+    }
     if (unknown)
       await this.settleNpcSparks(c, j, { outcome: 'unknown', receiptId: `unknown:${j.id}` });
     const upper = Number(j.provider_upper_micros);
+    // This legacy row retains its admitted ceiling; full release liability is in the shared ledger, with excess separately tracked below.
+    const accountedActual =
+      this.provider instanceof ReleaseGenerationProvider
+        ? Math.min(actual ?? 0, upper)
+        : (actual ?? 0);
     if (j.provider_budget_status === 'reserved') {
       await c.query(
         'UPDATE npc_ai_provider_budgets SET reserved_micros=reserved_micros-$2,spent_micros=spent_micros+$3,unknown_micros=unknown_micros+$4 WHERE provider_id=$1',
-        [j.provider_id, upper, unknown ? 0 : (actual ?? 0), unknown ? upper : 0],
+        [j.provider_id, upper, unknown ? 0 : accountedActual, unknown ? upper : 0],
       );
     } else if (j.provider_budget_status === 'unknown' && !unknown) {
       await c.query(
         'UPDATE npc_ai_provider_budgets SET unknown_micros=unknown_micros-$2,spent_micros=spent_micros+$3 WHERE provider_id=$1',
-        [j.provider_id, upper, actual ?? 0],
+        [j.provider_id, upper, accountedActual],
       );
     } else return;
     await c.query(
@@ -1078,8 +1243,8 @@ export class NpcAiEngine {
   async ready(campaignId: string): Promise<ReadyDecision[]> {
     return (
       await this.db.query<Job>(
-        "SELECT * FROM npc_ai_jobs WHERE campaign_id=$1 AND status='result_received' AND NOT cancel_requested ORDER BY created_at LIMIT 8",
-        [campaignId],
+        "SELECT * FROM npc_ai_jobs WHERE campaign_id=$1 AND status='result_received' AND ($2::text IS NULL OR provider_id=$2) AND NOT cancel_requested ORDER BY created_at LIMIT 8",
+        [campaignId, this.provider instanceof ReleaseGenerationProvider ? this.provider.id : null],
       )
     ).map((j) => ({
       id: j.id,
@@ -1209,7 +1374,10 @@ export class NpcAiEngine {
       if (j.provider_budget_status === 'reserved')
         await this.settleProvider(c, j, j.status === 'running' ? null : 0, j.status === 'running');
     }
-    if (this.provider instanceof ManualLiveProvider)
+    if (
+      this.provider instanceof ManualLiveProvider ||
+      (this.provider instanceof ReleaseGenerationProvider && !j.spark_hold_id)
+    )
       await this.provider.session.finalizeNpcSparks(
         c,
         j.id,
@@ -1291,13 +1459,16 @@ export class NpcAiEngine {
   async sweep(campaignId: string) {
     await this.db.tx(async (c) => {
       await c.query(
-        "UPDATE npc_ai_jobs j SET cancel_requested=true,result_code='SPONSOR_UNAVAILABLE' FROM npc_ai_sponsors s WHERE j.sponsor_id=s.id AND j.campaign_id=$1 AND (s.revoked_at IS NOT NULL OR s.expires_at<=now()) AND j.status NOT IN ('committed','stale','cancelled','failed')",
-        [campaignId],
+        "UPDATE npc_ai_jobs j SET cancel_requested=true,result_code='SPONSOR_UNAVAILABLE' FROM npc_ai_sponsors s WHERE j.sponsor_id=s.id AND j.campaign_id=$1 AND ($2::text IS NULL OR j.provider_id=$2) AND (s.revoked_at IS NOT NULL OR s.expires_at<=now()) AND j.status NOT IN ('committed','stale','cancelled','failed')",
+        [campaignId, this.provider instanceof ReleaseGenerationProvider ? this.provider.id : null],
       );
       const jobs = (
         await c.query<Job>(
-          "SELECT * FROM npc_ai_jobs WHERE campaign_id=$1 AND status IN ('reserved','running','result_received','validated') AND (cancel_requested OR reservation_expires_at<=now() OR (status='running' AND deadline_at<=now())) FOR UPDATE",
-          [campaignId],
+          "SELECT * FROM npc_ai_jobs WHERE campaign_id=$1 AND ($2::text IS NULL OR provider_id=$2) AND status IN ('reserved','running','result_received','validated') AND (cancel_requested OR reservation_expires_at<=now() OR (status='running' AND deadline_at<=now())) FOR UPDATE",
+          [
+            campaignId,
+            this.provider instanceof ReleaseGenerationProvider ? this.provider.id : null,
+          ],
         )
       ).rows;
       // A sweep can include historical providers. Lock the whole sorted financial
@@ -1305,6 +1476,23 @@ export class NpcAiEngine {
       await c.query(
         'SELECT * FROM npc_ai_provider_budgets WHERE provider_id=ANY($1::text[]) ORDER BY provider_id FOR UPDATE',
         [[...new Set(jobs.map((j) => j.provider_id))].sort()],
+      );
+      // Prelock every relevant authority/scope before the first global fence. A mixed
+      // payer batch must never acquire a second actor scope while holding that fence.
+      const authorizationIds = [
+        ...new Set(
+          jobs.map((j) => j.generation_authorization_id).filter((id): id is string => !!id),
+        ),
+      ];
+      const authorities = (
+        await c.query(
+          'SELECT id,scope_id FROM live_test_sessions WHERE scope_id IN (SELECT scope_id FROM live_test_sessions WHERE id=ANY($1::uuid[])) ORDER BY id FOR NO KEY UPDATE',
+          [authorizationIds],
+        )
+      ).rows;
+      await c.query(
+        'SELECT id FROM generation_budget_scopes WHERE id=ANY($1::text[]) ORDER BY id FOR UPDATE',
+        [[...new Set(authorities.map((a) => a.scope_id))].sort()],
       );
       for (const j of jobs) {
         if (j.status === 'running') {
@@ -1351,13 +1539,24 @@ export class NpcAiEngine {
         const nextOverrun = Math.max(0, actualMicros - upper);
         if (nextOverrun > 0 || previousOverrun > 0)
           await c.query(
-            'UPDATE npc_ai_provider_budgets SET blocked=true,overrun_micros=overrun_micros+$2 WHERE provider_id=$1',
-            [j.provider_id, nextOverrun - previousOverrun],
+            'UPDATE npc_ai_provider_budgets SET blocked=blocked OR $3,overrun_micros=overrun_micros+$2 WHERE provider_id=$1',
+            [
+              j.provider_id,
+              nextOverrun - previousOverrun,
+              !(this.provider instanceof ReleaseGenerationProvider),
+            ],
           );
         // The shared ledger has no separate overrun column: retain the entire late bill.
         if (this.provider instanceof ManualLiveProvider)
           await this.provider.session.settleJob(c, j.id, actualMicros, false);
-        await this.settleProvider(c, j, Math.min(actualMicros, upper), false);
+        await this.settleProvider(
+          c,
+          j,
+          this.provider instanceof ReleaseGenerationProvider
+            ? actualMicros
+            : Math.min(actualMicros, upper),
+          false,
+        );
         await c.query('UPDATE npc_ai_jobs SET provider_actual_micros=$2 WHERE id=$1', [
           id,
           actualMicros,
@@ -1417,7 +1616,11 @@ export class NpcAiService extends NpcAiEngine implements OnModuleInit, OnModuleD
     const configured = readNpcAiConfiguration();
     super(
       db,
-      live.config.enabled ? new ManualLiveProvider(configured.provider, live) : configured.provider,
+      live.mode === 'release'
+        ? new ReleaseGenerationProvider(configured.provider, live)
+        : live.config.enabled
+          ? new ManualLiveProvider(configured.provider, live)
+          : configured.provider,
       configured.policy,
     );
   }

@@ -44,7 +44,7 @@ import {
   type ImageResult,
 } from './provider';
 import { createImageRuntime, createOwnerImageRuntime, type ImageCapabilities } from './config';
-import { readOwnerGenerationConfig } from '../generation/config';
+import { readGenerationConfig } from '../generation/config';
 import {
   prepareStudioLocationTx,
   authorizeStudioLocationTx,
@@ -357,12 +357,17 @@ export class ImageGenerationEngine {
     let livePolicy: ImagePolicy | undefined;
     if (input.mode === 'external' && this.capabilities) {
       const authorizationId = input.generationAuthorizationId ?? input.liveTestSessionId;
-      if (!this.liveAuthorizer || (!authorizationId && this.policy.generationMode !== 'owner'))
+      if (
+        !this.liveAuthorizer ||
+        (!authorizationId &&
+          this.policy.generationMode !== 'owner' &&
+          this.policy.generationMode !== 'release')
+      )
         fail(409, 'MANUAL_LIVE_SESSION_REQUIRED', 'MANUAL_LIVE_SESSION_REQUIRED');
       const authorized = await this.liveAuthorizer!(c, actorId, authorizationId, input);
-      if (this.policy.generationMode === 'owner') {
+      if (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release') {
         if (
-          authorized.generationMode !== 'owner' ||
+          authorized.generationMode !== this.policy.generationMode ||
           authorized.generationConfigFingerprint !== this.policy.generationConfigFingerprint ||
           !authorized.generationAuthorizationId ||
           (authorizationId && authorizationId !== authorized.generationAuthorizationId)
@@ -386,7 +391,11 @@ export class ImageGenerationEngine {
   }
   private planning(input: GenerationRequest) {
     const base = this.policy.ownerImageProfile;
-    if (input.mode !== 'external' || this.policy.generationMode !== 'owner' || !base)
+    if (
+      input.mode !== 'external' ||
+      (this.policy.generationMode !== 'owner' && this.policy.generationMode !== 'release') ||
+      !base
+    )
       return undefined;
     const p = resolveOwnerImageProfile(base, input.imageFraming);
     const references = input.referenceRevisionIds.length + input.privateReferenceAssetIds.length;
@@ -403,7 +412,7 @@ export class ImageGenerationEngine {
     return (
       this.planning(input)?.estimateSnapshot.reserveMicros ??
       (input.mode === 'mock'
-        ? this.policy.generationMode === 'owner'
+        ? this.policy.generationMode === 'owner' || this.policy.generationMode === 'release'
           ? 0
           : this.policy.mockUpperMicros
         : this.policy.costBasis === 'approved_estimate'
@@ -420,7 +429,7 @@ export class ImageGenerationEngine {
     policy?: ImagePolicy,
   ) {
     if (
-      this.policy.generationMode !== 'owner' ||
+      (this.policy.generationMode !== 'owner' && this.policy.generationMode !== 'release') ||
       generationRequestSchema.parse(row.input).mode !== 'external' ||
       !this.capabilities
     )
@@ -454,14 +463,17 @@ export class ImageGenerationEngine {
         Date.parse(this.policy.externalExpiresAt) <= Date.now()) ||
       !Number.isSafeInteger(reserve) ||
       reserve <= 0 ||
-      reserve > (this.policy.generationMode === 'owner' ? this.policy.imageCapMicros : 1000000) ||
+      reserve >
+        (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release'
+          ? this.policy.imageCapMicros
+          : 1000000) ||
       (this.policy.costBasis !== 'approved_estimate' && this.policy.verifiedUpperMicros === null)
     )
       fail(409, 'LIVE_COST_BOUND_REQUIRED', 'LIVE_COST_BOUND_REQUIRED');
     if (
       this.policy.costBasis === 'approved_estimate' &&
       (input.referenceRevisionIds.length || input.privateReferenceAssetIds.length) &&
-      (this.policy.generationMode !== 'owner' ||
+      ((this.policy.generationMode !== 'owner' && this.policy.generationMode !== 'release') ||
         input.referenceRevisionIds.length + input.privateReferenceAssetIds.length >
           (this.capabilities?.requestProfile.maxReferenceImages ?? 0))
     )
@@ -482,7 +494,10 @@ export class ImageGenerationEngine {
   }) {
     const input = generationRequestSchema.parse(row.input),
       planned = this.planning(input);
-    if (this.policy.generationMode === 'owner' && input.mode === 'external') {
+    if (
+      (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release') &&
+      input.mode === 'external'
+    ) {
       if (
         row.cost_basis !== 'approved_estimate' ||
         Number(row.estimated_total_micros) !==
@@ -550,7 +565,7 @@ export class ImageGenerationEngine {
         policyRevision = currentAuthorization.livePolicy?.generationPolicyRevision,
         policyHash = currentAuthorization.livePolicy?.generationPolicyHash;
       if (
-        this.policy.generationMode === 'owner' &&
+        (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release') &&
         input.mode === 'external' &&
         this.capabilities &&
         (!Number.isSafeInteger(policyRevision) || !policyHash)
@@ -594,35 +609,42 @@ export class ImageGenerationEngine {
         ],
       );
       let sparkQuoteId: string | null = null;
-      if (input.mode === 'external' && (await sparksEnabled(c, actorId))) {
+      if (
+        input.mode === 'external' &&
+        (this.policy.generationMode === 'release' || (await sparksEnabled(c, actorId)))
+      ) {
         const profile = planned?.pricingProfileSnapshot;
         if (!profile)
           fail(409, 'SPARK_PRICING_SNAPSHOT_REQUIRED', 'SPARK_PRICING_SNAPSHOT_REQUIRED');
-        sparkQuoteId = await quoteSparks(c, {
-          ownerId: actorId,
-          operationId: id,
-          sourceKind: 'image',
-          sourceId: id,
-          reserveSubunits: String(upper),
-          expiresAt: expiresAt.toISOString(),
-          tariff: sparkTariff(
-            {
-              model: profile!.model,
-              inputMicrosPerMillion: profile!.inputTextMicrosPerMillion,
-              outputMicrosPerMillion: profile!.outputImageMicrosPerMillion,
+        sparkQuoteId = await quoteSparks(
+          c,
+          {
+            ownerId: actorId,
+            operationId: id,
+            sourceKind: 'image',
+            sourceId: id,
+            reserveSubunits: String(upper),
+            expiresAt: expiresAt.toISOString(),
+            tariff: sparkTariff(
+              {
+                model: profile!.model,
+                inputMicrosPerMillion: profile!.inputTextMicrosPerMillion,
+                outputMicrosPerMillion: profile!.outputImageMicrosPerMillion,
+              },
+              this.provider.id,
+              profile!.fingerprint,
+            ),
+            providerQuote: {
+              quoteId: id,
+              requestHash,
+              pricingProfile: profile,
+              estimate: planned?.estimateSnapshot,
+              settlement: 'actual-image-micros',
+              cachePricing: 'not-quoted',
             },
-            this.provider.id,
-            profile!.fingerprint,
-          ),
-          providerQuote: {
-            quoteId: id,
-            requestHash,
-            pricingProfile: profile,
-            estimate: planned?.estimateSnapshot,
-            settlement: 'actual-image-micros',
-            cachePricing: 'not-quoted',
           },
-        });
+          { required: this.policy.generationMode === 'release' },
+        );
         await c.query('UPDATE image_generation_quotes SET spark_quote_id=$2 WHERE id=$1', [
           id,
           sparkQuoteId,
@@ -670,9 +692,10 @@ export class ImageGenerationEngine {
               }
             : {}),
           ...(policyRevision != null ? { policyRevision, policyHash } : {}),
-          ...(input.mode === 'external' && this.policy.generationMode === 'owner'
+          ...(input.mode === 'external' &&
+          (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release')
             ? {
-                generationMode: 'owner',
+                generationMode: this.policy.generationMode,
                 estimateRiskConsentRequired: true,
                 providerEnforcesQuotedCap: false,
               }
@@ -760,7 +783,9 @@ export class ImageGenerationEngine {
         if (
           previous.mode === 'external' &&
           previous.cost_basis === 'approved_estimate' &&
-          (previous.input.generationAuthorizationId || this.policy.generationMode === 'owner') &&
+          (previous.input.generationAuthorizationId ||
+            this.policy.generationMode === 'owner' ||
+            this.policy.generationMode === 'release') &&
           b.estimateRiskConsent !== true
         )
           fail(409, 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED', 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED');
@@ -778,7 +803,7 @@ export class ImageGenerationEngine {
       // A separate informed action is mandatory even on idempotent replay; ordinary consent is not estimate consent.
       if (
         input.mode === 'external' &&
-        this.policy.generationMode === 'owner' &&
+        (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release') &&
         (q.cost_basis !== 'approved_estimate' || b.estimateRiskConsent !== true)
       )
         fail(409, 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED', 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED');
@@ -813,7 +838,8 @@ export class ImageGenerationEngine {
       const id = randomUUID(),
         reservation = await reserveGenerationSpend(
           c,
-          input.mode === 'mock' && this.policy.generationMode === 'owner'
+          input.mode === 'mock' &&
+            (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release')
             ? {
                 ...defaultImagePolicy,
                 version: 'image-fixtures-nonfinancial-v1',
@@ -823,7 +849,8 @@ export class ImageGenerationEngine {
                 textCapMicros: 0,
                 mockUpperMicros: 0,
               }
-            : input.mode === 'external' && this.policy.generationMode === 'owner'
+            : input.mode === 'external' &&
+                (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release')
               ? {
                   ...(authorization.livePolicy ?? this.policy),
                   estimatedTotalMicros: Number(q.estimated_total_micros),
@@ -836,7 +863,10 @@ export class ImageGenerationEngine {
           Number(q.upper_micros),
           input.mode === 'mock',
         );
-      if (input.mode === 'external') await reserveSparks(c, actorId, q.spark_quote_id, reservation);
+      if (input.mode === 'external')
+        await reserveSparks(c, actorId, q.spark_quote_id, reservation, {
+          required: this.policy.generationMode === 'release',
+        });
       const job = (
         await c.query<Job>(
           "INSERT INTO image_generation_jobs(id,actor_id,adventure_id,operation_id,quote_id,request_hash,input,reference_hashes,mode,policy_version,status,reservation_id,upper_micros,expires_at,upload_id,family_id,revision_id,cost_basis,estimated_total_micros,estimate_snapshot,pricing_profile_snapshot,generation_policy_revision,generation_policy_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *",
@@ -1253,7 +1283,8 @@ export class ImageGenerationEngine {
         'UPDATE image_generation_jobs SET status=$2,actual_micros=COALESCE($3,actual_micros),provider_request_id=$4,quarantine_filename=$5,quarantine_sha256=$6,quarantine_mime=$7,quota_reserved_bytes=CASE WHEN $8 THEN 0 ELSE quota_reserved_bytes END,error_code=$9,updated_at=now() WHERE id=$1',
         [
           id,
-          result.actualMicros === undefined && this.policy.generationMode === 'owner'
+          result.actualMicros === undefined &&
+          (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release')
             ? 'unknown'
             : rejected
               ? result.actualMicros === undefined
@@ -1307,7 +1338,10 @@ export class ImageGenerationEngine {
       await this.rejectAdmission(row, 'IMAGE_FRAMING_DIMENSIONS_MISMATCH');
       return;
     }
-    if (row.mode === 'external' && this.policy.generationMode === 'owner') {
+    if (
+      row.mode === 'external' &&
+      (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release')
+    ) {
       const expected = (
         row.pricing_profile_snapshot?.size ?? this.capabilities?.requestProfile.size
       )
@@ -1329,7 +1363,7 @@ export class ImageGenerationEngine {
           input.framingVersion === undefined,
         );
         this.assertPolicyRevision(row, admissionAuthorization.livePolicy);
-        if (this.policy.generationMode === 'owner') {
+        if (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release') {
           this.liveGate(input);
           this.assertQuotedProvider(row);
         }
@@ -1405,9 +1439,9 @@ export class ImageGenerationService extends ImageGenerationEngine implements OnM
   private busy: Promise<void> | undefined;
   private stopped = false;
   constructor(@Inject(Db) db: Db, @Inject(AssetReuseService) assets: AssetReuseService) {
-    const ownerConfig = readOwnerGenerationConfig(process.env);
+    const ownerConfig = readGenerationConfig(process.env);
     const runtime =
-      ownerConfig.mode === 'owner'
+      ownerConfig.mode === 'owner' || ownerConfig.mode === 'release'
         ? createOwnerImageRuntime(ownerConfig, {
             resolveApiKey: () => process.env.OPENAI_API_KEY ?? process.env.NPC_AI_API_KEY,
           })
