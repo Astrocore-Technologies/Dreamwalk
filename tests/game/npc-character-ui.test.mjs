@@ -36,6 +36,7 @@ test('structured profile is opt-in, clears explicitly and respects bounded real 
   assert.match(profile, /dialogueExamples:/);
 });
 test('lore preview is explicit, saved-source-bound, stale guarded and knowledge-specific', () => {
+  assert.match(lore, /<section className="panel stack" data-testid="story-lorebook-editor">/);
   assert.ok(lore.indexOf('await beforePreview()') < lore.indexOf('await api<Preview>'));
   assert.match(lore, /if \(!saved\) throw/);
   assert.match(lore, /inputFingerprint !== fingerprintRef\.current/);

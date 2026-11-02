@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { Npc, StoryLoreEntry } from '@dreamwalk/contracts';
 import { api, errorMessage, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
-import { Button, ErrorBox, Field, Input, Panel, Select, Textarea } from '../ui';
+import { Button, ErrorBox, Field, Input, Select, Textarea } from '../ui';
 import { characterText, type CharacterCopyKey } from './npc-character-copy';
 
 type Preview = {
@@ -111,7 +111,7 @@ export function StoryLorebookEditor({
     }
   }
   return (
-    <Panel className="stack" data-testid="story-lorebook-editor">
+    <section className="panel stack" data-testid="story-lorebook-editor">
       <h2>{text('lore')}</h2>
       <p className="muted">{text('loreIntro')}</p>
       <ErrorBox
@@ -346,6 +346,6 @@ export function StoryLorebookEditor({
           {!result.preview.entries.some((entry) => !entry.included) && <p>{text('empty')}</p>}
         </section>
       )}
-    </Panel>
+    </section>
   );
 }

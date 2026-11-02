@@ -244,12 +244,13 @@ test(
         .fill('Небольшой двор для синтетической проверки.');
       await page.getByRole('button', { name: 'Сохранить черновик', exact: true }).click();
       await page.getByRole('button', { name: /NPC$/ }).click();
+      const npcEditor = page.getByTestId('story-npc-editor').locator('..');
       await page.getByRole('button', { name: 'Создать NPC здесь', exact: true }).click();
       await page.getByLabel('Имя NPC', { exact: true }).fill('Локальный хранитель');
       await page.getByLabel('Внешность', { exact: true }).fill('Рисованная фигура в зелёном плаще');
       await page.getByRole('button', { name: 'Сохранить персонажа', exact: true }).dblclick();
       await expect(
-        page.getByText('Персонаж сохранён в этой истории.', { exact: true }),
+        npcEditor.getByText('Персонаж сохранён в этой истории.', { exact: true }),
       ).toBeVisible();
       let locals = await owner.request(`/studio/adventures/${storyId}/npcs`);
       assert.equal(locals.npcs.length, 1, 'double-click must not create two NPCs');
@@ -267,7 +268,11 @@ test(
         .filter({ hasText: /^\s*Закрыть\s*$/ })
         .click();
       await expect(discard).not.toBeVisible();
-      await page.getByRole('button', { name: 'Редактировать', exact: true }).click();
+      await npcEditor
+        .locator('.row')
+        .filter({ has: page.locator('strong').filter({ hasText: /^Локальный хранитель$/ }) })
+        .getByRole('button', { name: 'Редактировать', exact: true })
+        .click();
       await expect(page.getByLabel('Имя NPC', { exact: true })).toHaveValue('Локальный хранитель');
       await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
       await page
@@ -280,7 +285,7 @@ test(
       await page.getByLabel('Имя NPC', { exact: true }).fill('Копия для этой истории');
       await page.getByRole('button', { name: 'Сохранить персонажа', exact: true }).click();
       await expect(
-        page.getByText('Персонаж сохранён в этой истории.', { exact: true }),
+        npcEditor.getByText('Персонаж сохранён в этой истории.', { exact: true }),
       ).toBeVisible();
       assert.equal((await owner.request(`/npcs/${template.id}`)).name, 'Библиотечный хранитель');
       await page.screenshot({ path: `${screenshotDir}/inline-npc.png`, fullPage: true });
@@ -289,7 +294,10 @@ test(
       locals = await owner.request(`/studio/adventures/${storyId}/npcs`);
       assert.equal(locals.npcs.length, 2);
       assert.ok(locals.npcs.some((n) => n.id === localId));
-      await expect(page.getByText('Копия для этой истории', { exact: true })).toBeVisible();
+      // Assert the actual scoped NPC row, not a duplicate lore-preview option.
+      await expect(
+        npcEditor.locator('.row > strong').filter({ hasText: /^Копия для этой истории$/ }),
+      ).toBeVisible();
       await page.getByRole('button', { name: /Локации$/ }).click();
       await page.getByRole('button', { name: 'Подготовить план', exact: true }).click();
       await expect(page.getByText('Исходные данные готовы', { exact: true })).toBeVisible();
