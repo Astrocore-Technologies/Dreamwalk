@@ -212,7 +212,8 @@ export function LiveTestPanel({
         return m('releaseUnavailable');
     }
   };
-  const money = (value: number) => (releaseMode ? sparkAmount(value) : formatUsd(value, locale));
+  const money = (value: number | null) =>
+    value === null ? '—' : releaseMode ? sparkAmount(value) : formatUsd(value, locale);
   async function claim() {
     if (
       !status ||
@@ -350,6 +351,12 @@ export function LiveTestPanel({
           <h2>{m('releaseTitle')}</h2>
           <p>{m(active ? 'releaseReady' : 'releaseUnavailable')}</p>
           <p className={styles.note}>{m('releaseBilling')}</p>
+          {status.allowance === 'unlimited' && (
+            <p data-generation-unlimited>
+              {m('releaseUnlimited')} {m('releaseWalletAvailable')}:{' '}
+              {sparkAmount(status.remainingMicros)}
+            </p>
+          )}
           {!pricingCurrent && <p role="status">{m('pricingExpired')}</p>}
           {status.stopCode && (
             <p role="status">

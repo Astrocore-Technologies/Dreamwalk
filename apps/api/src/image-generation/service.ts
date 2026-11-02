@@ -376,15 +376,36 @@ export class ImageGenerationEngine {
         // Pin the explicit persisted claim, including when the caller omitted its convenience alias.
         input.generationAuthorizationId = authorized.generationAuthorizationId;
       }
+      const unlimited =
+        this.policy.generationMode === 'release' && this.policy.releaseUnlimitedAllowance === true;
+      if (
+        unlimited !== (authorized.releaseUnlimitedAllowance === true) ||
+        (!unlimited &&
+          [
+            authorized.totalCapMicros,
+            authorized.imageCapMicros,
+            authorized.textCapMicros,
+            this.policy.totalCapMicros,
+            this.policy.imageCapMicros,
+            this.policy.textCapMicros,
+          ].some((cap) => cap === null))
+      )
+        fail(409, 'GENERATION_AUTHORIZATION_MISMATCH', 'GENERATION_AUTHORIZATION_MISMATCH');
       livePolicy = {
         ...authorized,
         verifiedUpperMicros: this.policy.verifiedUpperMicros,
         costBasis: this.policy.costBasis,
         estimatedTotalMicros: this.policy.estimatedTotalMicros,
         operationalReserveMicros: this.policy.operationalReserveMicros,
-        totalCapMicros: Math.min(authorized.totalCapMicros, this.policy.totalCapMicros),
-        imageCapMicros: Math.min(authorized.imageCapMicros, this.policy.imageCapMicros),
-        textCapMicros: Math.min(authorized.textCapMicros, this.policy.textCapMicros),
+        totalCapMicros: unlimited
+          ? null
+          : Math.min(authorized.totalCapMicros!, this.policy.totalCapMicros!),
+        imageCapMicros: unlimited
+          ? null
+          : Math.min(authorized.imageCapMicros!, this.policy.imageCapMicros!),
+        textCapMicros: unlimited
+          ? null
+          : Math.min(authorized.textCapMicros!, this.policy.textCapMicros!),
       };
     }
     return { hashes, refs, livePolicy };
@@ -463,10 +484,12 @@ export class ImageGenerationEngine {
         Date.parse(this.policy.externalExpiresAt) <= Date.now()) ||
       !Number.isSafeInteger(reserve) ||
       reserve <= 0 ||
-      reserve >
+      (!(
+        this.policy.generationMode === 'release' && this.policy.releaseUnlimitedAllowance === true
+      ) &&
         (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release'
-          ? this.policy.imageCapMicros
-          : 1000000) ||
+          ? this.policy.imageCapMicros === null || reserve > this.policy.imageCapMicros
+          : reserve > 1000000)) ||
       (this.policy.costBasis !== 'approved_estimate' && this.policy.verifiedUpperMicros === null)
     )
       fail(409, 'LIVE_COST_BOUND_REQUIRED', 'LIVE_COST_BOUND_REQUIRED');

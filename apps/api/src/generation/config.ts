@@ -61,6 +61,14 @@ const textSchema = z
     maxInputBytes: z.number().int().min(1024).max(TEXT_CONTEXT_TRANSPORT_BYTES).optional(),
     inputMicrosPerMillion: positiveMicros,
     outputMicrosPerMillion: positiveMicros,
+    cachePricing: z
+      .object({
+        cachedInputMicrosPerMillion: positiveMicros,
+        cacheWrite30mMicrosPerMillion: positiveMicros,
+        cacheWrite12hMicrosPerMillion: positiveMicros,
+      })
+      .strict()
+      .optional(),
     estimation: textEstimationSchema.optional(),
     pricing: pricingSchema,
   })
@@ -183,9 +191,16 @@ export interface OwnerGenerationConfig {
   /** Quote/profile identity only. Never use this value as a new financial scope. */
   readonly configFingerprint: string;
 }
-export type ReleaseGenerationConfig = Omit<OwnerGenerationConfig, 'mode' | 'ownerHandle'> & {
+export type ReleaseGenerationConfig = Omit<
+  OwnerGenerationConfig,
+  'mode' | 'ownerHandle' | 'totalCapMicros' | 'textCapMicros' | 'imageCapMicros'
+> & {
   readonly mode: 'release';
-  readonly aggregateCapMicros: number;
+  readonly allowance?: 'unlimited';
+  readonly totalCapMicros: number | null;
+  readonly textCapMicros: number | null;
+  readonly imageCapMicros: number | null;
+  readonly aggregateCapMicros: number | null;
 };
 export type ConfiguredGenerationConfig = OwnerGenerationConfig | ReleaseGenerationConfig;
 
@@ -224,7 +239,33 @@ export function readOwnerGenerationConfig(
   } catch {
     invalid('OWNER_GENERATION_CONFIG_INVALID');
   }
-  const parsed = profileSchema.safeParse(value);
+  const profile = validatedProfile(value, now, false);
+  const configured = {
+    mode: 'owner' as const,
+    ownerHandle,
+    ...profile,
+    totalCapMicros: profile.totalCapMicros!,
+    textCapMicros: profile.textCapMicros!,
+    imageCapMicros: profile.imageCapMicros!,
+  };
+  return Object.freeze({
+    ...configured,
+    configFingerprint: createHash('sha256').update(JSON.stringify(configured)).digest('hex'),
+  });
+}
+function validatedProfile(value: unknown, now: number, unlimited: boolean) {
+  const parsed = unlimited
+    ? z
+        .object({ text: textSchema, image: reviewedImageSchema })
+        .strict()
+        .transform((v) => ({
+          ...v,
+          totalCapMicros: null,
+          textCapMicros: null,
+          imageCapMicros: null,
+        }))
+        .safeParse(value)
+    : profileSchema.safeParse(value);
   if (!parsed.success) invalid('OWNER_GENERATION_CONFIG_INVALID');
   const profile = parsed.data;
   if (
@@ -268,16 +309,22 @@ export function readOwnerGenerationConfig(
     invalid('OWNER_GENERATION_ESTIMATION_INVALID');
   }
   if (
-    (profile.text.estimation ? minimumTextReserve : upper) > profile.textCapMicros ||
-    profile.textCapMicros > profile.totalCapMicros ||
-    profile.imageCapMicros > profile.totalCapMicros ||
-    (profile.image.estimation ? imageBaseline.reserveMicros : maxImageReserve) >
-      profile.imageCapMicros
+    profile.totalCapMicros !== null &&
+    profile.textCapMicros !== null &&
+    profile.imageCapMicros !== null &&
+    ((profile.text.estimation ? minimumTextReserve : upper) > profile.textCapMicros ||
+      profile.textCapMicros > profile.totalCapMicros ||
+      profile.imageCapMicros > profile.totalCapMicros ||
+      (profile.image.estimation ? imageBaseline.reserveMicros : maxImageReserve) >
+        profile.imageCapMicros)
   )
     invalid('OWNER_GENERATION_BUDGET_INVALID');
   const text: OwnerTextProfile = Object.freeze({
     ...profile.text,
     pricing: Object.freeze(profile.text.pricing),
+    ...(profile.text.cachePricing
+      ? { cachePricing: Object.freeze(profile.text.cachePricing) }
+      : {}),
     ...(profile.text.estimation ? { estimation: Object.freeze(profile.text.estimation) } : {}),
     upperMicros: upper,
   });
@@ -300,20 +347,13 @@ export function readOwnerGenerationConfig(
     costBasis: 'approved_estimate',
     providerEnforcesQuotedCap: false,
   });
-  const configured = {
-    mode: 'owner' as const,
-    ownerHandle,
+  return {
     totalCapMicros: profile.totalCapMicros,
     textCapMicros: profile.textCapMicros,
     imageCapMicros: profile.imageCapMicros,
     text,
     image,
   };
-  // Zod fixes property order; credential rotation does not change quote identity.
-  return Object.freeze({
-    ...configured,
-    configFingerprint: createHash('sha256').update(JSON.stringify(configured)).digest('hex'),
-  });
 }
 
 /** Resolve only inside an explicitly reviewed range; the SAME conservative token assumption
@@ -346,6 +386,21 @@ export function readGenerationConfig(
   }
   if (!value || typeof value !== 'object' || Array.isArray(value))
     invalid('GENERATION_CONFIG_INVALID');
+  if (value.allowance === 'unlimited') {
+    const { allowance: _allowance, ...rest } = value;
+    void _allowance;
+    const profile = validatedProfile(rest, now, true);
+    const configured = {
+      ...profile,
+      mode: 'release' as const,
+      allowance: 'unlimited' as const,
+      aggregateCapMicros: null,
+    };
+    return Object.freeze({
+      ...configured,
+      configFingerprint: createHash('sha256').update(JSON.stringify(configured)).digest('hex'),
+    });
+  }
   const { aggregateCapMicros, ...profile } = value;
   const aggregate = positiveMicros.safeParse(aggregateCapMicros);
   if (!aggregate.success) invalid('GENERATION_AGGREGATE_CAP_REQUIRED');

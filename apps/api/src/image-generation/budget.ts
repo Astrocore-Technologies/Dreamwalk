@@ -31,13 +31,14 @@ export async function reserveGenerationSpend(
   )
     fail(409, 'LIVE_COST_BOUND_REQUIRED', 'LIVE_COST_BOUND_REQUIRED');
   await c.query(
-    'INSERT INTO generation_budget_scopes(id,approved,total_cap_micros,image_cap_micros,text_cap_micros) VALUES($1,$2,$3,$4,$5) ON CONFLICT DO NOTHING',
+    'INSERT INTO generation_budget_scopes(id,approved,total_cap_micros,image_cap_micros,text_cap_micros,unlimited_allowance) VALUES($1,$2,$3,$4,$5,$6) ON CONFLICT DO NOTHING',
     [
       policy.scopeId,
       policy.approved,
       policy.totalCapMicros,
       policy.imageCapMicros,
       policy.textCapMicros,
+      policy.generationMode === 'release' && policy.releaseUnlimitedAllowance === true,
     ],
   );
   const scope = (
@@ -54,7 +55,7 @@ export async function reserveGenerationSpend(
       // Historical reservations are not rewritten and still count toward aggregate exposure.
       const authorization = (
         await c.query(
-          'SELECT owner_id,scope_id,state,mode,config_hash,policy_revision,policy_hash FROM live_test_sessions WHERE id=$1',
+          'SELECT owner_id,scope_id,state,mode,config_hash,policy_revision,policy_hash,unlimited_allowance,cap_micros,text_cap_micros,image_cap_micros FROM live_test_sessions WHERE id=$1',
           [policy.generationAuthorizationId],
         )
       ).rows[0];
@@ -70,9 +71,29 @@ export async function reserveGenerationSpend(
         authorization.policy_hash !== policy.generationPolicyHash
       )
         fail(409, 'GENERATION_AUTHORIZATION_MISMATCH', 'GENERATION_AUTHORIZATION_MISMATCH');
+      const unlimited = policy.releaseUnlimitedAllowance === true;
       if (
-        !Number.isSafeInteger(policy.releaseAggregateCapMicros) ||
-        policy.releaseAggregateCapMicros! <= 0
+        authorization.unlimited_allowance !== unlimited ||
+        scope.unlimited_allowance !== unlimited ||
+        (unlimited &&
+          [
+            policy.totalCapMicros,
+            policy.textCapMicros,
+            policy.imageCapMicros,
+            policy.releaseAggregateCapMicros,
+            scope.total_cap_micros,
+            scope.text_cap_micros,
+            scope.image_cap_micros,
+            authorization.cap_micros,
+            authorization.text_cap_micros,
+            authorization.image_cap_micros,
+          ].some((value) => value !== null))
+      )
+        fail(409, 'GENERATION_AUTHORIZATION_MISMATCH', 'GENERATION_AUTHORIZATION_MISMATCH');
+      if (
+        !unlimited &&
+        (!Number.isSafeInteger(policy.releaseAggregateCapMicros) ||
+          policy.releaseAggregateCapMicros! <= 0)
       )
         fail(409, 'RELEASE_AGGREGATE_CAP_REQUIRED', 'RELEASE_AGGREGATE_CAP_REQUIRED');
     } else {
@@ -144,7 +165,7 @@ export async function reserveGenerationSpend(
       fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
     return prior.id as string;
   }
-  if (!mock && policy.generationMode === 'release') {
+  if (!mock && policy.generationMode === 'release' && !policy.releaseUnlimitedAllowance) {
     // The global fence serializes cross-actor admissions and late receipts. It is
     // a financial ceiling, not a global 'one error stops everybody' circuit.
     const aggregate = await aggregateGenerationExposure(c);
@@ -175,13 +196,14 @@ export async function reserveGenerationSpend(
     )
   ).rows[0];
   if (
-    Number(usage.total) + upperMicros >
-      Math.min(Number(scope.total_cap_micros), policy.totalCapMicros) ||
-    Number(usage.purpose) + upperMicros >
-      Math.min(
-        Number(scope[`${kind}_cap_micros`]),
-        kind === 'image' ? policy.imageCapMicros : policy.textCapMicros,
-      )
+    !(policy.generationMode === 'release' && policy.releaseUnlimitedAllowance === true) &&
+    (Number(usage.total) + upperMicros >
+      Math.min(Number(scope.total_cap_micros), policy.totalCapMicros ?? 0) ||
+      Number(usage.purpose) + upperMicros >
+        Math.min(
+          Number(scope[`${kind}_cap_micros`]),
+          (kind === 'image' ? policy.imageCapMicros : policy.textCapMicros) ?? 0,
+        ))
   )
     fail(409, 'GENERATION_BUDGET_EXCEEDED', 'GENERATION_BUDGET_EXCEEDED');
   const id = randomUUID();

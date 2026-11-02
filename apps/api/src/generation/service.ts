@@ -549,11 +549,12 @@ export class GenerationAuthority {
     return this.textProfile().upperMicros;
   }
   budgetCaps() {
-    return this.profileConfig
+    if (this.release) fail(409, 'GENERATION_ACTOR_REQUIRED', 'GENERATION_ACTOR_REQUIRED');
+    return this.ownerConfig
       ? {
-          totalCapMicros: this.profileConfig!.totalCapMicros,
-          textCapMicros: this.profileConfig!.textCapMicros,
-          imageCapMicros: this.profileConfig!.imageCapMicros,
+          totalCapMicros: this.ownerConfig!.totalCapMicros,
+          textCapMicros: this.ownerConfig!.textCapMicros,
+          imageCapMicros: this.ownerConfig!.imageCapMicros,
         }
       : {
           totalCapMicros: LIVE_TEXT.capMicros,
@@ -630,6 +631,12 @@ export class GenerationAuthority {
       return this.release.policy(c, userId!);
     }
     const policy = this.policy();
+    if (
+      policy.totalCapMicros === null ||
+      policy.textCapMicros === null ||
+      policy.imageCapMicros === null
+    )
+      return fail(409, 'GENERATION_BOUNDED_POLICY_REQUIRED', 'GENERATION_BOUNDED_POLICY_REQUIRED');
     const scope = (
       await c.query(
         'SELECT total_cap_micros,text_cap_micros,image_cap_micros FROM generation_budget_scopes WHERE id=$1',
@@ -1952,7 +1959,7 @@ export class GenerationAuthority {
    * Never locks an authorization/scope or takes another advisory lock under that fence.
    * An operator candidate is not an accepted cap until its persisted revision matches.
    */
-  async acknowledgedTextCap(c: PoolClient, authorizationId: string): Promise<number> {
+  async acknowledgedTextCap(c: PoolClient, authorizationId: string): Promise<number | null> {
     if (this.release) {
       await this.release.active(c, authorizationId);
       return this.release.config.aggregateCapMicros;
@@ -2246,7 +2253,10 @@ export class GenerationAuthority {
         ? Math.max(0, Number(wallet.balance_subunits) - Number(wallet.held_subunits))
         : 0;
       const exposure = await aggregateGenerationExposure(c);
-      const aggregateRemaining = Math.max(0, cfg.aggregateCapMicros - Number(exposure.totalMicros));
+      const aggregateRemaining =
+        cfg.aggregateCapMicros === null
+          ? available
+          : Math.max(0, cfg.aggregateCapMicros - Number(exposure.totalMicros));
       const current =
         ownerPricingIsCurrent(cfg.text.pricing) && ownerPricingIsCurrent(cfg.image.pricing);
       const stopCode = !current
@@ -2262,10 +2272,14 @@ export class GenerationAuthority {
                 : row && row.config_hash !== cfg.configFingerprint
                   ? 'GENERATION_POLICY_CHANGED'
                   : null;
-      const cap = Math.min(cfg.totalCapMicros, Number(row?.cap_micros ?? cfg.totalCapMicros));
+      const cap =
+        cfg.totalCapMicros === null
+          ? null
+          : Math.min(cfg.totalCapMicros, Number(row?.cap_micros ?? cfg.totalCapMicros));
       return {
         ownerId: userId,
         mode: 'release' as const,
+        ...(cfg.allowance ? { allowance: cfg.allowance } : {}),
         enabled: true,
         authorizationId: row?.id ?? null,
         sessionId: row?.id ?? null,
@@ -2285,15 +2299,27 @@ export class GenerationAuthority {
         imageUsedMicros: Number(usage.image),
         remainingMicros: Math.max(
           0,
-          Math.min(cap - Number(usage.used), available, aggregateRemaining),
+          Math.min(
+            cap === null ? available : cap - Number(usage.used),
+            available,
+            aggregateRemaining,
+          ),
         ),
         textRemainingMicros: Math.max(
           0,
-          Math.min(cfg.textCapMicros - Number(usage.text), available, aggregateRemaining),
+          Math.min(
+            cfg.textCapMicros === null ? available : cfg.textCapMicros - Number(usage.text),
+            available,
+            aggregateRemaining,
+          ),
         ),
         imageRemainingMicros: Math.max(
           0,
-          Math.min(cfg.imageCapMicros - Number(usage.image), available, aggregateRemaining),
+          Math.min(
+            cfg.imageCapMicros === null ? available : cfg.imageCapMicros - Number(usage.image),
+            available,
+            aggregateRemaining,
+          ),
         ),
         priorHeldReservations: 0,
         policyRevision: 1,

@@ -61,3 +61,50 @@ test('release configuration is explicit, strict, account-independent and has an 
     /CONFIG_INVALID/,
   );
 });
+
+test('explicit unlimited release has null operator caps, never fake high numbers or owner bypass', async () => {
+  const { readGenerationConfig } = await import('../../apps/api/src/generation/config.ts');
+  const original = ownerProfile();
+  const { totalCapMicros, textCapMicros, imageCapMicros, ...models } = original;
+  void totalCapMicros;
+  void textCapMicros;
+  void imageCapMicros;
+  const profile = { ...models, allowance: 'unlimited' };
+  const value = readGenerationConfig({
+    GENERATION_MODE: 'release',
+    GENERATION_CONFIG_JSON: JSON.stringify(profile),
+  });
+  assert.equal(value.allowance, 'unlimited');
+  for (const key of ['totalCapMicros', 'textCapMicros', 'imageCapMicros', 'aggregateCapMicros'])
+    assert.equal(value[key], null);
+  assert.equal(value.ownerHandle, undefined);
+  for (const patch of [{ aggregateCapMicros: 1 }, { totalCapMicros: 1 }, { allowance: 'anything' }])
+    assert.throws(() =>
+      readGenerationConfig({
+        GENERATION_MODE: 'release',
+        GENERATION_CONFIG_JSON: JSON.stringify({ ...profile, ...patch }),
+      }),
+    );
+  assert.throws(() => readOwnerGenerationConfig(ownerEnvironment(profile)));
+});
+
+test('reviewed cache tariffs are immutable profile identity and cannot omit a write class', async () => {
+  const { readGenerationConfig } = await import('../../apps/api/src/generation/config.ts');
+  const profile = { ...ownerProfile(), aggregateCapMicros: 4000000 };
+  profile.text.cachePricing = {
+    cachedInputMicrosPerMillion: 10000,
+    cacheWrite30mMicrosPerMillion: 125000,
+    cacheWrite12hMicrosPerMillion: 250000,
+  };
+  const parse = () =>
+    readGenerationConfig({
+      GENERATION_MODE: 'release',
+      GENERATION_CONFIG_JSON: JSON.stringify(profile),
+    });
+  const before = parse();
+  assert.equal(Object.isFrozen(before.text.cachePricing), true);
+  profile.text.cachePricing.cacheWrite30mMicrosPerMillion++;
+  assert.notEqual(parse().configFingerprint, before.configFingerprint);
+  delete profile.text.cachePricing.cacheWrite12hMicrosPerMillion;
+  assert.throws(parse);
+});

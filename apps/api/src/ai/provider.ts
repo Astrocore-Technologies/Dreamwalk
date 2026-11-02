@@ -22,6 +22,13 @@ const resultSchema = z
         inputTokens: z.number().int().nonnegative().max(10000000),
         cachedInputTokens: z.number().int().nonnegative().max(10000000).optional(),
         cacheWriteInputTokens: z.number().int().nonnegative().max(10000000).optional(),
+        cacheWriteInputTokensDetails: z
+          .object({
+            ttl30mTokens: z.number().int().nonnegative().max(10000000),
+            ttl12hTokens: z.number().int().nonnegative().max(10000000),
+          })
+          .strict()
+          .optional(),
         costVerifiedForSparks: z.boolean().optional(),
         outputTokens: z.number().int().nonnegative().max(10000000),
         costMicros: z.number().int().nonnegative().safe(),
@@ -32,6 +39,14 @@ const resultSchema = z
         (usage) =>
           (usage.cachedInputTokens ?? 0) + (usage.cacheWriteInputTokens ?? 0) <= usage.inputTokens,
         'Cached input exceeds input',
+      )
+      .refine(
+        (usage) =>
+          !usage.cacheWriteInputTokensDetails ||
+          usage.cacheWriteInputTokensDetails.ttl30mTokens +
+            usage.cacheWriteInputTokensDetails.ttl12hTokens ===
+            usage.cacheWriteInputTokens,
+        'Cache write lifetimes must sum to total writes',
       ),
   })
   .strict();

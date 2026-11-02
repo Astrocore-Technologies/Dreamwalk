@@ -73,6 +73,7 @@ export interface ProviderResult {
     /** Provider input-cache evidence, included within inputTokens, never extra tokens. */
     cachedInputTokens?: number;
     cacheWriteInputTokens?: number;
+    cacheWriteInputTokensDetails?: { ttl30mTokens: number; ttl12hTokens: number };
     /** False when a reported billing category lacks immutable matching pricing. */
     costVerifiedForSparks?: boolean;
     costMicros: number;
@@ -107,7 +108,7 @@ export interface NpcProvider {
 export interface AiPolicy {
   creditPrice: number;
   providerUpperMicros: number;
-  providerCapMicros: number;
+  providerCapMicros: number | null;
   timeoutMs: number;
   quoteMs: number;
   reservationMs: number;

@@ -107,7 +107,8 @@ export interface ImagePolicy {
   preserveModelRejectionHolds?: true;
   generationMode?: 'owner' | 'release';
   /** Explicit operator aggregate exposure ceiling, independent of the actor's Sparks wallet. */
-  releaseAggregateCapMicros?: number;
+  releaseAggregateCapMicros?: number | null;
+  releaseUnlimitedAllowance?: true;
   generationPolicyRevision?: number;
   generationPolicyHash?: string;
   ownerImageProfile?: OwnerImageProfile;
@@ -123,9 +124,9 @@ export interface ImagePolicy {
   operationalReserveMicros?: number;
   mockUpperMicros: number;
   approved: boolean;
-  totalCapMicros: number;
-  imageCapMicros: number;
-  textCapMicros: number;
+  totalCapMicros: number | null;
+  imageCapMicros: number | null;
+  textCapMicros: number | null;
   quoteTtlMs: number;
   dispatchTimeoutMs: number;
 }
