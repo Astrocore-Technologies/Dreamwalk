@@ -128,20 +128,19 @@ test('generic owner endpoints do not require admin role, hide authorization on r
   assert.match(panel, /sameTurnFence\(turnFence, batch.turnFence\)/);
   assert.match(panel, /uncertain.includes\(request.id\)/);
 });
-test('both image paths require separate per-quote estimate consent and preserve no automatic fallback or retry', async () => {
+test('both image paths combine per-quote consent in one explicit confirmation and preserve no automatic fallback or retry', async () => {
   for (const path of ['assets/image-generation.tsx', 'visual-authoring/external-generation.tsx']) {
     const source = await read(path);
     assert.match(source, /ownerImageQuoteMatches/);
     assert.match(source, /estimateRiskConsent: true/);
-    assert.match(source, /set(?:EstimateRiskConsent|RiskConsents)\((?:false|\{\})\)/);
-    assert.match(source, /estimateRiskConsent'\)/);
+    assert.match(source, /<ImageConfirmation/);
+    assert.match(source, /onConfirm=/);
+    assert.doesNotMatch(source, /setEstimateRiskConsent|setRiskConsents/);
+    assert.match(source, /consent: true/);
     assert.doesNotMatch(source, /api.openai|Authorization:|apiKey|process.env/);
   }
   const source = await read('assets/image-generation.tsx');
-  assert.match(
-    source,
-    /quote.upperMicros === null && \(!estimatedQuote \|\| !estimateRiskConsent\)/,
-  );
+  assert.match(source, /quote.upperMicros === null && !estimatedQuote/);
   assert.match(source, /setDispatchUncertain\(true\)/);
   assert.match(
     source,

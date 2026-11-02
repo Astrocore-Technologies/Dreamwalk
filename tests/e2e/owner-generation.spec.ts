@@ -6,14 +6,8 @@ const png = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+/lxoAAAAASUVORK5CYII=',
   'base64',
 );
-const risk =
-  'I separately accept the risk: the estimate and reserve do not cap the provider invoice, which may be higher. An unknown charge will stop further requests.';
-const requestConsent =
-  'I authorize only this external request and transfer of the selected references. Regeneration requires new consent.';
 const budgetConsent =
   'I own this configuration. I acknowledge the combined budget, including prior reservations and unknown charges. I will approve each request separately.';
-const review =
-  'I reviewed this image against the saved location description and want to use this revision.';
 type Locale = 'uk' | 'en' | 'ru';
 async function fixture(
   page: Page,
@@ -467,17 +461,7 @@ async function claim(page: Page) {
 }
 async function prepare(page: Page) {
   const generation = page.getByRole('region', { name: 'Image preparation', exact: true });
-  await generation
-    .getByLabel('License or terms name', { exact: true })
-    .fill('Synthetic test output');
-  await generation
-    .getByLabel('I confirm rights to this request and the selected owned references.', {
-      exact: true,
-    })
-    .check();
-  await generation
-    .getByRole('button', { name: 'Check library and prepare quote', exact: true })
-    .click();
+  await generation.getByRole('button', { name: 'Estimate cost', exact: true }).click();
   await expect(generation).toContainText('Estimated Sparks equivalent');
   await expect(generation).toContainText('Provider reserve in Sparks');
   await expect(generation).toContainText('do not guarantee a maximum provider invoice');
@@ -520,15 +504,13 @@ test('ordinary author sees no technical budget controls and cannot dispatch with
   await expect(
     dialog.getByRole('button', { name: 'Authorize owner budget', exact: true }),
   ).toHaveCount(0);
-  await expect(
-    dialog.getByRole('button', { name: 'Check library and prepare quote', exact: true }),
-  ).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Estimate cost', exact: true })).toBeDisabled();
   expect(f.calls.claim).toBe(0);
   expect(f.calls.dispatch).toBe(0);
   expect(f.calls.legacy).toBe(0);
   expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
 });
-test('synthetic owner image has separate budget, request and estimate-risk consent, then explicit library/map binding', async ({
+test('synthetic owner image has one explicit cost confirmation, then separate free library/map binding', async ({
   page,
 }) => {
   const f = await fixture(page),
@@ -536,13 +518,10 @@ test('synthetic owner image has separate budget, request and estimate-risk conse
   expect(f.calls.dispatch).toBe(0);
   await claim(page);
   const generation = await prepare(page),
-    run = generation.getByRole('button', { name: 'Generate one image', exact: true });
-  await expect(run).toBeDisabled();
-  await generation.getByLabel(requestConsent, { exact: true }).check();
-  await expect(run).toBeDisabled();
+    run = generation.getByRole('button', { name: 'Confirm and generate', exact: true });
+  await expect(run).toBeEnabled();
   expect(f.calls.dispatch).toBe(0);
-  await generation.getByLabel(risk, { exact: true }).check();
-  // Dismissal must not dispatch or retain either per-request consent.
+  // Dismissal must not dispatch; reopening requires a new explicit confirmation.
   await page.getByRole('button', { name: 'Close', exact: true }).click();
   expect(f.calls.dispatch).toBe(0);
   await page
@@ -550,21 +529,16 @@ test('synthetic owner image has separate budget, request and estimate-risk conse
     .getByRole('button', { name: 'Choose an image from library', exact: true })
     .click();
   const fresh = await prepare(page);
-  await expect(fresh.getByLabel(risk, { exact: true })).not.toBeChecked();
-  await expect(fresh.getByLabel(requestConsent, { exact: true })).not.toBeChecked();
-  await fresh.getByLabel(risk, { exact: true }).check();
   await expect(
-    fresh.getByRole('button', { name: 'Generate one image', exact: true }),
-  ).toBeDisabled();
-  await fresh.getByLabel(requestConsent, { exact: true }).check();
-  await fresh.getByRole('button', { name: 'Generate one image', exact: true }).click();
+    fresh.getByRole('button', { name: 'Confirm and generate', exact: true }),
+  ).toBeEnabled();
+  await fresh.getByRole('button', { name: 'Confirm and generate', exact: true }).click();
   const selection = dialog.getByTestId('location-image-selection');
   await expect(selection).toBeVisible({ timeout: 15000 });
   const bind = selection.getByRole('button', { name: 'Save image for location', exact: true });
-  await expect(bind).toBeDisabled();
+  await expect(bind).toBeEnabled();
   expect(f.calls.bind).toBe(0);
   await selection.getByLabel('Image attachment', { exact: true }).selectOption('room');
-  await selection.getByLabel(review, { exact: true }).check();
   await bind.click();
   await expect(dialog.getByRole('heading', { name: 'Saved image', exact: true })).toBeVisible();
   await page.reload();
@@ -593,9 +567,7 @@ for (const outcome of ['unknown', 'response-lost'] as const)
     await openLocation(page, f);
     await claim(page);
     const generation = await prepare(page);
-    await generation.getByLabel(risk, { exact: true }).check();
-    await generation.getByLabel(requestConsent, { exact: true }).check();
-    await generation.getByRole('button', { name: 'Generate one image', exact: true }).click();
+    await generation.getByRole('button', { name: 'Confirm and generate', exact: true }).click();
     await expect(
       page.getByTestId('location-image-dialog').locator('[data-image-job-status="unknown"]'),
     ).toBeVisible({ timeout: 15000 });
@@ -605,13 +577,13 @@ for (const outcome of ['unknown', 'response-lost'] as const)
       .click();
     await expect(page.getByTestId('live-test-panel')).toContainText('Generation stopped');
     await expect(
-      generation.getByRole('button', { name: 'Check library and prepare quote', exact: true }),
+      generation.getByRole('button', { name: 'Estimate cost', exact: true }),
     ).toBeDisabled();
     await page.reload();
     await page.getByRole('button', { name: /Locations$/ }).click();
     const control = page.locator(`[data-location-art="${f.locationId}"]`);
     await expect(
-      control.getByRole('button', { name: 'Generate image', exact: true }),
+      control.getByRole('button', { name: 'Estimate cost', exact: true }),
     ).toBeDisabled();
     await control
       .getByRole('button', { name: 'Choose an image from library', exact: true })
@@ -697,7 +669,7 @@ test('owner text-only profile blocks photo concepts before project creation with
 });
 
 for (const maxReferenceImages of [1, 2] as const)
-  test(`owner reference capacity ${maxReferenceImages} permits a private photo concept and reference-based part only with separate request/risk consent`, async ({
+  test(`owner reference capacity ${maxReferenceImages} permits a private photo concept and reference-based part only with one explicit cost confirmation`, async ({
     page,
   }) => {
     const f = await fixture(page, { maxReferenceImages });
@@ -882,18 +854,9 @@ for (const maxReferenceImages of [1, 2] as const)
     await create.click();
     for (const role of ['concept', 'portrait'] as const) {
       const stage = page.locator(`[data-generation-role="${role}"]`);
-      await stage.getByRole('button', { name: 'Estimate this image', exact: true }).click();
-      const dispatch = stage.getByRole('button', { name: 'Dispatch one request', exact: true });
-      await expect(dispatch).toBeDisabled();
-      await expect(stage.getByLabel(risk, { exact: true })).not.toBeChecked();
-      await stage
-        .getByLabel(
-          'I have rights to the references. I authorize only this external request and transfer of the selected private photo; no automatic retry will occur.',
-          { exact: true },
-        )
-        .check();
-      await expect(dispatch).toBeDisabled();
-      await stage.getByLabel(risk, { exact: true }).check();
+      await stage.getByRole('button', { name: 'Estimate cost', exact: true }).click();
+      const dispatch = stage.getByRole('button', { name: 'Confirm and generate', exact: true });
+      await expect(dispatch).toBeEnabled();
       await dispatch.click();
       await expect(stage.getByText('Structural validation passed', { exact: true })).toBeVisible();
       if (role === 'concept')
@@ -928,16 +891,8 @@ test('ordinary release author generates without Live Test claim or session ID an
     dialog.getByRole('button', { name: 'Authorize owner budget', exact: true }),
   ).toHaveCount(0);
   const generation = page.getByRole('region', { name: 'Image preparation', exact: true });
-  await generation
-    .getByLabel('License or terms name', { exact: true })
-    .fill('Synthetic test output');
-  await generation
-    .getByLabel('I confirm rights to this request and the selected owned references.', {
-      exact: true,
-    })
-    .check();
   const prepareQuote = generation.getByRole('button', {
-    name: 'Check library and prepare quote',
+    name: 'Estimate cost',
     exact: true,
   });
   // Release authority is first persisted by this POST, never an operator claim.
@@ -946,14 +901,80 @@ test('ordinary release author generates without Live Test claim or session ID an
   expect(f.status.allowance).toBe('unlimited');
   await expect(prepareQuote).toBeEnabled();
   await prepareQuote.click();
-  const run = generation.getByRole('button', { name: 'Generate one image', exact: true });
-  await expect(run).toBeDisabled();
-  await generation.getByLabel(requestConsent, { exact: true }).check();
-  await generation.getByLabel(risk, { exact: true }).check();
+  const run = generation.getByRole('button', { name: 'Confirm and generate', exact: true });
   await expect(run).toBeEnabled();
   await run.click();
   await expect.poll(() => f.calls.dispatch).toBe(1);
   expect(f.calls.claim).toBe(0);
   expect(f.calls.legacy).toBe(0);
   expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
+});
+
+test('one image confirmation cancels cleanly, invalidates edited quotes and prevents duplicate dispatch', async ({
+  page,
+}) => {
+  const f = await fixture(page, { release: true, adminPresentation: false });
+  await openLocation(page, f);
+  const generation = await prepare(page);
+  let confirmation = generation.locator('[data-image-confirmation]');
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation.locator('input[type="checkbox"]')).toHaveCount(0);
+  await expect(confirmation).toContainText('actual usage may exceed the estimate and reserve');
+  expect(f.calls.dispatch).toBe(0);
+  await confirmation.evaluate((element) => {
+    const buttons = element.querySelectorAll('button');
+    (buttons[0] as HTMLButtonElement).click();
+    (buttons[1] as HTMLButtonElement).click();
+  });
+  await expect(confirmation).toHaveCount(0);
+  expect(f.calls.dispatch).toBe(0);
+  await prepare(page);
+  await generation.getByText('Advanced options', { exact: true }).click();
+  await generation
+    .getByLabel('License or terms name', { exact: true })
+    .fill('Updated owned artwork terms');
+  await expect(generation.locator('[data-image-confirmation]')).toHaveCount(0);
+  expect(f.calls.dispatch).toBe(0);
+  await prepare(page);
+  confirmation = generation.locator('[data-image-confirmation]');
+  await confirmation
+    .getByRole('button', { name: 'Confirm and generate', exact: true })
+    .evaluate((element) => {
+      (element as HTMLButtonElement).click();
+      (element as HTMLButtonElement).click();
+    });
+  await expect.poll(() => f.calls.dispatch).toBe(1);
+  expect(f.calls.quote).toBe(3);
+  expect(f.calls.claim).toBe(0);
+  expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
+});
+
+test('inline map image requests no quote before the bottom button and uses one confirm/cancel', async ({
+  page,
+}) => {
+  const f = await fixture(page, { release: true, adminPresentation: false });
+  await page.goto(`/studio/adventures/${f.adventureId}`);
+  await page.getByRole('button', { name: /Locations$/ }).click();
+  const control = page.locator(`[data-location-art="${f.locationId}"]`);
+  const estimate = control.getByRole('button', { name: 'Estimate cost', exact: true });
+  await expect(estimate).toBeEnabled();
+  expect(f.calls.quote).toBe(0);
+  expect(f.calls.dispatch).toBe(0);
+  await estimate.click();
+  const confirmation = control.locator('[data-image-confirmation]');
+  await expect(confirmation).toBeVisible();
+  await expect(confirmation.locator('input[type="checkbox"]')).toHaveCount(0);
+  expect(f.calls.quote).toBe(1);
+  expect(f.calls.dispatch).toBe(0);
+  await confirmation.evaluate((element) => {
+    const buttons = element.querySelectorAll('button');
+    (buttons[0] as HTMLButtonElement).click();
+    (buttons[1] as HTMLButtonElement).click();
+  });
+  await expect(confirmation).toHaveCount(0);
+  expect(f.calls.dispatch).toBe(0);
+  await estimate.click();
+  await confirmation.getByRole('button', { name: 'Confirm and generate', exact: true }).click();
+  await expect.poll(() => f.calls.dispatch).toBe(1);
+  expect(f.calls.quote).toBe(2);
 });

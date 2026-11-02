@@ -836,14 +836,10 @@ async function applyThenOpenImage(page: Page) {
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   const stage = page.locator('[data-generation-role="concept"]');
   await expect(stage).toBeVisible();
-  await stage.getByRole('button', { name: 'Estimate this image', exact: true }).click();
+  await stage.getByRole('button', { name: 'Estimate cost', exact: true }).click();
   await expect(stage.getByTestId('request-reserve')).toBeVisible();
   return stage;
 }
-const imageRisk =
-  'I separately accept the risk: the estimate and reserve do not cap the provider invoice, which may be higher. An unknown charge will stop further requests.';
-const imageConsent =
-  'I have rights to the references. I authorize only this external request and transfer of the selected private photo; no automatic retry will occur.';
 
 test('after a policy change each image uses its own reserve snapshot and requires fresh request consent', async ({
   page,
@@ -872,7 +868,7 @@ test('after a policy change each image uses its own reserve snapshot and require
   await expect(reserve).toContainText(usd(first.reserveMicros));
   await expect(reserve).toContainText('The estimate and margin do not cap the provider invoice.');
   await expect(reserve).toContainText(
-    'Reference processing cost is uncertain. Review the separate image risk consent before dispatch.',
+    'Reference processing cost is uncertain. Review the image cost confirmation before dispatch.',
   );
   await reserve.scrollIntoViewIfNeeded();
   await page.screenshot({ path: test.info().outputPath('request-reserve-desktop.png') });
@@ -881,24 +877,17 @@ test('after a policy change each image uses its own reserve snapshot and require
   await reserve.scrollIntoViewIfNeeded();
   await page.screenshot({ path: test.info().outputPath('request-reserve-mobile.png') });
   await page.setViewportSize(originalViewport);
-  const dispatch = stage.getByRole('button', { name: 'Dispatch one request', exact: true });
-  await expect(dispatch).toBeDisabled();
-  await stage.getByLabel(imageRisk, { exact: true }).check();
-  await expect(dispatch).toBeDisabled();
-  await stage.getByLabel(imageConsent, { exact: true }).check();
+  const dispatch = stage.getByRole('button', { name: 'Confirm and generate', exact: true });
   await expect(dispatch).toBeEnabled();
-  await stage.getByRole('button', { name: 'Estimate this image', exact: true }).click();
+  expect(images.dispatches).toHaveLength(0);
+  await stage.getByRole('button', { name: 'Estimate cost', exact: true }).click();
   await expect.poll(() => images.quotes.length).toBe(2);
   const second = images.quotes[1];
   expect(second.id).not.toBe(first.id);
   expect(second.estimateSnapshotId).not.toBe(first.estimateSnapshotId);
   expect(second.reserveMicros).not.toBe(first.reserveMicros);
   await expect(reserve).toContainText(usd(second.reserveMicros));
-  await expect(stage.getByLabel(imageRisk, { exact: true })).not.toBeChecked();
-  await expect(stage.getByLabel(imageConsent, { exact: true })).not.toBeChecked();
-  await expect(dispatch).toBeDisabled();
-  await stage.getByLabel(imageRisk, { exact: true }).check();
-  await stage.getByLabel(imageConsent, { exact: true }).check();
+  await expect(dispatch).toBeEnabled();
   await dispatch.click();
   await expect.poll(() => images.dispatches.length).toBe(1);
   expect(f.calls.apply).toHaveLength(1);
@@ -912,9 +901,9 @@ for (const variant of ['stale-policy', 'pricing-mismatch', 'broken-margin'] as c
       images = await imageFixture(page, f, variant),
       stage = await applyThenOpenImage(page);
     await expect(
-      stage.getByRole('button', { name: 'Dispatch one request', exact: true }),
+      stage.getByRole('button', { name: 'Confirm and generate', exact: true }),
     ).toBeDisabled();
-    await expect(stage.getByRole('checkbox')).toBeDisabled();
+    await expect(stage.locator('[data-image-confirmation] input[type=checkbox]')).toHaveCount(0);
     expect(images.quotes).toHaveLength(1);
     expect(images.dispatches).toHaveLength(0);
     expect(f.policy.active!.revision).toBe(2);

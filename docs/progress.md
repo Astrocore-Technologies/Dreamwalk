@@ -934,3 +934,14 @@ an owned portrait revision, then explicitly saves the hero. Closing the modal re
 completed artwork in the private library and recovered portrait history, without retrying
 or charging for selection. Production availability still depends on the configured image
 generation policy; this change does not enable providers or make live requests.
+
+### Compact image cost confirmation (local preparation)
+
+Hero/library images, inline location images and character authoring image stages now
+use an explicit estimate button followed by one Confirm/Cancel decision. The decision
+shows approximate Sparks cost, held reserve and uncertainty; it authorizes only the
+current immutable quote. Rights are disclosed at estimate preparation, optional metadata
+and references remain under Advanced options, and server rights/expiry/policy/framing
+validation is unchanged. Editing inputs or cancellation discards the pending decision;
+no automatic re-quote, dispatch or retry is introduced. Saved outputs still require an
+explicit selection/binding action. This does not enable providers or publish/deploy code.

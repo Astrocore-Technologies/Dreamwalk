@@ -1,5 +1,6 @@
 'use client';
 import { imageFramingEvidenceMatches } from '@dreamwalk/contracts';
+import { ImageConfirmation } from '../assets/image-confirmation';
 import { ImageFramingNotice } from './image-framing-notice';
 import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage, useClient } from '@/lib/client';
@@ -65,15 +66,13 @@ export function LocationImageInline(p: Props) {
     l = useLocationImageText(),
     { s, amount } = useSparkCosts(),
     { user } = useClient();
-  const [attested, setAttested] = useState(false),
-    [share, setShare] = useState(false),
+  const [share, setShare] = useState(false),
     [quote, setQuote] = useState<Quoted | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [jobs, setJobs] = useState<Job[]>([]),
     [selected, setSelected] = useState<ArtRevision | null>(null),
     [savedImage, setSavedImage] = useState<ArtRevision | null>(null),
-    [reviewed, setReviewed] = useState(false),
     [mapId, setMapId] = useState(''),
     [uncertain, setUncertain] = useState(false),
     [now, setNow] = useState(Date.now()),
@@ -81,6 +80,7 @@ export function LocationImageInline(p: Props) {
     [binding, setBinding] = useState<Preparation | null>(null);
   const epoch = useRef(0),
     lock = useRef(false),
+    cancelledQuotes = useRef(new Set<string>()),
     operation = useRef<{ quoteId: string; id: string } | null>(null),
     bindOperation = useRef<{ key: string; id: string } | null>(null),
     seen = useRef(new Set<string>()),
@@ -95,12 +95,13 @@ export function LocationImageInline(p: Props) {
   const key = JSON.stringify({
     source: p.sourceKey,
     share,
-    attested,
     authorization: status?.mode === 'release' ? user?.id : generationAuthorizationId(status),
     policy: status?.policyHash,
     revision: status?.policyRevision,
     config,
   });
+  const currentKey = useRef(key);
+  currentKey.current = key;
   const quoteCurrent = quote?.key === key && Date.parse(quote.quote.expiresAt) > now;
   const estimate = quote?.quote.upperMicros === null;
   const matched =
@@ -111,8 +112,6 @@ export function LocationImageInline(p: Props) {
       : quote.quote.upperMicros === config?.verifiedUpperMicros);
   const reserve = quote?.quote.reserveMicros ?? quote?.quote.upperMicros ?? Infinity;
   useEffect(() => {
-    setAttested(false);
-    setReviewed(false);
     setQuote(null);
     epoch.current++;
   }, [p.sourceKey, user?.id]);
@@ -186,7 +185,6 @@ export function LocationImageInline(p: Props) {
                 (prepared.playable.maps.length === 1 ? prepared.playable.maps[0].id : ''),
             );
             setSelected(revision);
-            setReviewed(false);
           }
         }
       } catch (e) {
@@ -203,80 +201,89 @@ export function LocationImageInline(p: Props) {
     };
   }, [p.adventureId, p.locationId, p.saved, refresh, user?.id]);
   useEffect(() => {
+    epoch.current++;
+    setQuote(null);
+    setError('');
+  }, [key, allowed, p.saved, p.disabled]);
+  useEffect(
+    () => () => {
+      epoch.current++;
+    },
+    [],
+  );
+  async function prepareQuote() {
+    if (lock.current || !allowed || !p.saved || p.disabled || uncertain) return;
+    lock.current = true;
     const stamp = ++epoch.current;
     setQuote(null);
     setError('');
-    if (!attested || !allowed || !p.saved || p.disabled || uncertain) return;
     setBusy(true);
-    const timer = setTimeout(() => {
-      void (async () => {
-        await callbacks.current.beforePrepare();
-        const preparation = await api<Preparation>('/image-generation/studio-locations/prepare', {
-          method: 'POST',
-          body: JSON.stringify({ adventureId: p.adventureId, locationId: p.locationId }),
-        });
-        if (stamp !== epoch.current) return;
-        const response = await api<{
-          decision: string;
-          quote?: GenerationQuote;
-          matches: ArtRevision[];
-        }>('/image-generation/quotes', {
-          method: 'POST',
-          body: JSON.stringify({
-            ...preparation.request,
-            generationAuthorizationId:
-              status?.mode === 'release'
-                ? undefined
-                : (generationAuthorizationId(status) ?? undefined),
-            declineReuse: true,
-            rights: {
-              basis: 'generated',
-              licenseLabel: "Generated asset; reuse requires owner's permission",
-              attribution: '',
-              allowAuthorReuse: share,
-              attested: true,
-            },
-          }),
-        });
-        if (
-          stamp === epoch.current &&
-          response.quote &&
-          imageFramingEvidenceMatches(preparation.request, response.quote)
-        ) {
-          setQuote({ preparation, quote: response.quote, key, matches: response.matches });
-          setBinding(preparation);
-          setMapId(
-            preparation.binding?.mapId ??
-              (preparation.playable.maps.length === 1 ? preparation.playable.maps[0].id : ''),
-          );
-        }
-      })()
-        .catch((e) => {
-          if (stamp === epoch.current) setError(errorMessage(e));
-        })
-        .finally(() => {
-          if (stamp === epoch.current) setBusy(false);
-        });
-    }, 450);
-    return () => {
-      clearTimeout(timer);
-      if (epoch.current === stamp) epoch.current++;
+    try {
+      await callbacks.current.beforePrepare();
+      const preparation = await api<Preparation>('/image-generation/studio-locations/prepare', {
+        method: 'POST',
+        body: JSON.stringify({ adventureId: p.adventureId, locationId: p.locationId }),
+      });
+      if (stamp !== epoch.current) return;
+      const response = await api<{
+        decision: string;
+        quote?: GenerationQuote;
+        matches: ArtRevision[];
+      }>('/image-generation/quotes', {
+        method: 'POST',
+        body: JSON.stringify({
+          ...preparation.request,
+          generationAuthorizationId:
+            status?.mode === 'release'
+              ? undefined
+              : (generationAuthorizationId(status) ?? undefined),
+          declineReuse: true,
+          rights: {
+            basis: 'generated',
+            licenseLabel: "Generated asset; reuse requires owner's permission",
+            attribution: '',
+            allowAuthorReuse: share,
+            attested: true,
+          },
+        }),
+      });
+      if (
+        stamp === epoch.current &&
+        response.quote &&
+        imageFramingEvidenceMatches(preparation.request, response.quote)
+      ) {
+        setQuote({ preparation, quote: response.quote, key, matches: response.matches });
+        setBinding(preparation);
+        setMapId(
+          preparation.binding?.mapId ??
+            (preparation.playable.maps.length === 1 ? preparation.playable.maps[0].id : ''),
+        );
+      }
+    } catch (e) {
+      if (stamp === epoch.current) setError(errorMessage(e));
+    } finally {
+      lock.current = false;
       setBusy(false);
-    };
-  }, [key, allowed, p.saved, p.disabled, uncertain, refresh]);
-  async function generate() {
+    }
+  }
+  async function generate(confirmedQuoteId: string) {
     if (
       lock.current ||
+      cancelledQuotes.current.has(confirmedQuoteId) ||
+      confirmedQuoteId !== quote?.quote.id ||
+      quote.key !== currentKey.current ||
+      Date.parse(quote.quote.expiresAt) <= Date.now() ||
+      p.disabled ||
       !quoteCurrent ||
       !quote ||
       !matched ||
-      !attested ||
       !allowed ||
       uncertain ||
       reserve > generationRemaining(status, 'image')
     )
       return;
     lock.current = true;
+    const stamp = epoch.current;
     setBusy(true);
     setError('');
     if (operation.current?.quoteId !== quote.quote.id)
@@ -291,15 +298,15 @@ export function LocationImageInline(p: Props) {
           ...(estimate ? { estimateRiskConsent: true } : {}),
         }),
       });
+      if (stamp !== epoch.current) return;
       lastStatuses.current.set(job.id, job.status);
       setJobs((current) => [job, ...current.filter((j) => j.id !== job.id)]);
       setQuote(null);
-      setAttested(false);
     } catch (e) {
+      if (stamp !== epoch.current) return;
       setError(errorMessage(e));
       setUncertain(true);
       setQuote(null);
-      setAttested(false);
     } finally {
       lock.current = false;
       setBusy(false);
@@ -307,7 +314,7 @@ export function LocationImageInline(p: Props) {
     }
   }
   async function bind() {
-    if (lock.current || !binding || !selected?.canReuse || !reviewed) return;
+    if (lock.current || !binding || !selected?.canReuse) return;
     lock.current = true;
     setBusy(true);
     setError('');
@@ -345,7 +352,6 @@ export function LocationImageInline(p: Props) {
         method: 'POST',
         body: JSON.stringify({ ...body, operationId: bindOperation.current.id }),
       });
-      setReviewed(false);
       p.onSaved(!!attached);
       setBinding({
         ...fresh,
@@ -394,24 +400,27 @@ export function LocationImageInline(p: Props) {
           </p>
         )
       )}
-      <label className={styles.check}>
-        <input
-          type="checkbox"
-          checked={share}
-          disabled={busy || p.disabled}
-          onChange={(e) => setShare(e.target.checked)}
-        />
-        {a('allowReuse')}
-      </label>
-      <label className={styles.check}>
-        <input
-          type="checkbox"
-          checked={attested}
-          disabled={busy || p.disabled || !p.saved}
-          onChange={(e) => setAttested(e.target.checked)}
-        />
-        {g('rights')}
-      </label>
+      <details>
+        <summary>{g('advanced')}</summary>
+        <label className={styles.check}>
+          <input
+            type="checkbox"
+            checked={share}
+            disabled={busy || p.disabled}
+            onChange={(e) => setShare(e.target.checked)}
+          />
+          {a('allowReuse')}
+        </label>
+      </details>
+      <small>{g('quoteRights')}</small>
+      <Button
+        type="button"
+        busy={busy}
+        disabled={!allowed || !p.saved || p.disabled || uncertain}
+        onClick={() => void prepareQuote()}
+      >
+        {g('quote')}
+      </Button>
       {busy && !lock.current && <small role="status">{m('preparing')}</small>}
       {quoteCurrent && quote && (
         <p>
@@ -425,24 +434,26 @@ export function LocationImageInline(p: Props) {
             {quote.quote.sparks && <SparkQuotePrice quote={quote.quote} />}
             <SparkQuoteNotice quote={quote.quote} />
           </>
-          <small>{m('consent')}</small>
+          <ImageConfirmation
+            estimated={estimate}
+            busy={busy}
+            disabled={
+              !matched ||
+              !allowed ||
+              p.disabled ||
+              uncertain ||
+              reserve > generationRemaining(status, 'image')
+            }
+            onConfirm={() => void generate(quote.quote.id)}
+            onCancel={() => {
+              cancelledQuotes.current.add(quote.quote.id);
+              epoch.current++;
+              setQuote(null);
+              operation.current = null;
+            }}
+          />
         </>
       )}
-      <Button
-        type="button"
-        busy={busy}
-        disabled={
-          !quoteCurrent ||
-          !matched ||
-          !allowed ||
-          !attested ||
-          uncertain ||
-          reserve > generationRemaining(status, 'image')
-        }
-        onClick={() => void generate()}
-      >
-        {m(savedImage ? 'regenerate' : 'generate')}
-      </Button>
       {jobs.some((j) => ['queued', 'dispatched'].includes(j.status)) && (
         <p role="status">{m('pending')}</p>
       )}
@@ -504,7 +515,6 @@ export function LocationImageInline(p: Props) {
               disabled={busy || p.playableDirty}
               onChange={(e) => {
                 setMapId(e.target.value);
-                setReviewed(false);
               }}
             >
               <option value="">{l('illustration')}</option>
@@ -515,18 +525,10 @@ export function LocationImageInline(p: Props) {
               ))}
             </Select>
           </Field>
-          <label className={styles.check}>
-            <input
-              type="checkbox"
-              checked={reviewed}
-              disabled={busy}
-              onChange={(e) => setReviewed(e.target.checked)}
-            />
-            {l('review')}
-          </label>
+          <p>{l('review')}</p>
           <Button
             type="button"
-            disabled={!binding || !reviewed || !selected.canReuse}
+            disabled={!binding || !selected.canReuse}
             busy={busy}
             onClick={() => void bind()}
           >
