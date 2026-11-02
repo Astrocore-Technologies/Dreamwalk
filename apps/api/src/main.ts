@@ -1,3 +1,5 @@
+import { PaidStartService } from './game/paid-start.service';
+import { PaidStartController } from './game/paid-start.controller';
 import { StoryAuthoringController } from './story-authoring/controller';
 import { StoryNpcService } from './story-authoring/npcs';
 import { PrivateReleaseService } from './story-authoring/private-release';
@@ -66,6 +68,7 @@ class Health {
 }
 @Module({
   controllers: [
+    PaidStartController,
     StoryAuthoringController,
     Health,
     LiveTestController,
@@ -104,6 +107,7 @@ class Health {
     { provide: LiveTestService, useExisting: GenerationAuthority },
     VisualAuthoringService,
     StoryBuildService,
+    PaidStartService,
     {
       provide: 'STORY_BUILD_ENGINE',
       inject: [Db, GenerationAuthority],

@@ -168,8 +168,7 @@ test('Studio retains standalone editor safeguards and uses reviewed builder plus
   assert.doesNotMatch(editor, /dangerouslySetInnerHTML|JSON\.parse|<Textarea/);
   assert.match(studio, /useDirtyWarning\(dirty\)/);
   assert.match(studio, /dirty \? setConfirm\('leave'\)/);
-  assert.match(studio, /step === 2 \|\| step === 6/);
-  assert.match(studio, /<StoryPlayableBuilder[\s\S]*?beforePrepare=\{autosave.flush\}/);
+  assert.doesNotMatch(studio, /<StoryPlayableBuilder/);
   assert.match(studio, /<PrivateRelease[\s\S]*?beforePublish=\{autosave.flush\}/);
   assert.doesNotMatch(studio, /<PlayableMapEditor/);
 });

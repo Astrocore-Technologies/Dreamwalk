@@ -82,7 +82,6 @@ export function PrivateRelease({
         api<{ revision: number }>(`/asset-library/stories/${adventureId}/draft`),
       ]);
       if (current !== epoch.current) return;
-      if (!game.draft || !game.revision) throw new Error(text('missing'));
       const body = {
         expectedEditRevision: story.editRevision,
         expectedGameRevision: game.revision,

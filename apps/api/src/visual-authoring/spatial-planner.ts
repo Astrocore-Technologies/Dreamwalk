@@ -61,7 +61,7 @@ export class SpatialPlannerService {
     z.uuid().parse(id);
     const p = (
       await this.db.query(
-        'SELECT id,owner_id,kind,generation_mode,plan_origin,status,revision,source_hash FROM visual_authoring_projects WHERE id=$1 AND owner_id=$2',
+        "SELECT id,owner_id,kind,generation_mode,plan_origin,status,revision,source_hash FROM visual_authoring_projects WHERE id=$1 AND owner_id=$2 AND project_purpose='authoring'",
         [id, owner],
       )
     )[0];
