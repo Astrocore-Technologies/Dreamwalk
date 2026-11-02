@@ -22,13 +22,21 @@ test('hosted HTTP proxy overwrites ingress header and keeps secrets request-only
       DREAMWALK_INGRESS_SECRET: secret,
     });
     const response = proxy(
-      new NextRequest('https://web.example.test/api/v1/auth/me?x=1', {
-        headers: {
-          cookie: 'dreamwalk_session=fixture; platform_protection=must-not-forward',
-          origin: 'https://web.example.test',
-          'x-dreamwalk-ingress': 'attacker',
+      new NextRequest(
+        'https://web.example.test/api/v1/auth/me?x=1&x-vercel-protection-bypass=synthetic-url-secret&x-vercel-set-bypass-cookie=true',
+        {
+          headers: {
+            cookie: 'dreamwalk_session=fixture; platform_protection=must-not-forward',
+            origin: 'https://web.example.test',
+            'x-dreamwalk-ingress': 'attacker',
+            'x-vercel-protection-bypass': 'synthetic-protection-secret',
+            'x-vercel-trusted-oidc-idp-token': 'synthetic-identity-secret',
+            'x-vercel-oidc-token': 'synthetic-runtime-identity-secret',
+            'x-vercel-set-bypass-cookie': 'true',
+            'content-type': 'application/json',
+          },
         },
-      }),
+      ),
     );
     assert.equal(
       response.headers.get('x-middleware-rewrite'),
@@ -38,6 +46,19 @@ test('hosted HTTP proxy overwrites ingress header and keeps secrets request-only
     assert.equal(response.headers.get('x-dreamwalk-ingress'), null);
     assert.equal(response.headers.get('x-middleware-request-cookie'), 'dreamwalk_session=fixture');
     assert.equal(response.headers.get('x-middleware-request-origin'), 'https://web.example.test');
+    assert.equal(response.headers.get('x-middleware-request-content-type'), 'application/json');
+    for (const name of [
+      'x-vercel-protection-bypass',
+      'x-vercel-trusted-oidc-idp-token',
+      'x-vercel-oidc-token',
+      'x-vercel-set-bypass-cookie',
+    ]) {
+      assert.equal(response.headers.get(`x-middleware-request-${name}`), null);
+      assert.ok(
+        !(response.headers.get('x-middleware-override-headers') ?? '').split(',').includes(name),
+      );
+      assert.equal(response.headers.get(name), null);
+    }
     assert.equal(response.headers.get('x-vercel-enable-rewrite-caching'), '0');
     assert.equal(response.headers.get('Cache-Control'), 'private, no-store');
     delete process.env.DREAMWALK_INGRESS_SECRET;

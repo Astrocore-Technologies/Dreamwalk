@@ -21,7 +21,19 @@ export function proxy(request: NextRequest) {
     return new NextResponse('Service unavailable', { status: 503 });
   target.pathname = request.nextUrl.pathname;
   target.search = request.nextUrl.search;
+  // Temporary share/bypass URL credentials must stop at the platform boundary.
+  target.searchParams.delete('x-vercel-protection-bypass');
+  target.searchParams.delete('x-vercel-set-bypass-cookie');
   const headers = new Headers(request.headers);
+  // Platform authorization is consumed by Vercel, never by the application API.
+  // Strip it explicitly rather than relying on a particular edge runtime to do so.
+  for (const name of [
+    'x-vercel-protection-bypass',
+    'x-vercel-trusted-oidc-idp-token',
+    'x-vercel-oidc-token',
+    'x-vercel-set-bypass-cookie',
+  ])
+    headers.delete(name);
   // Overwrite untrusted caller input. Request-only: never emit this as a response header.
   headers.set('x-dreamwalk-ingress', secret);
   // Never forward platform protection cookies to the application backend.
