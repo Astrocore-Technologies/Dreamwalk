@@ -66,3 +66,68 @@ test('SMTP requires complete explicit sender and credential configuration', () =
     0,
   );
 });
+
+test('platform PORT is bounded and explicit API_PORT preserves split local launchers', () => {
+  for (const value of ['0', '65536', '-1', 'oops', '']) {
+    assert.notEqual(validates({ API_PORT: undefined, PORT: value }).status, 0);
+  }
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '-e',
+      "const { config } = await import('./apps/api/src/config.ts'); if (config.API_PORT !== 4000 || config.API_HOST !== '0.0.0.0') process.exit(1);",
+    ],
+    {
+      cwd: process.cwd(),
+      env: { ...env, PORT: '8080', API_PORT: '4000', API_HOST: '0.0.0.0' },
+      encoding: 'utf8',
+      timeout: 15_000,
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('bind address is explicit and does not accept arbitrary hostnames', () => {
+  assert.equal(validates({ API_HOST: '127.0.0.1' }).status, 0);
+  assert.equal(validates({ API_HOST: '0.0.0.0' }).status, 0);
+  assert.notEqual(validates({ API_HOST: 'untrusted.example' }).status, 0);
+});
+
+test('platform-only PORT is used when API_PORT is absent', () => {
+  const result = spawnSync(
+    process.execPath,
+    [
+      '--import',
+      'tsx',
+      '--input-type=module',
+      '-e',
+      "const { config } = await import('./apps/api/src/config.ts'); if (config.API_PORT !== 8080) process.exit(1);",
+    ],
+    {
+      cwd: process.cwd(),
+      env: { ...env, API_PORT: undefined, PORT: '8080' },
+      encoding: 'utf8',
+      timeout: 15000,
+    },
+  );
+  assert.equal(result.status, 0, result.stderr);
+});
+
+test('required trusted ingress cannot boot without a sufficiently strong key', () => {
+  assert.notEqual(validates({ DREAMWALK_REQUIRE_INGRESS_SECRET: 'true' }).status, 0);
+  assert.notEqual(
+    validates({ DREAMWALK_REQUIRE_INGRESS_SECRET: 'true', DREAMWALK_INGRESS_SECRET: 'short' })
+      .status,
+    0,
+  );
+  assert.equal(
+    validates({
+      DREAMWALK_REQUIRE_INGRESS_SECRET: 'true',
+      DREAMWALK_INGRESS_SECRET: 'test-only-server-ingress-secret-long-enough',
+    }).status,
+    0,
+  );
+});

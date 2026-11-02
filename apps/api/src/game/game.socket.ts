@@ -3,6 +3,7 @@ import type { Request } from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import { HttpException } from '@nestjs/common';
 import { config } from '../config';
+import { ingressAllowed } from '../ingress';
 import { GameService } from './game.service';
 
 /** Every outbound projection rechecks session and membership. No global event payload is broadcast. */
@@ -16,7 +17,14 @@ export function attachGameSockets(server: Server, game: GameService) {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname !== '/api/v1/game/socket') return;
     const id = url.searchParams.get('campaignId') ?? '';
-    if (req.headers.origin !== config.WEB_ORIGIN) {
+    if (
+      req.headers.origin !== config.WEB_ORIGIN ||
+      !ingressAllowed(
+        req.headers['x-dreamwalk-ingress'],
+        config.DREAMWALK_INGRESS_SECRET,
+        config.DREAMWALK_REQUIRE_INGRESS_SECRET,
+      )
+    ) {
       socket.write('HTTP/1.1 403 Forbidden\r\n\r\n');
       socket.destroy();
       return;

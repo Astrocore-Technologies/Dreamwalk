@@ -1,5 +1,6 @@
 import { seedCompleteObservatory } from './game/seed-observatory';
 import { Pool } from 'pg';
+import { postgresConnectionConfig } from './postgres-connection';
 import { isDeepStrictEqual } from 'node:util';
 import {
   settingsSchema,
@@ -93,8 +94,7 @@ function curatedNpc(data: Record<string, unknown>) {
 }
 async function main() {
   if (process.env.NODE_ENV === 'production') throw new Error('Demo seed forbidden in production');
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
-  const db = new Pool({ connectionString: process.env.DATABASE_URL });
+  const db = new Pool(postgresConnectionConfig());
   try {
     const existing = await db.query(
       "SELECT id FROM users WHERE handle='dreamwalk' OR handle='dreamwalk_editorial'",

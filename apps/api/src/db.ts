@@ -1,9 +1,13 @@
 import { Injectable, OnApplicationShutdown } from '@nestjs/common';
 import { Pool, PoolClient, QueryResultRow } from 'pg';
 import { config } from './config';
+import { postgresConnectionConfig } from './postgres-connection';
 @Injectable()
 export class Db implements OnApplicationShutdown {
-  readonly pool = new Pool({ connectionString: config.DATABASE_URL, max: 10 });
+  readonly pool = new Pool({
+    ...postgresConnectionConfig({ ...process.env, DATABASE_URL: config.DATABASE_URL }),
+    max: 10,
+  });
   async query<T extends QueryResultRow = QueryResultRow>(
     sql: string,
     values: unknown[] = [],
