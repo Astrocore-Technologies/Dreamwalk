@@ -110,7 +110,7 @@ jobs:
         run: npm run test:home:integration
       # Exact test payload of test:mail, after the same-job server build.
       - name: Local SMTP capture integration
-        run: node --test tests/mail-integration.test.mjs
+        run: node --test tests/mail-integration.test.mjs tests/google-auth.test.mjs tests/mail-brevo.test.mjs
 
   browser_1:
     name: Browser shard 1 of 2

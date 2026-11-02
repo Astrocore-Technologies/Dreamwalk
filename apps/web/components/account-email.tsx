@@ -115,6 +115,13 @@ export function EmailVerification() {
     <Panel>
       <h2>{t('Подтверждение email')}</h2>
       <p>{user?.emailVerified ? t('Email подтверждён') : t('Email пока не подтверждён')}</p>
+      {user?.emailVerificationRequired && !user.emailVerified && (
+        <p>
+          {t(
+            'Подтверди почту, чтобы начать игру и получить 50 искр. Проверь письмо или запроси новую ссылку.',
+          )}
+        </p>
+      )}
       {!user?.emailVerified && (
         <Button
           variant="secondary"

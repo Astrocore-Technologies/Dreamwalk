@@ -51,6 +51,7 @@ export function userView(row: Record<string, unknown>): User {
   delete u.passwordHash;
   delete u.deletedAt;
   delete u.tokenHash;
+  delete u.starterSparksEligible;
   return { ...u, settings: settingsSchema.parse(row.settings ?? {}) } as unknown as User;
 }
 function cookieToken(req: Request) {
@@ -81,15 +82,30 @@ export class Auth {
       );
     return rows[0] ? userView(rows[0]) : null;
   }
-  async require(req: Request) {
+  /** Public resources stay readable, but pending sessions confer no private-read authority. */
+  async viewer(req: Request) {
+    const user = await this.current(req);
+    return user?.emailVerificationRequired && !user.emailVerified ? null : user;
+  }
+  async pending(req: Request) {
     return (await this.current(req)) ?? fail(401, 'UNAUTHORIZED', 'Войдите в аккаунт.');
+  }
+  async require(req: Request) {
+    const user = await this.pending(req);
+    if (user.emailVerificationRequired && !user.emailVerified)
+      fail(403, 'EMAIL_VERIFICATION_REQUIRED', 'Подтвердите email, чтобы продолжить.');
+    return user;
   }
   async admin(req: Request) {
     const u = await this.require(req);
     if (u.role !== 'admin') fail(403, 'FORBIDDEN', 'Доступ только для администратора.');
     return u;
   }
-  async session(user: User, req: Request, res: Response) {
+  async session(user: User, req: Request, res: Response, rotatePrevious = false) {
+    if (rotatePrevious) {
+      const previous = await this.currentSessionId(req);
+      if (previous) await this.db.query('DELETE FROM sessions WHERE id=$1', [previous]);
+    }
     const token = randomBytes(32).toString('hex');
     await this.db.query(
       "INSERT INTO sessions(user_id,token_hash,user_agent,expires_at) VALUES($1,$2,$3,now()+interval '14 days')",
@@ -152,11 +168,21 @@ export class AccountController {
     const hash = await hashPassword(b.password);
     const row = await this.db.tx(async (c) => {
       const r = await c.query(
-        'INSERT INTO users(email,password_hash,name,handle,settings) VALUES($1,$2,$3,$4,$5) RETURNING *',
-        [b.email, hash, b.name, b.handle, JSON.stringify(settingsSchema.parse({}))],
+        'INSERT INTO users(email,password_hash,name,handle,settings,email_verification_required,starter_sparks_eligible) VALUES($1,$2,$3,$4,$5,$6,true) RETURNING *',
+        [
+          b.email,
+          hash,
+          b.name,
+          b.handle,
+          JSON.stringify(settingsSchema.parse({ language: b.language })),
+          config.AUTH_EMAIL_VERIFICATION_REQUIRED,
+        ],
       );
       await c.query('INSERT INTO wallets(user_id) VALUES($1)', [r.rows[0].id]);
-      await grantRegistrationSparks(c, r.rows[0].id);
+      if (!config.AUTH_EMAIL_VERIFICATION_REQUIRED) {
+        await grantRegistrationSparks(c, r.rows[0].id);
+        await c.query('UPDATE users SET starter_sparks_eligible=false WHERE id=$1', [r.rows[0].id]);
+      }
       await c.query(
         "INSERT INTO notifications(user_id,title,message,type,payload) VALUES($1,'','','welcome','{}')",
         [r.rows[0].id],
@@ -165,6 +191,7 @@ export class AccountController {
     });
     const user = userView(row);
     await this.auth.session(user, req, res);
+    if (user.emailVerificationRequired) await requestAccountEmail(this.db, user.email, 'verify');
     return { user };
   }
   @Post('auth/login')
@@ -209,50 +236,6 @@ export class AccountController {
     res.clearCookie('dreamwalk_session', { path: '/' });
     return { ok: true };
   }
-  private async requestEmail(email: string, purpose: 'reset' | 'verify') {
-    if (!mailEnabled) return { ok: true, code: 'EMAIL_DELIVERY_UNAVAILABLE' };
-    const token = randomBytes(32).toString('hex');
-    const recipient = await this.db.tx(async (c) => {
-      await c.query(
-        "DELETE FROM auth_email_cooldowns WHERE (address_hash,purpose) IN (SELECT address_hash,purpose FROM auth_email_cooldowns WHERE requested_at < now()-interval '1 day' LIMIT 1000)",
-      );
-      await c.query(
-        "DELETE FROM auth_email_tokens WHERE token_hash IN (SELECT token_hash FROM auth_email_tokens WHERE expires_at < now()-interval '1 day' LIMIT 1000)",
-      );
-      // Persist a cooldown even for nonexistent addresses: identical response and rate semantics.
-      const allowed = await c.query(
-        "INSERT INTO auth_email_cooldowns(address_hash,purpose) VALUES($1,$2) ON CONFLICT(address_hash,purpose) DO UPDATE SET requested_at=now() WHERE auth_email_cooldowns.requested_at < now()-interval '1 minute' RETURNING address_hash",
-        [tokenHash(email), purpose],
-      );
-      if (!allowed.rowCount) return null;
-      const row = (
-        await c.query('SELECT * FROM users WHERE email=$1 AND deleted_at IS NULL FOR UPDATE', [
-          email,
-        ])
-      ).rows[0];
-      if (!row || (purpose === 'verify' && row.email_verified)) return null;
-      await c.query('DELETE FROM auth_email_tokens WHERE user_id=$1 AND purpose=$2', [
-        row.id,
-        purpose,
-      ]);
-      await c.query(
-        "INSERT INTO auth_email_tokens(token_hash,user_id,purpose,expires_at) VALUES($1,$2,$3,now()+interval '30 minutes')",
-        [tokenHash(token), row.id, purpose],
-      );
-      return row;
-    });
-    if (recipient) {
-      // Delivery is deliberately detached from the uniform response; never log tokens or SMTP errors.
-      void sendAccountMail(email, purpose, token, recipient.settings?.language ?? 'en').catch(
-        async () => {
-          await this.db
-            .query('DELETE FROM auth_email_tokens WHERE token_hash=$1', [tokenHash(token)])
-            .catch(() => undefined);
-        },
-      );
-    }
-    return { ok: true, code: 'REQUEST_ACCEPTED' };
-  }
   @Post('auth/reset-password')
   async reset(@Body() body: unknown) {
     const b = z
@@ -264,12 +247,12 @@ export class AccountController {
       })
       .strict()
       .parse(body);
-    return this.requestEmail(b.email, 'reset');
+    return requestAccountEmail(this.db, b.email, 'reset');
   }
   @Post('account/email-verification/request')
   async requestVerification(@Req() req: Request) {
-    const user = await this.auth.require(req);
-    return this.requestEmail(user.email, 'verify');
+    const user = await this.auth.pending(req);
+    return requestAccountEmail(this.db, user.email, 'verify');
   }
   private async consumeEmailToken(token: unknown, purpose: 'reset' | 'verify', password?: string) {
     if (typeof token !== 'string' || !/^[a-f0-9]{64}$/.test(token))
@@ -284,9 +267,10 @@ export class AccountController {
       if (!candidate) fail(400, 'TOKEN_INVALID', 'Invalid token.');
       // Match request/password/deletion lock order: user first, then bearer row.
       const user = (
-        await c.query('SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE', [
-          candidate.user_id,
-        ])
+        await c.query(
+          'SELECT id,starter_sparks_eligible FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE',
+          [candidate.user_id],
+        )
       ).rows[0];
       if (!user) fail(400, 'TOKEN_INVALID', 'Invalid token.');
       const row = (
@@ -304,6 +288,12 @@ export class AccountController {
         await c.query('DELETE FROM sessions WHERE user_id=$1', [row.user_id]);
       } else {
         await c.query('UPDATE users SET email_verified=true WHERE id=$1', [row.user_id]);
+        if (user.starter_sparks_eligible) {
+          await grantRegistrationSparks(c, row.user_id);
+          await c.query('UPDATE users SET starter_sparks_eligible=false WHERE id=$1', [
+            row.user_id,
+          ]);
+        }
       }
     });
     return { ok: true };
@@ -527,4 +517,47 @@ export class AccountController {
     ]);
     return { ok: true };
   }
+}
+
+export async function requestAccountEmail(db: Db, email: string, purpose: 'reset' | 'verify') {
+  if (!mailEnabled) return { ok: true, code: 'EMAIL_DELIVERY_UNAVAILABLE' };
+  const token = randomBytes(32).toString('hex');
+  const recipient = await db.tx(async (c) => {
+    await c.query(
+      "DELETE FROM auth_email_cooldowns WHERE (address_hash,purpose) IN (SELECT address_hash,purpose FROM auth_email_cooldowns WHERE requested_at < now()-interval '1 day' LIMIT 1000)",
+    );
+    await c.query(
+      "DELETE FROM auth_email_tokens WHERE token_hash IN (SELECT token_hash FROM auth_email_tokens WHERE expires_at < now()-interval '1 day' LIMIT 1000)",
+    );
+    // Persist a cooldown even for nonexistent addresses: identical response and rate semantics.
+    const allowed = await c.query(
+      "INSERT INTO auth_email_cooldowns(address_hash,purpose) VALUES($1,$2) ON CONFLICT(address_hash,purpose) DO UPDATE SET requested_at=now() WHERE auth_email_cooldowns.requested_at < now()-interval '1 minute' RETURNING address_hash",
+      [tokenHash(email), purpose],
+    );
+    if (!allowed.rowCount) return null;
+    const row = (
+      await c.query('SELECT * FROM users WHERE email=$1 AND deleted_at IS NULL FOR UPDATE', [email])
+    ).rows[0];
+    if (!row || (purpose === 'verify' && row.email_verified)) return null;
+    await c.query('DELETE FROM auth_email_tokens WHERE user_id=$1 AND purpose=$2', [
+      row.id,
+      purpose,
+    ]);
+    await c.query(
+      "INSERT INTO auth_email_tokens(token_hash,user_id,purpose,expires_at) VALUES($1,$2,$3,now()+interval '30 minutes')",
+      [tokenHash(token), row.id, purpose],
+    );
+    return row;
+  });
+  if (recipient) {
+    // Delivery is deliberately detached from the uniform response; never log tokens or SMTP errors.
+    void sendAccountMail(email, purpose, token, recipient.settings?.language ?? 'en').catch(
+      async () => {
+        await db
+          .query('DELETE FROM auth_email_tokens WHERE token_hash=$1', [tokenHash(token)])
+          .catch(() => undefined);
+      },
+    );
+  }
+  return { ok: true, code: 'REQUEST_ACCEPTED' };
 }

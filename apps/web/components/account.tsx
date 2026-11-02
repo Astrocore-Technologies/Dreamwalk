@@ -63,6 +63,8 @@ function AuthForm({
   const localPreview = useResource<{ localAdminAlias: boolean }>(
     !signup && !reset ? '/auth/local-preview' : null,
   );
+  const providers = useResource<{ google: boolean }>('/auth/providers');
+  const googleError = useSearchParams().get('googleError');
   const localAlias = !signup && !reset && localPreview.data?.localAdminAlias === true;
   const localText = localAuthMessages[locale];
   const { setUser, toast } = useClient();
@@ -75,7 +77,10 @@ function AuthForm({
     if (!lease) return;
     const data = Object.fromEntries(new FormData(event.currentTarget));
     // Keep the existing registration contract; login is the only public identity.
-    if (signup) data.name = data.handle;
+    if (signup) {
+      data.name = data.handle;
+      data.language = locale;
+    }
     setBusy(true);
     setError('');
     try {
@@ -97,7 +102,7 @@ function AuthForm({
           method: 'POST',
           body: JSON.stringify(data),
         });
-        if (signup) {
+        if (signup && !(r.user.emailVerificationRequired && !r.user.emailVerified)) {
           r.user = await api<User>('/account/settings', {
             method: 'PATCH',
             body: JSON.stringify({ language: locale }),
@@ -106,7 +111,11 @@ function AuthForm({
         if (!authGate.accepts(lease)) return;
         setUser(r.user);
         toast(signup ? tr('Добро пожаловать в Dreamwalk') : tr('С возвращением'));
-        router.push(storyAfterAuth(r.user.onboarded, returnTo));
+        router.push(
+          r.user.emailVerificationRequired && !r.user.emailVerified
+            ? '/account/sessions'
+            : storyAfterAuth(r.user.onboarded, returnTo),
+        );
       }
     } catch (e) {
       if (authGate.accepts(lease)) setError(errorMessage(e));
@@ -150,6 +159,20 @@ function AuthForm({
               ? tr('Один аккаунт — бесконечно много историй.')
               : tr('Твои миры и герои ждут тебя.')}
         </p>
+        {googleError && (
+          <ErrorBox
+            message={
+              googleError === 'existing_account'
+                ? tr('Этот email уже зарегистрирован. Войди по паролю или восстанови доступ.')
+                : tr('Вход через Google не завершён. Попробуй снова.')
+            }
+          />
+        )}
+        {!reset && providers.data?.google && (
+          <a className="button secondary" href="/api/v1/auth/google/start">
+            {tr('Войти через Google')}
+          </a>
+        )}
         <form method="post" className="stack" onSubmit={submit}>
           {signup && (
             <>
@@ -260,6 +283,7 @@ export function Protected({
         }
       />
     );
+  if (user.emailVerificationRequired && !user.emailVerified) return <EmailVerification />;
   if (admin && user.role !== 'admin')
     return (
       <Empty

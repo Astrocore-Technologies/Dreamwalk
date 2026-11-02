@@ -41,7 +41,12 @@ export function proxy(request: NextRequest) {
   const sessionCookie = (headers.get('cookie') ?? '')
     .split(';')
     .map((v) => v.trim())
-    .filter((v) => v.startsWith('dreamwalk_session='))
+    .filter(
+      (v) =>
+        v.startsWith('dreamwalk_session=') ||
+        (request.nextUrl.pathname.startsWith('/api/v1/auth/google/') &&
+          v.startsWith('dreamwalk_oauth=')),
+    )
     .join('; ');
   if (sessionCookie) headers.set('cookie', sessionCookie);
   else headers.delete('cookie');

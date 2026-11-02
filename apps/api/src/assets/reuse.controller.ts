@@ -86,7 +86,7 @@ export class AssetReuseController {
     return this.assets.campaignManifest((await this.auth.require(req)).id, id);
   }
   @Get('versions/:id/manifest') async manifest(@Req() req: Request, @Param('id') id: string) {
-    const user = await this.auth.current(req);
+    const user = await this.auth.viewer(req);
     return this.assets.manifest(user?.id ?? null, id, user?.role === 'admin');
   }
   @Get('revisions/:id/file') async file(
@@ -100,7 +100,7 @@ export class AssetReuseController {
       .strict()
       .refine((v) => !(v.campaignId && v.playableVersionId))
       .parse(query);
-    const user = await this.auth.current(req),
+    const user = await this.auth.viewer(req),
       descriptor = await this.assets.fileDescriptor(
         user?.id ?? null,
         id,

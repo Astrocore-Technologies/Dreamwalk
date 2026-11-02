@@ -17,6 +17,11 @@ export function readConfig(env = process.env) {
       DISCORD_ENABLED: flag,
       DEV_AUTH_ENABLED: flag,
       DEMO_FAUCET_ENABLED: flag,
+      AUTH_EMAIL_VERIFICATION_REQUIRED: flag,
+      GOOGLE_CLIENT_ID: z.string().min(1).optional(),
+      GOOGLE_CLIENT_SECRET: z.string().min(1).optional(),
+      BREVO_API_KEY: z.string().min(1).optional(),
+      BREVO_FROM: z.email().optional(),
       SMTP_HOST: z.string().min(1).optional(),
       SMTP_PORT: z.coerce.number().int().min(1).max(65535).default(587),
       SMTP_SECURE: flag,
@@ -51,6 +56,14 @@ export function readConfig(env = process.env) {
     throw new Error('SMTP authentication requires both user and password.');
   if (!c.SMTP_HOST && (c.SMTP_FROM || c.SMTP_USER || c.SMTP_PASSWORD))
     throw new Error('Incomplete SMTP configuration.');
+  if (c.AUTH_EMAIL_VERIFICATION_REQUIRED && !c.SMTP_HOST && !c.BREVO_API_KEY)
+    throw new Error('Mandatory email verification requires email delivery configuration.');
+  if (Boolean(c.GOOGLE_CLIENT_ID) !== Boolean(c.GOOGLE_CLIENT_SECRET))
+    throw new Error('Google login requires client ID and secret.');
+  if (Boolean(c.BREVO_API_KEY) !== Boolean(c.BREVO_FROM))
+    throw new Error('Brevo delivery requires API key and sender.');
+  if (c.BREVO_API_KEY && c.SMTP_HOST)
+    throw new Error('Choose one email transport: Brevo HTTPS or SMTP.');
   return c;
 }
 export const config = readConfig();

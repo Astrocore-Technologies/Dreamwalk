@@ -126,6 +126,7 @@ export const settingsSchema = z.object({
 export type Settings = z.infer<typeof settingsSchema>;
 export interface User {
   emailVerified: boolean;
+  emailVerificationRequired?: boolean;
   id: string;
   email: string;
   name: string;
@@ -145,6 +146,7 @@ export const registerSchema = z
       .transform((v) => v.toLowerCase()),
     password: z.string().min(10).max(128),
     name: text(60).min(2),
+    language: z.enum(['ru', 'en', 'uk']).optional(),
     handle: z.string().regex(/^[a-z0-9_]{3,30}$/),
   })
   .strict();

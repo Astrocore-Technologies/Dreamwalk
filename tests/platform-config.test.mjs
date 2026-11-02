@@ -131,3 +131,42 @@ test('required trusted ingress cannot boot without a sufficiently strong key', (
     0,
   );
 });
+test('mandatory verification requires delivery and Google credentials are all-or-nothing', () => {
+  assert.notEqual(
+    validates({ AUTH_EMAIL_VERIFICATION_REQUIRED: 'true', SMTP_HOST: undefined }).status,
+    0,
+  );
+  assert.notEqual(
+    validates({ GOOGLE_CLIENT_ID: 'test', GOOGLE_CLIENT_SECRET: undefined }).status,
+    0,
+  );
+  assert.notEqual(
+    validates({ GOOGLE_CLIENT_ID: undefined, GOOGLE_CLIENT_SECRET: 'test' }).status,
+    0,
+  );
+});
+test('Brevo HTTPS delivery requires both key and sender and excludes ambiguous SMTP', () => {
+  assert.notEqual(validates({ BREVO_API_KEY: 'fixture', BREVO_FROM: undefined }).status, 0);
+  assert.notEqual(
+    validates({ BREVO_FROM: 'sender@example.test', BREVO_API_KEY: undefined }).status,
+    0,
+  );
+  assert.notEqual(
+    validates({
+      BREVO_API_KEY: 'fixture',
+      BREVO_FROM: 'sender@example.test',
+      SMTP_HOST: 'localhost',
+      SMTP_FROM: 'sender@example.test',
+    }).status,
+    0,
+  );
+  assert.equal(
+    validates({
+      AUTH_EMAIL_VERIFICATION_REQUIRED: 'true',
+      BREVO_API_KEY: 'fixture',
+      BREVO_FROM: 'sender@example.test',
+      SMTP_HOST: undefined,
+    }).status,
+    0,
+  );
+});
