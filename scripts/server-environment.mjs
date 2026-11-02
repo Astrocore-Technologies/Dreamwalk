@@ -12,7 +12,7 @@ const serverKeys = new Set([
   'GENERATION_OWNER_CONFIG_JSON',
 ]);
 const privateGenerationKey = (key) =>
-  /^(OPENAI_|NPC_AI_|LIVE_TEST_|IMAGE_|GENERATION_)/.test(key) ||
+  /^(OPENAI_|NPC_AI_|LIVE_TEST_|IMAGE_|GENERATION_|BREVO_|GOOGLE_|SMTP_|AUTH_EMAIL_)/.test(key) ||
   ['DREAMWALK_SERVER_ENV_FILE', 'DREAMWALK_LIVE_SECRET_FILE'].includes(key);
 const systemKeys = new Set([
   'PATH',
@@ -79,7 +79,7 @@ export function webEnvironment(env) {
   );
 }
 
-/** Build/migration/bootstrap processes do not receive generation credentials or owner policy. */
+/** Build/migration/bootstrap processes do not receive provider/auth credentials or activation policy. */
 export function preparationEnvironment(env) {
   return Object.fromEntries(Object.entries(env).filter(([key]) => !privateGenerationKey(key)));
 }

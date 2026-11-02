@@ -1,5 +1,6 @@
 /** Local SMTP capture only. No message content or bearer token is logged or written to disk. */
 import test from 'node:test';
+import { createRequire } from 'node:module';
 import assert from 'node:assert/strict';
 import net from 'node:net';
 import { spawn } from 'node:child_process';
@@ -31,6 +32,7 @@ test('SMTP capture: reset, verification, nonenumeration, expiry, replay, session
   const database = await startLocalPostgres();
   const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
   const messages = [];
+  let rejectDeliveries = false;
   const sockets = new Set();
   const smtp = net.createServer((socket) => {
     sockets.add(socket);
@@ -54,6 +56,10 @@ test('SMTP capture: reset, verification, nonenumeration, expiry, replay, session
           } else message += line + '\n';
         } else if (/^EHLO|^HELO/.test(line)) socket.write('250-localhost\r\n250 8BITMIME\r\n');
         else if (line === 'DATA') {
+          if (rejectDeliveries) {
+            socket.write('451 delivery unavailable\r\n');
+            continue;
+          }
           data = true;
           socket.write('354 send\r\n');
         } else if (line === 'QUIT') {
@@ -79,7 +85,7 @@ test('SMTP capture: reset, verification, nonenumeration, expiry, replay, session
     assert.equal(response.status, status);
     return response.json();
   }
-  async function start(enabled) {
+  async function start(enabled, required = false) {
     api = spawn(process.execPath, ['apps/api/dist/main.js'], {
       stdio: 'ignore',
       env: {
@@ -87,6 +93,7 @@ test('SMTP capture: reset, verification, nonenumeration, expiry, replay, session
         NODE_ENV: 'test',
         API_PORT: String(port),
         WEB_ORIGIN: 'http://localhost:3000',
+        AUTH_EMAIL_VERIFICATION_REQUIRED: String(required),
         SMTP_HOST: enabled ? '127.0.0.1' : undefined,
         SMTP_PORT: String(smtp.address().port),
         SMTP_FROM: enabled ? 'test@example.test' : undefined,
@@ -252,6 +259,177 @@ test('SMTP capture: reset, verification, nonenumeration, expiry, replay, session
       'Concurrent replacement/consume must never deadlock or return500',
     );
     await captured(4);
+    await stop();
+    await start(true, true);
+    const pending = await call('/auth/register', {
+      email: 'pending@example.test',
+      password,
+      name: 'Pending',
+      handle: 'pending_verified',
+    });
+    assert.equal(pending.user.emailVerificationRequired, true);
+    assert.equal(pending.user.emailVerified, false);
+    assert.equal(
+      (await pool.query('SELECT count(*) FROM spark_wallets WHERE owner_id=$1', [pending.user.id]))
+        .rows[0].count,
+      '0',
+    );
+    const pendingCookie = cookie;
+    assert.equal((await fetch(base + '/sparks/wallet', { headers: { cookie } })).status, 403);
+    assert.equal((await fetch(base + '/auth/me', { headers: { cookie } })).status, 200);
+    await call('/account/email-verification/request', {}); // cooldown, session allowed
+    const pendingToken = await captured(5);
+    const pendingRace = await Promise.all(
+      [1, 2].map(() =>
+        fetch(base + '/auth/verify-email', {
+          method: 'POST',
+          headers: { 'content-type': 'application/json' },
+          body: JSON.stringify({ token: pendingToken }),
+        }),
+      ),
+    );
+    assert.deepEqual(pendingRace.map((r) => r.status).sort(), [201, 400]);
+    assert.equal(
+      (
+        await pool.query('SELECT balance_subunits FROM spark_wallets WHERE owner_id=$1', [
+          pending.user.id,
+        ])
+      ).rows[0].balance_subunits,
+      '500000',
+    );
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT count(*) FROM spark_ledger WHERE owner_id=$1 AND kind='starter_grant'",
+          [pending.user.id],
+        )
+      ).rows[0].count,
+      '1',
+    );
+    assert.equal(
+      (await fetch(base + '/sparks/wallet', { headers: { cookie: pendingCookie } })).status,
+      200,
+    );
+    // Legacy account remains explicitly unverified but is not locked by activation.
+    await call('/auth/login', {
+      email: 'disabled@example.test',
+      password: 'Disabled-test-password-123',
+    });
+    const legacy = await (await fetch(base + '/auth/me', { headers: { cookie } })).json();
+    assert.equal(legacy.user.emailVerified, false);
+    assert.equal(legacy.user.emailVerificationRequired, false);
+    assert.equal((await fetch(base + '/sparks/wallet', { headers: { cookie } })).status, 200);
+    rejectDeliveries = true;
+    const failedDelivery = await call('/auth/register', {
+      email: 'retry-delivery@example.test',
+      password,
+      name: 'Retry delivery',
+      handle: 'retry_delivery',
+    });
+    for (let attempt = 0; attempt < 50; attempt++) {
+      const tokens = await pool.query('SELECT count(*) FROM auth_email_tokens WHERE user_id=$1', [
+        failedDelivery.user.id,
+      ]);
+      if (tokens.rows[0].count === '0') break;
+      await delay(50);
+    }
+    assert.equal(
+      (
+        await pool.query('SELECT count(*) FROM auth_email_tokens WHERE user_id=$1', [
+          failedDelivery.user.id,
+        ])
+      ).rows[0].count,
+      '0',
+      'Rejected mail invalidates unsent bearer',
+    );
+    assert.equal((await fetch(base + '/sparks/wallet', { headers: { cookie } })).status, 403);
+    rejectDeliveries = false;
+    await pool.query(
+      "UPDATE auth_email_cooldowns SET requested_at=now()-interval '2 minutes' WHERE address_hash=$1",
+      [hash('retry-delivery@example.test')],
+    );
+    const messageCount = messages.length;
+    await call('/account/email-verification/request', {});
+    const retryToken = await captured(messageCount + 1);
+    await call('/auth/verify-email', { token: retryToken });
+    assert.equal(
+      (
+        await pool.query('SELECT balance_subunits FROM spark_wallets WHERE owner_id=$1', [
+          failedDelivery.user.id,
+        ])
+      ).rows[0].balance_subunits,
+      '500000',
+    );
+    // Provisioning uses signed-claim-shaped local fixtures; no Google endpoints called.
+    process.env.SMTP_HOST = '127.0.0.1';
+    process.env.SMTP_FROM = 'test@example.test';
+    const require = createRequire(import.meta.url);
+    const { provisionGoogleUser } = require('../apps/api/dist/google-auth.js');
+    const dbAdapter = {
+      tx: async (work) => {
+        const c = await pool.connect();
+        try {
+          await c.query('BEGIN');
+          const result = await work(c);
+          await c.query('COMMIT');
+          return result;
+        } catch (error) {
+          await c.query('ROLLBACK');
+          throw error;
+        } finally {
+          c.release();
+        }
+      },
+    };
+    const googleClaims = {
+      sub: 'fixture-google-identity',
+      email: 'google-fixture@gmail.com',
+      email_verified: true,
+      name: 'Google fixture',
+    };
+    const [google1, google2] = await Promise.all(
+      [1, 2].map(() => provisionGoogleUser(dbAdapter, googleClaims)),
+    );
+    assert.equal(google1.id, google2.id);
+    assert.equal(google1.email_verified, true);
+    assert.equal(
+      (
+        await pool.query(
+          "SELECT count(*) FROM spark_ledger WHERE owner_id=$1 AND kind='starter_grant'",
+          [google1.id],
+        )
+      ).rows[0].count,
+      '1',
+    );
+    await assert.rejects(
+      provisionGoogleUser(dbAdapter, {
+        ...googleClaims,
+        sub: 'different',
+        email: 'disabled@example.test',
+      }),
+      { message: 'ACCOUNT_LINK_REQUIRED' },
+    );
+    const thirdParty = await provisionGoogleUser(dbAdapter, {
+      sub: 'third-party-google',
+      email: 'third-party@example.test',
+      email_verified: true,
+    });
+    assert.equal(thirdParty.email_verified, false);
+    assert.equal(thirdParty.email_verification_required, true);
+    assert.equal(
+      (await pool.query('SELECT count(*) FROM spark_wallets WHERE owner_id=$1', [thirdParty.id]))
+        .rows[0].count,
+      '0',
+    );
+    const returning = await provisionGoogleUser(dbAdapter, {
+      ...googleClaims,
+      email: 'changed-google@gmail.com',
+    });
+    assert.equal(
+      returning.id,
+      google1.id,
+      'Stable sub, never changed email, controls returning login',
+    );
   } finally {
     await stop();
     for (const s of sockets) s.destroy();

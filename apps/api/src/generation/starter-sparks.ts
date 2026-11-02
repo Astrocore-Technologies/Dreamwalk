@@ -1,7 +1,9 @@
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 
-/** Registration-only gift. Caller must use the SAME transaction that inserts the new user.
+/** New-account gift, never a backfill. Caller owns the eligibility check and must use
+ * the SAME transaction that inserts the user OR consumes their verification eligibility.
+ * Verification callers lock the user and clear starter_sparks_eligible atomically.
  * enabled enforces Sparks admission; it does not enable providers, payments or generation policies.
  * Existing wallets are never backfilled, re-enabled or reset by this function.
  */

@@ -86,7 +86,9 @@ await test(
     try {
       await startApi();
       const people = [];
-      for (let i = 0; i < 5; i++) people.push(await client().register());
+      // Historical synthetic adapters have no priced model snapshot; exercise their legacy path.
+      // Funded-account pricing rejection is covered by the image integration suite.
+      for (let i = 0; i < 5; i++) people.push(await client().registerLegacyFixture());
       const story = await createStory(people[2]),
         otherStory = await createStory(people[4]);
       const form = new FormData();

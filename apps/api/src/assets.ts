@@ -97,7 +97,7 @@ export class AssetsController {
       ).length
     )
       fail(404, 'NOT_FOUND', 'Изображение не найдено.');
-    const u = await this.auth.current(req);
+    const u = await this.auth.viewer(req);
     let allowed = u?.id === row.owner_id;
     if (!allowed) {
       const references = await this.db.query(

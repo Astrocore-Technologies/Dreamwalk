@@ -316,7 +316,7 @@ export class ContentController {
       fail(404, 'NOT_FOUND', 'Приключение не найдено.');
     // Discovery must use the approved snapshot even for its signed-in author.
     // The default detail route retains its existing owner/invitation behavior.
-    const u = publishedOnly ? null : await this.auth.current(req);
+    const u = publishedOnly ? null : await this.auth.viewer(req);
     const access = publishedOnly ? 'public' : await this.content.access(row, u);
     if (!access) fail(404, 'NOT_FOUND', 'Приключение не найдено.');
     const usePublished = access === 'public' || access === 'invited';

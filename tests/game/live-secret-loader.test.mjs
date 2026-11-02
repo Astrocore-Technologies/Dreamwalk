@@ -194,3 +194,23 @@ test('secret paths are explicitly supplied and absolute; no machine-specific fal
     /LIVE_TEST_DISABLED/,
   );
 });
+
+test('mail and OAuth credentials and activation policy remain API-only during preparation', async () => {
+  const { preparationEnvironment } = await import('../../scripts/server-environment.mjs');
+  const values = {
+    BREVO_API_KEY: 'fixture',
+    BREVO_FROM: 'sender@example.test',
+    GOOGLE_CLIENT_ID: 'client',
+    GOOGLE_CLIENT_SECRET: 'fixture',
+    SMTP_PASSWORD: 'fixture',
+    AUTH_EMAIL_VERIFICATION_REQUIRED: 'true',
+    WEB_ORIGIN: 'https://example.test',
+  };
+  const prep = preparationEnvironment(values),
+    web = webEnvironment(values);
+  for (const key of Object.keys(values).filter((key) => key !== 'WEB_ORIGIN')) {
+    assert.equal(prep[key], undefined);
+    assert.equal(web[key], undefined);
+  }
+  assert.equal(prep.WEB_ORIGIN, values.WEB_ORIGIN);
+});

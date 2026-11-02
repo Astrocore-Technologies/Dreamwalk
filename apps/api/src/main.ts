@@ -23,6 +23,7 @@ import { json } from 'express';
 import type { Request, Response, NextFunction } from 'express';
 import { Db } from './db';
 import { Auth, AccountController } from './auth';
+import { GoogleAuthController } from './google-auth';
 import { Content, ContentController } from './content';
 import { AdminController } from './admin';
 import { AssetsController, AssetUploadGuard } from './assets';
@@ -69,6 +70,7 @@ class Health {
     VisualAuthoringController,
     StoryBuildController,
     AccountController,
+    GoogleAuthController,
     ContentController,
     AdminController,
     AssetsController,
@@ -179,8 +181,9 @@ async function bootstrap() {
       }
     }
     const isAuth =
-      mutation &&
-      (req.path.includes('/auth/') || req.path.includes('/account/email-verification/'));
+      (mutation &&
+        (req.path.includes('/auth/') || req.path.includes('/account/email-verification/'))) ||
+      ['/api/v1/auth/google/start', '/api/v1/auth/google/callback'].includes(req.path);
     const key = `${req.ip}:${isAuth ? 'auth' : 'all'}`,
       now = Date.now(),
       limit = isAuth ? 30 : 600;

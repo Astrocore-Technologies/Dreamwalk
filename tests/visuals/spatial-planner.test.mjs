@@ -100,7 +100,8 @@ await test(
     });
     try {
       await startApi();
-      const account = await client().register(),
+      // The injected legacy art transport has no priced model snapshot.
+      const account = await client().registerLegacyFixture(),
         other = await client().register();
       owner = account.user.id;
       const stories = [];
