@@ -1,4 +1,5 @@
 import {
+  readNarrativePreferences,
   narrativeConstraintsSchema,
   localeSchema,
   type Locale,
@@ -79,6 +80,9 @@ export function buildNarrativeContext(
   const context = {
     actorId,
     replyLocale: localeSchema.parse(replyLocale),
+    ...(state.narrativePreferences?.[actorId]
+      ? { narrativePreferences: readNarrativePreferences(state, actorId) }
+      : {}),
     premise: state.narrativePremise ? structuredClone(state.narrativePremise) : null,
     sourceVersion: state.narrativeSource ? { ...state.narrativeSource } : null,
     intent: text,

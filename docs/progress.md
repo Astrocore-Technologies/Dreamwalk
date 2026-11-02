@@ -904,3 +904,21 @@ verified model capacity determines the effective window. Financial limits and th
 separate transport byte guard still apply; persistent story history can grow beyond
 any one provider request. Approximate startup needs no new mandatory environment
 field, and `text.counting` stays omitted while count pricing is unverified.
+
+## 2026-11-02 — authored character and presentation milestone
+
+Character profiles now compile through immutable story versions into the existing
+NPC decision engine, with differing grounded motives/reactions and a bounded public
+voice projection. Author lore is knowledge-gated before relevance; reader DTOs do not
+include private profiles or lore. Explicit profile removal restores the preceding
+manual configuration. Existing campaigns retain their pinned version.
+
+Per-player relationship evidence, long-history obligations and private appraisal use
+existing state rather than a parallel memory engine. Typed presentation preferences
+have CAS/idempotent receipts, privacy/export/erasure handling and stale-context fences
+before provider dispatch. They do not edit canon or grant raw OOC instruction authority.
+
+See `npc-character-quality.md` for the deterministic three-character fixture and the
+separate, not-yet-authorized real-model acceptance procedure. New characterization is
+opt-in for authored NPCs; existing/generated NPCs retain their existing behavior unless
+explicitly authored. No external card import, TTS, new emotional art or paid calls.

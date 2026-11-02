@@ -2,7 +2,12 @@ import { Inject, Injectable, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
-import { contentSchema, authoredGameDraftSchema } from '@dreamwalk/contracts';
+import {
+  contentSchema,
+  authoredGameDraftSchema,
+  npcCharacterProfileSchema,
+  validateStoryLoreReferences,
+} from '@dreamwalk/contracts';
 import { enumerateArtSlots } from '@dreamwalk/game-core';
 import { Db } from '../db';
 import { AssetReuseService } from '../assets/reuse.service';
@@ -37,6 +42,7 @@ export class StoryBuildService {
     if (!content.locations.length || content.locations.length > 4 || content.npcIds.length > 8)
       fail(400, 'STORY_PLAN_CAPACITY', 'STORY_PLAN_CAPACITY');
     if (
+      !validateStoryLoreReferences(content) ||
       new Set(content.locations.map((l) => l.id)).size !== content.locations.length ||
       new Set(content.npcIds).size !== content.npcIds.length
     )
@@ -86,6 +92,11 @@ export class StoryBuildService {
         role: n.data.role ?? '',
         description: n.data.description ?? '',
         appearance: n.data.appearance ?? '',
+        ...(n.data.characterProfile === null
+          ? { characterProfile: null }
+          : n.data.characterProfile
+            ? { characterProfile: npcCharacterProfileSchema.parse(n.data.characterProfile) }
+            : {}),
       })),
       priorDraft: game?.draft ? authoredGameDraftSchema.parse(game.draft) : null,
     };

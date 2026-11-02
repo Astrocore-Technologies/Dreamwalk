@@ -2,7 +2,13 @@ import { Inject, Injectable } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
-import { adventureSchema, npcSchema, npcTextFields } from '@dreamwalk/contracts';
+import {
+  adventureSchema,
+  npcSchema,
+  npcTextFields,
+  previewStoryLore,
+  validateStoryLoreReferences,
+} from '@dreamwalk/contracts';
 import { Db } from '../db';
 import { fail } from '../errors';
 import { ownedCharacterPackage } from '../visual-authoring/character-package';
@@ -152,6 +158,46 @@ export class StoryNpcService {
       return { npcs: rows.map(view), storyEditRevision: Number(story.edit_revision) };
     });
   }
+  async previewLore(userId: string, storyId: string, body: unknown) {
+    const input = z
+      .object({
+        npcId: z.uuid(),
+        query: z.string().trim().max(200).default(''),
+        locationId: z
+          .string()
+          .regex(/^[A-Za-z0-9_-]{1,80}$/)
+          .optional(),
+      })
+      .strict()
+      .parse(body);
+    return this.db.tx(async (c) => {
+      const story = await this.story(c, userId, storyId);
+      const content = adventureSchema.parse(story.data).content;
+      if (!validateStoryLoreReferences(content))
+        fail(400, 'VALIDATION_FAILED', 'INVALID_LORE_REFERENCE');
+      if (
+        !content.npcIds.includes(input.npcId) ||
+        (input.locationId && !content.locations.some((entry) => entry.id === input.locationId))
+      )
+        fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      const owned = await c.query(
+        'SELECT id FROM npcs WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND (story_id IS NULL OR story_id=$3)',
+        [userId, content.npcIds, storyId],
+      );
+      if (owned.rowCount !== new Set(content.npcIds).size) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      return {
+        npcId: input.npcId,
+        storyEditRevision: Number(story.edit_revision),
+        providerCalls: 0,
+        entries: previewStoryLore(
+          content.lorebook ?? [],
+          input.npcId,
+          input.query,
+          input.locationId,
+        ),
+      };
+    });
+  }
   async create(userId: string, storyId: string, body: unknown) {
     const input = mutation.extend({ npc: npcSchema }).strict().parse(body);
     return this.run(userId, storyId, 'create', input, async (c, story) => {
@@ -227,6 +273,7 @@ export class StoryNpcService {
       );
       if (
         npcTextFields.some((field) => data[field] !== original[field]) ||
+        JSON.stringify(data.characterProfile) !== JSON.stringify(original.characterProfile) ||
         data.sourceLanguage !== original.sourceLanguage
       )
         data.sourceRevision++;

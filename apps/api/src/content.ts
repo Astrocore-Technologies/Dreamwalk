@@ -1,3 +1,4 @@
+import { remapCopiedCharacterProfile, remapCopiedStoryLore } from './game/character-authoring';
 import { ownedCharacterPackage } from './visual-authoring/character-package';
 import {
   Body,
@@ -30,6 +31,8 @@ import {
   type MetadataTranslations,
   localeSchema,
   safeAdventureMetadata,
+  readerStoryContent,
+  validateStoryLoreReferences,
 } from '@dreamwalk/contracts';
 import { Db, camel } from './db';
 import { Auth } from './auth';
@@ -70,6 +73,11 @@ export function adventureView(
   const exposedMetadata = usePublished || reader ? safeAdventureMetadata(metadata) : metadata;
   return {
     ...data,
+    ...((usePublished || reader) && data.content
+      ? {
+          content: readerStoryContent(data.content as Record<string, unknown>),
+        }
+      : {}),
     ...exposedMetadata,
     id: row.id,
     ownerId: row.owner_id,
@@ -142,6 +150,7 @@ export class Content {
     if (data.playersMin > data.playersMax)
       fail(400, 'VALIDATION_FAILED', 'Минимум игроков не может превышать максимум.');
     const c = data.content;
+    if (!validateStoryLoreReferences(c)) fail(400, 'VALIDATION_FAILED', 'INVALID_LORE_REFERENCE');
     if (
       new Set(c.locations.map((x) => x.id)).size !== c.locations.length ||
       new Set(c.scenes.map((x) => x.id)).size !== c.scenes.length
@@ -328,6 +337,7 @@ export class ContentController {
         const n = entityView(r);
         delete n.secrets;
         delete n.biography;
+        delete n.characterProfile;
         if (access !== 'owner') delete n.editRevision;
         return { ...n, ...safeNpcMetadata(npcSchema.parse(r.data)) };
       });
@@ -336,10 +346,13 @@ export class ContentController {
       ...result,
       access,
       readOnly: access !== 'owner',
-      npcs: npcPreview.map((n) => ({
-        ...n,
-        ...safeNpcMetadata(n as unknown as import('@dreamwalk/contracts').NpcMetadata),
-      })),
+      npcs: npcPreview.map((n) => {
+        const { characterProfile: _characterProfile, ...safe } = n;
+        return {
+          ...safe,
+          ...safeNpcMetadata(n as unknown as import('@dreamwalk/contracts').NpcMetadata),
+        };
+      }),
       versions:
         access !== 'owner'
           ? []
@@ -661,6 +674,7 @@ export class ContentController {
       }
       if (
         npcTextFields.some((f) => data[f] !== original[f]) ||
+        JSON.stringify(data.characterProfile) !== JSON.stringify(original.characterProfile) ||
         data.sourceLanguage !== original.sourceLanguage
       )
         data.sourceRevision++;
@@ -931,10 +945,9 @@ export class ContentController {
           'private',
         ],
       );
-      const copies = new Map<string, string>();
+      const copies = new Map<string, string>(npcs.map((npc) => [npc.id, randomUUID()]));
       for (const npc of npcs) {
-        const npcId = randomUUID();
-        copies.set(npc.id, npcId);
+        const npcId = copies.get(npc.id)!;
         await c.query(
           'INSERT INTO npcs(id,owner_id,story_id,source_template_id,data) VALUES($1,$2,$3,$4,$5)',
           [
@@ -942,10 +955,22 @@ export class ContentController {
             u.id,
             newId,
             npc.story_id ? npc.source_template_id : npc.id,
-            JSON.stringify(npc.data),
+            JSON.stringify({
+              ...npc.data,
+              ...(npc.data.characterProfile
+                ? {
+                    characterProfile: remapCopiedCharacterProfile(
+                      npc.data.characterProfile,
+                      copies,
+                    ),
+                  }
+                : {}),
+            }),
           ],
         );
       }
+      if (data.content.lorebook)
+        data.content.lorebook = remapCopiedStoryLore(data.content.lorebook, copies);
       data.content.npcIds = data.content.npcIds.map((npcId) => copies.get(npcId)!);
       await c.query('UPDATE adventures SET data=$2 WHERE id=$1', [newId, JSON.stringify(data)]);
     });

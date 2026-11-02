@@ -125,7 +125,11 @@ export function updateNpcAffect(s: GameState, npcId: string): boolean {
     20,
     100 - Math.floor(m.affect.fatigue / 2) - (m.distractedUntilTick > s.tick ? 50 : 0),
   );
-  if (m.affect.alertness === 0) m.affect.mood = 'calm';
+  if (
+    m.affect.alertness === 0 &&
+    (!m.personality.characterization || (m.affect.moodUntilTick ?? 0) <= s.tick)
+  )
+    m.affect.mood = 'calm';
   return true;
 }
 export function defaultNpcGoalPolicy(s: GameState, npcId: string): void {

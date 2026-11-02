@@ -313,6 +313,8 @@ export function compilePlayableDraft(input: unknown): {
           title: fact.title,
           definitionText: fact.text,
           publicQuestion: fact.publicQuestion,
+          relevanceTopics: fact.relevanceTopics,
+          relevanceMapId: fact.relevanceMapId,
           depth: 0,
           disclosure: fact.disclosure === 'public' ? 'public' : 'private',
           audienceIds: [],

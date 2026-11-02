@@ -7,6 +7,7 @@ import {
   adventureSchema,
   parsePatch,
   safeNpcMetadata,
+  readerStoryContent,
 } from '@dreamwalk/contracts';
 import { Db, camel } from './db';
 import { Auth, userView } from './auth';
@@ -232,7 +233,7 @@ export class AdminController {
       adventureView(
         r,
         r.owner_id !== u.id && (r.visibility === 'private' || r.status !== 'pending_review'),
-        r.owner_id !== u.id && r.visibility === 'private',
+        r.owner_id !== u.id,
       ),
     );
   }
@@ -267,6 +268,7 @@ export class AdminController {
       if (r.owner_id !== u.id) {
         delete safe.secrets;
         delete safe.biography;
+        delete safe.characterProfile;
         Object.assign(safe, safeNpcMetadata(r.data));
       }
       return { ...safe, ...camel({ ...r, data: undefined }) };
@@ -328,17 +330,24 @@ export class AdminController {
           ])
         ).rows;
         const publicNpcs = npcRows.map((n) => {
-          const { secrets: _secrets, biography: _biography, ...safe } = n.data;
+          const {
+            secrets: _secrets,
+            biography: _biography,
+            characterProfile: _characterProfile,
+            ...safe
+          } = n.data;
           return { ...safe, ...safeNpcMetadata(n.data), id: n.id };
         });
         const snapshot = {
           ...row.data,
+          content: readerStoryContent(row.data.content),
           status: 'published',
           publicNpcs,
           playableVersionId: row.submitted_game_version_id ?? null,
         };
         const privateVersion = {
           ...snapshot,
+          content: row.data.content,
           npcDefinitions: npcRows.map((n) => ({ ...n.data, id: n.id })),
         };
         const savedVersion = await c.query(

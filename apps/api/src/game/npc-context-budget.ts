@@ -19,6 +19,8 @@ export function packNpcContext<T extends object>(
   const required = new Set<string>();
   const goal = value.goal as { evidenceIds?: string[] } | undefined;
   for (const id of goal?.evidenceIds ?? []) required.add(id);
+  const appraisal = value.privateAppraisal as { evidenceIds?: string[] } | undefined;
+  for (const id of appraisal?.evidenceIds ?? []) required.add(id);
   for (const o of array('obligations'))
     for (const id of (o.evidenceIds as string[] | undefined) ?? []) required.add(id);
   const observations = array('observations');
@@ -71,6 +73,8 @@ export function packNpcContextWindow<T extends object>(
   if (value.replyToObservationId) required.add(String(value.replyToObservationId));
   const goal = value.goal as { evidenceIds?: string[] } | undefined;
   for (const id of goal?.evidenceIds ?? []) required.add(id);
+  const appraisal = value.privateAppraisal as { evidenceIds?: string[] } | undefined;
+  for (const id of appraisal?.evidenceIds ?? []) required.add(id);
   for (const o of (value.obligations as { evidenceIds?: string[] }[] | undefined) ?? [])
     for (const id of o.evidenceIds ?? []) required.add(id);
   const summary = value.summary as { observationIds?: string[] } | undefined;

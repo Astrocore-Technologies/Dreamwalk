@@ -1,6 +1,34 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { packNpcContext } from '../../apps/api/src/game/npc-context-budget.ts';
+import {
+  packNpcContext,
+  packNpcContextWindow,
+} from '../../apps/api/src/game/npc-context-budget.ts';
+test('private fictional appraisal retains its actual evidence under both packing policies', () => {
+  const input = {
+    privateAppraisal: { evidenceIds: ['basis'], response: 'observe' },
+    observations: [
+      { id: 'basis', kind: 'noise', text: 'A sound was heard.' },
+      ...Array.from({ length: 20 }, (_, i) => ({
+        id: `extra-${i}`,
+        kind: 'noise',
+        text: 'x'.repeat(100),
+      })),
+    ],
+  };
+  const bytePacked = packNpcContext(input, 500);
+  const tokenPacked = packNpcContextWindow(
+    input,
+    (context) => JSON.stringify(context).length < 500,
+  );
+  for (const packed of [bytePacked, tokenPacked]) {
+    assert.equal(packed.budgetExceeded, false);
+    assert.ok(packed.observations.some((o) => o.id === 'basis'));
+    assert.ok(packed.observations.length < input.observations.length);
+    assert.deepEqual(packed.privateAppraisal, input.privateAppraisal);
+  }
+  assert.equal(packNpcContext(input, 50).budgetExceeded, true);
+});
 test('context packing trims whole optional episodes while preserving question and obligation evidence', () => {
   const input = {
     npcId: 'keeper',

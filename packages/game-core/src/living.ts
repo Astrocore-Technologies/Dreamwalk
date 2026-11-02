@@ -1,7 +1,10 @@
+import { characterAppraisal, characterPerformance, updateCharacterRelationship } from './character';
 import { materializeNpcItems, npcItemContext } from './world-items';
 import type { NpcItemIntent } from '@dreamwalk/contracts';
-import { mockAcknowledgement, mockFactReply } from './mock-speech';
+import { mockAcknowledgement, mockCharacterAcknowledgement, mockFactReply } from './mock-speech';
 import {
+  readNarrativePreferences,
+  npcLoreRelevance,
   npcSpeechSchema,
   localeSchema,
   type Locale,
@@ -196,7 +199,11 @@ function prune(memory: LivingNpcMemory) {
     (o) => ['accepted', 'proposed'].includes(o.status) || terminal.has(o.id),
   );
 }
-function remember(memory: LivingNpcMemory, observation: NpcObservation): boolean {
+function remember(
+  memory: LivingNpcMemory,
+  observation: NpcObservation,
+  observerId?: string,
+): boolean {
   // A root event repeated through multiple messengers is not independent evidence.
   if (
     memory.observations.some(
@@ -222,6 +229,13 @@ function remember(memory: LivingNpcMemory, observation: NpcObservation): boolean
     memory.affect.mood = 'grateful';
     memory.affect.alertness = Math.max(0, memory.affect.alertness - 10);
   }
+  if (
+    memory.personality.characterization &&
+    ['helped', 'harmed', 'pushed', 'item_taken'].includes(observation.kind)
+  ) {
+    memory.affect.moodUntilTick = observation.tick + 60;
+    if (['harmed', 'pushed'].includes(observation.kind)) memory.affect.mood = 'alarmed';
+  }
   const kind = observation.kind;
   if (
     [
@@ -235,7 +249,8 @@ function remember(memory: LivingNpcMemory, observation: NpcObservation): boolean
       'claim',
       'harmed',
       'pushed',
-    ].includes(kind)
+    ].includes(kind) ||
+    (memory.personality.characterization && kind === 'helped')
   ) {
     const c = {
       id: observation.id,
@@ -318,16 +333,19 @@ function remember(memory: LivingNpcMemory, observation: NpcObservation): boolean
       debt: 0,
       evidenceIds: [],
     });
-    if (kind === 'item_taken' && memory.personality.role === 'guard') {
+    const mayChange =
+      !memory.personality.characterization || r.character?.lastChangedTick !== observation.tick;
+    if (mayChange && kind === 'item_taken' && memory.personality.role === 'guard') {
       r.trust = Math.max(-5, r.trust - 1);
       r.alertness = Math.min(5, r.alertness + 1);
     }
-    if (kind === 'helped') {
+    if (mayChange && kind === 'helped') {
       r.trust = Math.min(5, r.trust + 1);
       r.debt = Math.min(5, r.debt + 1);
     }
     r.evidenceIds = [...r.evidenceIds, observation.id].slice(-32);
   }
+  if (observation.actorId !== observerId) updateCharacterRelationship(memory, observation);
   prune(memory);
   return true;
 }
@@ -494,7 +512,7 @@ export function recordLivingNpcEvents(
             ? { point: { x: Math.floor(actor.x / 3) * 3, y: Math.floor(actor.y / 3) * 3 } }
             : {}),
       };
-      changed = remember(m, o) || changed;
+      changed = remember(m, o, npcId) || changed;
     }
   }
   if (changed) s.revision++;
@@ -913,12 +931,47 @@ export function stepLivingNpcs(
       m.goal.evidenceIds = [cause.observationId];
       s.revision++;
       if (!observation) continue;
+      const appraisal = characterAppraisal(m, observation, npcId);
+      if (appraisal && ['observe', 'refuse', 'withdraw'].includes(appraisal.response)) {
+        const actor = observation.actorId ? s.entities[observation.actorId] : undefined;
+        const away =
+          appraisal.response === 'withdraw' && actor && visible(s, npc, actor)
+            ? [
+                { x: npc.x - 1, y: npc.y },
+                { x: npc.x + 1, y: npc.y },
+                { x: npc.x, y: npc.y - 1 },
+                { x: npc.x, y: npc.y + 1 },
+              ]
+                .filter((p) => walkable(s, npc.mapId, p, npcId, true))
+                .filter(
+                  (p) =>
+                    Math.abs(p.x - actor.x) + Math.abs(p.y - actor.y) >
+                    Math.abs(npc.x - actor.x) + Math.abs(npc.y - actor.y),
+                )
+                .sort((a, b) => a.x - b.x || a.y - b.y)[0]
+            : undefined;
+        const reaction = plan(s, npcId, [
+          away ? { kind: 'move_to', target: away } : { kind: 'wait' },
+        ]);
+        if (!reaction.error) {
+          s = reaction.state;
+          events.push(...reaction.events);
+        }
+        prune(s.npcBrains![npcId].living!);
+        continue;
+      }
+      if (appraisal?.response === 'warn') {
+        m.goal.kind = 'warn';
+        notice(s, npcId, 'warned', cause.id);
+      }
       if (
         observation.kind === 'addressed' &&
         !m.promiseTemplates?.length &&
-        (m.personality.role === 'helper' ||
-          m.personality.values.includes('kindness') ||
-          m.personality.behaviorProfile === 'cookie') &&
+        (appraisal
+          ? appraisal.response === 'assist'
+          : m.personality.role === 'helper' ||
+            m.personality.values.includes('kindness') ||
+            m.personality.behaviorProfile === 'cookie') &&
         observation.actorId
       ) {
         const owned = (npc.inventory ?? []).find(
@@ -940,7 +993,10 @@ export function stepLivingNpcs(
           }
         }
       }
-      if (['item_taken', 'item_missing', 'noise', 'claim'].includes(observation.kind)) {
+      if (
+        ['item_taken', 'item_missing', 'noise', 'claim'].includes(observation.kind) ||
+        appraisal?.response === 'warn'
+      ) {
         m.goal.kind = 'investigate';
         m.goal.targetId = observation.targetId;
         defaultNpcGoalPolicy(s, npcId);
@@ -1072,10 +1128,40 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
     brain = state.npcBrains?.[npcId],
     m = brain?.living;
   if (!npc || !m) throw new Error('TARGET_UNAVAILABLE');
+  const query =
+    [...m.observations]
+      .reverse()
+      .find(
+        (o) =>
+          (o.kind === 'addressed' || (o.kind === 'said' && o.addressedNpcId === npcId)) && o.text,
+      )?.text ?? '';
+  const pinned = new Set([
+    ...m.goal.evidenceIds,
+    ...m.obligations
+      .filter((o) => ['accepted', 'proposed'].includes(o.status))
+      .flatMap((o) => o.evidenceIds),
+  ]);
+  const relevance = (o: NpcObservation) =>
+    npcLoreRelevance(
+      [o.title, o.definitionText, o.publicQuestion, ...(o.relevanceTopics ?? [])].filter(
+        (v): v is string => typeof v === 'string',
+      ),
+      o.relevanceMapId,
+      query,
+      npc.mapId,
+    );
   const ranked = [...m.observations]
+    .filter(
+      (o) =>
+        o.kind !== 'authored_fact' ||
+        !o.factId?.startsWith('story-lore-') ||
+        pinned.has(o.id) ||
+        relevance(o) > 0,
+    )
     .sort(
       (a, b) =>
         npcObservationImportance(m, b) - npcObservationImportance(m, a) ||
+        relevance(b) - relevance(a) ||
         b.tick - a.tick ||
         a.id.localeCompare(b.id),
     )
@@ -1094,6 +1180,9 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
     knowledgeRevision: m.knowledgeRevision,
     goalGeneration: m.goal.revision,
     personality: clone(m.personality),
+    ...(m.personality.characterization
+      ? { privateAppraisal: characterAppraisal({ ...m, observations: ranked }, undefined, npcId) }
+      : {}),
     // The scheduler timestamp is not a semantic read dependency. Keep every actual
     // affect value: changing mood, attention, fatigue or alertness still stales a plan.
     affect: {
@@ -1243,6 +1332,7 @@ export function buildNpcPublicSpeechContext(
   requestedFactIds: string[] = [],
   deferredSpeechId?: string,
   replyLocale: Locale = 'en',
+  recipientActorId?: string,
 ) {
   const locale = localeSchema.parse(replyLocale);
   const m = state.npcBrains?.[npcId]?.living,
@@ -1268,6 +1358,32 @@ export function buildNpcPublicSpeechContext(
     )
   )
     return { npcId, replyLocale: locale, audienceIds: audience, claims: [] };
+  const claims = observationIds.flatMap((id) => {
+    const o = m.observations.find((o) => o.id === id);
+    if (!o) return [];
+    const reveal =
+      (o.revealCondition === 'asked' && requestedFactIds.includes(o.id)) ||
+      (o.revealCondition === 'trusted' &&
+        audienceIds.every((id) => id === npcId || (m.relationships[id]?.trust ?? 0) >= 1));
+    if (
+      (o.disclosure === 'private' && !reveal) ||
+      (o.disclosure === 'participants' && audienceIds.some((id) => !o.audienceIds.includes(id)))
+    )
+      return [];
+    return [
+      {
+        observationId: o.id,
+        kind: o.kind,
+        confidence: o.confidence,
+        ...(o.actorId ? { actorId: o.actorId } : {}),
+        ...(o.targetId ? { targetId: o.targetId } : {}),
+        ...(o.text ? { untrustedUtterance: o.text } : {}),
+        ...(o.kind === 'authored_fact' && o.definitionText
+          ? { authoredFact: { title: o.title ?? '', text: o.definitionText } }
+          : {}),
+      },
+    ];
+  });
   return {
     ...npcItemContext(state, npcId),
     npcId,
@@ -1277,32 +1393,25 @@ export function buildNpcPublicSpeechContext(
       ? { publicIdentity: { name: npc.label, role: npc.supportingNpc.roleLabel } }
       : {}),
     publicSpeechStyle: m.personality.publicSpeechStyle ?? 'neutral',
-    claims: observationIds.flatMap((id) => {
-      const o = m.observations.find((o) => o.id === id);
-      if (!o) return [];
-      const reveal =
-        (o.revealCondition === 'asked' && requestedFactIds.includes(o.id)) ||
-        (o.revealCondition === 'trusted' &&
-          audienceIds.every((id) => id === npcId || (m.relationships[id]?.trust ?? 0) >= 1));
-      if (
-        (o.disclosure === 'private' && !reveal) ||
-        (o.disclosure === 'participants' && audienceIds.some((id) => !o.audienceIds.includes(id)))
-      )
-        return [];
-      return [
-        {
-          observationId: o.id,
-          kind: o.kind,
-          confidence: o.confidence,
-          ...(o.actorId ? { actorId: o.actorId } : {}),
-          ...(o.targetId ? { targetId: o.targetId } : {}),
-          ...(o.text ? { untrustedUtterance: o.text } : {}),
-          ...(o.kind === 'authored_fact' && o.definitionText
-            ? { authoredFact: { title: o.title ?? '', text: o.definitionText } }
-            : {}),
-        },
-      ];
-    }),
+    claims,
+    ...(m.personality.characterization
+      ? {
+          performance: characterPerformance(
+            m,
+            claims.flatMap((c) => {
+              const o = m.observations.find((o) => o.id === c.observationId);
+              return o ? [o] : [];
+            }),
+            npcId,
+          ),
+        }
+      : {}),
+    ...(recipientActorId &&
+    audience.includes(recipientActorId) &&
+    state.entities[recipientActorId]?.kind === 'player' &&
+    state.narrativePreferences?.[recipientActorId]
+      ? { narrativePreferences: readNarrativePreferences(state, recipientActorId) }
+      : {}),
   };
 }
 export function projectGameEvents(
@@ -1430,6 +1539,7 @@ export function commitNpcPublicUtterance(
     input.requestedFactIds,
     input.deferredSpeechId,
     input.replyLocale,
+    input.recipientId,
   );
   if (new Set(input.observationIds).size !== context.claims.length)
     return result(state, [], 'FORBIDDEN');
@@ -1651,7 +1761,9 @@ export function createMockNpcPublicResponse(
   return {
     text: claim?.authoredFact
       ? mockFactReply(context.npcId, claim.observationId, claim.authoredFact, locale)
-      : mockAcknowledgement[locale],
+      : 'performance' in context && context.performance
+        ? mockCharacterAcknowledgement(locale, context.performance)
+        : mockAcknowledgement[locale],
   };
 }
 

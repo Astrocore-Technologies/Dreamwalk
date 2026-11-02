@@ -22,6 +22,19 @@ export class GameController {
   ) {
     return this.game.confirmIntent(req, id, proposalId, body);
   }
+  @Get('campaigns/:id/narrative-preferences') narrativePreferences(
+    @Req() req: Request,
+    @Param('id') id: string,
+  ) {
+    return this.game.narrativePreferences(req, id);
+  }
+  @Post('campaigns/:id/narrative-preferences') updateNarrativePreferences(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.narrativePreferences(req, id, body);
+  }
   @Get('campaigns/:id/turns/feed') storyFeed(@Req() req: Request, @Param('id') id: string) {
     return this.game.storyFeed(req, id);
   }

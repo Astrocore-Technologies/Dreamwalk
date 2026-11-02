@@ -6,10 +6,13 @@ import {
   npcItemStockSchema,
   authoredGameDraftSchema,
   turnRulesSchema,
+  validateStoryLoreReferences,
+  type NpcCharacterProfile,
   type AuthoredGameDraft,
 } from '@dreamwalk/contracts';
 import { compilePlayableDraft } from '@dreamwalk/game-core';
 import type { AuthoringTextDefinition } from '../live-test/authoring-provider';
+import { applyAuthoredCharacters } from './character-authoring';
 const id = z
   .string()
   .regex(/^[A-Za-z0-9_-]{1,80}$/)
@@ -70,7 +73,14 @@ export type StoryPlanSource = {
   title: string;
   synopsis?: string;
   content: z.infer<typeof contentSchema>;
-  npcs: { id: string; name: string; role: string; description: string; appearance: string }[];
+  npcs: {
+    id: string;
+    name: string;
+    role: string;
+    description: string;
+    appearance: string;
+    characterProfile?: NpcCharacterProfile | null;
+  }[];
   priorDraft?: AuthoredGameDraft | null;
 };
 const exact = (a: string[], b: string[]) =>
@@ -79,6 +89,7 @@ export function compileStoryPlan(source: StoryPlanSource, value: unknown) {
   const proposal = storyPlanSchema.parse(value),
     content = contentSchema.parse(source.content);
   if (
+    !validateStoryLoreReferences(content) ||
     !exact(
       proposal.rooms.map((r) => r.locationId),
       content.locations.map((l) => l.id),
@@ -147,6 +158,7 @@ export function compileStoryPlan(source: StoryPlanSource, value: unknown) {
     roundPolicy: { maxRounds: 5, planningMs: 30000 },
   });
   const pairs = new Set<string>();
+  applyAuthoredCharacters(draft, source.npcs, content.lorebook);
   for (const [c, v] of proposal.connections.entries()) {
     const a = draft.maps.find((m) => m.id === v.a),
       b = draft.maps.find((m) => m.id === v.b),
@@ -209,7 +221,7 @@ export function removeNullFields(v: unknown): unknown {
       : v;
 }
 export const storyPlanDefinition: AuthoringTextDefinition = {
-  version: 'authored-story-plan-v2-map-intent',
+  version: 'authored-story-plan-v3-character-profile',
   schema: nullableStrict(z.toJSONSchema(storyPlanSchema)),
   instructions:
     'Create the opening playable spatial plan from this author story, not a new story. Output only JSON. Preserve EXACTLY all supplied source location and NPC IDs, names and identities. Place every source NPC once, choose its location from story/context; do not replace it with a helper or add NPCs or quests. Connect all source locations bidirectionally. Every spawn, NPC and passage must be reachable on walkable interior floor. Solid furniture adds collision, keep passages clear. Use table/counter/shelf surfaces when the story calls for them. Choose only plausible benign physical item definitions and finite NPC stock supported by the story; no arbitrary powers, private facts or executable code. Item restoreVitality is bounded 0..3, nonedible items restore 0. The AI only proposes; author review and server validation are required. Honor geometry described in the synopsis, world, rules and each location description. Do not turn every room into the minimum 8x8 square: choose dimensions and orientation appropriate to the author intent. Explicit location.mapIntent is authoritative: dimensions requires exactly its width and height; aspect requires that exact width:height ratio, choosing feasible integer dimensions within 8..24. These constraints override priorDraft geometry. With no explicit intent, infer suitable proportions from the description; do not invent a fixed widescreen ratio. Prior drafts are continuity context, not permission to ignore new geometry intent. Four spawns must be distinct; rooms 8..24 cells, at most four locations/eight NPCs. Do not narrate success, add fetch quests, rename source characters or create pixel art. Opening and constraints describe an ongoing story, not a fixed script.',

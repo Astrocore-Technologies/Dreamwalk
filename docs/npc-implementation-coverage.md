@@ -170,3 +170,17 @@ source; core91 and the additional UI/privacy/context38 checks passed. The exact 
 browser scenario remains pending the updated PR's CI, and live-model quality remains an
 explicit external gate. No local unfinished requirement is being relabeled as a paid-API
 blocker. The separate new image-library task is outside this NPC acceptance snapshot.
+
+## Authored character extension (2026-11-02)
+
+- Versioned private author profile → compiled goals/personality → immutable release.
+- Conditional, evidence-based response differences; public voice enums rather than
+  disclosure of biography, dialogue examples or private fictional appraisal.
+- Bounded affinity/respect/fear per NPC/player, without universal romance mechanics.
+- Author lore knowledge ACL before relevance and an owner-only context preview.
+- Existing episodic/obligation machinery verified with long-history/restart fixtures;
+  no duplicate summary engine or automatic paid summarization.
+- Typed per-player presentation correction, idempotent persistence, stale quote and
+  dispatch fences, export and confirmed erasure. No retroactive canon rewrite.
+- Deterministic three-NPC harness is not evidence of live language quality. See
+  `npc-character-quality.md` for the explicit remaining real-model acceptance gate.
