@@ -93,7 +93,9 @@ test('scoped character profile and lore save, discard and preview preserve autho
     .click();
   await expect(panel.getByTestId('npc-character-profile')).toHaveCount(0);
   await expect(panel.getByLabel('Стиль поведения', { exact: true })).toHaveCount(0);
-  await panel.getByLabel('Первая реплика', { exact: true }).fill('Назови своё дело.');
+  await panel
+    .getByRole('textbox', { name: 'Первая реплика', exact: true })
+    .fill('Назови своё дело.');
   const saved = page.waitForResponse(
     (response) =>
       response.request().method() === 'PATCH' && response.url().endsWith(`/npcs/${first.npc.id}`),
@@ -110,7 +112,6 @@ test('scoped character profile and lore save, discard and preview preserve autho
   expect(stored.characterProfile.personality.characterization.publicVoice.cadence).toBe('brief');
   expect(stored.characterProfile).toEqual(first.npc.characterProfile);
   expect(stored.modelProfileId).toBe(first.npc.modelProfileId);
-  // The parent refresh may remount this scoped editor after a successful save.
   // Reopen from durable state before exercising a second edit/discard.
   await page.reload();
   await page.getByRole('button', { name: /NPC$/ }).click();
@@ -119,7 +120,7 @@ test('scoped character profile and lore save, discard and preview preserve autho
     .filter({ hasText: 'Северин' })
     .getByRole('button', { name: 'Редактировать', exact: true })
     .click();
-  await panel.getByLabel('Первая реплика', { exact: true }).fill('Не сохранять.');
+  await panel.getByRole('textbox', { name: 'Первая реплика', exact: true }).fill('Не сохранять.');
   await panel.getByRole('button', { name: 'Закрыть', exact: true }).click();
   const discard = page.getByRole('dialog', { name: 'Закрыть без сохранения?' });
   await discard
@@ -133,7 +134,7 @@ test('scoped character profile and lore save, discard and preview preserve autho
     .filter({ hasText: 'Северин' })
     .getByRole('button', { name: 'Редактировать', exact: true })
     .click();
-  await expect(panel.getByLabel('Первая реплика', { exact: true })).toHaveValue(
+  await expect(panel.getByRole('textbox', { name: 'Первая реплика', exact: true })).toHaveValue(
     'Назови своё дело.',
   );
   await panel.getByRole('button', { name: 'Закрыть', exact: true }).click();

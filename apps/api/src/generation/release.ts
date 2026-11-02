@@ -46,18 +46,19 @@ export class ReleaseAdmission {
       fail(403, 'GENERATION_AUTHORIZATION_FORBIDDEN', 'GENERATION_AUTHORIZATION_FORBIDDEN');
     if (!row) {
       await c.query(
-        'INSERT INTO generation_budget_scopes(id,approved,total_cap_micros,text_cap_micros,image_cap_micros,serialize_outstanding) VALUES($1,true,$2,$3,$4,true) ON CONFLICT DO NOTHING',
+        'INSERT INTO generation_budget_scopes(id,approved,total_cap_micros,text_cap_micros,image_cap_micros,serialize_outstanding,unlimited_allowance) VALUES($1,true,$2,$3,$4,true,$5) ON CONFLICT DO NOTHING',
         [
           scopeId,
           this.config.totalCapMicros,
           this.config.textCapMicros,
           this.config.imageCapMicros,
+          this.config.allowance === 'unlimited',
         ],
       );
       const id = randomUUID();
       row = (
         await c.query(
-          "INSERT INTO live_test_sessions(id,owner_id,scope_id,expires_at,cap_micros,state,mode,config_hash,text_cap_micros,image_cap_micros,policy_revision,policy_hash) VALUES($1,$2,$3,NULL,$4,'active','release',$5,$6,$7,1,$5) RETURNING *",
+          "INSERT INTO live_test_sessions(id,owner_id,scope_id,expires_at,cap_micros,state,mode,config_hash,text_cap_micros,image_cap_micros,policy_revision,policy_hash,unlimited_allowance) VALUES($1,$2,$3,NULL,$4,'active','release',$5,$6,$7,1,$5,$8) RETURNING *",
           [
             id,
             actorId,
@@ -66,6 +67,7 @@ export class ReleaseAdmission {
             this.config.configFingerprint,
             this.config.textCapMicros,
             this.config.imageCapMicros,
+            this.config.allowance === 'unlimited',
           ],
         )
       ).rows[0];
@@ -92,6 +94,11 @@ export class ReleaseAdmission {
       row.policy_hash !== this.config.configFingerprint
     )
       fail(409, 'GENERATION_POLICY_CHANGED', 'GENERATION_POLICY_CHANGED');
+    if (
+      row.unlimited_allowance !== (this.config.allowance === 'unlimited') ||
+      scope?.unlimited_allowance !== (this.config.allowance === 'unlimited')
+    )
+      fail(409, 'GENERATION_POLICY_CHANGED', 'GENERATION_POLICY_CHANGED');
     if (row.state !== 'active' || !scope?.approved || scope.blocked)
       fail(409, 'GENERATION_ACCOUNT_REVIEW_REQUIRED', 'GENERATION_ACCOUNT_REVIEW_REQUIRED');
     await fenceGenerationAdmission(c);
@@ -112,10 +119,22 @@ export class ReleaseAdmission {
       approved: true,
       externalEnabled: true,
       verifiedUpperMicros: this.config.text.upperMicros,
-      totalCapMicros: Math.min(Number(row.total_cap_micros), this.config.totalCapMicros),
-      textCapMicros: Math.min(Number(row.text_cap_micros), this.config.textCapMicros),
-      imageCapMicros: Math.min(Number(row.image_cap_micros), this.config.imageCapMicros),
+      totalCapMicros:
+        this.config.allowance === 'unlimited'
+          ? null
+          : Math.min(Number(row.total_cap_micros), this.config.totalCapMicros ?? 0),
+      textCapMicros:
+        this.config.allowance === 'unlimited'
+          ? null
+          : Math.min(Number(row.text_cap_micros), this.config.textCapMicros ?? 0),
+      imageCapMicros:
+        this.config.allowance === 'unlimited'
+          ? null
+          : Math.min(Number(row.image_cap_micros), this.config.imageCapMicros ?? 0),
       generationMode: 'release',
+      ...(this.config.allowance === 'unlimited'
+        ? { releaseUnlimitedAllowance: true as const }
+        : {}),
       generationAuthorizationId: authorizationId,
       generationConfigFingerprint: this.config.configFingerprint,
       generationPolicyRevision: 1,
@@ -127,7 +146,7 @@ export class ReleaseAdmission {
     this.current();
     const row = (
       await c.query(
-        "SELECT s.*,b.approved,b.blocked FROM live_test_sessions s JOIN generation_budget_scopes b ON b.id=s.scope_id JOIN users u ON u.id=s.owner_id AND u.deleted_at IS NULL AND (NOT COALESCE((to_jsonb(u)->>'email_verification_required')::boolean,false) OR u.email_verified) JOIN spark_wallets w ON w.owner_id=s.owner_id AND w.enabled WHERE s.id=$1 AND s.mode='release'",
+        "SELECT s.*,b.approved,b.blocked,b.unlimited_allowance AS scope_unlimited_allowance FROM live_test_sessions s JOIN generation_budget_scopes b ON b.id=s.scope_id JOIN users u ON u.id=s.owner_id AND u.deleted_at IS NULL AND (NOT COALESCE((to_jsonb(u)->>'email_verification_required')::boolean,false) OR u.email_verified) JOIN spark_wallets w ON w.owner_id=s.owner_id AND w.enabled WHERE s.id=$1 AND s.mode='release'",
         [id],
       )
     ).rows[0];
@@ -136,6 +155,8 @@ export class ReleaseAdmission {
       row.scope_id !== releaseScope(row.owner_id) ||
       row.state !== 'active' ||
       !row.approved ||
+      row.unlimited_allowance !== (this.config.allowance === 'unlimited') ||
+      row.scope_unlimited_allowance !== (this.config.allowance === 'unlimited') ||
       row.blocked
     )
       fail(409, 'GENERATION_ACCOUNT_REVIEW_REQUIRED', 'GENERATION_ACCOUNT_REVIEW_REQUIRED');

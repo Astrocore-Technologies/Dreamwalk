@@ -1,3 +1,4 @@
+import { textUsageCostMicros } from '../generation/text-pricing';
 import { Inject, Injectable, type OnModuleInit, type OnModuleDestroy } from '@nestjs/common';
 import type { PoolClient, QueryResultRow } from 'pg';
 import { randomUUID } from 'node:crypto';
@@ -117,12 +118,19 @@ export class NpcAiEngine {
         ? { maxContextBytes: provider.contextWindow()!.transportLimitBytes }
         : {}),
     };
-    for (const value of [
-      this.policy.creditPrice,
-      this.policy.providerUpperMicros,
-      this.policy.providerCapMicros,
-    ])
+    for (const value of [this.policy.creditPrice, this.policy.providerUpperMicros])
       if (!Number.isSafeInteger(value) || value < 0) throw new Error('INVALID_AI_BUDGET');
+    if (this.policy.providerCapMicros === null) {
+      if (
+        !(provider instanceof ReleaseGenerationProvider) ||
+        provider.session.releaseConfig?.allowance !== 'unlimited'
+      )
+        throw new Error('INVALID_AI_BUDGET');
+    } else if (
+      !Number.isSafeInteger(this.policy.providerCapMicros) ||
+      this.policy.providerCapMicros < 0
+    )
+      throw new Error('INVALID_AI_BUDGET');
     if (
       this.policy.timeoutMs < 10 ||
       this.policy.timeoutMs > 60000 ||
@@ -697,8 +705,8 @@ export class NpcAiEngine {
           fail(409, 'BUDGET_EXCEEDED', 'BUDGET_EXCEEDED');
       }
       await c.query(
-        'INSERT INTO npc_ai_provider_budgets(provider_id,cap_micros) VALUES($1,$2) ON CONFLICT DO NOTHING',
-        [this.provider.id, this.policy.providerCapMicros],
+        'INSERT INTO npc_ai_provider_budgets(provider_id,cap_micros,unlimited_allowance) VALUES($1,$2,$3) ON CONFLICT DO NOTHING',
+        [this.provider.id, this.policy.providerCapMicros, this.policy.providerCapMicros === null],
       );
       const budget = (
         await c.query('SELECT * FROM npc_ai_provider_budgets WHERE provider_id=$1 FOR UPDATE', [
@@ -724,20 +732,33 @@ export class NpcAiEngine {
         Number(budget.reserved_micros) +
         Number(budget.spent_micros) +
         Number(budget.unknown_micros);
-      let cap = Math.min(Number(budget.cap_micros), this.policy.providerCapMicros);
+      const unlimited =
+        releaseProvider?.session.releaseConfig?.allowance === 'unlimited' &&
+        this.policy.providerCapMicros === null;
+      // release.policy above validates the persisted actor/scope unlimited flag under locks.
+      if (
+        !unlimited &&
+        (budget.cap_micros === null ||
+          budget.unlimited_allowance === true ||
+          this.policy.providerCapMicros === null)
+      )
+        fail(409, 'GENERATION_POLICY_CHANGED', 'GENERATION_POLICY_CHANGED');
+      let cap: number | null = unlimited
+        ? null
+        : Math.min(Number(budget.cap_micros), this.policy.providerCapMicros!);
       if (this.provider instanceof ManualLiveProvider && this.provider.session.mode === 'owner') {
         // The financial row precedes the common fence. Read the accepted policy without
         // locking another authorization/scope, then retain this fence through job insertion.
         await fenceGenerationAdmission(c);
         cap = await this.provider.session.acknowledgedTextCap(c, generationAuthorizationId!);
-        if (cap < liabilities)
+        if (cap === null || cap < liabilities)
           fail(
             409,
             'GENERATION_CAP_BELOW_HISTORICAL_SPEND',
             'GENERATION_CAP_BELOW_HISTORICAL_SPEND',
           );
       }
-      if (liabilities + requestPlan.reserveMicros > cap)
+      if (cap !== null && liabilities + requestPlan.reserveMicros > cap)
         fail(409, 'PROVIDER_BUDGET_EXCEEDED', 'PROVIDER_BUDGET_EXCEEDED');
       if (
         this.provider instanceof ManualLiveProvider &&
@@ -748,6 +769,11 @@ export class NpcAiEngine {
           this.provider.id,
           cap,
         ]);
+      if (unlimited && (budget.cap_micros !== null || budget.unlimited_allowance !== true))
+        await c.query(
+          'UPDATE npc_ai_provider_budgets SET cap_micros=NULL,unlimited_allowance=true WHERE provider_id=$1',
+          [this.provider.id],
+        );
       // Match finalizer lock order: job/provider budget, then Spark wallet.
       // Mode changes cannot turn an accepted demo quote into implicit paid consent (or vice versa).
       const walletModes = new Map<string, boolean>();
@@ -1049,14 +1075,27 @@ export class NpcAiEngine {
           (!['running', 'reconciling'].includes(j.status) && j.provider_budget_status !== 'unknown')
         )
           return;
-        await c.query('UPDATE npc_ai_jobs SET provider_cost_evidence=$2 WHERE id=$1', [
-          id,
-          result.usage.costEvidence ?? 'reported',
-        ]);
+        await c.query(
+          'UPDATE npc_ai_jobs SET provider_cost_evidence=$2,provider_usage=COALESCE(provider_usage,$3::jsonb) WHERE id=$1',
+          [id, result.usage.costEvidence ?? 'reported', JSON.stringify(result.usage)],
+        );
+        const hasCacheUsage =
+          (result.usage.cachedInputTokens ?? 0) + (result.usage.cacheWriteInputTokens ?? 0) > 0;
+        let pricedCache = false;
         if (
-          result.usage.costVerifiedForSparks === false ||
-          (result.usage.cacheWriteInputTokens ?? 0) > 0
-        )
+          hasCacheUsage &&
+          result.usage.costVerifiedForSparks === true &&
+          j.request_snapshot?.cachePricing
+        ) {
+          try {
+            pricedCache =
+              textUsageCostMicros(j.request_snapshot, result.usage).costMicros ===
+              result.usage.costMicros;
+          } catch {
+            /* Missing or invalid immutable tariff stays pending. */
+          }
+        }
+        if (result.usage.costVerifiedForSparks === false || (hasCacheUsage && !pricedCache))
           await this.settleNpcSparks(c, j, {
             outcome: 'failure_policy_pending',
             receiptId: `unpriced:${result.requestId}`,

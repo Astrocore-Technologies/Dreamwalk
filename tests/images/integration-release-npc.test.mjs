@@ -415,6 +415,92 @@ await test(
           );
         },
       );
+      await t.test(
+        'explicit unlimited release lifts only provider cap and preserves wallet admission and historical spend',
+        async () => {
+          const profile = requestEstimateOwnerProfile();
+          delete profile.totalCapMicros;
+          delete profile.textCapMicros;
+          delete profile.imageCapMicros;
+          const unlimitedConfig = readGenerationConfig({
+            GENERATION_MODE: 'release',
+            GENERATION_CONFIG_JSON: JSON.stringify({ ...profile, allowance: 'unlimited' }),
+          });
+          const unboundedAuthority = new GenerationAuthority(database, unlimitedConfig);
+          const unboundedProvider = new ReleaseGenerationProvider(
+            { ...inner, id: 'unlimited-npc-fixture' },
+            unboundedAuthority,
+          );
+          const unbounded = new NpcAiEngine(database, unboundedProvider, {
+            externalApproved: true,
+            creditPrice: 0,
+            providerUpperMicros: unlimitedConfig.text.upperMicros,
+            providerCapMicros: null,
+            version: 'unlimited-fixture',
+          });
+          assert.throws(
+            () => new NpcAiEngine(database, inner, { providerCapMicros: null }),
+            /INVALID_AI_BUDGET/,
+          );
+          assert.throws(
+            () => new NpcAiEngine(database, provider, { providerCapMicros: null }),
+            /INVALID_AI_BUDGET/,
+          );
+          const a = await actor();
+          await db.query(
+            'INSERT INTO npc_ai_provider_budgets(provider_id,cap_micros) VALUES($1,0)',
+            [unboundedProvider.id],
+          );
+          for (let i = 0; i < 2; i++) {
+            const context = { contextHash: randomUUID() },
+              q = await unbounded.quote(scope(a), context, a.id);
+            const input = {
+              scope: scope(a),
+              context,
+              operationId: randomUUID(),
+              quoteId: q.id,
+              consent: true,
+            };
+            const job = await unbounded.queue(input);
+            assert.equal((await unbounded.queue(input)).id, job.id);
+            await unbounded.run(job.id, async () => true);
+            await database.tx((c) => unbounded.finalize(c, job.id, 'committed'));
+            if (i === 0)
+              await db.query(
+                'UPDATE npc_ai_provider_budgets SET spent_micros=1000000000000 WHERE provider_id=$1',
+                [unboundedProvider.id],
+              );
+          }
+          const budget = (
+            await db.query(
+              'SELECT cap_micros,unlimited_allowance,spent_micros,reserved_micros FROM npc_ai_provider_budgets WHERE provider_id=$1',
+              [unboundedProvider.id],
+            )
+          ).rows[0];
+          assert.deepEqual(budget, {
+            cap_micros: null,
+            unlimited_allowance: true,
+            spent_micros: '1000000000030',
+            reserved_micros: '0',
+          });
+          assert.deepEqual(await wallet(a), { balance_subunits: '499940', held_subunits: '0' });
+          await db.query('UPDATE spark_wallets SET balance_subunits=0 WHERE owner_id=$1', [a.id]);
+          await assert.rejects(
+            async () => {
+              const context = { contextHash: randomUUID() };
+              const q = await unbounded.quote(scope(a), context, a.id);
+              return unbounded.queue({
+                scope: scope(a),
+                context,
+                operationId: randomUUID(),
+                quoteId: q.id,
+                consent: true,
+              });
+            },
+            (e) => /INSUFFICIENT_SPARKS/.test(code(e)),
+          );
+        },
+      );
     } finally {
       await db.end();
     }

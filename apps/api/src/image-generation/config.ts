@@ -127,9 +127,9 @@ export interface ImageCapabilities {
     expiresAt: string;
   };
   verifiedUpperMicros: number | null;
-  approvedTotalMicros: number;
-  approvedImageMicros: number;
-  approvedTextMicros: number;
+  approvedTotalMicros: number | null;
+  approvedImageMicros: number | null;
+  approvedTextMicros: number | null;
   costStatus: 'unverified' | 'verified_bound' | 'approved_estimate';
   costBasis: 'unverified' | 'verified_bound' | 'approved_estimate';
   estimatedTotalMicros?: number;
@@ -380,7 +380,12 @@ export function createOwnerImageRuntime(
     generationConfigFingerprint: config.configFingerprint,
     // Release authorization supplies the actor scope before any reservation.
     scopeId: config.mode === 'release' ? 'release-unbound' : LIVE_TEXT.scopeId,
-    ...(config.mode === 'release' ? { releaseAggregateCapMicros: config.aggregateCapMicros } : {}),
+    ...(config.mode === 'release'
+      ? {
+          releaseAggregateCapMicros: config.aggregateCapMicros,
+          ...(config.allowance === 'unlimited' ? { releaseUnlimitedAllowance: true as const } : {}),
+        }
+      : {}),
     externalEnabled: true,
     approved: true,
     externalExpiresAt: p.pricing.validUntil,

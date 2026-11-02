@@ -4,7 +4,7 @@ import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
 import { db } from '../game/support-runtime.mjs';
-import { ownerProfile } from './owner-config-fixture.mjs';
+import { ownerProfile, requestEstimateOwnerProfile } from './owner-config-fixture.mjs';
 const require = createRequire(import.meta.url);
 const { Db } = require('../../apps/api/dist/db.js');
 const { readGenerationConfig } = require('../../apps/api/dist/generation/config.js');
@@ -202,6 +202,106 @@ await test(
             )
           ).rows[0];
           assert.deepEqual(wallet, { balance_subunits: '499970', held_subunits: '0' });
+        },
+      );
+      await t.test(
+        'cached authoring adoption captures once and retains immutable usage receipt',
+        async () => {
+          const {
+            BoundedAuthoringTextProvider,
+          } = require('../../apps/api/dist/live-test/authoring-provider.js');
+          const profile = requestEstimateOwnerProfile();
+          profile.text.cachePricing = {
+            cachedInputMicrosPerMillion: 100000,
+            cacheWrite30mMicrosPerMillion: 1250000,
+            cacheWrite12hMicrosPerMillion: 2500000,
+          };
+          const cfg = readGenerationConfig({
+            GENERATION_MODE: 'release',
+            GENERATION_CONFIG_JSON: JSON.stringify({ ...profile, aggregateCapMicros: 10000000 }),
+          });
+          const auth = new GenerationAuthority(database, cfg);
+          let dispatched = 0;
+          const real = new BoundedAuthoringTextProvider(
+            definition,
+            'synthetic-only',
+            async () => {
+              dispatched++;
+              return new Response(
+                JSON.stringify({
+                  id: 'synthetic-author-cache',
+                  status: 'completed',
+                  service_tier: 'default',
+                  usage: {
+                    input_tokens: 1000,
+                    output_tokens: 100,
+                    input_tokens_details: {
+                      cached_tokens: 200,
+                      cache_write_tokens: 400,
+                      cache_write_tokens_details: { ttl_30m_tokens: 300, ttl_12h_tokens: 100 },
+                    },
+                  },
+                  output: [
+                    {
+                      type: 'message',
+                      content: [
+                        {
+                          type: 'output_text',
+                          text: JSON.stringify({ title: 'Synthetic proposal' }),
+                        },
+                      ],
+                    },
+                  ],
+                }),
+              );
+            },
+            cfg.text,
+          );
+          const runtime = new AuthoringTextEngine(database, auth, real, definition),
+            who = await actor();
+          const q = await runtime.quote(
+            who.id,
+            { ...who.binding, operationId: randomUUID() },
+            who.guard,
+          );
+          const input = { quoteId: q.id, operationId: randomUUID(), consent: true };
+          const job = await runtime.enqueue(who.id, input, who.guard);
+          assert.equal((await runtime.enqueue(who.id, input, who.guard)).id, job.id);
+          let adopted = 0;
+          const adopt = async (_c, _b, proposal) => {
+            adopted++;
+            return { title: proposal.title };
+          };
+          assert.equal((await runtime.run(who.id, job.id, who.guard, adopt)).status, 'committed');
+          await runtime.run(who.id, job.id, who.guard, adopt);
+          assert.equal(dispatched, 1);
+          assert.equal(adopted, 1);
+          assert.deepEqual(
+            (
+              await db.query(
+                'SELECT balance_subunits,held_subunits FROM spark_wallets WHERE owner_id=$1',
+                [who.id],
+              )
+            ).rows[0],
+            { balance_subunits: '498755', held_subunits: '0' },
+          );
+          const receipt = (
+            await db.query('SELECT provider_usage FROM live_authoring_text_jobs WHERE id=$1', [
+              job.id,
+            ])
+          ).rows[0].provider_usage;
+          assert.equal(receipt.costMicros, 1245);
+          assert.equal(receipt.cachedInputTokens, 200);
+          assert.deepEqual(receipt.cacheWriteInputTokensDetails, {
+            ttl30mTokens: 300,
+            ttl12hTokens: 100,
+          });
+          await assert.rejects(
+            db.query('UPDATE live_authoring_text_jobs SET provider_usage=NULL WHERE id=$1', [
+              job.id,
+            ]),
+            (e) => e.code === '23514',
+          );
         },
       );
       await t.test(

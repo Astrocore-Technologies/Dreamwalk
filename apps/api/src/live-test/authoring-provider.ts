@@ -1,3 +1,8 @@
+import {
+  textUsageCostMicros,
+  textInputReserveRate,
+  type TextCachePricing,
+} from '../generation/text-pricing';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { canonical } from '../ai/context';
@@ -23,6 +28,7 @@ export interface AuthoringTextProfile {
   maxInputBytes: number;
   inputMicrosPerMillion: number;
   outputMicrosPerMillion: number;
+  cachePricing?: TextCachePricing;
   upperMicros: number;
   estimation?: TextEstimationPolicy;
   pricing?: { source?: string; reviewedAt: string; validUntil: string };
@@ -36,6 +42,7 @@ export interface AuthoringTextResult {
     outputTokens: number;
     cachedInputTokens?: number;
     cacheWriteInputTokens?: number;
+    cacheWriteInputTokensDetails?: { ttl30mTokens: number; ttl12hTokens: number };
     costVerifiedForSparks?: boolean;
     costMicros: number;
     costEvidence: 'configured_rates' | 'reported';
@@ -68,6 +75,7 @@ export function buildAuthoringTextRequestBody(
   return JSON.stringify({
     model: profile.model,
     service_tier: 'default',
+    ...(profile.cachePricing ? { prompt_cache_options: { mode: 'implicit', ttl: '30m' } } : {}),
     ...(profile.contextBudgetTokens !== undefined ? { truncation: 'disabled' } : {}),
     store: false,
     stream: false,
@@ -109,14 +117,16 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
       profile.maxInputBytes > (profile.contextBudgetTokens !== undefined ? 4194304 : 64000) ||
       (!profile.estimation &&
         BigInt(profile.upperMicros) <
-          (BigInt(profile.contextTokens) * BigInt(profile.inputMicrosPerMillion) +
+          (BigInt(profile.contextTokens) * BigInt(textInputReserveRate(profile)) +
             BigInt(profile.maxOutputTokens) * BigInt(profile.outputMicrosPerMillion) +
             999999n) /
             1000000n)
     )
       throw new Error('INVALID_AUTHORING_PROVIDER_PROFILE');
+    textUsageCostMicros(profile, { inputTokens: 0, outputTokens: 0 });
     this.profile = Object.freeze({
       ...profile,
+      ...(profile.cachePricing ? { cachePricing: Object.freeze({ ...profile.cachePricing }) } : {}),
       ...(profile.estimation ? { estimation: Object.freeze({ ...profile.estimation }) } : {}),
       ...(profile.pricing ? { pricing: Object.freeze({ ...profile.pricing }) } : {}),
     });
@@ -284,25 +294,35 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
     const value = parsed.data;
     if (value.service_tier !== 'default')
       throw new ProviderFailure('PROVIDER_TIER_UNKNOWN', true, value.id);
-    const costMicros = Number(
-      (BigInt(value.usage.input_tokens) * BigInt(this.profile.inputMicrosPerMillion) +
-        BigInt(value.usage.output_tokens) * BigInt(this.profile.outputMicrosPerMillion) +
-        999999n) /
-        1000000n,
-    );
-    const usage = {
+    const details = value.usage.input_tokens_details;
+    if (
+      this.profile.cachePricing &&
+      (details?.cached_tokens === undefined || details.cache_write_tokens === undefined)
+    )
+      throw new ProviderFailure('PROVIDER_USAGE_UNKNOWN', true, value.id);
+    const tokenUsage = {
       inputTokens: value.usage.input_tokens,
-      cachedInputTokens: value.usage.input_tokens_details?.cached_tokens ?? 0,
-      cacheWriteInputTokens: value.usage.input_tokens_details?.cache_write_tokens ?? 0,
-      // Existing profiles have no immutable discounted-read or cache-write rate.
-      // Preserve legacy configured provider spend but hold user billing for reconciliation.
-      costVerifiedForSparks:
-        (value.usage.input_tokens_details?.cached_tokens ?? 0) === 0 &&
-        (value.usage.input_tokens_details?.cache_write_tokens ?? 0) === 0,
       outputTokens: value.usage.output_tokens,
-      costMicros,
+      cachedInputTokens: details?.cached_tokens ?? 0,
+      cacheWriteInputTokens: details?.cache_write_tokens ?? 0,
+      ...(details?.cache_write_tokens_details || this.profile.cachePricing
+        ? {
+            cacheWriteInputTokensDetails: {
+              ttl30mTokens:
+                details?.cache_write_tokens_details?.ttl_30m_tokens ??
+                details?.cache_write_tokens ??
+                0,
+              ttl12hTokens: details?.cache_write_tokens_details?.ttl_12h_tokens ?? 0,
+            },
+          }
+        : {}),
+    };
+    const usage = {
+      ...tokenUsage,
+      ...textUsageCostMicros(this.profile, tokenUsage),
       costEvidence: 'configured_rates' as const,
     };
+    const { costMicros } = usage;
     const failed = (failureCode: string): AuthoringTextResult => ({
       requestId: value.id,
       usage,

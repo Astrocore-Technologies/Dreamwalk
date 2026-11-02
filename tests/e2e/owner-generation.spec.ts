@@ -140,7 +140,10 @@ async function fixture(
     pricingValidUntil: new Date(
       Date.now() + (options.stalePricing ? -1000 : 86400000),
     ).toISOString(),
-    capMicros: 1000000,
+    capMicros: options.release ? null : 1000000,
+    ...(options.release
+      ? { allowance: 'unlimited', textCapMicros: null, imageCapMicros: null }
+      : {}),
     usedMicros: 0,
     heldMicros: 0,
     remainingMicros: 1000000,
@@ -939,6 +942,8 @@ test('ordinary release author generates without Live Test claim or session ID an
   });
   // Release authority is first persisted by this POST, never an operator claim.
   expect(f.status.authorizationId).toBeNull();
+  expect(f.status.capMicros).toBeNull();
+  expect(f.status.allowance).toBe('unlimited');
   await expect(prepareQuote).toBeEnabled();
   await prepareQuote.click();
   const run = generation.getByRole('button', { name: 'Generate one image', exact: true });
