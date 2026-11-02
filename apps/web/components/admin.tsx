@@ -1,6 +1,7 @@
 'use client';
 import { PlayableReview } from './studio/playable-review';
-import { selectAdventureText, selectNpcText } from '@dreamwalk/contracts';
+import { formatSparkSubunits, selectAdventureText, selectNpcText } from '@dreamwalk/contracts';
+import { readSparksWallet, type SparksWallet } from '@/lib/sparks-wallet';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
 import { useCallback, useState, type FormEvent } from 'react';
@@ -19,14 +20,7 @@ import {
   Users,
   X,
 } from 'lucide-react';
-import type {
-  Adventure,
-  ModelProfile,
-  Npc,
-  RuntimeProfile,
-  User,
-  Wallet,
-} from '@dreamwalk/contracts';
+import type { Adventure, ModelProfile, Npc, RuntimeProfile, User } from '@dreamwalk/contracts';
 import { api, ApiError, useDate, errorMessage, useClient, useResource } from '@/lib/client';
 import {
   Badge,
@@ -91,7 +85,8 @@ const actionLabels: Record<string, string> = {
   'report.resolve': 'Жалоба рассмотрена',
   'taxonomy.update': 'Справочник обновлён',
   'user.role': 'Роль пользователя изменена',
-  'wallet.adjust': 'Demo-баланс скорректирован',
+  'wallet.adjust': 'Баланс скорректирован',
+  'sparks.adjust': 'Баланс скорректирован',
 };
 const links = [
   { href: '/admin', label: 'Обзор' },
@@ -1243,20 +1238,20 @@ function AdminCredits() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [confirm, setConfirm] = useState(false),
-    [result, setResult] = useState<Wallet | null>(null),
+    [result, setResult] = useState<SparksWallet | null>(null),
     { toast } = useClient();
   async function grant() {
     setBusy(true);
     setError('');
     try {
-      const wallet = await api<Wallet>('/admin/credits', {
+      const wallet = await api<unknown>('/admin/credits', {
         method: 'POST',
         body: JSON.stringify({ userId, amount, reason, idempotencyKey: key }),
       });
-      setResult(wallet);
+      setResult(readSparksWallet(wallet, userId));
       setKey(crypto.randomUUID());
       setConfirm(false);
-      toast(t('Операция записана в demo ledger'));
+      toast(t('Операция записана в журнал искр'));
     } catch (e) {
       setError(t(errorMessage(e)));
     } finally {
@@ -1267,13 +1262,7 @@ function AdminCredits() {
     <>
       <div className={styles.sectionHeading}>
         <Coins size={22} />
-        <h2>{t('Тестовая валюта')}</h2>
-        <Badge>DEMO</Badge>
-      </div>
-      <div className="notice">
-        {t(
-          'Искры в этой версии не имеют денежной стоимости. Платежи, продажи и переводы между пользователями отключены. Корректировки создают новые записи, не переписывая историю.',
-        )}
+        <h2>{t('Искры')}</h2>
       </div>
       <div className={styles.overviewGrid}>
         <Panel>
@@ -1288,6 +1277,7 @@ function AdminCredits() {
           >
             <Field label={t('Пользователь')}>
               <Select
+                aria-label={t('Пользователь')}
                 value={userId}
                 onChange={(e) => {
                   setUserId(e.target.value);
@@ -1307,14 +1297,12 @@ function AdminCredits() {
             <Field
               label={t('Изменение баланса')}
               hint={t(
-                'Положительное число — начисление, отрицательное — компенсация. Только целые Искры.',
+                'Положительное число — начисление, отрицательное — списание. Только целые искры.',
               )}
             >
               <Input
                 required
                 type="number"
-                min={-100000}
-                max={100000}
                 step={1}
                 value={amount}
                 onChange={(e) => setAmount(Number(e.target.value))}
@@ -1324,10 +1312,10 @@ function AdminCredits() {
               <Textarea
                 required
                 minLength={3}
-                maxLength={1000}
+                maxLength={500}
                 value={reason}
                 onChange={(e) => setReason(e.target.value)}
-                placeholder={t('Например, тест сценария покупки без реального платежа')}
+                placeholder={t('Например, награда за участие')}
               />
             </Field>
             <Button type="submit" disabled={!amount || users.loading}>
@@ -1360,19 +1348,19 @@ function AdminCredits() {
             <div className={styles.result}>
               <span>{t('Баланс после операции')}</span>
               <strong>
-                {result.balance.toLocaleString(locale)} <small>{t('demo Искр')}</small>
+                {formatSparkSubunits(result.availableSubunits, locale)} <small>✦</small>
               </strong>
             </div>
           )}
         </Panel>
       </div>
       {confirm && (
-        <Modal title={t('Подтвердить demo-операцию?')} onClose={() => setConfirm(false)}>
+        <Modal title={t('Подтвердить операцию с искрами?')} onClose={() => setConfirm(false)}>
           <p>
             {users.data?.find((u) => u.id === userId)?.name}:{' '}
             <strong>
               {amount > 0 ? '+' : ''}
-              {amount} {t(' demo Искр')}
+              {amount} ✦
             </strong>
           </p>
           <p>{reason}</p>

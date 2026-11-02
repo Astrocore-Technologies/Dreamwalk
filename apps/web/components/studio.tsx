@@ -6,7 +6,6 @@ import { useDraftAutosave } from '@/lib/use-draft-autosave';
 import { StoryPlayableBuilder } from './visual-authoring/story-playable-builder';
 import { LocationMapIntent } from './studio/location-map-intent';
 import { StoryLorebookEditor } from './studio/story-lorebook-editor';
-import { NpcCharacterProfile } from './studio/npc-character-profile';
 import { StoryNpcEditor } from './studio/story-npc-editor';
 import { PrivateRelease } from './studio/private-release';
 import { CharacterSpriteControl } from './visual-authoring/character-sprite-control';
@@ -41,7 +40,6 @@ import {
   type Adventure,
   type Asset,
   type Invitation,
-  type ModelProfile,
   type Npc,
 } from '@dreamwalk/contracts';
 import {
@@ -1572,8 +1570,7 @@ function NpcEditor({ id }: { id: string }) {
   const router = useRouter(),
     { toast } = useClient(),
     isNew = id === 'new',
-    resource = useResource<Npc>(isNew ? null : `/npcs/${id}`),
-    models = useResource<ModelProfile[]>('/models');
+    resource = useResource<Npc>(isNew ? null : `/npcs/${id}`);
   const [draft, setDraft] = useState<NpcDraft>(() => ({ ...blankNpc, sourceLanguage: locale })),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
@@ -1788,26 +1785,6 @@ function NpcEditor({ id }: { id: string }) {
                   onChange={(e) => change('greeting', e.target.value)}
                 />
               </Field>
-              <NpcCharacterProfile
-                value={draft.characterProfile}
-                onChange={(value) => change('characterProfile', value)}
-              />
-              <Field label={t('Стиль поведения')}>
-                <Select
-                  value={draft.modelProfileId || ''}
-                  onChange={(e) => change('modelProfileId', e.target.value || null)}
-                >
-                  <option value="">{t('Без предпочтения')}</option>
-                  {models.data
-                    ?.filter((m) => m.enabled)
-                    .map((m) => (
-                      <option key={m.id} value={m.id}>
-                        {m.name} — {m.description}
-                      </option>
-                    ))}
-                </Select>
-              </Field>
-              <ErrorBox message={models.error} retry={models.reload} />
               <UploadField
                 label={t('Загрузить портрет')}
                 onUploaded={(asset) => change('portraitAssetId', asset.id)}

@@ -45,10 +45,29 @@ test('scoped character profile and lore save, discard and preview preserve autho
     },
   });
   const root = `/studio/adventures/${story.id}`;
+  const models = await authoringRequest(page, '/models');
+  expect(models.length).toBeGreaterThan(0);
+  const profile = {
+    version: 1,
+    initialGoal: 'patrol',
+    personality: {
+      role: 'guard',
+      values: ['duty'],
+      taboos: ['steal', 'disclose_private'],
+      speechStyle: '',
+      characterization: {
+        version: 1,
+        motives: [{ kind: 'protect', priority: 3 }],
+        reactions: [],
+        publicVoice: { cadence: 'brief', register: 'plain', humor: 'none' },
+        dialogueExamples: [],
+      },
+    },
+  };
   const first = await authoringRequest(page, `${root}/npcs`, {
     requestId: randomUUID(),
     expectedStoryRevision: story.editRevision,
-    npc: { name: 'Северин' },
+    npc: { name: 'Северин', characterProfile: profile, modelProfileId: models[0].id },
   });
   const second = await authoringRequest(page, `${root}/npcs`, {
     requestId: randomUUID(),
@@ -72,18 +91,11 @@ test('scoped character profile and lore save, discard and preview preserve autho
     .filter({ hasText: 'Северин' })
     .getByRole('button', { name: 'Редактировать', exact: true })
     .click();
-  await panel.getByLabel('Настроить игровой характер', { exact: true }).check();
+  await expect(panel.getByTestId('npc-character-profile')).toHaveCount(0);
+  await expect(panel.getByLabel('Стиль поведения', { exact: true })).toHaveCount(0);
   await panel
-    .getByRole('combobox', { name: 'Первоначальная задача', exact: true })
-    .selectOption('patrol');
-  await panel.getByRole('combobox', { name: 'Мотив 1', exact: true }).selectOption('protect');
-  await panel.getByRole('button', { name: 'Добавить реакцию', exact: true }).click();
-  await panel
-    .getByRole('combobox', { name: 'Предпочитаемая реакция 1', exact: true })
-    .selectOption('warn');
-  await panel.getByRole('combobox', { name: 'Длина фраз', exact: true }).selectOption('brief');
-  await panel.getByRole('button', { name: 'Добавить пример реплики', exact: true }).click();
-  await panel.getByLabel('Реплика 1', { exact: true }).fill('Назови своё дело.');
+    .getByRole('textbox', { name: 'Первая реплика', exact: true })
+    .fill('Назови своё дело.');
   const saved = page.waitForResponse(
     (response) =>
       response.request().method() === 'PATCH' && response.url().endsWith(`/npcs/${first.npc.id}`),
@@ -98,7 +110,17 @@ test('scoped character profile and lore save, discard and preview preserve autho
     { kind: 'protect', priority: 3 },
   ]);
   expect(stored.characterProfile.personality.characterization.publicVoice.cadence).toBe('brief');
-  await panel.getByRole('combobox', { name: 'Длина фраз', exact: true }).selectOption('elaborate');
+  expect(stored.characterProfile).toEqual(first.npc.characterProfile);
+  expect(stored.modelProfileId).toBe(first.npc.modelProfileId);
+  // Reopen from durable state before exercising a second edit/discard.
+  await page.reload();
+  await page.getByRole('button', { name: /NPC$/ }).click();
+  await panel
+    .locator('.row')
+    .filter({ hasText: 'Северин' })
+    .getByRole('button', { name: 'Редактировать', exact: true })
+    .click();
+  await panel.getByRole('textbox', { name: 'Первая реплика', exact: true }).fill('Не сохранять.');
   await panel.getByRole('button', { name: 'Закрыть', exact: true }).click();
   const discard = page.getByRole('dialog', { name: 'Закрыть без сохранения?' });
   await discard
@@ -112,8 +134,8 @@ test('scoped character profile and lore save, discard and preview preserve autho
     .filter({ hasText: 'Северин' })
     .getByRole('button', { name: 'Редактировать', exact: true })
     .click();
-  await expect(panel.getByRole('combobox', { name: 'Длина фраз', exact: true })).toHaveValue(
-    'brief',
+  await expect(panel.getByRole('textbox', { name: 'Первая реплика', exact: true })).toHaveValue(
+    'Назови своё дело.',
   );
   await panel.getByRole('button', { name: 'Закрыть', exact: true }).click();
 

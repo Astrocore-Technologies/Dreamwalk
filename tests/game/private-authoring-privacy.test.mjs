@@ -136,17 +136,18 @@ test('detail version history is owner-only and invitee NPC display reads frozen 
   );
 });
 
-test('Sparks wallet GET is owner-filtered and read-only, with missing-wallet zero projection', () => {
-  const wallet = method(admin, 'sparksWallet');
-  assert.match(compact(wallet), /this\.auth\.require\(req\)/);
+test('Sparks wallet GET is owner-filtered and read-only, with one consistent snapshot and missing-wallet zero projection', () => {
+  const route = method(admin, 'sparksWallet');
+  assert.match(compact(route), /this\.auth\.require\(req\)/);
+  assert.match(compact(route), /this\.sparksWalletFor\(owner\)/);
+  const wallet = method(admin, 'sparksWalletFor');
   const queries = sql(wallet).filter((s) => /^(?:SELECT|INSERT|UPDATE|DELETE|MERGE)\b/.test(s));
-  assert.equal(queries.length, 2);
-  assert.ok(queries.every((query) => /^SELECT /.test(query) && /WHERE owner_id=\$1/.test(query)));
-  assert.match(
-    queries[1],
-    /^SELECT .* FROM spark_ledger WHERE owner_id=\$1 ORDER BY id DESC LIMIT 100$/,
-  );
-  assert.match(queries[0], /^SELECT .* FROM spark_wallets WHERE owner_id=\$1$/);
+  assert.equal(queries.length, 1);
+  assert.match(queries[0], /^SELECT /);
+  assert.match(queries[0], /FROM spark_ledger WHERE owner_id=\$1 ORDER BY id DESC LIMIT 100/);
+  assert.match(queries[0], /SELECT \$1::uuid AS owner_id/);
+  assert.match(queries[0], /LEFT JOIN spark_wallets w USING\(owner_id\)/);
+  assert.match(compact(wallet), /\[owner\]/);
   const calls = nodes(wallet, ts.isCallExpression).map((n) => n.expression.getText());
   assert.ok(!calls.some((c) => /ensureWallet|reserve|settle|capture|\.tx$/.test(c)));
   assert.match(compact(wallet), /row\?\.balance_subunits \?\? '0'/);

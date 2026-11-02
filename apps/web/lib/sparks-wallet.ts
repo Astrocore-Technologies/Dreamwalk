@@ -7,7 +7,13 @@ export interface SparksWallet {
   heldSubunits: string;
   availableSubunits: string;
   subunitsPerSpark: string;
-  ledger: { id: string; kind: string; amountSubunits: string; createdAt: string }[];
+  ledger: {
+    id: string;
+    kind: string;
+    amountSubunits: string;
+    createdAt: string;
+    reason?: string | null;
+  }[];
 }
 export const SPARKS_REFRESH_EVENT = 'dreamwalk:sparks-refresh';
 
@@ -36,9 +42,18 @@ export function readSparksWallet(value: unknown, expectedOwnerId: string): Spark
       !entry ||
       typeof entry.id !== 'string' ||
       !/^\d+$/.test(entry.id) ||
-      !['starter_grant', 'reserve', 'pending', 'capture', 'release'].includes(entry.kind) ||
+      ![
+        'starter_grant',
+        'admin_credit',
+        'admin_debit',
+        'reserve',
+        'pending',
+        'capture',
+        'release',
+      ].includes(entry.kind) ||
       typeof entry.amountSubunits !== 'string' ||
       typeof entry.createdAt !== 'string' ||
+      (entry.reason != null && (typeof entry.reason !== 'string' || entry.reason.length > 500)) ||
       !Number.isFinite(Date.parse(entry.createdAt))
     )
       throw new Error('SPARK_WALLET_INVALID');

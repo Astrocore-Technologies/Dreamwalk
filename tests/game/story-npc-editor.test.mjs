@@ -56,7 +56,9 @@ test('all NPC authoring fields retain validation and local copy has three comple
   assert.match(source, /maxLength=\{120\}/);
   assert.match(source, /sourceLanguage/);
   assert.match(source, /portraitAssetId/);
-  assert.match(source, /modelProfileId/);
+  // Hidden profile/model preferences remain in the schema-derived draft rather than controls.
+  assert.match(source, /Object.entries\(data\).*key in npcSchema.shape/);
+  assert.doesNotMatch(source, /label=\{t\('Стиль поведения'\)\}/);
   assert.match(source, /npcSchema.parse\(draft\)/);
   assert.match(source, /locale === 'ru' \? 0 : locale === 'en' \? 1 : 2/);
   assert.match(source, /Персонажі цієї історії/);

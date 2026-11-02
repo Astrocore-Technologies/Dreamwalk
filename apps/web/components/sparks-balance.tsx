@@ -12,21 +12,21 @@ export const sparksBalanceMessages: Record<
     unavailable: 'Баланс искр недоступен',
     available: 'Доступно искр',
     starter: 'Стартовый подарок',
-    description: 'Искры для AI-приключений и отдельный демонстрационный баланс.',
+    description: 'Искры для твоих AI-приключений.',
   },
   uk: {
     loading: 'Завантажуємо баланс іскор',
     unavailable: 'Баланс іскор недоступний',
     available: 'Доступно іскор',
     starter: 'Стартовий подарунок',
-    description: 'Іскри для AI-пригод та окремий демонстраційний баланс.',
+    description: 'Іскри для твоїх AI-пригод.',
   },
   en: {
     loading: 'Loading Sparks balance',
     unavailable: 'Sparks balance unavailable',
     available: 'Available Sparks',
     starter: 'Welcome gift',
-    description: 'Sparks for AI adventures and a separate demonstration balance.',
+    description: 'Sparks for your AI adventures.',
   },
 };
 export function SparksBalance({ ownerId }: { ownerId: string }) {

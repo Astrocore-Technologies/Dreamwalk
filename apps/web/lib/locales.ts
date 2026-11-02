@@ -3647,6 +3647,36 @@ const messages: Record<string, Record<Locale, string>> = {
       en: 'This configuration remains disabled. A real integration needs a separate future phase and owner approval.',
       uk: 'Конфігурація залишиться вимкненою. Для реальної інтеграції потрібні окремий наступний етап і дозвіл власника.',
     },
+  'Баланс скорректирован': {
+    ru: 'Баланс скорректирован',
+    en: 'Balance adjusted',
+    uk: 'Баланс скориговано',
+  },
+  'Подтвердить операцию с искрами?': {
+    ru: 'Подтвердить операцию с искрами?',
+    en: 'Confirm Sparks adjustment?',
+    uk: 'Підтвердити операцію з іскрами?',
+  },
+  'Например, награда за участие': {
+    ru: 'Например, награда за участие',
+    en: 'For example, a participation reward',
+    uk: 'Наприклад, нагорода за участь',
+  },
+  'Положительное число — начисление, отрицательное — списание. Только целые искры.': {
+    ru: 'Положительное число — начисление, отрицательное — списание. Только целые искры.',
+    en: 'Positive adds Sparks, negative deducts them. Whole Sparks only.',
+    uk: 'Додатне число — нарахування, від’ємне — списання. Лише цілі іскри.',
+  },
+  'Сначала получатель должен подтвердить почту.': {
+    ru: 'Сначала получатель должен подтвердить почту.',
+    en: 'The recipient must verify their email first.',
+    uk: 'Спочатку одержувач має підтвердити пошту.',
+  },
+  'Операция записана в журнал искр': {
+    ru: 'Операция записана в журнал искр',
+    en: 'Transaction recorded in the Sparks ledger',
+    uk: 'Операцію записано в журнал іскор',
+  },
   'Операция записана в demo ledger': {
     ru: 'Операция записана в demo ledger',
     en: 'Transaction recorded in the demo ledger',
@@ -4329,6 +4359,11 @@ const messages: Record<string, Record<Locale, string>> = {
     ru: 'Слишком много запросов. Подожди немного и повтори.',
     en: 'Too many requests. Wait a moment and try again.',
     uk: 'Забагато запитів. Зачекай трохи й повтори.',
+  },
+  'Недостаточно искр для этой операции.': {
+    ru: 'Недостаточно искр для этой операции.',
+    en: 'Not enough Sparks for this operation.',
+    uk: 'Недостатньо іскор для цієї операції.',
   },
   'Недостаточно тестовых искр для этой операции.': {
     ru: 'Недостаточно тестовых искр для этой операции.',
