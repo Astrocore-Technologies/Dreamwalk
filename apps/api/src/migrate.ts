@@ -1,5 +1,9 @@
 import { Pool } from 'pg';
-import { productionMigrationSql } from './production-migrations';
+import {
+  productionMigrationSql,
+  assertProductionDatabasePrerequisites,
+} from './production-migrations';
+import { postgresConnectionConfig } from './postgres-connection';
 import { readdir, readFile } from 'node:fs/promises';
 import { resolve } from 'node:path';
 import {
@@ -8,25 +12,17 @@ import {
   matchesMigrationChecksum,
 } from './migration-checksum';
 async function main() {
-  if (!process.env.DATABASE_URL) throw new Error('DATABASE_URL required');
-  const p = new Pool({ connectionString: process.env.DATABASE_URL });
+  const p = new Pool(postgresConnectionConfig(process.env, 'migration'));
   const c = await p.connect();
   try {
     const production =
       process.argv.includes('--production') || process.env.NODE_ENV === 'production';
-    const pgcryptoInstalled =
-      !production ||
-      Boolean(
-        (
-          await c.query(
-            "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname='pgcrypto') AS installed",
-          )
-        ).rows[0]?.installed,
+    if (production) {
+      const prerequisites = await c.query(
+        "SELECT EXISTS (SELECT 1 FROM pg_extension WHERE extname='pgcrypto') AS installed, to_regprocedure('digest(text,text)') IS NOT NULL AS digest_visible",
       );
-    if (production && !pgcryptoInstalled)
-      throw new Error(
-        'PRODUCTION_PGCRYPTO_REQUIRED: database operator must install pgcrypto first',
-      );
+      assertProductionDatabasePrerequisites(prerequisites.rows[0]);
+    }
     await c.query('SELECT pg_advisory_lock(7781801)');
     await c.query(
       'CREATE TABLE IF NOT EXISTS schema_migrations(name text PRIMARY KEY,sha256 text NOT NULL,applied_at timestamptz NOT NULL DEFAULT now())',
@@ -46,7 +42,7 @@ async function main() {
       }
       await c.query('BEGIN');
       try {
-        await c.query(production ? productionMigrationSql(name, sql, pgcryptoInstalled) : sql);
+        await c.query(production ? productionMigrationSql(name, sql, true) : sql);
         await c.query('INSERT INTO schema_migrations(name,sha256) VALUES($1,$2)', [name, hash]);
         await c.query('COMMIT');
         console.log(`Applied ${name}`);

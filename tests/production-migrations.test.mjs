@@ -31,3 +31,24 @@ test('production requires operator-installed pgcrypto and never dispatches exten
     /UNEXPECTED_EXTENSION/,
   );
 });
+
+test('production preflight needs an installed extension and visible digest before any DDL', () => {
+  const {
+    assertProductionDatabasePrerequisites,
+  } = require('../apps/api/src/production-migrations.ts');
+  for (const row of [
+    undefined,
+    {},
+    { installed: false, digest_visible: true },
+    { installed: 'true', digest_visible: true },
+  ])
+    assert.throws(() => assertProductionDatabasePrerequisites(row), /PGCRYPTO_REQUIRED/);
+  for (const digest_visible of [false, undefined, 'true'])
+    assert.throws(
+      () => assertProductionDatabasePrerequisites({ installed: true, digest_visible }),
+      /DIGEST_NOT_VISIBLE/,
+    );
+  assert.doesNotThrow(() =>
+    assertProductionDatabasePrerequisites({ installed: true, digest_visible: true }),
+  );
+});
