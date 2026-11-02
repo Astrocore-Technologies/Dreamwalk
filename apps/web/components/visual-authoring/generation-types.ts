@@ -11,7 +11,7 @@ export type ImageConfiguration = {
   pricingProfileHash?: string;
 
   providerFingerprint?: string;
-  generationMode?: 'owner' | 'manual';
+  generationMode?: 'owner' | 'manual' | 'release';
   ownerEstimateEnabled?: boolean;
   estimateRiskConsentRequired?: boolean;
   providerEnforcesQuotedCap?: boolean;
@@ -51,7 +51,7 @@ export type GenerationQuote = {
   estimateSnapshotHash?: string;
   policyRevision?: number;
   policyHash?: string;
-  generationMode?: 'owner' | 'manual';
+  generationMode?: 'owner' | 'manual' | 'release';
   estimateRiskConsentRequired?: boolean;
   providerEnforcesQuotedCap?: boolean;
   id: string;
@@ -123,7 +123,7 @@ const nonnegativeInteger = (value: unknown): value is number =>
   Number.isSafeInteger(value) && (value as number) >= 0;
 const positiveInteger = (value: unknown): value is number => nonnegativeInteger(value) && value > 0;
 export const ownerImageEstimateAvailable = (config: ImageConfiguration | null | undefined) =>
-  config?.generationMode === 'owner' &&
+  (config?.generationMode === 'owner' || config?.generationMode === 'release') &&
   config.externalEnabled &&
   config.ownerEstimateEnabled === true &&
   config.estimateRiskConsentRequired === true &&
@@ -138,7 +138,8 @@ export const ownerImageQuoteMatches = (
   quote:
     | {
         mode: string;
-        generationMode?: 'owner' | 'manual';
+        sparks?: { walletCharging: true };
+        generationMode?: 'owner' | 'manual' | 'release';
         estimateRiskConsentRequired?: boolean;
         providerEnforcesQuotedCap?: boolean;
         costBasis?: string;
@@ -164,7 +165,9 @@ export const ownerImageQuoteMatches = (
   if (
     !ownerImageEstimateAvailable(config) ||
     quote?.mode !== 'external' ||
-    quote.generationMode !== 'owner' ||
+    quote.generationMode !== config?.generationMode ||
+    (authorization?.mode !== undefined && quote.generationMode !== authorization.mode) ||
+    (quote.generationMode === 'release' && quote.sparks?.walletCharging !== true) ||
     quote.estimateRiskConsentRequired !== true ||
     quote.providerEnforcesQuotedCap !== false ||
     quote.costBasis !== 'approved_estimate' ||

@@ -46,9 +46,11 @@ export class GenerationController {
     const imageOnly = 'imageOnlyAdmission' in status && status.imageOnlyAdmission === true;
     const grantActive = status.enabled && (status.state === 'active' || imageOnly);
     const imageRemaining =
-      status.mode === 'owner' ? status.imageRemainingMicros : status.remainingMicros;
+      status.mode === 'owner' || status.mode === 'release'
+        ? status.imageRemainingMicros
+        : status.remainingMicros;
     const perRequest =
-      status.mode === 'owner' &&
+      (status.mode === 'owner' || status.mode === 'release') &&
       'requestEstimationEnabled' in image &&
       image.requestEstimationEnabled === true;
     // Capability permits a quote; the concrete quoted reserve is checked under the shared ledger lock.
@@ -82,9 +84,11 @@ export class GenerationController {
               pricingProfileHash: image.pricingProfileHash,
             }
           : {}),
-        ...('generationMode' in image && image.generationMode === 'owner' && status.mode === 'owner'
+        ...('generationMode' in image &&
+        (image.generationMode === 'owner' || image.generationMode === 'release') &&
+        (status.mode === 'owner' || status.mode === 'release')
           ? {
-              generationMode: 'owner' as const,
+              generationMode: image.generationMode,
               ownerEstimateEnabled:
                 'ownerEstimateEnabled' in image && image.ownerEstimateEnabled === true,
               estimateRiskConsentRequired:

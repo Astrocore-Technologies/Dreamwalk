@@ -194,7 +194,7 @@ export function VisualWorkshop() {
   }, [editingMap?.id, editingLayer?.id, editingLayer?.x, editingLayer?.y, editingLayer?.visual]);
   const ownerReferencesUnavailable =
     generationMode === 'external' &&
-    liveStatus?.mode === 'owner' &&
+    (liveStatus?.mode === 'owner' || liveStatus?.mode === 'release') &&
     liveStatus.imageConfiguration?.requestProfile?.maxReferenceImages === 0;
   const unsupportedPhoto = kind === 'character' && source === 'photo' && ownerReferencesUnavailable;
   const external = project?.provider === 'external';
@@ -210,7 +210,11 @@ export function VisualWorkshop() {
     setVisualReview(false);
   }, [reviewKey]);
   useEffect(() => {
-    if (liveStatus?.mode === 'owner' && !generationModeChosen.current && !project)
+    if (
+      (liveStatus?.mode === 'owner' || liveStatus?.mode === 'release') &&
+      !generationModeChosen.current &&
+      !project
+    )
       setGenerationMode('external');
   }, [liveStatus?.mode, project]);
   function selectProject(p: Project) {

@@ -23,7 +23,7 @@ export class GenerationProvider implements NpcProvider {
         count: (purpose, context, id) => inner.count!(purpose, context, id),
       });
     this.version = `${inner.version}:generation-${session.mode}-v1`;
-    if (session.ownerConfig?.text.estimation) {
+    if ((session.profileConfig ?? session.ownerConfig)?.text.estimation) {
       session.configureTextRequestPlanner((purpose, context) => {
         const prepared = this.inner.prepareTextRequest?.(purpose, context);
         if (!prepared) throw new ProviderFailure('GENERATION_TEXT_PLANNER_REQUIRED', false);

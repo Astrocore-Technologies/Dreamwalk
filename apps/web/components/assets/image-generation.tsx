@@ -86,7 +86,7 @@ type Quote = {
   basePricingProfileHash?: string;
   policyRevision?: number;
   policyHash?: string;
-  generationMode?: 'owner' | 'manual';
+  generationMode?: 'owner' | 'manual' | 'release';
   estimateRiskConsentRequired?: boolean;
   providerEnforcesQuotedCap?: boolean;
   id: string;
@@ -168,7 +168,7 @@ export function ImageGeneration({
   const { status: managedAuthorization, setStatus: setManagedAuthorization } = useLiveTestStatus();
   const grant = authorization ?? managedAuthorization,
     authorizationId = generationAuthorizationId(grant) ?? liveTestSessionId,
-    ownerMode = grant?.mode === 'owner';
+    ownerMode = grant?.mode === 'owner' || grant?.mode === 'release';
   const modeChosen = useRef(false);
   const library = useResource<ArtRevision[]>('/asset-library');
   const [mode, setMode] = useState<'mock' | 'external'>(externalOnly ? 'external' : 'mock');
@@ -224,7 +224,9 @@ export function ImageGeneration({
       attested: true as const,
     },
     mode: externalOnly ? ('external' as const) : mode,
-    ...(mode === 'external' && authorizationId ? { liveTestSessionId: authorizationId } : {}),
+    ...(mode === 'external' && grant?.mode !== 'release' && authorizationId
+      ? { liveTestSessionId: authorizationId }
+      : {}),
   };
   const outstandingExternalJob = jobs.some(
     (job) =>
@@ -241,6 +243,7 @@ export function ImageGeneration({
     externalDispatchAllowed &&
     (!ownerMode || (!!grant?.imagesEnabled && imageSessionActive(grant, now)));
   const fingerprint = JSON.stringify({
+    owner: user?.id,
     request,
     attested,
     externalDispatchAllowed: dispatchAllowed,
@@ -336,6 +339,7 @@ export function ImageGeneration({
       clearInterval(timer);
     };
   }, [
+    user?.id,
     adventureId,
     preparedRequest?.studioLocationContext.locationId,
     preparedRequest?.studioLocationContext.sourceHash,
@@ -494,7 +498,9 @@ export function ImageGeneration({
         <div className={styles.notice}>
           <p>
             {g(
-              ownerMode || config.data?.generationMode === 'owner'
+              ownerMode ||
+                config.data?.generationMode === 'owner' ||
+                config.data?.generationMode === 'release'
                 ? 'ownerUnavailable'
                 : 'unavailable',
             )}

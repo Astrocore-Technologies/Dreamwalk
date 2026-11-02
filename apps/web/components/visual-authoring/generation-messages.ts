@@ -1,6 +1,11 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const generationMessages = {
+  releaseBlocked: [
+    'Генерация сейчас недоступна. Проверьте баланс Искр и сообщение об ошибке.',
+    'Generation is currently unavailable. Check your Sparks balance and the error message.',
+    'Генерація зараз недоступна. Перевірте баланс Іскор і повідомлення про помилку.',
+  ],
   ownerReferencesUnavailable: [
     'Настроенный профиль изображений принимает только текст. Концепты по фото и части пакета с изображениями-референсами недоступны. Референсы не удаляются, образцы не подставляются.',
     'The configured image profile accepts text only. Photo concepts and reference-dependent package parts are unavailable. References are not removed and samples are not substituted.',
