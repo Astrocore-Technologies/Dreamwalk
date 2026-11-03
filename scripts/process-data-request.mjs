@@ -1,3 +1,4 @@
+import { eraseTranslations } from './translation-data-requests.mjs';
 import { readerInvitationPayload } from '../packages/contracts/dist/index.js';
 import { exportManualLiveData, lockManualLiveData } from './manual-live-data-requests.mjs';
 import {
@@ -123,6 +124,9 @@ try {
         visualAuthoring: await exportVisualAuthoring(c, user.id),
         reusableArt: await exportReusableAssets(c, user.id),
         imageGeneration: await exportImageGeneration(c, user.id),
+        translations: await rows('SELECT * FROM content_translations WHERE viewer_id=$1', [
+          user.id,
+        ]),
         heroes: await rows('SELECT id,data,created_at,updated_at FROM heroes WHERE owner_id=$1', [
           user.id,
         ]),
@@ -209,6 +213,8 @@ try {
       // Resolve contextual image provenance before membership/source records are purged.
       await eraseVisualAuthoring(c, user.id);
       const imageCleanup = await eraseImageGeneration(c, user.id);
+      // Match all source-owned/owned/participated campaign redaction scopes.
+      await eraseTranslations(c, user.id);
       await purgeGameData(c, user.id);
       // The deleted account cannot resume admission. Keep DB pointers on rollback so
       // a failed unlink remains retryable, exactly like original asset cleanup above.

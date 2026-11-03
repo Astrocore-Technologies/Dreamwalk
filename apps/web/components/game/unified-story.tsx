@@ -82,7 +82,7 @@ export function UnifiedStory({
   const turnCopy = useRef(turnText);
   turnCopy.current = turnText;
   const h = useStoryText(),
-    { t } = useT(),
+    { t, locale } = useT(),
     hintId = useId();
   const [channel, setChannel] = useState<'say' | 'whisper'>('say');
   const [text, setText] = useState(''),
@@ -131,9 +131,12 @@ export function UnifiedStory({
     if (polling.current) return;
     polling.current = true;
     const current = epoch.current;
+    const responseLocale = getLocale();
     try {
-      const result = await api<StoryTurnFeed>(`${path}/feed`);
-      if (current !== epoch.current) return;
+      const result = await api<StoryTurnFeed>(`${path}/feed`, {
+        headers: { 'Accept-Language': responseLocale },
+      });
+      if (current !== epoch.current || responseLocale !== getLocale()) return;
       setFeed(result);
       const sent = submitted.current;
       const receipt =
@@ -169,7 +172,7 @@ export function UnifiedStory({
     } finally {
       polling.current = false;
     }
-    // Copy is evaluated on response; requests are scoped by campaign, not by locale.
+    // Keep submissions pinned to their original quote; only the read feed follows the current locale.
   }, [path]);
   useEffect(() => {
     epoch.current++;
@@ -179,7 +182,7 @@ export function UnifiedStory({
       epoch.current++;
       clearInterval(timer);
     };
-  }, [refresh]);
+  }, [refresh, locale]);
   useEffect(() => {
     if (
       prepared &&

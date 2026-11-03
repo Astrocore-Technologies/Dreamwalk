@@ -10,6 +10,7 @@ import type {
 import { gameEnvelopeSchema, type GameEnvelope } from '@dreamwalk/contracts';
 import { api, ApiError } from '@/lib/client';
 import { projectionTurnFence } from './turn-ui';
+import { useT } from '@/lib/i18n';
 import {
   canRetryEncounterBegin,
   encounterRetryContext,
@@ -60,12 +61,21 @@ type CommandResult = {
   events?: GameEvent[];
 };
 export function useGame(campaignId: string) {
+  const { locale } = useT();
   const [campaign, setCampaign] = useState<GameEnvelope['campaign']>();
   const [projection, setProjection] = useState<GameProjection | null>(null);
   const [connection, setConnection] = useState<
     'connecting' | 'connected' | 'reconnecting' | 'superseded'
   >('connecting');
   const [reconnectVersion, setReconnectVersion] = useState(0);
+  const readScope = `${campaignId}:${locale}:${reconnectVersion}`;
+  const activeReadScope = useRef({ scope: readScope, generation: 0 });
+  if (activeReadScope.current.scope !== readScope)
+    activeReadScope.current = {
+      scope: readScope,
+      generation: activeReadScope.current.generation + 1,
+    };
+  const readGeneration = activeReadScope.current.generation;
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [events, setEvents] = useState<(GameEvent & { id: string })[]>([]);
@@ -118,13 +128,15 @@ export function useGame(campaignId: string) {
   }, []);
   const refresh = useCallback(async () => {
     try {
-      const value = await api<GameEnvelope>(`${path}/snapshot`);
-      if (alive.current) {
+      const value = await api<GameEnvelope>(`${path}/snapshot`, {
+        headers: { 'Accept-Language': locale },
+      });
+      if (alive.current && activeReadScope.current.generation === readGeneration) {
         accept(value);
         return value;
       }
     } catch (err) {
-      if (alive.current) {
+      if (alive.current && activeReadScope.current.generation === readGeneration) {
         setError(err instanceof ApiError ? err.code : 'NETWORK_ERROR');
         if (err instanceof ApiError && [401, 403, 404].includes(err.status)) {
           setProjection(null);
@@ -132,7 +144,7 @@ export function useGame(campaignId: string) {
         }
       }
     }
-  }, [path, accept]);
+  }, [path, accept, locale, readGeneration]);
   useEffect(() => {
     alive.current = true;
     envelope.current = null;
@@ -148,7 +160,7 @@ export function useGame(campaignId: string) {
       if (stopped) return;
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const ws = new WebSocket(
-        `${protocol}//${location.host}/api/v1/game/socket?campaignId=${encodeURIComponent(campaignId)}`,
+        `${protocol}//${location.host}/api/v1/game/socket?campaignId=${encodeURIComponent(campaignId)}&locale=${locale}`,
       );
       socket.current = ws;
       ws.onopen = () => {
@@ -204,14 +216,20 @@ export function useGame(campaignId: string) {
       socket.current?.close();
       socket.current = null;
     };
-  }, [campaignId, refresh, accept, reconnectVersion]);
+  }, [campaignId, refresh, accept, reconnectVersion, locale]);
   const transmitMove = useCallback(
     (target: GamePoint) => {
       const value = envelope.current;
       const self = value?.projection.entities.find(
         (entity) => entity.id === value.projection.actorId,
       );
-      if (!value || !self || !alive.current) return;
+      if (
+        !value ||
+        !self ||
+        !alive.current ||
+        activeReadScope.current.generation !== readGeneration
+      )
+        return;
       const turnFence = projectionTurnFence(value.projection);
       if (turnFence) {
         if (
@@ -253,7 +271,7 @@ export function useGame(campaignId: string) {
               events: _events,
               ...snapshot
             } = result;
-            if (alive.current) {
+            if (alive.current && activeReadScope.current.generation === readGeneration) {
               if (snapshot.projection) accept(snapshot);
               if (status === 'rejected') setError(code || 'INVALID_ACTION');
             }
@@ -262,7 +280,8 @@ export function useGame(campaignId: string) {
           .catch((err: unknown) => {
             if (err instanceof ApiError && err.status >= 400 && err.status < 500)
               moveRetry.current = null;
-            if (alive.current) setError(err instanceof ApiError ? err.code : 'NETWORK_ERROR');
+            if (alive.current && activeReadScope.current.generation === readGeneration)
+              setError(err instanceof ApiError ? err.code : 'NETWORK_ERROR');
           })
           .finally(() => {
             commandInFlight.current = false;
@@ -282,10 +301,11 @@ export function useGame(campaignId: string) {
         void api(`${path}/move`, { method: 'POST', body: JSON.stringify(body) })
           .then(() => refresh())
           .catch((err: unknown) => {
-            if (alive.current) setError(err instanceof ApiError ? err.code : 'NETWORK_ERROR');
+            if (alive.current && activeReadScope.current.generation === readGeneration)
+              setError(err instanceof ApiError ? err.code : 'NETWORK_ERROR');
           });
     },
-    [path, refresh, accept],
+    [path, refresh, accept, readGeneration],
   );
   const move = useCallback(
     (target: GamePoint) => {
@@ -313,10 +333,11 @@ export function useGame(campaignId: string) {
       body: JSON.stringify({ connectionEpoch: value.connectionEpoch }),
     })
       .then((next) => {
-        if (alive.current) accept(next);
+        if (alive.current && activeReadScope.current.generation === readGeneration) accept(next);
       })
       .catch((err: unknown) => {
-        if (alive.current) setError(err instanceof ApiError ? err.code : 'NETWORK_ERROR');
+        if (alive.current && activeReadScope.current.generation === readGeneration)
+          setError(err instanceof ApiError ? err.code : 'NETWORK_ERROR');
       })
       .finally(() => {
         stopping.current = false;
@@ -324,10 +345,11 @@ export function useGame(campaignId: string) {
         queuedTarget.current = null;
         if (target && alive.current) transmitMove(target);
       });
-  }, [path, accept, transmitMove]);
+  }, [path, accept, transmitMove, readGeneration]);
   const command = useCallback(
     async (body: Omit<CommandBody, 'protocolVersion' | 'operationId'>) => {
-      if (commandInFlight.current) return false;
+      if (commandInFlight.current || activeReadScope.current.generation !== readGeneration)
+        return false;
       commandInFlight.current = true;
       const key = JSON.stringify(body);
       let request: CommandBody =
@@ -395,7 +417,7 @@ export function useGame(campaignId: string) {
           }
         }
         retry.current = null;
-        if (!alive.current) return false;
+        if (!alive.current || activeReadScope.current.generation !== readGeneration) return false;
         if (result.status === 'rejected') setError(result.code || 'INVALID_ACTION');
         if (result.events?.length)
           setEvents((previous) =>
@@ -411,14 +433,15 @@ export function useGame(campaignId: string) {
         return result.status === 'committed';
       } catch (err) {
         if (err instanceof ApiError && err.status >= 400 && err.status < 500) retry.current = null;
-        if (alive.current) setError(err instanceof ApiError ? err.code : 'NETWORK_ERROR');
+        if (alive.current && activeReadScope.current.generation === readGeneration)
+          setError(err instanceof ApiError ? err.code : 'NETWORK_ERROR');
         return false;
       } finally {
         commandInFlight.current = false;
         if (alive.current) setBusy(false);
       }
     },
-    [path, refresh],
+    [path, refresh, readGeneration],
   );
   return {
     projection,

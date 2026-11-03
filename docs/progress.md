@@ -1022,3 +1022,13 @@ an own-property check and regression tests. Full API build and repository-wide l
 hit local resource/dependency limitations; two dependency-install attempts were
 interrupted or killed (exit 137). Authenticated PostgreSQL integration and aggregate
 checks therefore remain for CI. No paid model call or production mutation was used.
+
+### KAN-11: automatic translation preparation (2026-11-03)
+
+Prepared revision-aware, per-viewer cached localization for readable story metadata
+and already-visible game prose/labels, including selected-language HTTP and socket
+refresh, source preservation, strict output validation and deletion integration.
+Synthetic-only tests cover deduplication, stale translations, permission boundaries
+and language-switch races. See `automatic-translation.md` for scope and checks.
+Production dispatch remains disconnected pending the owner's payer, spend and
+content-sharing decision. This is not a claim of live automatic translation.
