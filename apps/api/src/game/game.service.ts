@@ -263,6 +263,10 @@ export class GameService implements OnModuleDestroy {
         this.prepareTurnSpeech(state, actorId, npcId, speech, requestId, userId, identity),
     });
     this.art.attachRuntimeStateReader((id) => this.live.get(id)?.state);
+    this.ai.attachRuntimeStateReader?.(
+      (id) => this.live.get(id)?.state,
+      (id) => this.live.get(id)?.dbRevision,
+    );
     images?.attachRuntimeStateReader((id) => {
       const cached = this.live.get(id);
       return cached ? { state: cached.state, dbRevision: cached.dbRevision } : undefined;
@@ -468,6 +472,9 @@ export class GameService implements OnModuleDestroy {
   }
   storyFeed(req: Request, id: string) {
     return this.story.feed(req, id);
+  }
+  withRuntimeVisionQuote<T>(work: () => Promise<T>) {
+    return this.ai.withRuntimeVisionQuote(work);
   }
   storyQuote(req: Request, id: string, body: unknown) {
     return this.story.quote(req, id, body);

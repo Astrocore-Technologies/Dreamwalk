@@ -64,7 +64,7 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
     '@/lib/client': { api, ApiError, errorMessage: (error) => error.message },
     '@/lib/i18n': { useT: () => ({ locale }) },
     '../ui': { Button: 'button', ErrorBox: 'error' },
-    './story-cost': { StoryCost: 'cost' },
+    './story-cost': { StoryCost: 'cost', RuntimeMapQuoteNotice: 'map-notice' },
     '../wallet-funding': { FundingBreakdown: 'funding', FundingNotice: 'funding-notice' },
     './narrative-guards': { providerBoundKnown },
     './story-messages': { useStoryText: () => copy },
@@ -83,7 +83,10 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
     },
     (id) => timers.delete(id),
   );
-  const Component = Object.values(module.exports)[0];
+  const Component =
+    module.exports[
+      { 'story-cost': 'StoryCost', 'story-reply-confirmation': 'StoryReplyConfirmation' }[filename]
+    ] ?? Object.values(module.exports)[0];
   function render(next = props) {
     props = next;
     cursor = 0;

@@ -1,7 +1,7 @@
 'use client';
 import { Send } from 'lucide-react';
 import { SparkReceiptCost } from '../visual-authoring/sparks-cost';
-import { StoryCost } from './story-cost';
+import { StoryCost, RuntimeMapQuoteNotice } from './story-cost';
 import { StoryReplyConfirmation } from './story-reply-confirmation';
 import { WorldGenerationConfirmation } from './world-generation-confirmation';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
@@ -582,6 +582,7 @@ export function UnifiedStory({
               {h('hint')}
             </p>
             <div className={styles.composerFeedback}>
+              <RuntimeMapQuoteNotice />
               <ErrorBox message={error} />
               {notice && (
                 <p className={styles.status} role="status">

@@ -32,6 +32,7 @@ export function readNpcAiConfiguration(env: NodeJS.ProcessEnv = process.env): {
           ? { contextBudgetTokens: profile.contextBudgetTokens }
           : {}),
         maxOutputTokens: profile.maxOutputTokens,
+        ...(profile.runtimeVision ? { runtimeVision: profile.runtimeVision } : {}),
         maxResponseBytes: 128000,
         serviceTier: 'default',
         reasoningEffort: 'none',
