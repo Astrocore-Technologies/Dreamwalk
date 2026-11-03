@@ -25,6 +25,7 @@ export interface AuthoringTextProfile {
   contextTokens: number;
   contextBudgetTokens?: number;
   maxOutputTokens: number;
+  storyPlanMaxOutputTokens?: number;
   maxInputBytes: number;
   inputMicrosPerMillion: number;
   outputMicrosPerMillion: number;
@@ -57,10 +58,12 @@ export interface AuthoringTextRequest {
 }
 export interface AuthoringTextProvider {
   readonly version: string;
+  readonly profile?: AuthoringTextProfile;
   prepareTextRequest?(context: unknown): PreparedTextRequest | undefined;
   generate(request: AuthoringTextRequest): Promise<AuthoringTextResult>;
 }
 export interface AuthoringTextDefinition {
+  purpose?: 'story_plan';
   version: string;
   schema: Record<string, unknown>;
   instructions: string;
@@ -102,6 +105,16 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
     private transport: typeof fetch = fetch,
     readonly profile: AuthoringTextProfile = LIVE_TEXT,
   ) {
+    if (definition.purpose === 'story_plan' && profile.storyPlanMaxOutputTokens !== undefined) {
+      if (
+        !profile.estimation ||
+        !Number.isSafeInteger(profile.storyPlanMaxOutputTokens) ||
+        profile.storyPlanMaxOutputTokens < 16 ||
+        profile.storyPlanMaxOutputTokens > 32000
+      )
+        throw new Error('INVALID_AUTHORING_PROVIDER_PROFILE');
+      profile = { ...profile, maxOutputTokens: profile.storyPlanMaxOutputTokens };
+    }
     if (profile.contextBudgetTokens !== undefined)
       profile = { ...profile, maxInputBytes: TEXT_CONTEXT_TRANSPORT_BYTES };
     if (

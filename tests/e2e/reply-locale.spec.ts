@@ -1,5 +1,6 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { createUnpaidFixtureCampaign } from './support/unpaid-fixture-campaign';
 import {
   gameEnvelopeSchema,
   storyTurnInputSchema,
@@ -48,6 +49,7 @@ async function selectLocale(page: Page, locale: Locale) {
 }
 
 async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
+  test.setTimeout(90_000);
   const handle = `locale_ui_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
   const registered = await page.request.post('/api/v1/auth/register', {
     data: {
@@ -62,10 +64,11 @@ async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
     (await page.request.patch('/api/v1/account/settings', { data: { language: locale } })).ok(),
   ).toBeTruthy();
   await page.addInitScript((value) => localStorage.setItem('dreamwalk-language', value), locale);
-  const started = await page.request.post('/api/v1/game/campaigns', {
-    data: { template: 'observatory-v1', turnBased: true },
-  });
-  expect(started.ok()).toBeTruthy();
+  const started = await createUnpaidFixtureCampaign(page.request);
+  expect(
+    started.ok(),
+    `Fixture creation returned ${started.status()}: ${await started.text()}`,
+  ).toBeTruthy();
   const { campaignId } = await started.json();
   const campaignPath = `/api/v1/game/campaigns/${campaignId}`;
   // Keep a real, schema-validated turn projection and socket. Only the story

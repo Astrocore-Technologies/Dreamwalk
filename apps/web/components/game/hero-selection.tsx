@@ -62,15 +62,17 @@ export function useHeroSelection() {
 export function HeroSelection({
   selection,
   disabled = false,
+  compact = false,
 }: {
   selection: ReturnType<typeof useHeroSelection>;
   disabled?: boolean;
+  compact?: boolean;
 }) {
   const h = useHeroText();
   if (!selection.enabled) return null;
   return (
     <div className="stack" data-testid="hero-selection" style={{ minWidth: 0, maxWidth: '100%' }}>
-      <Field label={h('choose')} hint={h('pinned')}>
+      <Field label={h('choose')} hint={compact ? undefined : h('pinned')}>
         <Select
           value={selection.heroId}
           disabled={disabled || selection.resource.loading}
@@ -94,7 +96,7 @@ export function HeroSelection({
         }
         retry={selection.resource.reload}
       />
-      <Link href="/my-characters">{h('manage')}</Link>
+      {!compact && <Link href="/my-characters">{h('manage')}</Link>}
     </div>
   );
 }

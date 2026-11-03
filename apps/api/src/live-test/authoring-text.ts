@@ -273,12 +273,16 @@ export class AuthoringTextEngine {
           sourceId: id,
           reserveSubunits: providerMicrosToSparkSubunits(String(row.upper_micros)),
           expiresAt: expiresAt.toISOString(),
-          tariff: sparkTariff(snapshot ?? this.live.textProfile(), 'openai', this.provider.version),
+          tariff: sparkTariff(
+            snapshot ?? this.provider.profile ?? this.live.textProfile(),
+            'openai',
+            this.provider.version,
+          ),
           providerQuote: {
             quoteId: id,
             providerVersion: this.provider.version,
             requestHash,
-            profile: this.live.textProfile(),
+            profile: this.provider.profile ?? this.live.textProfile(),
             requestSnapshot: snapshot,
           },
         },
