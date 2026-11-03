@@ -1,5 +1,7 @@
 import { tokenSizeSchema, footprintCells, type TokenSize } from './battlemap';
 export * from './battlemap';
+import { npcPlaceholderSchema, type NpcPlaceholder } from './npc-placeholder';
+export * from './npc-placeholder';
 import type { NarrativePreferences } from './narrative-corrections';
 export * from './narrative-corrections';
 import {
@@ -192,6 +194,7 @@ export const gameLabelTranslationsSchema = z
   .strict();
 export type GameLabelTranslations = z.infer<typeof gameLabelTranslationsSchema>;
 export interface GameEntity extends GamePoint {
+  npcPlaceholder?: NpcPlaceholder;
   item?: WorldItemState;
   /** Private author-approved provisioning capability. */
   itemStock?: NpcItemStock;
@@ -481,6 +484,7 @@ export const playableVersionSchema = z
 /** Wire entities deliberately exclude server-only path, memory, and inventory fields. */
 export const gamePublicEntitySchema = z
   .object({
+    npcPlaceholder: npcPlaceholderSchema.optional(),
     item: worldItemStateSchema.optional(),
     id: gameIdSchema,
     vitality: z.number().int().min(0).max(100).optional(),
@@ -783,6 +787,7 @@ export const authoredGameDraftSchema = z
         z
           .object({
             id: gameIdSchema,
+            npcPlaceholder: npcPlaceholderSchema.optional(),
             sourceNpcId: z.string().uuid().optional(),
             itemStock: npcItemStockSchema.optional(),
             label: authoredLabel,

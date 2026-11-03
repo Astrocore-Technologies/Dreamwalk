@@ -115,6 +115,7 @@ test('Studio narrative autosave plus API-authored fixture launches its pinned ca
   draft.maps[0].blocked.push({ x: 1, y: 1 });
   draft.objects.find((entry) => entry.id === 'key')!.label = 'Browser copper key';
   draft.npcs[0].sourceNpcId = npcId;
+  draft.npcs[0].npcPlaceholder = 'crowd';
   const fixture = await savePrivateFixture(page, adventureId, draft);
   await page.reload();
   const persisted = await authoringRequest(
@@ -122,6 +123,7 @@ test('Studio narrative autosave plus API-authored fixture launches its pinned ca
     `/studio/adventures/${adventureId}/playable-draft`,
   );
   expect(persisted.draft.maps[0].label).toBe(mapName);
+  expect(persisted.draft.npcs[0].npcPlaceholder).toBe('crowd');
   expect(persisted.draft.objects.find((entry: { id: string }) => entry.id === 'key').label).toBe(
     'Browser copper key',
   );
@@ -145,6 +147,11 @@ test('Studio narrative autosave plus API-authored fixture launches its pinned ca
   expect([actor.x, actor.y]).toEqual([4, 2]);
   expect(initial.projection.map.blocked).toContainEqual({ x: 1, y: 1 });
   expect(JSON.stringify(initial)).not.toContain('BROWSER_PRIVATE_NPC_SECRET');
+  expect(
+    initial.projection.entities.find((entity: { id: string }) => entity.id === draft.npcs[0].id)
+      ?.npcPlaceholder,
+  ).toBe('crowd');
+  await page.locator('canvas').screenshot({ path: test.info().outputPath('npc-silhouette.png') });
   expect(initial.projection.turn?.ownTurn).toBe(true);
   await expect(page.locator('[data-turn-phase="player"]')).toBeVisible();
   const roundNumber = initial.projection.turn.roundNumber;

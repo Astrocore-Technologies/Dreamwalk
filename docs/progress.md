@@ -934,6 +934,7 @@ collision and edge interaction range, without changing action budgets or damage.
 See [battlemap-layout.md](battlemap-layout.md) for compatibility boundaries and
 verification scope. This source change does not perform paid generation or a
 production update.
+
 ### Hero portrait creation (implementation, not production activation)
 
 The New Hero/edit-hero modal can prepare a drawn portrait from an editable prompt seeded
@@ -956,3 +957,13 @@ and references remain under Advanced options, and server rights/expiry/policy/fr
 validation is unchanged. Editing inputs or cancellation discards the pending decision;
 no automatic re-quote, dispatch or retry is introduced. Saved outputs still require an
 explicit selection/binding action. This does not enable providers or publish/deploy code.
+
+## 2026-11-02 — explicit reusable NPC silhouette placeholders
+
+- Added optional neutral/male/female/crowd map-NPC presentation, neutral for legacy and
+  unspecified entities. Three stable ID-selected original vector variants per category;
+  no inference from character text and no provider calls.
+- Existing bound portrait/animation wins. Labels and authoritative geometry are unchanged.
+- Local exact-geometry offscreen contact sheet inspected at token sizes; schema/compile/
+  projection and deterministic-render-selection regressions added. Unique NPC image
+  generation remains future work, not part of this change.

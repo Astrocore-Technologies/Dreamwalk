@@ -187,6 +187,7 @@ export function compilePlayableDraft(input: unknown): {
       id: n.id,
       kind: 'npc',
       ...(n.tokenSize ? { tokenSize: n.tokenSize } : {}),
+      ...(n.npcPlaceholder ? { npcPlaceholder: n.npcPlaceholder } : {}),
       ...(n.characterAnimation
         ? { characterAnimation: structuredClone(n.characterAnimation) }
         : {}),

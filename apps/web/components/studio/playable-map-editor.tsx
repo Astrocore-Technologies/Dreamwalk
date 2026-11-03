@@ -838,6 +838,25 @@ export function PlayableMapEditor({
                             ))}
                           </Select>
                         </Field>
+                        <Field label={t('Силуэт NPC')}>
+                          <Select
+                            aria-label={t('Силуэт NPC')}
+                            value={npc.npcPlaceholder ?? 'neutral'}
+                            onChange={(event) =>
+                              patchSelected({ npcPlaceholder: event.target.value })
+                            }
+                          >
+                            <option value="neutral">{t('Нейтральный силуэт')}</option>
+                            <option value="male">{t('Мужской силуэт')}</option>
+                            <option value="female">{t('Женский силуэт')}</option>
+                            <option value="crowd">{t('Группа силуэтов')}</option>
+                          </Select>
+                        </Field>
+                        <p>
+                          {t(
+                            'Временный силуэт. Собственный арт заменяет его, размер персонажа не меняется.',
+                          )}
+                        </p>
                         <Field label={t('Поведение NPC')}>
                           <Select
                             aria-label={t('Поведение NPC')}

@@ -204,11 +204,10 @@ test('playable select labels stay exact independently of option text', async () 
   // A wrapping label also contains option text. Explicit names preserve precise
   // label queries even when user-authored map/NPC names change.
   const selects = [
-    ...editor.matchAll(
-      /<Field label=\{t\('([^']+)'\)\}>\s*<Select\s+aria-label=\{t\('([^']+)'\)\}/g,
-    ),
+    ...editor.matchAll(/<Field label=\{([^}\n]+)\}>\s*<Select\s+aria-label=\{([^}\n]+)\}/g),
   ];
-  assert.equal(selects.length, 11);
+  assert.equal(selects.length, [...editor.matchAll(/<Select\b/g)].length);
+  assert.ok(selects.some((match) => match[1] === "t('Силуэт NPC')"));
   for (const match of selects) assert.equal(match[1], match[2]);
 });
 
