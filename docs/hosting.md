@@ -130,3 +130,27 @@ missing. After verification, the runner omits the exact extension-install statem
 from the first migration's execution; historical files and recorded checksums are
 unchanged. New extension DDL is rejected in production, not silently executed.
 No operator extension command is dispatched by the deployment agent.
+
+### Preview request origins
+
+Hosted HTTP mutations and game sockets validate the browser against the current
+public request URL before forwarding to the API. Only `WEB_ORIGIN` and the exact
+Vercel-provided `VERCEL_URL` / `VERCEL_BRANCH_URL` are admitted. Forwarded-host
+headers and arbitrary `*.vercel.app` domains are not trusted. Missing, null,
+foreign, or contradictory browser origins are rejected.
+
+On Vercel, the canonical origin comes from its server-provided
+`VERCEL_PROJECT_PRODUCTION_URL`, including previews, rather than stale manual
+`WEB_ORIGIN` settings. The manual value is a fallback only when the platform value
+is absent; a malformed supplied platform value fails closed. After edge validation,
+the server-to-server hop uses this canonical Origin and the existing ingress secret.
+Do not change the API origin for each preview. If the project's production domain
+changes (including adding a custom domain that Vercel selects), the API canonical
+origin must still match. A mismatch is rejected by the unchanged API guard; this
+is not permission to auto-change backend security settings. Vercel deployment protection and
+application authentication/authorization remain separate and unchanged.
+
+Previews using the production API share real accounts, stories, and balances;
+they are not an isolated sandbox. Google OAuth callbacks remain canonical-bound.
+Before release, verify a real preview's public URL/Host/Fetch-Site behavior using
+non-mutating diagnostic endpoints and confirm untrusted origins are still denied.

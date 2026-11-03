@@ -1,4 +1,5 @@
 import WebSocket, { type RawData } from 'ws';
+import { canonicalWebOrigin, trustedBrowserOrigin } from './hosted-origin';
 
 const CLIENT_LIMIT = 8192;
 const SERVER_LIMIT = 1024 * 1024;
@@ -10,7 +11,9 @@ export function socketRelayTarget(request: Request, env: NodeJS.ProcessEnv) {
   const secret = env.DREAMWALK_INGRESS_SECRET;
   if (!secret || !/^[A-Za-z0-9_-]{32,256}$/.test(secret)) throw new Error('RELAY_CONFIG');
   const api = new URL(env.API_URL ?? '');
-  const web = new URL(env.WEB_ORIGIN ?? '');
+  const canonical = canonicalWebOrigin(env);
+  if (!canonical) throw new Error('RELAY_CONFIG');
+  const web = new URL(canonical);
   if (
     api.protocol !== 'https:' ||
     api.username ||
@@ -19,8 +22,7 @@ export function socketRelayTarget(request: Request, env: NodeJS.ProcessEnv) {
     api.search ||
     api.hash ||
     web.protocol !== 'https:' ||
-    web.origin !== env.WEB_ORIGIN ||
-    request.headers.get('origin') !== web.origin
+    !trustedBrowserOrigin(request, env)
   )
     throw new Error('RELAY_ORIGIN');
   const cookie = request.headers.get('cookie') ?? '';
