@@ -129,6 +129,21 @@ test('four players retain the legacy realtime Observatory ending with owned hero
         await expect(ownNote).toBeVisible();
         await privateDetails.locator('summary').click();
         await expect(ownNote).not.toBeVisible();
+        if (index > 0) {
+          // Guests keep reading their hero/party while the owner explores. A shorter
+          // reader window puts the map fully outside the viewport after objectives
+          // were removed; keep the socket live and verify normal renderer suspension.
+          await page.setViewportSize({ width: 1440, height: 600 });
+          await page
+            .getByTestId('campaign-hero')
+            .evaluate((element) => element.scrollIntoView({ block: 'start', behavior: 'instant' }));
+          const renderer = page.locator('[data-renderer-active]');
+          await expect
+            .poll(() => renderer.evaluate((element) => element.getBoundingClientRect().bottom <= 0))
+            .toBe(true);
+          await expect(renderer).toHaveAttribute('data-renderer-active', 'false');
+          await expect(page.locator('[data-connected]')).toHaveAttribute('data-connected', 'true');
+        }
       }),
     );
     await test.step(
