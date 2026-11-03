@@ -592,7 +592,7 @@ await test(
             assert.match(reply.text, /миску супа/);
             assert.equal(
               BigInt(funds.balance_subunits) - BigInt((await wallet()).balance_subunits),
-              30n,
+              60n, // 30 provider micros at the version-2 debit rate.
               'Only quoted AI use is billed, never fictional coins',
             );
           }
