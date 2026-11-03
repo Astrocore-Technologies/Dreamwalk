@@ -39,9 +39,11 @@ test('public art layouts preserve long titles, theme, locale and mobile reachabi
     await page.setViewportSize({ width, height: 973 });
     for (const theme of ['dark', 'light']) {
       await page.goto('/explore');
+      if (width <= 900) await page.locator('.mobile-menu').click();
       await page.locator('.locale-select').selectOption('ru');
       if ((await page.locator('html').getAttribute('data-theme')) !== theme)
         await page.locator('.theme-button').click();
+      if (width <= 900) await page.keyboard.press('Escape');
       for (const route of routes) {
         await page.goto(route);
         await expect(page.locator('#main-content')).toBeVisible();

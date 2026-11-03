@@ -97,3 +97,6 @@ test('public cards and auth retain real content in the art-first layout', async 
   assert.match(shell, /auth-brand/);
   assert.match(css, /character-orb:not\(:has\(img\)\)/);
 });
+
+// Shared-rail reference and preserved interaction invariants.
+import './shared-shell-design.test.mjs';
