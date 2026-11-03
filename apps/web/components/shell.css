@@ -243,6 +243,11 @@
 .app-shell:not(.game-shell):not(.auth-shell) .topbar .logout {
   display: inline-flex;
 }
+.app-shell:not(.game-shell):not(.auth-shell) .topbar .login-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
 .app-shell:not(.game-shell):not(.auth-shell) .topbar .profile-chip {
   display: flex;
 }
