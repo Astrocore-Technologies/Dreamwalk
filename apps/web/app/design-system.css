@@ -16,6 +16,10 @@ h3,
 .discovery-page h3 {
   font-family: var(--font-display);
 }
+.auth-art em,
+.hero-content em {
+  font-family: var(--font-display);
+}
 .sidebar {
   width: 240px;
   padding: 28px 16px 20px;

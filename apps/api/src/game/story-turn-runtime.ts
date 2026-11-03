@@ -1,4 +1,4 @@
-import { aggregateFunding, heldFunding } from '../generation/currency-funding';
+import { aggregateFunding, heldFunding, optionalFunding } from '../generation/currency-funding';
 import { totalQuotedSparkSubunits, commonQuotedSparkRate } from '../generation/sparks-quote-total';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -123,7 +123,7 @@ function aggregateReplyQuote(id: string, quotedReplies: QuotedReply[]): StoryQuo
     chargeUnit: 'sparks',
     sparkReservedSubunits: totalQuotedSparkSubunits(quotedReplies.map((reply) => reply.quote)),
     ...commonQuotedSparkRate(quotedReplies.map((reply) => reply.quote)),
-    funding: aggregateFunding(quotedReplies.map((reply) => reply.quote)),
+    ...optionalFunding(aggregateFunding(quotedReplies.map((reply) => reply.quote))),
     providerUpperMicros: null,
     providerReserveMicros: reserve,
     estimatedTotalMicros: estimate,

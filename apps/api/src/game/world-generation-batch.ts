@@ -1,4 +1,4 @@
-import { aggregateFunding } from '../generation/currency-funding';
+import { aggregateFunding, optionalFunding } from '../generation/currency-funding';
 import { totalQuotedSparkSubunits, commonQuotedSparkRate } from '../generation/sparks-quote-total';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -225,7 +225,7 @@ export class WorldGenerationBatch {
         chargeUnit: 'sparks',
         sparkReservedSubunits: totalQuotedSparkSubunits(entries.map((entry) => entry.quote)),
         ...commonQuotedSparkRate(entries.map((entry) => entry.quote)),
-        funding: aggregateFunding(entries.map((entry) => entry.quote)),
+        ...optionalFunding(aggregateFunding(entries.map((entry) => entry.quote))),
         providerUpperMicros: null,
         providerReserveMicros: reserve,
         estimatedTotalMicros: estimate,

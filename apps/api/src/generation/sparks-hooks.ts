@@ -1,8 +1,12 @@
-import { quoteFunding } from './currency-funding';
+import { quoteFunding, optionalFunding } from './currency-funding';
 /** Transactional usage accounting: mandatory in release, opt-in for historical modes.
  * No wallet creation, funding or activation. */
 import type { PoolClient } from 'pg';
-import { createSparkTariffSnapshot, type SparkTariffSnapshot } from '@dreamwalk/contracts';
+import {
+  createSparkTariffSnapshot,
+  type SparkTariffSnapshot,
+  type CurrencyFunding,
+} from '@dreamwalk/contracts';
 import {
   SparksAccounting,
   sparkQuoteRateVersion,
@@ -141,14 +145,22 @@ export async function settleReservationSparks(
 export async function sparkQuoteView(
   c: Pick<PoolClient, 'query'>,
   quoteId: string | null | undefined,
-) {
+): Promise<{
+  funding?: CurrencyFunding;
+  sparks?: {
+    quoteId: string;
+    reserveSubunits: string;
+    rateVersion: ReturnType<typeof sparkQuoteRateVersion>;
+    walletCharging: true;
+  };
+}> {
   if (!quoteId) return {};
   const quote = (
     await c.query('SELECT reserve_subunits,price_snapshot FROM spark_quotes WHERE id=$1', [quoteId])
   ).rows[0];
   if (!quote) fail(409, 'SPARK_QUOTE_NOT_FOUND', 'SPARK_QUOTE_NOT_FOUND');
   return {
-    funding: await quoteFunding(c, quoteId),
+    ...optionalFunding(await quoteFunding(c, quoteId)),
     sparks: {
       quoteId,
       reserveSubunits: String(quote.reserve_subunits),
@@ -171,7 +183,7 @@ export async function sparkHoldView(
   ).rows[0];
   return h
     ? {
-        funding: await quoteFunding(c, quoteId),
+        ...optionalFunding(await quoteFunding(c, quoteId)),
         sparkHoldId: quoteId,
         sparkStatus: h.status,
         sparkReservedSubunits: String(h.reserved_subunits),

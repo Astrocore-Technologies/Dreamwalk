@@ -1,6 +1,13 @@
 import type { PoolClient } from 'pg';
 import type { CurrencyFunding } from '@dreamwalk/contracts';
 export const CURRENCY_FUNDING_POLICY = 'dreams-first-v1' as const;
+/** Omit absent optional data so an immediate DTO equals its persisted JSON replay. */
+export function optionalFunding(funding: CurrencyFunding | undefined): {
+  funding?: CurrencyFunding;
+} {
+  return funding === undefined ? {} : { funding };
+}
+
 /** Pure view of the immutable held split, or a clearly marked current-balance estimate. */
 export function heldFunding(row: {
   reserved_subunits: string;

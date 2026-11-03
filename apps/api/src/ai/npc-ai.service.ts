@@ -1,4 +1,4 @@
-import { quoteFunding } from '../generation/currency-funding';
+import { quoteFunding, optionalFunding } from '../generation/currency-funding';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import { textUsageCostMicros } from '../generation/text-pricing';
 import { Inject, Injectable, type OnModuleInit, type OnModuleDestroy } from '@nestjs/common';
@@ -381,7 +381,7 @@ export class NpcAiEngine {
         credits: sparkMode ? 0 : this.policy.creditPrice,
         chargeUnit: sparkMode ? ('sparks' as const) : ('credits' as const),
         sparkReservedSubunits: sparkQuote?.reserve_subunits ?? null,
-        funding: await quoteFunding(c, sparkQuote?.id),
+        ...optionalFunding(await quoteFunding(c, sparkQuote?.id)),
         ...(sparkQuote
           ? { sparkRateVersion: sparkQuoteRateVersion(sparkQuote.price_snapshot) }
           : {}),
@@ -453,7 +453,7 @@ export class NpcAiEngine {
       credits: job.credits,
       chargeUnit: sparkCharged ? ('sparks' as const) : ('credits' as const),
       sparkReservedSubunits: sparkHold?.reserved_subunits ?? null,
-      funding: await quoteFunding(c, sparkHold?.id),
+      ...optionalFunding(await quoteFunding(c, sparkHold?.id)),
       sparkHoldId: job.spark_hold_id ?? null,
       reservationStatus: job.reservation_status,
       code: job.result_code ?? null,

@@ -98,7 +98,7 @@ test('mandatory email blocks gameplay UI until confirmation and grants starter c
     await expect(page).toHaveURL(/\/account\/sessions$/);
     await expect(
       page.getByText(
-        'Подтверди почту, чтобы начать игру и получить 50 грёз. Проверь письмо или запроси новую ссылку.',
+        'Подтверди почту, чтобы начать игру и получить стартовый подарок. Проверь письмо или запроси новую ссылку.',
       ),
     ).toBeVisible();
     expect((await page.request.get('/api/v1/sparks/wallet')).status()).toBe(403);
