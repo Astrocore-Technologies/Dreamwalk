@@ -3,7 +3,7 @@ import { useEffect, useRef, useState } from 'react';
 import type { StoryTurnQuoteResponse } from '@dreamwalk/contracts';
 import { api, ApiError, errorMessage } from '@/lib/client';
 import { Button, ErrorBox } from '../ui';
-import { StoryCost } from './story-cost';
+import { StoryCost, RuntimeMapQuoteNotice } from './story-cost';
 import { providerBoundKnown } from './narrative-guards';
 import { useStoryText } from './story-messages';
 import styles from './story-feed.module.css';
@@ -153,6 +153,7 @@ export function StoryReplyConfirmation({
   return (
     <div className={styles.quote} data-testid="story-reply-confirmation">
       <p>{h(worldBatch ? 'worldEstimate' : 'replyEstimateChanged')}</p>
+      <RuntimeMapQuoteNotice />
       <ErrorBox message={error} />
       {unknown ? (
         <>

@@ -857,7 +857,7 @@ export class GenerationAuthority {
       fail(409, 'GENERATION_CONSENT_REQUIRED', 'GENERATION_CONSENT_REQUIRED');
     const row = (
       await c.query(
-        `SELECT s.id,s.owner_id,p.context_hash,p.spark_quote_id,h.status AS spark_status,r.status AS reserve_status,r.actor_id
+        `SELECT s.id,s.owner_id,p.context_hash,p.request_snapshot,p.spark_quote_id,h.status AS spark_status,r.status AS reserve_status,r.actor_id
       FROM live_test_text_permits p JOIN live_test_sessions s ON s.id=p.session_id
       JOIN generation_budget_reservations r ON r.id=p.reservation_id
       JOIN spark_holds h ON h.id=p.spark_quote_id AND h.owner_id=s.owner_id
@@ -875,7 +875,11 @@ export class GenerationAuthority {
       (requesterId && requesterId !== row.owner_id)
     )
       fail(409, 'GENERATION_CONSENT_REQUIRED', 'GENERATION_CONSENT_REQUIRED');
-    return { authorizationId: row.id as string, payerId: row.owner_id as string };
+    return {
+      authorizationId: row.id as string,
+      payerId: row.owner_id as string,
+      requestSnapshot: row.request_snapshot as TextReserveSnapshot | null,
+    };
   }
   async authorizationId(userId: string): Promise<string | undefined> {
     if (this.release) {
