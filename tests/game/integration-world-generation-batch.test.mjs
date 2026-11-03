@@ -6,9 +6,7 @@ import { createRequire } from 'node:module';
 import { db, startApi, stopApi, client } from './support-runtime.mjs';
 import { requestEstimateOwnerProfile } from '../images/owner-config-fixture.mjs';
 const require = createRequire(import.meta.url);
-const {
-  activateReleaseDeployment,
-} = require('../images/release-deployment-fixture.cjs');
+const { activateReleaseDeployment } = require('../images/release-deployment-fixture.cjs');
 const { Db } = require('../../apps/api/dist/db.js');
 const { Auth } = require('../../apps/api/dist/auth.js');
 const { GameService } = require('../../apps/api/dist/game/game.service.js');
@@ -148,7 +146,27 @@ await test(
         async () => {
           const id = ids[0],
             live = await pendingWorld(id);
-          await addRequest(id, live);
+          const waitingId = await addRequest(id, live);
+          await db.query(
+            "UPDATE game_npc_decision_requests SET result_code='MANUAL_AUTHORIZATION_UNAVAILABLE' WHERE id=$1",
+            [waitingId],
+          );
+          const manualBatch = new WorldGenerationBatch(database, {
+            releaseGeneration: () => false,
+          });
+          const waitingBefore = await requests(id);
+          assert.deepEqual(await manualBatch.status(owner.user.id, id, live.state), {
+            available: false,
+            pending: false,
+            unknown: false,
+            reason: 'manual_authorization_required',
+          });
+          await assert.rejects(manualBatch.status(randomUUID(), id, live.state), code('FORBIDDEN'));
+          assert.deepEqual(
+            await requests(id),
+            waitingBefore,
+            'status does not mutate consent-waiting requests',
+          );
           const before = structuredClone(live.state),
             funds = await wallet(),
             operationId = randomUUID();
@@ -156,6 +174,7 @@ await test(
             available: true,
             pending: false,
             unknown: false,
+            reason: 'awaiting_consent',
           });
           const q = await batch.quote(owner.user.id, id, live.state, { operationId });
           assert.equal(q.quote.chargeUnit, 'sparks');
@@ -416,7 +435,19 @@ await test(
             available: false,
             pending: true,
             unknown: true,
+            reason: 'outcome_unknown',
           });
+          const nonRelease = new WorldGenerationBatch(database, { releaseGeneration: () => false });
+          assert.deepEqual(
+            await nonRelease.status(owner.user.id, id, live.state),
+            {
+              available: false,
+              pending: true,
+              unknown: true,
+              reason: 'outcome_unknown',
+            },
+            'manual status must not label reconciling paid work as absent',
+          );
           assert.equal(await batch.quotedWorldRequest(id, second), null);
           await assert.rejects(
             batch.quote(owner.user.id, id, live.state, { operationId: randomUUID() }),

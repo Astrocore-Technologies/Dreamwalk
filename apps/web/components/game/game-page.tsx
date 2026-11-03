@@ -588,6 +588,13 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           disabled={controlsDisabled}
           partyDisabled={!connected || game.busy}
           worldGenerationAllowed={members.data?.ownerId === user?.id}
+          worldGenerationMembersStatus={
+            members.error
+              ? 'error'
+              : members.loading || !members.data || !user
+                ? 'loading'
+                : 'ready'
+          }
         />
       </div>
       <div className={styles.roomGrid}>
