@@ -60,7 +60,7 @@ try {
     await run(npm, ['run', 'build', '-w', workspace]);
   await run(process.execPath, ['apps/api/dist/migrate.js']);
   await run(process.execPath, ['apps/api/dist/seed.js']);
-  let files = ['integration-discovery.test.mjs'];
+  let files = ['integration-discovery.test.mjs', 'integration-popularity.test.mjs'];
   if (process.env.HOME_TEST_FILE) {
     if (!files.includes(process.env.HOME_TEST_FILE)) throw new Error('Unknown image test file');
     files = [process.env.HOME_TEST_FILE];

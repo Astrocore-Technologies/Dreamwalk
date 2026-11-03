@@ -50,9 +50,20 @@ function checkEditRevision(row: Record<string, unknown>, expected: number | unde
   if (expected !== undefined && Number(row.edit_revision) !== expected)
     fail(409, 'STALE_STATE', 'Draft changed in another editor. Reload before saving.');
 }
-export const adventureSelect = `SELECT a.*,(SELECT r.snapshot FROM adventure_private_releases r WHERE r.id=a.private_release_id) AS private_snapshot,u.name AS author_name,u.handle AS author_handle,(SELECT count(*)::int FROM favorites f WHERE f.adventure_id=a.id) AS favorite_count FROM adventures a JOIN users u ON u.id=a.owner_id`;
 export const publicAdventureSql =
-  "a.visibility='public' AND a.published_snapshot IS NOT NULL AND a.status<>'archived'";
+  "a.visibility='public' AND a.published_snapshot IS NOT NULL AND a.status<>'archived' AND u.deleted_at IS NULL";
+// Separate correlated aggregates avoid multiplying rounds by likes or party members.
+// Only approved source versions contribute; private/draft playtests remain private.
+export const adventureSelect = `SELECT a.*,(SELECT r.snapshot FROM adventure_private_releases r WHERE r.id=a.private_release_id) AS private_snapshot,u.name AS author_name,u.handle AS author_handle,
+  (SELECT count(*)::int FROM favorites f WHERE f.adventure_id=a.id) AS favorite_count,
+  CASE WHEN ${publicAdventureSql} THEN (SELECT count(*)::int FROM adventure_likes l JOIN users liker ON liker.id=l.user_id AND liker.deleted_at IS NULL WHERE l.adventure_id=a.id) ELSE 0 END AS like_count,
+  CASE WHEN ${publicAdventureSql} THEN (SELECT count(*)::int FROM game_playable_versions v
+    JOIN game_playable_approvals approval ON approval.playable_version_id=v.id
+    JOIN game_campaigns c ON c.source_version_id=v.id
+    JOIN users player ON player.id=c.owner_id AND player.deleted_at IS NULL
+    JOIN game_events e ON e.campaign_id=c.id AND e.kind IN ('turn.world.completed','round.resolved') AND e.created_at>=approval.approved_at
+    WHERE v.adventure_id=a.id) ELSE 0 END AS total_rounds
+  FROM adventures a JOIN users u ON u.id=a.owner_id`;
 export const readableAdventureSql = (userParameter: string) =>
   `(a.owner_id=${userParameter} OR (${publicAdventureSql}) OR (a.visibility='private' AND a.private_release_id IS NOT NULL AND a.status<>'archived' AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id AND i.recipient_id=${userParameter} AND i.status='accepted')))`;
 export function adventureView(
@@ -95,6 +106,9 @@ export function adventureView(
       : (released as Record<string, unknown> | null)?.playableVersionId) as
       string | null | undefined,
     favoriteCount: row.favorite_count ?? 0,
+    likeCount: row.like_count ?? 0,
+    totalRounds: row.total_rounds ?? 0,
+    likedByMe: row.liked_by_me === true,
     createdAt: (row.created_at as Date).toISOString(),
     updatedAt: (row.updated_at as Date).toISOString(),
   } as Adventure;
@@ -281,19 +295,31 @@ export class ContentController {
     genre = '',
     @Query('sort')
     sort = 'popular',
+    @Req() req: Request,
   ) {
     const order =
       sort === 'new'
         ? 'a.created_at DESC'
         : sort === 'updated'
           ? 'a.updated_at DESC'
-          : 'favorite_count DESC,a.updated_at DESC';
+          : 'like_count DESC,total_rounds DESC,a.created_at DESC,a.id';
     const rows = await this.db.query(
       adventureSelect +
-        ` WHERE a.visibility='public' AND a.published_snapshot IS NOT NULL AND a.status<>'archived' AND ($1='' OR a.published_snapshot->>'title' ILIKE $2 OR a.published_snapshot->>'synopsis' ILIKE $2 OR EXISTS(SELECT 1 FROM jsonb_each(COALESCE(a.published_snapshot->'translations','{}'::jsonb)) tr WHERE (tr.value->>'sourceRevision')::int=COALESCE((a.published_snapshot->>'sourceRevision')::int,1) AND (tr.value->>'title' ILIKE $2 OR tr.value->>'synopsis' ILIKE $2))) AND ($3='' OR a.published_snapshot->>'genre'=$3) ORDER BY ${order} LIMIT 100`,
+        ` WHERE ${publicAdventureSql} AND ($1='' OR a.published_snapshot->>'title' ILIKE $2 OR a.published_snapshot->>'synopsis' ILIKE $2 OR EXISTS(SELECT 1 FROM jsonb_each(COALESCE(a.published_snapshot->'translations','{}'::jsonb)) tr WHERE (tr.value->>'sourceRevision')::int=COALESCE((a.published_snapshot->>'sourceRevision')::int,1) AND (tr.value->>'title' ILIKE $2 OR tr.value->>'synopsis' ILIKE $2))) AND ($3='' OR a.published_snapshot->>'genre'=$3) ORDER BY ${order} LIMIT 100`,
       [q.slice(0, 200), `%${q.slice(0, 200)}%`, genre.slice(0, 50)],
     );
-    return rows.map((r) => adventureView(r, true));
+    const viewer = await this.auth.viewer(req);
+    const liked = viewer
+      ? new Set(
+          (
+            await this.db.query(
+              'SELECT adventure_id FROM adventure_likes WHERE user_id=$1 AND adventure_id=ANY($2::uuid[])',
+              [viewer.id, rows.map((row) => row.id)],
+            )
+          ).map((row) => row.adventure_id),
+        )
+      : new Set();
+    return rows.map((r) => adventureView({ ...r, liked_by_me: liked.has(r.id) }, true));
   }
   @Get('adventures/:slug')
   async detail(
@@ -316,10 +342,18 @@ export class ContentController {
       fail(404, 'NOT_FOUND', 'Приключение не найдено.');
     // Discovery must use the approved snapshot even for its signed-in author.
     // The default detail route retains its existing owner/invitation behavior.
-    const u = publishedOnly ? null : await this.auth.viewer(req);
+    const u = await this.auth.viewer(req);
     const access = publishedOnly ? 'public' : await this.content.access(row, u);
     if (!access) fail(404, 'NOT_FOUND', 'Приключение не найдено.');
     const usePublished = access === 'public' || access === 'invited';
+    row.liked_by_me = u
+      ? (
+          await this.db.query(
+            'SELECT 1 FROM adventure_likes WHERE user_id=$1 AND adventure_id=$2',
+            [u.id, row.id],
+          )
+        ).length > 0
+      : false;
     const result = adventureView(row, usePublished, access !== 'owner');
     const npcIds = result.content.npcIds;
     let npcPreview: Record<string, unknown>[];
@@ -437,6 +471,53 @@ export class ContentController {
         ])
       ).map(entityView),
     };
+  }
+  @Put('likes/:id')
+  async like(@Param('id') id: string, @Req() req: Request) {
+    return this.setLike(id, req, true);
+  }
+  @Delete('likes/:id')
+  async unlike(@Param('id') id: string, @Req() req: Request) {
+    return this.setLike(id, req, false);
+  }
+  private async setLike(id: string, req: Request, liked: boolean) {
+    const u = await this.auth.require(req);
+    z.string().uuid().parse(id);
+    return this.db.tx(async (c) => {
+      // Lock the story so publication/withdrawal cannot race a new public like.
+      const story = (
+        await c.query(
+          `SELECT a.id FROM adventures a JOIN users u ON u.id=a.owner_id WHERE a.id=$1 AND ${publicAdventureSql} FOR UPDATE OF a`,
+          [id],
+        )
+      ).rows[0];
+      if (!story) {
+        // Users can remove their own old like even after a story is withdrawn.
+        if (liked) fail(404, 'NOT_FOUND', 'Приключение не найдено.');
+        await c.query('DELETE FROM adventure_likes WHERE user_id=$1 AND adventure_id=$2', [
+          u.id,
+          id,
+        ]);
+        return { likeCount: 0, likedByMe: false };
+      }
+      if (liked)
+        await c.query(
+          'INSERT INTO adventure_likes(user_id,adventure_id) VALUES($1,$2) ON CONFLICT DO NOTHING',
+          [u.id, id],
+        );
+      else
+        await c.query('DELETE FROM adventure_likes WHERE user_id=$1 AND adventure_id=$2', [
+          u.id,
+          id,
+        ]);
+      const result = (
+        await c.query(
+          'SELECT count(*)::int AS count FROM adventure_likes l JOIN users u ON u.id=l.user_id AND u.deleted_at IS NULL WHERE l.adventure_id=$1',
+          [id],
+        )
+      ).rows[0];
+      return { likeCount: result.count, likedByMe: liked };
+    });
   }
   @Put('favorites/:id')
   async favorite(

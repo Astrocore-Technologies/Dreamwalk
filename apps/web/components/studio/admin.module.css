@@ -20,9 +20,7 @@
   color: var(--accent, #d8b879);
 }
 .stat strong {
-  font:
-    40px Georgia,
-    serif;
+  font: 700 40px var(--font);
 }
 .stat span {
   font-size: 13px;
@@ -84,7 +82,7 @@
 .modelList h3 {
   font-size: 22px;
   margin: 0 0 5px;
-  font-family: Georgia, serif;
+  font-family: var(--font);
 }
 .modelList p {
   line-height: 1.8;
@@ -151,9 +149,7 @@
   color: var(--muted, #b3a6b8);
 }
 .result strong {
-  font:
-    36px Georgia,
-    serif;
+  font: 700 36px var(--font);
   color: var(--accent, #d8b879);
 }
 .result small {

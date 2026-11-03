@@ -148,6 +148,9 @@ try {
           'SELECT v.* FROM adventure_versions v JOIN adventures a ON a.id=v.adventure_id WHERE a.owner_id=$1',
           [user.id],
         ),
+        likes: await rows('SELECT adventure_id,created_at FROM adventure_likes WHERE user_id=$1', [
+          user.id,
+        ]),
         favorites: await rows('SELECT adventure_id,created_at FROM favorites WHERE user_id=$1', [
           user.id,
         ]),
@@ -239,6 +242,10 @@ try {
       );
       await c.query(
         'DELETE FROM favorites WHERE user_id=$1 OR adventure_id IN(SELECT id FROM adventures WHERE owner_id=$1)',
+        [user.id],
+      );
+      await c.query(
+        'DELETE FROM adventure_likes WHERE user_id=$1 OR adventure_id IN(SELECT id FROM adventures WHERE owner_id=$1)',
         [user.id],
       );
       await c.query('DELETE FROM sessions WHERE user_id=$1', [user.id]);

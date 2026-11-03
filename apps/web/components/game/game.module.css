@@ -673,3 +673,129 @@
   padding: 10px 0;
   border-top: 1px solid var(--line);
 }
+
+/* Full-width play surface: the map and story remain the primary interaction. */
+:global(.game-shell) .root {
+  max-width: none;
+}
+:global(.game-shell) .roomHeader {
+  display: grid;
+  grid-template-columns: minmax(180px, 1fr) auto minmax(340px, 1.2fr);
+  gap: 18px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+:global(.game-shell) .roomHeader h1 {
+  font-size: clamp(20px, 2vw, 28px);
+  margin: 2px 0 5px;
+}
+:global(.game-shell) .roomHeader .back {
+  font-size: 11px;
+  margin-bottom: 2px;
+}
+:global(.game-shell) .roomHeader .kicker {
+  font-size: 10px;
+  margin-bottom: 2px;
+}
+:global(.game-shell) .position {
+  font-size: 11px;
+  margin: 0;
+}
+:global(.game-shell) .mode {
+  font-size: 10px;
+}
+:global(.game-shell) .turnPanel {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 6px;
+  padding: 10px 14px;
+  margin: 0;
+  border-radius: 12px;
+}
+:global(.game-shell) .turnPanel header > div {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+}
+:global(.game-shell) .turnPanel h2 {
+  font-size: 14px;
+  margin: 0;
+}
+:global(.game-shell) .turnResources {
+  margin: 0;
+  gap: 4px 12px;
+}
+:global(.game-shell) .turnResources > div {
+  padding: 0;
+  border: 0;
+  border-radius: 0;
+  gap: 6px;
+}
+:global(.game-shell) .turnResources dt {
+  font-size: 10px;
+}
+:global(.game-shell) .turnResources dd {
+  font-size: 12px;
+}
+:global(.game-shell) .turnHint {
+  margin: 0;
+  font-size: 10px;
+  line-height: 1.4;
+}
+:global(.game-shell) .playGrid {
+  grid-template-columns: minmax(0, 1.7fr) minmax(340px, 1fr);
+  gap: 16px;
+  align-items: stretch;
+  margin-top: 10px;
+}
+:global(.game-shell) .canvasWrap {
+  height: max(480px, calc(100dvh - 230px));
+}
+:global(.game-shell) .mapSection {
+  border-radius: 16px;
+}
+:global(.game-shell) .inspectionHelp {
+  margin: 8px 0 3px;
+}
+:global(.game-shell) .inspectionButtons {
+  gap: 5px;
+}
+:global(.game-shell) .inspectionButtons button {
+  min-height: 34px;
+  font-size: 11px;
+  padding: 5px 10px;
+}
+:global(.game-shell) .roomGrid {
+  border-top: 1px solid var(--line);
+  padding-top: 22px;
+  margin-top: 12px;
+}
+@media (max-width: 1000px) {
+  :global(.game-shell) .roomHeader {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  :global(.game-shell) .turnPanel {
+    grid-column: 1 / -1;
+  }
+  :global(.game-shell) .playGrid {
+    grid-template-columns: minmax(0, 1.4fr) minmax(290px, 1fr);
+  }
+}
+@media (max-width: 760px) {
+  :global(.game-shell) .playGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  :global(.game-shell) .canvasWrap {
+    height: clamp(330px, 53dvh, 550px);
+  }
+  :global(.game-shell) .roomHeader {
+    gap: 8px;
+  }
+  :global(.game-shell) .turnPanel {
+    padding: 10px;
+  }
+  :global(.game-shell) .turnPanel header > div {
+    flex-wrap: wrap;
+    gap: 4px 10px;
+  }
+}

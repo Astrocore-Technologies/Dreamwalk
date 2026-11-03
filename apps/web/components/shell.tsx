@@ -6,6 +6,8 @@ import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import {
   Compass,
+  ArrowLeft,
+  MoonStar,
   House,
   Library,
   UsersRound,
@@ -36,8 +38,10 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname(),
     router = useRouter(),
     { user, setUser, toast } = useClient();
+  const inGame = /^\/game\/[^/]+$/.test(path);
   const [menu, setMenu] = useState(false);
   const [query, setQuery] = useState('');
+  useEffect(() => setMenu(false), [path]);
   useEffect(() => {
     if (!menu) return;
     const listener = (event: KeyboardEvent) => {
@@ -46,83 +50,92 @@ export function Shell({ children }: { children: React.ReactNode }) {
     document.addEventListener('keydown', listener);
     return () => document.removeEventListener('keydown', listener);
   }, [menu]);
-  const active = (href: string) => path === href || (href === '/home' && path === '/');
+  const active = (href: string) =>
+    path === href ||
+    (href === '/home' && path === '/') ||
+    (href !== '/home' && path.startsWith(`${href}/`));
   return (
-    <div className="app-shell">
+    <div
+      className={`app-shell ${inGame ? 'game-shell' : ''}`}
+      data-surface={inGame ? 'game' : path.split('/')[1] || 'home'}
+    >
       <a className="skip-link" href="#main-content">
         {tr('К содержимому')}
       </a>
-      <aside id="main-sidebar" className={`sidebar ${menu ? 'open' : ''}`}>
-        <Link href="/" className="brand" onClick={() => setMenu(false)}>
-          <span className="brand-mark">✧</span>
-          <span>
-            dreamwalk<span className="brand-dot">.</span>
-          </span>
-        </Link>
-        <button
-          className="icon-button mobile-close"
-          aria-label={tr('Закрыть меню')}
-          onClick={() => setMenu(false)}
-        >
-          <X />
-        </button>
-        <span className="nav-caption">{tr('ТВОЁ ПРИКЛЮЧЕНИЕ')}</span>
-        <nav>
-          {nav.map(({ href, label, icon: Icon }) => (
-            <Link
-              key={href}
-              href={href}
-              className={`nav-item ${active(href) ? 'active' : ''}`}
-              onClick={() => setMenu(false)}
-            >
-              <Icon size={19} />
-              {tr(label)}
-              {active(href) && <span className="nav-dot" />}
-            </Link>
-          ))}
-        </nav>
-        <div className="nav-divider" />
-        <span className="nav-caption">{tr('СОЗДАВАЙ БОЛЬШЕ')}</span>
-        <nav>
-          <Link
-            className={`nav-item ${path.startsWith('/studio') ? 'active' : ''}`}
-            href="/studio"
+      {!inGame && (
+        <aside id="main-sidebar" className={`sidebar ${menu ? 'open' : ''}`}>
+          <Link href="/" className="brand" onClick={() => setMenu(false)}>
+            <span className="brand-mark" aria-hidden="true">
+              <MoonStar size={33} strokeWidth={1.4} />
+            </span>
+            <span>Dreamwalk</span>
+          </Link>
+          <button
+            className="icon-button mobile-close"
+            aria-label={tr('Закрыть меню')}
             onClick={() => setMenu(false)}
           >
-            <Feather size={19} />
-            {tr('Студия автора')}
-          </Link>
-          <Link
-            className={`nav-item ${active('/wallet') ? 'active' : ''}`}
-            href="/wallet"
-            onClick={() => setMenu(false)}
-          >
-            <Sparkles size={19} />
-            {tr('Мои искры')}
-          </Link>
-          {user?.role === 'admin' && (
+            <X />
+          </button>
+          <span className="nav-caption">{tr('ТВОЁ ПРИКЛЮЧЕНИЕ')}</span>
+          <nav>
+            {nav.map(({ href, label, icon: Icon }) => (
+              <Link
+                key={href}
+                href={href}
+                className={`nav-item ${active(href) ? 'active' : ''}`}
+                aria-current={active(href) ? 'page' : undefined}
+                onClick={() => setMenu(false)}
+              >
+                <Icon size={19} />
+                {tr(label)}
+                {active(href) && <span className="nav-dot" />}
+              </Link>
+            ))}
+          </nav>
+          <div className="nav-divider" />
+          <span className="nav-caption">{tr('СОЗДАВАЙ БОЛЬШЕ')}</span>
+          <nav>
             <Link
-              className={`nav-item ${path.startsWith('/admin') ? 'active' : ''}`}
-              href="/admin"
+              className={`nav-item ${path.startsWith('/studio') ? 'active' : ''}`}
+              href="/studio"
               onClick={() => setMenu(false)}
             >
-              <ShieldCheck size={19} />
-              {tr('Управление')}
+              <Feather size={19} />
+              {tr('Студия автора')}
             </Link>
-          )}
-        </nav>
-        <div className="sidebar-bottom">
-          <Link className="nav-item" href="/account/settings" onClick={() => setMenu(false)}>
-            <Settings size={18} />
-            {tr('Настройки')}
-          </Link>
-          <Link className="nav-item" href="/help" onClick={() => setMenu(false)}>
-            <CircleHelp size={18} />
-            {tr('Помощь и поддержка')}
-          </Link>
-        </div>
-      </aside>
-      {menu && (
+            <Link
+              className={`nav-item ${active('/wallet') ? 'active' : ''}`}
+              href="/wallet"
+              onClick={() => setMenu(false)}
+            >
+              <Sparkles size={19} />
+              {tr('Мои искры')}
+            </Link>
+            {user?.role === 'admin' && (
+              <Link
+                className={`nav-item ${path.startsWith('/admin') ? 'active' : ''}`}
+                href="/admin"
+                onClick={() => setMenu(false)}
+              >
+                <ShieldCheck size={19} />
+                {tr('Управление')}
+              </Link>
+            )}
+          </nav>
+          <div className="sidebar-bottom">
+            <Link className="nav-item" href="/account/settings" onClick={() => setMenu(false)}>
+              <Settings size={18} />
+              {tr('Настройки')}
+            </Link>
+            <Link className="nav-item" href="/help" onClick={() => setMenu(false)}>
+              <CircleHelp size={18} />
+              {tr('Помощь и поддержка')}
+            </Link>
+          </div>
+        </aside>
+      )}
+      {!inGame && menu && (
         <button
           aria-label={tr('Закрыть меню')}
           className="menu-backdrop"
@@ -131,16 +144,23 @@ export function Shell({ children }: { children: React.ReactNode }) {
       )}
       <div className="workspace">
         <header className="topbar">
-          <button
-            className="icon-button mobile-menu"
-            aria-label={tr('Открыть меню')}
-            aria-expanded={menu}
-            aria-controls="main-sidebar"
-            onClick={() => setMenu(true)}
-          >
-            <Menu />
-          </button>
-          {path === '/explore' ? (
+          {!inGame && (
+            <button
+              className="icon-button mobile-menu"
+              aria-label={tr('Открыть меню')}
+              aria-expanded={menu}
+              aria-controls="main-sidebar"
+              onClick={() => setMenu(true)}
+            >
+              <Menu />
+            </button>
+          )}
+          {inGame ? (
+            <Link href="/game" className="game-return">
+              <ArrowLeft size={18} />
+              <span>Dreamwalk</span>
+            </Link>
+          ) : path === '/explore' ? (
             <span className="catalog-shell-label">{tr('Открыть миры')}</span>
           ) : (
             <form
@@ -248,24 +268,26 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </footer>
       </div>
-      <nav className="bottom-nav" aria-label={tr('Мобильная навигация')}>
-        {nav.map(({ href, label, icon: Icon }) => (
-          <Link key={href} href={href} className={active(href) ? 'active' : ''}>
-            <Icon size={20} />
-            <span>
-              {href === '/library'
-                ? tr('Библиотека')
-                : href === '/explore'
-                  ? tr('Миры')
-                  : tr(label)}
-            </span>
+      {!inGame && (
+        <nav className="bottom-nav" aria-label={tr('Мобильная навигация')}>
+          {nav.map(({ href, label, icon: Icon }) => (
+            <Link key={href} href={href} className={active(href) ? 'active' : ''}>
+              <Icon size={20} />
+              <span>
+                {href === '/library'
+                  ? tr('Библиотека')
+                  : href === '/explore'
+                    ? tr('Миры')
+                    : tr(label)}
+              </span>
+            </Link>
+          ))}
+          <Link href="/studio" className={path.startsWith('/studio') ? 'active' : ''}>
+            <Feather size={20} />
+            <span>{tr('Студия')}</span>
           </Link>
-        ))}
-        <Link href="/studio" className={path.startsWith('/studio') ? 'active' : ''}>
-          <Feather size={20} />
-          <span>{tr('Студия')}</span>
-        </Link>
-      </nav>
+        </nav>
+      )}
     </div>
   );
 }

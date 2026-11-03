@@ -1,4 +1,5 @@
 'use client';
+import { StoryMetrics, StoryLikeButton } from './story-metrics';
 import { isDiscoveryStory } from '@/lib/discovery';
 import { storyReturnPath, withStoryReturn } from './story-return';
 import { AdventureLaunch } from './game/adventure-launch';
@@ -93,6 +94,7 @@ export function AdventureCard({
         <h3>{text.title}</h3>
         {adventure.visibility === 'private' && <Badge>{tr('Приватный')}</Badge>}
         <p>{text.synopsis}</p>
+        <StoryMetrics adventure={adventure} />
         <div className="card-meta">
           <span>
             <UsersRound size={14} />
@@ -266,6 +268,7 @@ export function AdventurePage({ slug }: { slug: string }) {
             <ArrowUpRight size={14} />
           </Link>
           <p className="story-synopsis">{text.synopsis}</p>
+          <StoryMetrics adventure={a} />
           <div className="story-tags">
             {selectAdventureTags(a, locale, tagDefinitions.data || []).map((tag, index) => (
               <span key={index}>#{tag}</span>
@@ -289,6 +292,11 @@ export function AdventurePage({ slug }: { slug: string }) {
                 <strong>{taxonomy(a.difficulty)}</strong>
               </span>
             </div>
+            {user &&
+              a.visibility === 'public' &&
+              (a.access === 'public' || a.status === 'published') && (
+                <StoryLikeButton key={a.id} adventure={a} onChanged={reload} />
+              )}
             <ButtonLink href={withStoryReturn('/my-characters', storyReturnPath(a.slug))}>
               {tr('Подготовить героя')}
               <ArrowRight size={17} />
