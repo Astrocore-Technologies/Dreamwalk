@@ -43,7 +43,10 @@ function fixture(enabled = true, mode = 'success') {
       return result([
         { enabled: mode === 'flip' && sql.includes('FOR UPDATE') ? !enabled : enabled },
       ]);
-    if (sql.startsWith('SELECT status FROM spark_holds'))
+    if (
+      sql.startsWith('SELECT status FROM spark_holds') ||
+      sql.startsWith('SELECT reserved_subunits FROM spark_holds')
+    )
       return result(state.holds.filter((h) => h.id === p[0]));
     if (sql.startsWith('SELECT count(')) return result([{ count: 0 }]);
     if (sql.startsWith('SELECT state FROM game_campaigns')) return result([{ state: {} }]);
@@ -237,7 +240,12 @@ function fixture(enabled = true, mode = 'success') {
   for (const name of ['quote', 'reserve', 'settle'])
     originals[name] = SparksAccounting.prototype[name];
   SparksAccounting.prototype.quote = async (_c, input) => {
-    const q = { ...input, id: randomUUID() };
+    const q = {
+      ...input,
+      reserve_subunits: input.reserveSubunits,
+      price_snapshot: { tariff: input.tariff },
+      id: randomUUID(),
+    };
     state.sparkQuotes.push(q);
     return q;
   };
@@ -247,7 +255,12 @@ function fixture(enabled = true, mode = 'success') {
     const q = state.sparkQuotes.find((q) => q.id === qid);
     assert.equal(q.ownerId, uid);
     if (state.balance - state.held < BigInt(q.reserveSubunits)) throw Error('INSUFFICIENT_SPARKS');
-    const h = { id: qid, status: 'held', reserved_subunits: q.reserveSubunits };
+    const h = {
+      id: qid,
+      status: 'held',
+      reserved_subunits: q.reserveSubunits,
+      spark_rate_version: q.tariff.sparkRateVersion,
+    };
     state.holds.push(h);
     state.held += BigInt(q.reserveSubunits);
     return h;
@@ -292,15 +305,18 @@ test('enabled engine quotes/reserves once under replay, dispatches, commits actu
   try {
     const { quote, input, job } = await f.admit();
     assert.equal(quote.chargeUnit, 'sparks');
+    assert.equal(quote.sparkReservedSubunits, '200');
+    assert.equal(quote.sparkRateVersion, 'api-cent-2-sparks-v2');
+    assert.equal(job.sparkReservedSubunits, '200');
     assert.equal(job.credits, 0);
     const duplicates = await Promise.all([f.engine.queue(input), f.engine.queue(input)]);
     assert.ok(duplicates.every((j) => j.id === job.id));
     assert.equal(f.state.holds.length, 1);
-    assert.equal(f.state.held, 100n);
+    assert.equal(f.state.held, 200n);
     await f.engine.run(job.id, async () => true);
     await f.db.tx((c) => f.engine.finalize(c, job.id, 'committed'));
     await f.db.tx((c) => f.engine.finalize(c, job.id, 'committed'));
-    assert.equal(f.state.balance, 970n);
+    assert.equal(f.state.balance, 940n);
     assert.equal(f.state.held, 0n);
     assert.equal(f.state.credits, 50);
     assert.equal(f.state.calls, 1);
@@ -331,7 +347,7 @@ for (const mode of [
           await f.db.tx((c) => f.engine.finalize(c, job.id, 'committed'));
       }
       assert.equal(f.state.balance, 1000n);
-      assert.equal(f.state.held, ['cache', 'cancel'].includes(mode) ? 0n : 100n);
+      assert.equal(f.state.held, ['cache', 'cancel'].includes(mode) ? 0n : 200n);
       assert.equal(
         f.state.holds[0].status,
         ['cache', 'cancel'].includes(mode) ? 'released' : 'pending',
@@ -825,4 +841,21 @@ test('cache tariffs are copied immutably and changed tariffs reject old quote sn
     );
   }
   assert.equal(calls, 0);
+});
+
+test('NPC replay displays the persisted legacy hold rather than repricing provider micros', async () => {
+  const f = fixture();
+  try {
+    const { input, job } = await f.admit();
+    // A historical hold remains 100 subunits for the same 100-micro provider reserve.
+    f.state.holds[0].reserved_subunits = '100';
+    f.state.holds[0].spark_rate_version = 'api-cent-1-spark-v1';
+    f.state.held = 100n;
+    const replay = await f.engine.queue(input);
+    assert.equal(replay.id, job.id);
+    assert.equal(replay.sparkReservedSubunits, '100');
+    assert.equal(f.state.holds.length, 1);
+  } finally {
+    f.restore();
+  }
 });

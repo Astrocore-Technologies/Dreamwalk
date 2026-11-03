@@ -9,7 +9,11 @@ const {
   sparkTextActual,
 } = require('../../apps/api/dist/generation/sparks-accounting');
 const { validateProviderResult } = require('../../apps/api/dist/ai/provider');
-const { createSparkTariffSnapshot } = require('../../packages/contracts/dist/sparks');
+const {
+  createSparkTariffSnapshot,
+  LEGACY_SPARK_RATE_VERSION,
+  SPARK_RATE_VERSION,
+} = require('../../packages/contracts/dist/sparks');
 const tariff = createSparkTariffSnapshot({
   provider: 'fixture',
   model: 'fixture',
@@ -27,6 +31,7 @@ const hold = (extra = {}) => ({
   captured_subunits: null,
   status: 'held',
   settlement_fingerprint: null,
+  spark_rate_version: LEGACY_SPARK_RATE_VERSION,
   ...extra,
 });
 const success = (actualMicros) => ({
@@ -57,6 +62,24 @@ test('exact usage capture releases surplus; replay agrees and mismatched settlem
     /CONFLICT/,
   );
 });
+test('new rate doubles only new-version holds; legacy, missing and overruns cannot overcharge', () => {
+  assert.equal(planSparkSettlement(hold(), success('50')).captured, '50');
+  const current = hold({ spark_rate_version: SPARK_RATE_VERSION });
+  assert.equal(planSparkSettlement(current, success('50')).captured, '100');
+  assert.equal(planSparkSettlement(current, success('51')).reason, 'reserve_exceeded');
+  assert.throws(
+    () => planSparkSettlement(hold({ spark_rate_version: undefined }), success('1')),
+    /RATE_UNSUPPORTED/,
+  );
+  const plan = planSparkSettlement(current, success('1'));
+  assert.equal(
+    planSparkSettlement(
+      { ...current, status: 'settled', settlement_fingerprint: plan.fingerprint },
+      success('1'),
+    ).duplicate,
+    true,
+  );
+});
 test('unknown and unresolved failure preserve liability; resolution requires explicit reconciliation', () => {
   for (const outcome of ['unknown', 'failure_policy_pending']) {
     const plan = planSparkSettlement(hold(), { outcome, receiptId: 'fixture' });
@@ -82,7 +105,7 @@ test('overrun cannot capture or release, zero-dispatch and application cache cos
 test('cache-aware immutable rate meter separates cached input, and validates provider evidence', () => {
   assert.equal(
     sparkTextActual(tariff, { inputTokens: '1000', cachedInputTokens: '800', outputTokens: '10' }),
-    '33',
+    '66',
   );
   const value = {
     proposal: {},
@@ -211,6 +234,45 @@ test(
         'UPDATE spark_wallets SET enabled=true,balance_subunits=100 WHERE owner_id=$1',
         [owner],
       );
+      const legacyInput = quoteInput('legacy-inflight', '20');
+      legacyInput.tariff = createSparkTariffSnapshot({
+        ...tariff,
+        sparkRateVersion: LEGACY_SPARK_RATE_VERSION,
+      });
+      const legacyQuote = await tx((c) => accounting.quote(c, legacyInput));
+      await tx((c) => accounting.reserve(c, owner, legacyQuote.id));
+      await tx((c) => accounting.settle(c, owner, legacyQuote.id, success('1')));
+      assert.equal(
+        (
+          await pool.query('SELECT captured_subunits FROM spark_holds WHERE id=$1', [
+            legacyQuote.id,
+          ])
+        ).rows[0].captured_subunits,
+        '1',
+      );
+      const missingRateId = randomUUID();
+      await pool.query(
+        "INSERT INTO spark_quotes(id,owner_id,operation_id,request_hash,source_kind,source_id,price_snapshot,reserve_subunits,expires_at) VALUES($1,$2,$3,'fixture','text','missing-rate','{}',10,now()+interval '1 minute')",
+        [missingRateId, owner, randomUUID()],
+      );
+      await assert.rejects(
+        tx((c) => accounting.reserve(c, owner, missingRateId)),
+        /RATE_UNSUPPORTED/,
+      );
+      const futureRateId = randomUUID();
+      await pool.query(
+        "INSERT INTO spark_quotes(id,owner_id,operation_id,request_hash,source_kind,source_id,price_snapshot,reserve_subunits,expires_at) VALUES($1,$2,$3,'fixture','text','future-rate',$4,10,now()+interval '1 minute')",
+        [
+          futureRateId,
+          owner,
+          randomUUID(),
+          JSON.stringify({ tariff: { sparkRateVersion: 'future' } }),
+        ],
+      );
+      await assert.rejects(
+        tx((c) => accounting.reserve(c, owner, futureRateId)),
+        /RATE_UNSUPPORTED/,
+      );
       const input = quoteInput('first');
       const q1 = await tx((c) => accounting.quote(c, input));
       assert.equal((await tx((c) => accounting.quote(c, input))).id, q1.id);
@@ -236,11 +298,14 @@ test(
         tx((c) => accounting.settle(c, owner, reserved.id, success('1'))),
       ]);
       wallet = (await pool.query('SELECT * FROM spark_wallets')).rows[0];
-      assert.equal(wallet.balance_subunits, '99');
+      assert.equal(wallet.balance_subunits, '97');
       assert.equal(wallet.held_subunits, '0');
       assert.equal(
-        (await pool.query("SELECT count(*)::int n FROM spark_ledger WHERE kind='capture'")).rows[0]
-          .n,
+        (
+          await pool.query(
+            "SELECT count(*)::int n FROM spark_ledger WHERE kind='capture' AND amount_subunits>1",
+          )
+        ).rows[0].n,
         1,
       );
       const unknownQuote = await tx((c) => accounting.quote(c, quoteInput('unknown', '40')));
@@ -249,7 +314,7 @@ test(
         accounting.settle(c, owner, unknownQuote.id, { outcome: 'unknown', receiptId: 'missing' }),
       );
       wallet = (await pool.query('SELECT * FROM spark_wallets')).rows[0];
-      assert.equal(wallet.balance_subunits, '99');
+      assert.equal(wallet.balance_subunits, '97');
       assert.equal(wallet.held_subunits, '40');
       await assert.rejects(
         tx((c) => accounting.settle(c, owner, unknownQuote.id, success('2'))),
@@ -257,7 +322,7 @@ test(
       );
       await tx((c) => accounting.settle(c, owner, unknownQuote.id, success('2'), true));
       wallet = (await pool.query('SELECT * FROM spark_wallets')).rows[0];
-      assert.equal(wallet.balance_subunits, '97');
+      assert.equal(wallet.balance_subunits, '93');
       assert.equal(wallet.held_subunits, '0');
       await assert.rejects(pool.query('DELETE FROM spark_ledger'), /immutable/);
       await assert.rejects(
@@ -279,8 +344,14 @@ test('image authoring shows equivalents, keeps consent/caps, and separates admin
     'не списання й не резерв гаманця',
   ])
     assert.ok(helper.includes(phrase));
-  assert.match(helper, /Number\.isSafeInteger/);
-  assert.match(helper, /formatSparkSubunits\(String\(micros\), locale, 'exact'\)/);
+  const equivalent = await readFile(
+    'apps/web/components/visual-authoring/spark-equivalent.ts',
+    'utf8',
+  );
+  assert.match(equivalent, /Number\.isSafeInteger/);
+  assert.match(equivalent, /providerMicrosToSparkSubunits\(String\(micros\), rateVersion\)/);
+  assert.match(helper, /providerSparkSubunits\(micros, rateVersion\)/);
+  assert.match(helper, /formatSparkSubunits\(subunits, locale, 'exact'\)/);
   const inline = await readFile(
     'apps/web/components/visual-authoring/location-image-inline.tsx',
     'utf8',

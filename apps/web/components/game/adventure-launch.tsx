@@ -5,6 +5,7 @@ import { useLaunchGate } from './use-launch-gate';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
 import { formatSparkSubunits } from '@dreamwalk/contracts';
+import { providerSparkSubunits } from '../visual-authoring/spark-equivalent';
 import type { Adventure } from '@dreamwalk/contracts';
 import { api, errorMessage, useClient, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
@@ -44,11 +45,17 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
   type Quote = {
     id: string;
     expiresAt: string;
-    sparks?: { reserveSubunits: string };
+    sparks?: { reserveSubunits: string; rateVersion?: string };
     estimatedTotalMicros?: number;
   };
   const [preparation, setPreparation] = useState<Preparation | null>(null);
   const [quote, setQuote] = useState<Quote | null>(null);
+  const estimatedSubunits = quote
+    ? providerSparkSubunits(
+        quote.estimatedTotalMicros,
+        quote.sparks ? (quote.sparks.rateVersion ?? null) : undefined,
+      )
+    : null;
   const [confirm, setConfirm] = useState(false);
   const storageKey = `dreamwalk-start:${user?.id}:${versionId}:${heroSelection.heroId}`;
   useEffect(() => {
@@ -198,9 +205,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
           </p>
           <p>
             {t('Оценка в искрах')}:{' '}
-            {quote.estimatedTotalMicros === undefined
-              ? '—'
-              : formatSparkSubunits(String(quote.estimatedTotalMicros))}
+            {estimatedSubunits === null ? '—' : formatSparkSubunits(estimatedSubunits)}
           </p>
           <p>
             {t('Резерв искр')}:{' '}

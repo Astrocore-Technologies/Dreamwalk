@@ -10,6 +10,7 @@ import {
   parseSparkInteger,
   providerMicrosToSparkSubunits,
   type SparkTariffSnapshot,
+  type SparkRateVersion,
 } from '@dreamwalk/contracts';
 
 const identity = z.string().min(1).max(200);
@@ -76,6 +77,7 @@ export interface SparkHold {
   captured_subunits: string | null;
   status: 'held' | 'pending' | 'settled' | 'released';
   settlement_fingerprint: string | null;
+  spark_rate_version: SparkRateVersion;
 }
 
 /** Derive settlement using the admitted tariff, never today's mutable pricing configuration. */
@@ -117,9 +119,12 @@ export function planSparkSettlement(
       pending: true as const,
       reason: settlement.outcome,
     };
+  if (!hold.spark_rate_version) reject('SPARK_QUOTE_RATE_UNSUPPORTED');
   const actual =
     settlement.outcome === 'success'
-      ? parseSparkInteger(providerMicrosToSparkSubunits(settlement.actualMicros))
+      ? parseSparkInteger(
+          providerMicrosToSparkSubunits(settlement.actualMicros, hold.spark_rate_version),
+        )
       : 0n;
   if (actual > reserve)
     return {
@@ -135,6 +140,19 @@ export function planSparkSettlement(
     captured: actual.toString(),
     released: (reserve - actual).toString(),
   };
+}
+
+/** No guessing: an absent/unknown binding must be re-quoted or reconciled explicitly. */
+export function sparkQuoteRateVersion(snapshot: unknown): SparkRateVersion {
+  const version = (snapshot as { tariff?: { sparkRateVersion?: SparkRateVersion } } | null)?.tariff
+    ?.sparkRateVersion;
+  if (!version) reject('SPARK_QUOTE_RATE_UNSUPPORTED');
+  try {
+    providerMicrosToSparkSubunits('0', version);
+  } catch {
+    reject('SPARK_QUOTE_RATE_UNSUPPORTED');
+  }
+  return version;
 }
 
 export class SparksAccounting {
@@ -218,6 +236,7 @@ export class SparksAccounting {
     ).rows[0];
     if (prior) return prior;
     if (!wallet?.enabled) reject('SPARK_WALLET_DISABLED');
+    sparkQuoteRateVersion(quote.price_snapshot);
     if (new Date(quote.expires_at).getTime() <= Date.now()) reject('SPARK_QUOTE_EXPIRED');
     const reserve = parseSparkInteger(String(quote.reserve_subunits));
     const available =
@@ -264,7 +283,19 @@ export class SparksAccounting {
       ])
     ).rows[0];
     if (!hold) reject('SPARK_HOLD_NOT_FOUND');
-    const plan = planSparkSettlement(hold, settlement, reconciliation);
+    // The immutable quote is the rate binding for its hold, including pre-upgrade work.
+    const quote = (
+      await c.query('SELECT price_snapshot FROM spark_quotes WHERE id=$1 AND owner_id=$2', [
+        holdId,
+        ownerId,
+      ])
+    ).rows[0];
+    const rateVersion = sparkQuoteRateVersion(quote?.price_snapshot);
+    const plan = planSparkSettlement(
+      { ...hold, spark_rate_version: rateVersion },
+      settlement,
+      reconciliation,
+    );
     if (plan.duplicate) return hold;
     if (plan.pending) {
       await c.query("UPDATE spark_holds SET status='pending',reason=$2 WHERE id=$1", [

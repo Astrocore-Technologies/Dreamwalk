@@ -1,3 +1,4 @@
+import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import {
   quoteSparks,
   reserveSparks,
@@ -305,7 +306,7 @@ export class GenerationAuthority {
                 operationId: id,
                 sourceKind: 'text',
                 sourceId: `count:${id}`,
-                reserveSubunits: String(price.microsPerRequest),
+                reserveSubunits: providerMicrosToSparkSubunits(String(price.microsPerRequest)),
                 expiresAt: new Date(Date.now() + 60000).toISOString(),
                 tariff: sparkTariff(this.textProfile(), 'openai', this.textCountAdapter!.version),
                 providerQuote: {
@@ -1440,15 +1441,10 @@ export class GenerationAuthority {
       if (previous) {
         if (previous.request_id !== requestId || previous.campaign_id !== campaignId)
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
-        const reserve = (
-          await c.query('SELECT upper_micros FROM generation_budget_reservations WHERE id=$1', [
-            previous.reservation_id,
-          ])
-        ).rows[0];
         return {
           id: previous.id,
           state: previous.state,
-          ...sparkQuoteView(previous.spark_quote_id, String(reserve.upper_micros)),
+          ...(await sparkQuoteView(c, previous.spark_quote_id)),
         };
       }
       if (
@@ -1551,7 +1547,7 @@ export class GenerationAuthority {
           operationId: id,
           sourceKind: 'text',
           sourceId: requestId,
-          reserveSubunits: String(reserveMicros),
+          reserveSubunits: providerMicrosToSparkSubunits(String(reserveMicros)),
           expiresAt: new Date(
             Math.min(Date.now() + 60000, this.config.expiresAt?.getTime() ?? Infinity),
           ).toISOString(),
@@ -1596,7 +1592,7 @@ export class GenerationAuthority {
       return {
         id,
         state: 'authorized',
-        ...sparkQuoteView(sparkQuoteId, String(reserveMicros)),
+        ...(await sparkQuoteView(c, sparkQuoteId)),
         upperMicros: estimateSnapshot?.costBasis === 'operator_estimate' ? null : reserveMicros,
         reserveMicros,
         estimateSnapshot,

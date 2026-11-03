@@ -425,8 +425,16 @@ export function LocationImageInline(p: Props) {
       {busy && !lock.current && <small role="status">{m('preparing')}</small>}
       {quoteCurrent && quote && (
         <p>
-          {s('estimate')}: {amount(quote.quote.estimatedTotalMicros ?? quote.quote.upperMicros)} ·{' '}
-          {s('reserve')}: {amount(reserve)}
+          {s('estimate')}:{' '}
+          {amount(
+            quote.quote.estimatedTotalMicros ?? quote.quote.upperMicros,
+            quote.quote.sparks ? (quote.quote.sparks.rateVersion ?? null) : undefined,
+          )}{' '}
+          · {s('reserve')}:{' '}
+          {amount(
+            reserve,
+            quote.quote.sparks ? (quote.quote.sparks.rateVersion ?? null) : undefined,
+          )}
         </p>
       )}
       {quoteCurrent && (
@@ -487,7 +495,14 @@ export function LocationImageInline(p: Props) {
             .map((j) => (
               <div key={j.id} data-image-job-status={j.status}>
                 <p>
-                  {g(j.status as 'unknown')} · {s('reserve')}: {amount(j.heldMicros)}
+                  {g(j.status as 'unknown')} ·{' '}
+                  {j.sparkStatus ? (
+                    <SparkReceiptCost receipt={{ ...j, generationCost: null }} />
+                  ) : (
+                    <>
+                      {s('reserve')}: {amount(j.heldMicros)}
+                    </>
+                  )}
                 </p>
                 {j.diagnostic?.requestId && <code>{j.diagnostic.requestId}</code>}
                 {user?.role === 'admin' &&

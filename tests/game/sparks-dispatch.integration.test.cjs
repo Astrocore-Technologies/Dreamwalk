@@ -150,6 +150,7 @@ test(
         ]);
         const q = await quote();
         assert.equal(q.sparks.walletCharging, true);
+        assert.equal(q.sparks.rateVersion, 'api-cent-2-sparks-v2');
         await pool.query('UPDATE spark_wallets SET balance_subunits=1 WHERE owner_id=$1', [owner]);
         await assert.rejects(enqueue(q), /INSUFFICIENT_SPARKS/);
         assert.equal(calls, 0);
@@ -174,7 +175,7 @@ test(
           assert.equal(calls, 1);
           const h = await hold(a.id);
           assert.equal(h.status, 'settled');
-          assert.equal(h.captured_subunits, '7');
+          assert.equal(h.captured_subunits, '14');
           assert.equal((await engine.get(owner, a.id)).status, 'committed');
           await run(a);
           assert.equal(calls, 1);
@@ -318,7 +319,7 @@ test(
               [receipt.id],
             )
           ).rows[0];
-          assert.equal(h.captured_subunits, '17');
+          assert.equal(h.captured_subunits, '34');
           assert.equal(h.status, 'settled');
           assert.equal(h.price_snapshot.providerQuote.pricing.microsPerRequest, 17);
         },
@@ -379,7 +380,7 @@ test(
             h = (await pool.query('SELECT * FROM spark_holds WHERE id=$1', [p.sparks.quoteId]))
               .rows[0];
             assert.equal(h.status, 'settled');
-            assert.equal(h.captured_subunits, '9');
+            assert.equal(h.captured_subunits, '18');
             await pool.query("UPDATE npc_ai_jobs SET status='committed' WHERE id=$1", [jobId]);
             const cached = await make();
             await db.tx(async (c) => {
@@ -532,14 +533,15 @@ test(
             });
           const q = await imageQuote();
           assert.equal(q.sparks.walletCharging, true);
+          assert.equal(q.sparks.rateVersion, 'api-cent-2-sparks-v2');
           const j = await imageEnqueue(q);
           assert.equal(imageCalls, 0);
           await images.workOnce();
           const done = await images.get(owner, j.id);
           assert.equal(done.status, 'admitted');
           assert.equal(done.sparkStatus, 'settled');
-          assert.equal(done.sparkCapturedSubunits, '13');
-          assert.equal(done.sparkReservedSubunits, '100');
+          assert.equal(done.sparkCapturedSubunits, '26');
+          assert.equal(done.sparkReservedSubunits, '200');
           const cancelled = await imageEnqueue(await imageQuote());
           await images.cancel(owner, cancelled.id);
           assert.equal((await images.get(owner, cancelled.id)).sparkStatus, 'released');

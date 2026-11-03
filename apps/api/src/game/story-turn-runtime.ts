@@ -1,3 +1,4 @@
+import { totalQuotedSparkSubunits, commonQuotedSparkRate } from '../generation/sparks-quote-total';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { resolveReplyLocale } from './reply-locale';
@@ -119,7 +120,8 @@ function aggregateReplyQuote(id: string, quotedReplies: QuotedReply[]): StoryQuo
     external: true,
     requiresConsent: true,
     chargeUnit: 'sparks',
-    sparkReservedSubunits: String(reserve),
+    sparkReservedSubunits: totalQuotedSparkSubunits(quotedReplies.map((reply) => reply.quote)),
+    ...commonQuotedSparkRate(quotedReplies.map((reply) => reply.quote)),
     providerUpperMicros: null,
     providerReserveMicros: reserve,
     estimatedTotalMicros: estimate,

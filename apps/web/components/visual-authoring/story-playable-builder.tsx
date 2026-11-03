@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { formatSparkSubunits, type AuthoredGameDraft } from '@dreamwalk/contracts';
+import { providerSparkSubunits } from './spark-equivalent';
 import { api, errorMessage } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { SparkQuoteNotice, SparkQuotePrice, SparkReceiptCost, useSparkCosts } from './sparks-cost';
@@ -339,10 +340,13 @@ export function StoryPlayableBuilder({
     )[status];
     return copyText(key ?? 'unavailable');
   };
-  const sparkAmount = (micros: number) =>
-    Number.isSafeInteger(micros) && micros >= 0
-      ? formatSparkSubunits(String(micros), locale)
-      : copyText('estimateUnknown');
+  const sparkAmount = (micros: number) => {
+    const subunits = providerSparkSubunits(
+      micros,
+      quote?.sparks ? (quote.sparks.rateVersion ?? null) : undefined,
+    );
+    return subunits === null ? copyText('estimateUnknown') : formatSparkSubunits(subunits, locale);
+  };
   const compiled = state?.draft ? compilePlayableDraft(state.draft) : null;
   const projection = compiled?.playable
     ? projectState(createStateFromPlayable(compiled.playable, ['story-preview']), 'story-preview')
@@ -421,7 +425,7 @@ export function StoryPlayableBuilder({
                   · <SparkReceiptCost receipt={{ ...j, generationCost: null }} />
                 </>
               )}
-              {j.actual_micros !== undefined && j.actual_micros !== null && (
+              {!j.sparkStatus && j.actual_micros !== undefined && j.actual_micros !== null && (
                 <>
                   {' '}
                   · {costs.s('actual')}: {costs.amount(Number(j.actual_micros))}

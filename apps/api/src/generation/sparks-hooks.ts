@@ -2,7 +2,12 @@
  * No wallet creation, funding or activation. */
 import type { PoolClient } from 'pg';
 import { createSparkTariffSnapshot, type SparkTariffSnapshot } from '@dreamwalk/contracts';
-import { SparksAccounting, type SparkQuoteInput, type SparkSettlement } from './sparks-accounting';
+import {
+  SparksAccounting,
+  sparkQuoteRateVersion,
+  type SparkQuoteInput,
+  type SparkSettlement,
+} from './sparks-accounting';
 import { fail } from '../errors';
 import { fenceGenerationAdmission } from './scope-fence';
 import type { TextPricing } from './text-pricing';
@@ -123,17 +128,23 @@ export async function settleReservationSparks(
     return;
   return accounting.settle(c, row.actor_id, row.spark_quote_id, settlement);
 }
-export function sparkQuoteView(quoteId: string | null | undefined, reserveSubunits: string) {
-  return quoteId
-    ? {
-        sparks: {
-          quoteId,
-          reserveSubunits,
-          rateVersion: 'api-cent-1-spark-v1',
-          walletCharging: true as const,
-        },
-      }
-    : {};
+export async function sparkQuoteView(
+  c: Pick<PoolClient, 'query'>,
+  quoteId: string | null | undefined,
+) {
+  if (!quoteId) return {};
+  const quote = (
+    await c.query('SELECT reserve_subunits,price_snapshot FROM spark_quotes WHERE id=$1', [quoteId])
+  ).rows[0];
+  if (!quote) fail(409, 'SPARK_QUOTE_NOT_FOUND', 'SPARK_QUOTE_NOT_FOUND');
+  return {
+    sparks: {
+      quoteId,
+      reserveSubunits: String(quote.reserve_subunits),
+      rateVersion: sparkQuoteRateVersion(quote.price_snapshot),
+      walletCharging: true as const,
+    },
+  };
 }
 
 export async function sparkHoldView(
