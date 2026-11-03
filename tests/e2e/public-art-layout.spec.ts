@@ -11,15 +11,16 @@ test('public art layouts preserve long titles, theme, locale and mobile reachabi
     await route.fulfill({
       response,
       json: Array.isArray(data)
-        ? data.map((story, index) =>
-            index === 0
+        ? data.map((story, index) => ({
+            ...story,
+            author: { ...story.author, handle: 'synthetic_discovery_author' },
+            ...(index === 0
               ? {
-                  ...story,
                   title: 'Академия Семи Отзвуков: ночь без имени — длинное название',
                   translations: {},
                 }
-              : story,
-          )
+              : {}),
+          }))
         : data,
     });
   });
