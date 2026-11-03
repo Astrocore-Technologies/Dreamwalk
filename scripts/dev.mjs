@@ -1,11 +1,21 @@
 /** Shared launcher for local and managed-preview use. Never prints secrets. */
-import { appendFileSync, mkdirSync } from 'node:fs';
+import { appendFileSync, existsSync, mkdirSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import path from 'node:path';
 import { spawn } from 'node:child_process';
 import { startLocalPostgres } from './postgres-local.mjs';
 import { readServerEnvironment, webEnvironment } from './server-environment.mjs';
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), '..');
+// CI can exercise the production web bundle without changing the API's mock/test
+// environment, disposable database, migrations, seeding or credential separation.
+const prebuiltWeb = process.argv.includes('--prebuilt-web');
+if (
+  prebuiltWeb &&
+  !existsSync(
+    path.join(root, 'apps/web', process.env.DREAMWALK_WEB_DIST_DIR || '.next', 'BUILD_ID'),
+  )
+)
+  throw new Error('Run the production web build before --prebuilt-web');
 const serverConfiguration = await readServerEnvironment({ root, env: process.env });
 for (const key of Object.keys(process.env))
   if (!(key in serverConfiguration.preparationEnv)) delete process.env[key];
@@ -75,7 +85,7 @@ try {
       process.execPath,
       [
         path.join(root, 'node_modules/next/dist/bin/next'),
-        'dev',
+        prebuiltWeb ? 'start' : 'dev',
         '--hostname',
         '127.0.0.1',
         '--port',
@@ -84,7 +94,7 @@ try {
       {
         cwd: path.join(root, 'apps/web'),
         stdio: ['inherit', 'pipe', 'pipe'],
-        env: webEnvironment(process.env),
+        env: webEnvironment(prebuiltWeb ? { ...process.env, NODE_ENV: 'production' } : process.env),
       },
     ),
   ];

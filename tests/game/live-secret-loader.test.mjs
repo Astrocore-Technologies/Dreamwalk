@@ -95,7 +95,10 @@ test('ordinary launcher preparation cannot reintroduce root dotenv provider keys
     /run\(\['scripts\/admin-grant\.mjs', '--email', process\.env\.LOCAL_ADMIN_EMAIL\], true\)/,
   );
   assert.doesNotMatch(source, /run\(\['run', '(?:db:migrate|db:seed|admin:grant)'\]\)/);
-  assert.match(source, /env: webEnvironment\(process\.env\)/);
+  assert.match(
+    source,
+    /env: webEnvironment\(prebuiltWeb \? \{ \.\.\.process\.env, NODE_ENV: 'production' \} : process\.env\)/,
+  );
   assert.match(source, /delete apiEnv\.LOCAL_ADMIN_EMAIL/);
   assert.match(source, /'apps\/api\/dist\/main\.js'/);
 });

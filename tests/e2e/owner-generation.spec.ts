@@ -465,8 +465,9 @@ async function prepare(page: Page) {
   const generation = page.getByRole('region', { name: 'Image preparation', exact: true });
   await generation.getByRole('button', { name: 'Estimate cost', exact: true }).click();
   await expect(generation).toContainText('Estimated Sparks equivalent');
-  await expect(generation).toContainText('Provider reserve in Sparks');
-  await expect(generation).toContainText('do not guarantee a maximum provider invoice');
+  await expect(generation.locator('[data-image-quote-price]')).toHaveCount(1);
+  await expect(generation).not.toContainText('Provider reserve in Sparks');
+  await expect(generation).toContainText('The estimate does not cap the provider invoice');
   return generation;
 }
 for (const locale of ['uk', 'en', 'ru'] as const)

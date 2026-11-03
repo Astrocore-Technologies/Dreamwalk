@@ -1,6 +1,7 @@
 import type { CurrencyFunding } from '../sparks';
 import { turnFenceSchema } from './turns';
 import { z } from 'zod';
+import { npcCompanionIntentSchema } from './world-items';
 import { narrativeActionSchema, narrativeSceneSchema, narrativeNpcSchema } from './narrative';
 const id = z
   .string()
@@ -51,7 +52,12 @@ export const storyTurnProposalSchema = z
             action: narrativeActionSchema.nullable(),
             reply: z
               .union([
-                z.object({ text: z.string().trim().min(1).max(1000) }).strict(),
+                z
+                  .object({
+                    text: z.string().trim().min(1).max(1000),
+                    companionIntent: npcCompanionIntentSchema.optional(),
+                  })
+                  .strict(),
                 z.object({ code: z.literal('acknowledged') }).strict(),
               ])
               .nullable(),

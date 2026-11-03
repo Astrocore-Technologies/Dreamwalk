@@ -532,6 +532,7 @@ export function applyStoryTurnProposal(
           observationIds: spoken.context.observationIds,
           requestedFactIds: spoken.context.requestedFactIds,
           contextHash: spoken.context.speechHash,
+          replyToObservationId: spoken.context.replyToObservationId,
           replyLocale: input.replyLocale,
         });
         if (r.error) return reject(r.error);

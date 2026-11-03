@@ -142,7 +142,7 @@ test('story cover quotes once, cancels freely, recovers and selects without nest
   await expect(
     dialog.getByRole('button', { name: 'Confirm and generate', exact: true }),
   ).toBeVisible();
-  await expect(dialog.locator('[data-image-quote-price]')).toContainText('10 Sparks');
+  await expect(dialog.locator('[data-image-quote-price]')).toContainText('10.0000 Sparks');
   await expect(dialog.locator('[data-image-quote-price]')).toHaveCount(1);
   await expect(dialog.locator('[data-spark-quote-price], [data-request-reserve]')).toHaveCount(0);
   await page.screenshot({ path: testInfo.outputPath('image-single-estimate.png') });

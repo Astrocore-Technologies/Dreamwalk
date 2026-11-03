@@ -29,6 +29,7 @@ import {
   type GameState,
 } from '@dreamwalk/contracts';
 export * from '@dreamwalk/contracts';
+export { companionAction } from './companionship';
 const copy = (s: GameState): GameState => structuredClone(s);
 const result = (state: GameState, events: GameEvent[] = []): GameResult => ({ state, events });
 const fail = (state: GameState, error: GameError): GameResult => ({ state, events: [], error });
@@ -273,7 +274,7 @@ export function tick(state: GameState, tickCount = 1): GameResult {
       if (a.encounterId || !a.path?.length) continue;
       const next = a.path[0];
       if (
-        !walkable(s, a.mapId, next, a.id) ||
+        !walkable(s, a.mapId, next, a.id, !!s.npcBrains?.[a.id]?.living?.companionship) ||
         Object.values(s.encounters).some(
           (e) =>
             e.phase === 'planning' &&
@@ -420,9 +421,28 @@ function actionInternal(
       )
     )
       return fail(state, 'WRONG_MODE');
-    if (!walkable(state, exit.destinationMapId, exit.destination, id))
+    if (!walkable(state, exit.destinationMapId, exit.destination, id, true))
       return fail(state, 'PATH_BLOCKED');
     const s = copy(state);
+    for (const [npcId, brain] of Object.entries(s.npcBrains ?? {})) {
+      const agreement = brain.living?.companionship;
+      if (agreement?.actorId === id && visible(state, state.entities[npcId], a)) {
+        // Reunited actors start a fresh observed route; old detours cannot send a companion away.
+        agreement.crossings = [];
+        if (agreement.crossings.length < 16)
+          agreement.crossings.push({
+            mapId: a.mapId,
+            exitId: exit.id,
+            destinationMapId: exit.destinationMapId,
+          });
+      }
+      if (
+        npcId === id &&
+        agreement?.crossings[0]?.mapId === a.mapId &&
+        agreement.crossings[0].exitId === exit.id
+      )
+        agreement.crossings.shift();
+    }
     Object.assign(s.entities[id], exit.destination, {
       mapId: exit.destinationMapId,
       path: [],

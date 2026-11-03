@@ -126,6 +126,10 @@ await test(
           (await command(user, id, operation({ kind: 'transition', targetId: link.id }))).status,
           'committed',
         );
+        // Each transition uses the same arrival cell. Clear it through ordinary
+        // movement before the next party member enters; actors cannot overlap.
+        if (user === owner)
+          await moveTo(owner, id, { x: link.destination.x + 1, y: link.destination.y });
       }
       const body = {
         operationId: randomUUID(),

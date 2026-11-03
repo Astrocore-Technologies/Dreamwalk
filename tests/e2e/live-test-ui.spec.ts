@@ -92,7 +92,7 @@ async function fixtures(page: Page, mode: 'success' | 'unknown' | 'estimate' = '
     mode: 'external',
     upperMicros: mode === 'estimate' ? null : 100000,
     ...(mode === 'estimate'
-      ? { estimatedTotalMicros: 45880, reserveMicros: 100000, costBasis: 'approved_estimate' }
+      ? { estimatedTotalMicros: 45880, reserveMicros: 45880, costBasis: 'approved_estimate' }
       : {}),
     expiresAt: new Date(Date.now() + 300000).toISOString(),
     rightsAttestationRequired: true,
@@ -303,7 +303,7 @@ test('synthetic external stages require one image confirmation and explicit save
   const concept = page.locator('[data-generation-role="concept"]');
   await concept.getByRole('button', { name: 'Estimate cost', exact: true }).click();
   await expect(
-    concept.getByText('Upper estimate in Sparks: 20.00 Sparks', { exact: true }),
+    concept.getByText('Estimated Sparks equivalent: 20.0000 Sparks', { exact: true }),
   ).toBeVisible();
   const dispatch = concept.getByRole('button', { name: 'Confirm and generate', exact: true });
   await expect(dispatch).toBeEnabled();
@@ -352,16 +352,13 @@ test('synthetic planning estimate is never shown as a free hard cap and cannot d
   await create(page);
   const concept = page.locator('[data-generation-role="concept"]');
   await concept.getByRole('button', { name: 'Estimate cost', exact: true }).click();
-  await expect(
-    concept.getByText('Estimated Sparks equivalent: 9.18 Sparks', { exact: true }),
-  ).toBeVisible();
-  await expect(
-    concept.getByText('Provider reserve in Sparks: 20.00 Sparks', { exact: true }),
-  ).toBeVisible();
-  await expect(concept.getByTitle('9.1760 Sparks', { exact: true })).toBeVisible();
-  await expect(concept.locator('[data-sparks-equivalent-only]')).toContainText(
-    'not wallet charges or wallet holds',
+  await expect(concept.locator('[data-image-quote-price]')).toHaveCount(1);
+  await expect(concept.locator('[data-image-quote-price]')).toContainText(
+    'Estimated Sparks equivalent: 9.1760 Sparks',
   );
+  await expect(concept).not.toContainText('Provider reserve in Sparks');
+  await expect(concept).toContainText('the player wallet is not used');
+  await expect(concept).toContainText('The estimate does not cap the provider invoice');
   await expect(concept.getByLabel(/I have rights to the specified references/)).toHaveCount(0);
   await expect(
     concept.getByRole('button', { name: 'Confirm and generate', exact: true }),

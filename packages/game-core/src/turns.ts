@@ -643,6 +643,15 @@ export function removeTurnParticipant(state: GameState, actorId: string): GameRe
   const next = clone(state),
     turn = next.turnController!,
     removedIndex = turn.actorOrder.indexOf(actorId);
+  for (const [npcId, brain] of Object.entries(next.npcBrains ?? {})) {
+    if (brain.living?.companionship?.actorId === actorId) {
+      delete brain.living.companionship;
+      brain.plan = [];
+      brain.cursor = 0;
+      brain.waitingForPath = false;
+      if (next.entities[npcId]) next.entities[npcId].path = [];
+    }
+  }
   const pendingInvolves =
     turn.pendingResolution?.actorId === actorId ||
     turn.pendingResolution?.action.targetId === actorId;

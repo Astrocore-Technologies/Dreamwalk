@@ -179,7 +179,7 @@ test('character generation has two actions, expires safely and shows honest pend
   fixture.setTtl(1500);
   await concept.getByRole('button', { name: 'Estimate cost', exact: true }).click();
   await expect(concept.getByRole('button', { name: 'Generate', exact: true })).toBeVisible();
-  await expect(concept.locator('[data-spark-quote-price]')).toBeVisible();
+  await expect(concept.locator('[data-image-quote-price]')).toBeVisible();
   expect(fixture.counters.dispatch).toBe(0);
   await expect(concept.getByRole('button', { name: 'Estimate cost', exact: true })).toBeVisible({
     timeout: 5000,
