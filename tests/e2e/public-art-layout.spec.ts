@@ -28,6 +28,7 @@ test('public art layouts preserve long titles, theme, locale and mobile reachabi
   expect(catalog.length).toBeGreaterThan(0);
   const routes = [
     '/explore',
+    `/adventures/${catalog[0].slug}`,
     `/creators/${catalog[0].author.handle}`,
     '/auth/sign-in',
     '/help',
@@ -60,6 +61,13 @@ test('public art layouts preserve long titles, theme, locale and mobile reachabi
           await expect(page.locator('.locale-select')).toBeVisible();
           await expect(page.locator('.theme-button')).toBeVisible();
         }
+        if (route.startsWith('/adventures/')) {
+          await expect(page.locator('.story-intro h1')).toBeVisible();
+          await expect(page.locator('.prepare-panel a[href^="/my-characters"]')).toHaveClass(
+            /secondary/,
+          );
+        }
+        if (route === '/home') await expect(page.getByTestId('home-featured')).toBeVisible();
         if (route.startsWith('/creators/'))
           await expect(page.locator('.creator-banner')).toBeVisible();
         if (route === '/help') await expect(page.locator('.help-grid .button')).toHaveCount(4);
@@ -67,6 +75,15 @@ test('public art layouts preserve long titles, theme, locale and mobile reachabi
         await expect
           .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
           .toBe(true);
+        await page.evaluate(async () => {
+          await document.fonts.ready;
+          await Promise.all(
+            [...document.images].map(async (image) => {
+              image.loading = 'eager';
+              await image.decode();
+            }),
+          );
+        });
         await page.screenshot({
           path: info.outputPath(
             `public-art-${route.split('/').filter(Boolean).join('-')}-${width}-${theme}.png`,

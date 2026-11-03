@@ -1130,3 +1130,23 @@ td {
     grid-template-columns: 1fr;
   }
 }
+
+/* Text on decorative artwork has a predictable AA-readable backplate in either theme. */
+.illustrated-card .card-art-title {
+  padding: 6px 8px;
+  border-radius: 6px;
+  background: #17111fe6;
+}
+.creator-banner > div,
+.help-banner .page-heading {
+  padding: 16px;
+  border-radius: 12px;
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+}
+.auth-shell .auth-art h1 {
+  align-self: flex-start;
+  padding: 16px;
+  border-radius: 12px;
+  background: #17111fe6;
+  color: #f7f2ea;
+}
