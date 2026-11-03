@@ -217,6 +217,7 @@ test('admin tool dialogs preserve data on cancel and block dismissal while savin
   page,
 }, info) => {
   const state = await fixture(page);
+  await page.setViewportSize({ width: 1280, height: 720 });
   await page.goto('/admin/models');
   const models = page.locator('[data-admin-tool="models"]');
   const edit = models.getByRole('button', { name: 'Настроить профиль', exact: true });
@@ -229,6 +230,7 @@ test('admin tool dialogs preserve data on cancel and block dismissal while savin
   await expect(dialog.getByLabel('Название профиля', { exact: true })).toHaveValue(
     'Synthetic storyteller',
   );
+  await dialog.getByLabel('Название профиля', { exact: true }).fill('Preserved fixture');
   state.pending = true;
   await dialog.getByRole('button', { name: 'Сохранить', exact: true }).click();
   await expect.poll(() => state.requests.length).toBe(1);
@@ -236,13 +238,27 @@ test('admin tool dialogs preserve data on cancel and block dismissal while savin
   await dialog.getByRole('button', { name: 'Закрыть', exact: true }).click();
   await expect(dialog).toBeVisible();
   await expect(dialog.getByRole('button', { name: 'Отмена', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Отмена', exact: true })).not.toBeInViewport();
   state.release();
-  await expect(dialog.getByRole('alert')).toBeVisible();
+  const saveError = dialog.getByRole('alert');
+  await expect(saveError).toBeVisible();
+  await expect(saveError.locator('..')).toBeFocused();
+  await expect(saveError).toBeInViewport({ ratio: 1 });
+  await expect(dialog.getByRole('button', { name: 'Отмена', exact: true })).toBeInViewport({
+    ratio: 1,
+  });
+  await expect(dialog.getByRole('button', { name: 'Сохранить', exact: true })).toBeInViewport({
+    ratio: 1,
+  });
+  await expect(dialog.getByLabel('Название профиля', { exact: true })).toHaveValue(
+    'Preserved fixture',
+  );
   await capture(page, info, 'models-error-dialog');
   await dialog.getByRole('button', { name: 'Отмена', exact: true }).click();
   await expect(edit).toBeFocused();
   expect(state.requests[0].body).toMatchObject({
     key: 'fixture',
+    name: 'Preserved fixture',
     instructions: 'Synthetic source instructions.',
     enabled: true,
   });

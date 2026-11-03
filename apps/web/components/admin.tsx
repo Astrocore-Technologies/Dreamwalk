@@ -422,7 +422,7 @@ function AdminUsers() {
 
 function AdminContent() {
   const date = useDate();
-  const { t, locale } = useT();
+  const { t, locale, taxonomy } = useT();
   const [tab, setTab] = useState<'adventures' | 'npcs'>('adventures'),
     [filter, setFilter] = useState('pending_review'),
     [query, setQuery] = useState('');
@@ -552,7 +552,7 @@ function AdminContent() {
                           <span>
                             <strong>{selectAdventureText(a, locale).title}</strong>
                             <small className={detailStyles.secondary}>
-                              {a.genre} {t(' · версия ')}
+                              {taxonomy(a.genre)} {t(' · версия ')}
                               {a.version || '—'}
                             </small>
                           </span>
@@ -997,6 +997,13 @@ function AdminModels() {
     [error, setError] = useState(''),
     { toast } = useClient();
   const dialog = useToolDialog(!!kind, () => setKind(null));
+  const saveErrorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!error) return;
+    // A guarded Close click can leave the long editor scrolled above the failed save.
+    saveErrorRef.current?.focus({ preventScroll: true });
+    saveErrorRef.current?.scrollIntoView({ block: 'center', behavior: 'instant' });
+  }, [error]);
   function openModel(item?: ModelProfile) {
     dialog.capture();
     setKind('model');
@@ -1344,7 +1351,11 @@ function AdminModels() {
                 )}
               </>
             )}
-            <ErrorBox message={error} />
+            {error && (
+              <div ref={saveErrorRef} tabIndex={-1}>
+                <ErrorBox message={error} />
+              </div>
+            )}
             <div className="form-actions">
               <Button variant="secondary" type="button" onClick={dialog.close} disabled={busy}>
                 {t('Отмена')}

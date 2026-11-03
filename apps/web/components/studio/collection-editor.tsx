@@ -15,7 +15,7 @@ export function CollectionEditor({
 }: {
   items: { id: string; name: string }[];
   label: string;
-  kind: 'locations' | 'scenes';
+  kind: 'locations' | 'scenes' | 'lore';
   children: (item: { id: string; name: string }, index: number) => ReactNode;
   actions: ReactNode;
   invalidIds: string[];

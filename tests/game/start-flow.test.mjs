@@ -127,15 +127,16 @@ async function harness(
     },
     './start-state': { startState },
     'next/navigation': { useRouter: () => ({ push: (path) => paths.push(path) }) },
-    '@dreamwalk/contracts': { formatSparkSubunits: String },
+    '@dreamwalk/contracts': { formatSparkSubunits: String, selectAdventureText: (a) => a },
     '@/lib/client': {
       ApiError,
+      coverUrl: () => '/images/observatory.webp',
       api: transport,
       errorMessage: (e) => e.message,
       useClient: () => client,
       useResource: () => ({ loading: false }),
     },
-    '@/lib/i18n': { useT: () => ({ t: (s) => s }) },
+    '@/lib/i18n': { useT: () => ({ t: (s) => s, taxonomy: (s) => s }) },
     '@/components/ui': { Button: 'button', ErrorBox: 'error', Modal: 'modal' },
   };
   const module = { exports: {} };

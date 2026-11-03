@@ -117,6 +117,7 @@ test('inner story workspace preserves complete drafts while selecting locations 
   await expect(locationEditor.locator('button[aria-invalid="true"]')).toHaveCount(1);
   await page.getByRole('button', { name: 'Save draft', exact: true }).click();
   await expect(page.locator('[data-autosave-status="invalid"]').first()).toBeVisible();
+  await expect(page.getByText('[Translation missing]', { exact: true })).toHaveCount(0);
   expect(
     (await (await page.request.get(`/api/v1/studio/adventures/${story.id}`)).json()).content
       .locations[0].name,
@@ -192,6 +193,7 @@ test('inner story workspace preserves complete drafts while selecting locations 
         });
         const name = `studio-inner-${step}-${locale}-${viewport.width}-${viewport.theme}`;
         const path = info.outputPath(`${name}.png`);
+        await expect(page.getByText('[Translation missing]', { exact: true })).toHaveCount(0);
         await page.screenshot({ path, fullPage: true, animations: 'disabled' });
         await info.attach(name, { path, contentType: 'image/png' });
       }

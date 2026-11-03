@@ -517,7 +517,9 @@ function AdventureEditor({ id }: { id: string }) {
       if (isNew) router.replace(`/studio/adventures/${saved.id}`);
       return saved;
     } catch (e) {
-      setError(t(errorMessage(e)));
+      // The localized AutosaveStatus and invalid-item markers already explain this.
+      // Do not translate the controller's internal code into a second, stale error.
+      setError(e instanceof Error && e.message === 'INVALID_DRAFT' ? '' : t(errorMessage(e)));
       return null;
     } finally {
       setBusy(false);

@@ -67,3 +67,147 @@ test('hero composition scopes portrait cards and wide editor without dropping co
   assert.match(css, /overflow: auto/);
   assert.match(css, /max-height: 92dvh/);
 });
+
+test('expanded hero presentation reuses owned selection without commands, private notes or a second controller', async () => {
+  const selection = await source('game/hero-selection.tsx');
+  const launch = await source('game/adventure-launch.tsx');
+  const view = selection.slice(
+    selection.indexOf('export function HeroSelection('),
+    selection.indexOf('export function CampaignHero('),
+  );
+  assert.match(view, /selection\.resource\.data\?\.map/);
+  assert.match(view, /assetId=\{hero\.portraitAssetId\}/);
+  assert.match(view, /hero\.traits\.join/);
+  assert.doesNotMatch(
+    view,
+    /hero\.(notes|backstory)|\bapi\(|router\.|launch\(|useHeroSelection\(\)/,
+  );
+  assert.match(view, /fieldset className=\{styles\.choices\} disabled=\{blocked\}/);
+  assert.match(view, /const blocked = disabled \|\| selection\.resource\.loading/);
+  assert.match(view, /type="radio"/);
+  assert.match(view, /checked=\{selection\.heroId === hero.id\}/);
+  assert.match(view, /checked=\{selection\.heroId === ''\}/);
+  assert.match(view, /onClose=\{closePicker\}/);
+  assert.match(view, /data-hero-choice-trigger/);
+  assert.match(view, /requestAnimationFrame/);
+  assert.match(view, /trigger && !trigger.disabled \? trigger : root.current/);
+  assert.match(view, /tabIndex=\{compact \? -1 : undefined\}/);
+  assert.match(view, /presentation.synopsis/);
+  assert.match(view, /disabled=\{blocked \|\| !selection\.valid\}/);
+  assert.match(view, /selection\.resource\.error/);
+  assert.match(view, /h\('missing'\)/);
+  assert.match(launch, /disabled=\{busy \|\| directorSelection.locked \|\| state !== 'estimate'\}/);
+  assert.equal((launch.match(/useHeroSelection\(\)/g) || []).length, 1);
+  assert.match(launch, /storyReturnPath\(adventure.slug, heroSelection.heroId\)/);
+  assert.match(selection, /onError=\{\(\) => setFailed\(true\)\}/);
+  assert.match(selection, /assetUrl\(assetId\)/);
+});
+
+test('hero dialog keeps the authoritative selection when reopened and reacts to a new lock', async () => {
+  const { transformSync } = await import('esbuild');
+  const code = transformSync(await source('game/hero-selection.tsx'), {
+    loader: 'tsx',
+    format: 'cjs',
+    jsx: 'automatic',
+  }).code;
+  const cells = [];
+  let cursor = 0;
+  const selection = {
+    enabled: true,
+    heroId: '',
+    valid: true,
+    resource: {
+      data: [{ id: 'owned', name: 'Owned', traits: ['Kind'], portraitAssetId: 'portrait' }],
+      loading: false,
+      error: '',
+      reload() {},
+    },
+    setHeroId(id) {
+      selection.heroId = id;
+    },
+  };
+  const imports = {
+    react: {
+      useId: () => 'hero-choice',
+      useRef: () => ({ current: null }),
+      useState(initial) {
+        const i = cursor++;
+        if (!(i in cells)) cells[i] = initial;
+        return [
+          cells[i],
+          (value) => {
+            cells[i] = value;
+          },
+        ];
+      },
+    },
+    'react/jsx-runtime': {
+      jsx: (type, props) => ({ type, props }),
+      jsxs: (type, props) => ({ type, props }),
+      Fragment: 'fragment',
+    },
+    'next/navigation': {},
+    'next/link': { default: 'a' },
+    'lucide-react': {
+      BookOpen: 'book',
+      Sparkles: 'sparkles',
+      Check: 'check',
+      Plus: 'plus',
+      UserRound: 'silhouette',
+    },
+    './hero-choice.module.css': { default: {} },
+    '@/lib/i18n': { useT: () => ({ locale: 'en' }) },
+    '@/lib/client': { assetUrl: (id) => '/assets/' + id },
+    '@/components/ui': {
+      Button: 'button',
+      ErrorBox: 'error',
+      Field: 'field',
+      Modal: 'modal',
+      Select: 'select',
+    },
+  };
+  const module = { exports: {} };
+  new Function('require', 'module', 'exports', 'requestAnimationFrame', code)(
+    (name) => {
+      assert.ok(name in imports, `Unexpected dependency ${name}`);
+      return imports[name];
+    },
+    module,
+    module.exports,
+    (callback) => callback(),
+  );
+  const flatten = (node) =>
+    !node || typeof node !== 'object'
+      ? []
+      : [
+          node,
+          ...[]
+            .concat(node.props?.children || [])
+            .flat(Infinity)
+            .flatMap(flatten),
+        ];
+  function render(disabled = false) {
+    cursor = 0;
+    return flatten(module.exports.HeroSelection({ selection, compact: true, disabled }));
+  }
+  let nodes = render();
+  nodes.find((n) => n.props?.['aria-haspopup'] === 'dialog').props.onClick();
+  nodes = render();
+  nodes.find((n) => n.type === 'input' && n.props.value === 'owned').props.onChange();
+  assert.equal(selection.heroId, 'owned');
+  nodes = render(true);
+  assert.equal(nodes.find((n) => n.type === 'fieldset').props.disabled, true);
+  assert.equal(nodes.find((n) => n.props?.['aria-haspopup'] === 'dialog').props.disabled, true);
+  nodes.find((n) => n.type === 'modal').props.onClose();
+  assert.equal(
+    render().some((n) => n.type === 'modal'),
+    false,
+  );
+  render()
+    .find((n) => n.props?.['aria-haspopup'] === 'dialog')
+    .props.onClick();
+  assert.equal(
+    render().find((n) => n.type === 'input' && n.props.value === 'owned').props.checked,
+    true,
+  );
+});

@@ -103,3 +103,74 @@ test('NPC decorative hero stays local and bounded, never becomes an authored por
   assert.match(css, /object-fit: contain/);
   assert.match(css, /prefers-reduced-motion/);
 });
+
+test('story character cards preview only authored public presentation without replacing private drafts', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(
+    new URL('../../apps/web/components/studio/story-npc-editor.tsx', import.meta.url),
+    'utf8',
+  );
+  const preview = source.slice(
+    source.indexOf('data-testid="story-npc-preview"'),
+    source.indexOf('{legacy.map'),
+  );
+  for (const field of ['name', 'portraitAssetId', 'description'])
+    assert.ok(preview.includes(`previewNpc.${field}`));
+  assert.doesNotMatch(
+    preview,
+    /previewNpc\.(secrets|characterProfile|personality|knowledge|biography)/,
+  );
+  assert.match(source, /key in npcSchema.shape/);
+  assert.match(source, /expectedNpcRevision/);
+  assert.match(source, /expectedStoryRevision: story.editRevision/);
+  assert.match(source, /await beforeEdit\(\)/);
+  assert.match(source, /if \(kind === 'save'\) npcSchema.parse\(draft\)/);
+  assert.match(source, /dirty \? setDiscard\(true\) : close\(\)/);
+  assert.match(
+    source,
+    /!locals.loading &&\s*!templates.loading &&\s*!locals.error &&\s*!templates.error/,
+  );
+});
+
+test('lore layout retains every field and diagnoses hidden invalid records with the shared schema', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(
+    new URL('../../apps/web/components/studio/story-lorebook-editor.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /kind="lore"/);
+  assert.match(source, /!storyLoreEntrySchema.safeParse\(entry\).success/);
+  assert.match(source, /!selectedNpcIds.includes\(id\)/);
+  assert.match(source, /!locations.some\(\(location\) => location.id === entry.locationId\)/);
+  for (const field of [
+    'title',
+    'text',
+    'disclosure',
+    'publicQuestion',
+    'knowerNpcIds',
+    'locationId',
+    'topics',
+  ])
+    assert.ok(source.includes(`entry.${field}`), field);
+  assert.match(source, /const saved = await beforePreview\(\)/);
+  assert.match(source, /response.storyEditRevision !== savedRevision/);
+  assert.match(source, /inputFingerprint === fingerprintRef.current/);
+  const excluded = source.slice(source.indexOf("<h3>{text('excluded')}</h3>"));
+  assert.doesNotMatch(excluded, /\{entry\.(text|title)\}/);
+});
+
+test('lore collection keeps inactive editors mounted and restores deletion focus without changing draft ownership', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const source = await readFile(
+    new URL('../../apps/web/components/studio/collection-editor.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /'locations' \| 'scenes' \| 'lore'/);
+  assert.match(source, /items.map\(\(item, index\) => \(/);
+  assert.match(source, /hidden=\{active !== item.id\}/);
+  assert.match(source, /disabled=\{active !== item.id\}/);
+  assert.match(source, /\{children\(item, index\)\}/);
+  assert.match(source, /document.activeElement === document.body/);
+  assert.match(source, /target\?\.focus\(\)/);
+  assert.doesNotMatch(source, /api\(|onChange\(|fetch\(/);
+});

@@ -2,7 +2,7 @@
 import './story-detail.css';
 import Link from 'next/link';
 import { useRouter } from 'next/navigation';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import {
   ArrowUpRight,
   ArrowRight,
@@ -53,6 +53,21 @@ export function AdventurePage({ slug }: { slug: string }) {
     [report, setReport] = useState(false),
     [reason, setReason] = useState(''),
     [reportError, setReportError] = useState('');
+  const reportTrigger = useRef<HTMLButtonElement>(null);
+  const reportPending = useRef(false);
+  const restoreReportFocus = useRef(false);
+  const [reportBusy, setReportBusy] = useState(false);
+  function closeReport() {
+    if (reportPending.current) return;
+    restoreReportFocus.current = true;
+    setReport(false);
+  }
+  useEffect(() => {
+    if (!report && restoreReportFocus.current) {
+      restoreReportFocus.current = false;
+      reportTrigger.current?.focus();
+    }
+  }, [report]);
   useEffect(() => {
     if (a && library.data) setSaved(library.data.favorites.some((item) => item.id === a.id));
   }, [a, library.data]);
@@ -180,12 +195,14 @@ export function AdventurePage({ slug }: { slug: string }) {
             )}
           </div>
           <button
+            ref={reportTrigger}
             className="subtle-button"
             onClick={() => {
               if (!user) {
                 router.push('/auth/sign-in');
                 return;
               }
+              setReportError('');
               setReport(true);
             }}
           >
@@ -248,30 +265,35 @@ export function AdventurePage({ slug }: { slug: string }) {
         </div>
       </section>
       {report && (
-        <Modal title={tr('Сообщить о нарушении')} onClose={() => setReport(false)}>
+        <Modal title={tr('Сообщить о нарушении')} onClose={closeReport}>
           <form
             method="post"
             onSubmit={async (e) => {
               e.preventDefault();
+              if (reportPending.current) return;
+              reportPending.current = true;
               setReportError('');
-              setBusy(true);
+              setReportBusy(true);
               try {
                 await api('/reports', {
                   method: 'POST',
                   body: JSON.stringify({ adventureId: a.id, reason }),
                 });
-                setReport(false);
+                reportPending.current = false;
+                closeReport();
                 toast(tr('Жалоба отправлена на проверку'));
               } catch (e) {
                 setReportError(errorMessage(e));
               } finally {
-                setBusy(false);
+                reportPending.current = false;
+                setReportBusy(false);
               }
             }}
           >
             <Field label={tr('Что стоит проверить?')}>
               <Textarea
                 required
+                disabled={reportBusy}
                 minLength={5}
                 maxLength={2000}
                 value={reason}
@@ -280,10 +302,10 @@ export function AdventurePage({ slug }: { slug: string }) {
             </Field>
             <ErrorBox message={reportError} />
             <div className="form-actions">
-              <Button type="button" variant="secondary" onClick={() => setReport(false)}>
+              <Button type="button" variant="secondary" disabled={reportBusy} onClick={closeReport}>
                 {tr('Отмена')}
               </Button>
-              <Button busy={busy}>{tr('Отправить жалобу')}</Button>
+              <Button busy={reportBusy}>{tr('Отправить жалобу')}</Button>
             </div>
           </form>
         </Modal>

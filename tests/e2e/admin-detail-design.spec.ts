@@ -22,6 +22,7 @@ async function fixture(page: Page, locale = 'ru', theme = 'dark') {
       status,
       visibility: 'public',
       sourceLanguage: 'en',
+      genre: 'Тайна',
       synopsis: 'Synthetic synopsis for layout and interaction verification.',
       tags: ['Synthetic'],
       content: {
@@ -122,7 +123,7 @@ async function capture(page: Page, info: TestInfo, name: string, resetDialog = t
   });
 }
 
-for (const locale of ['ru', 'en', 'uk']) {
+for (const locale of ['ru', 'en', 'uk'] as const) {
   test(`admin tables and two-column review retain real controls (${locale})`, async ({
     page,
   }, info) => {
@@ -151,6 +152,9 @@ for (const locale of ['ru', 'en', 'uk']) {
       await capture(page, info, `admin-users-${locale}-${width}-dark`);
       await page.goto('/admin/adventures');
       await expect(page.locator('tbody tr')).toHaveCount(1);
+      await expect(page.locator('tbody tr').first().locator('small')).toContainText(
+        { ru: 'Тайна', en: 'Mystery', uk: 'Таємниця' }[locale],
+      );
       const cover = page.locator('tbody img');
       await expect
         .poll(() => cover.evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0))

@@ -1096,6 +1096,7 @@ Focused cover/metadata/autosave tests: 17 passed; focused lint and format passed
 Current contracts and game-core builds passed; local web typecheck was killed twice
 by executor resource limits. Final remote-base synchronization preserves main's
 runtime-vision locale/progress additions; no local tests during synchronization.
+
 ## Catalog and creator reference composition (2026-11-03)
 
 - Scoped public discovery cards now place readable world covers behind the title,
@@ -1121,6 +1122,7 @@ runtime-vision locale/progress additions; no local tests during synchronization.
   review remain acceptance gates. Existing
   shared-shell draft owns surrounding chrome. Real story/author content differs
   from the reference; no complete sitewide 1:1 claim is made.
+
 ## 2026-11-03 — Story-detail reference composition (scoped, review pending)
 
 Extracted `AdventurePage` into `components/story/story-detail-page.tsx`, with independent
@@ -1184,3 +1186,61 @@ item blocking save, HTTP save failure/retry, CAS conflict input retention and ca
 versus confirmed server reload. 26 focused source/controller checks, ESLint and format
 passed; browser execution remains unrun. The separate confirmation-safety test requires
 contracts/dist and was dependency-blocked, not passed; no build was run for this slice.
+
+## Story-character and lore composition follow-on (2026-11-03)
+
+Inspected actual pixels of desktop references 18 (story characters) and 19 (story lore).
+The story-scoped NPC list now uses selectable portrait/name/role cards, explicit create,
+copy and edit controls, and a separate public-description preview. Existing authored
+portraits are used; absent portraits get a neutral icon, never invented story content.
+The NPC schema round-trip, private profile/knowledge/secrets, CAS revisions, replay
+identity, dirty confirmation, library export and explicit appearance actions remain.
+
+Lore uses the existing persistent CollectionEditor for a left entry index and focused
+fields; inactive entries remain mounted. Shared lore schema and source-reference checks
+mark invalid entries in the index, while the unchanged full adventure validator blocks
+invalid saves. All disclosure, question, knower, location and topic fields remain.
+Preview stays explicit, save/revision/fingerprint-bound, with separate included/excluded
+columns; excluded content is not rendered. No fabricated illustrations or lore added.
+
+Checks: 33 focused source/controller tests passed (NPC templates, character UI, story
+metadata, autosave), focused ESLint and formatting passed, and Playwright listed four
+cases across the existing character-authoring file and the two new synthetic cases.
+New browser source covers selection, private-field preservation, invalid/hidden entries,
+save failure/retry, add/delete/last-delete focus, preview staleness, reload, empty/loading/
+read-error retry, and RU/UK/EN desktop-dark/mobile-light screenshots with drawer-aware
+preferences. Browser execution and actual rendered comparison remain unrun locally.
+Direct no-emit web typecheck reached only the base public.tsx missing Badge import errors
+(two TS2304 errors at line 63); parent reports that defect fixed in the later integration
+head. This scoped patch does not alter public.tsx. No build, install, API/database run,
+publication, merge, deploy or paid/provider action was performed for this slice. This is
+not 1:1 acceptance; integrated CI and actual rendered review are still required.
+## Ref59 owned hero choice presentation — 2026-11-03
+
+Added a full-width, native-modal hero picker to the compact story selector. Cards use
+only owned `/heroes` records and their authorized portrait assets, with neutral missing-art
+fallbacks, an explicit traveler, loading/error/empty states, and a validated hero-management
+return. Selection is immediate; Done, Close and Escape only dismiss the picker and return
+focus. Preparing heroes is an ordinary management detour, not automatic creation.
+
+The existing compact select remains compatible. AdventureLaunch receives only presentation
+metadata; its controller, selection hook, disabled guard, restoration, director, quote,
+consent and dispatch handlers remain unchanged. No generated or reference heroes are seeded.
+
+Verification: 41 focused hero/start/return tests passed; targeted ESLint and diff whitespace
+checks passed. Web typecheck finds the existing missing Badge import in public.tsx on the
+33a2d055 base (the integration's separate Badge fix is not duplicated here). Added CI browser
+cases for owned cards, keyboard/Close/Escape focus, no mutations/navigation, unchanged launch
+DOM identity, unavailable/empty/error states, loading and restored locked preparation.
+Browser screenshots and visual fidelity are pending CI; no local build, install, provider,
+payment or deployment action was performed.
+
+Ref59 presentation refinement: the landscape now has a readable foreground gradient rather
+than a barely visible wash; the create card uses a neutral silhouette and plus badge. The
+summary displays localized authored synopsis, genre and the actual supported player range,
+without invented mode metadata. Close focus falls back to the programmatically focusable
+hero-selection group if the trigger became disabled during restoration. Added a CI browser
+case that selects a hero with an existing ready preparation, verifies locked cards, closes,
+and checks fallback focus without navigation or mutation. The same 41 focused tests and
+targeted ESLint passed again; controller source remains byte-identical. No build or browser
+execution was performed, and the changes remain unpublished pending independent review.

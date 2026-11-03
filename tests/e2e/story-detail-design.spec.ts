@@ -61,7 +61,15 @@ async function fixture(
     data.npcs = [];
     data.playableVersionId = '';
   }
-  const state = { readsFail: false, delay: 0, heroFail: false, posts: [] as string[] };
+  const state = {
+    readsFail: false,
+    delay: 0,
+    heroFail: false,
+    posts: [] as string[],
+    reportFails: false,
+    releaseReport: null as null | (() => void),
+    reportBodies: [] as unknown[],
+  };
   const locale = options.locale || 'en';
   const theme = options.theme || 'dark';
   await page.addInitScript(
@@ -107,7 +115,16 @@ async function fixture(
         : route.fulfill({
             json: options.empty
               ? []
-              : [{ id: heroId, name: 'Saved reader hero', traits: [], notes: '', backstory: '' }],
+              : [
+                  {
+                    id: heroId,
+                    name: 'Saved reader hero',
+                    portraitAssetId: artId,
+                    traits: ['Curious'],
+                    notes: 'PRIVATE_HERO_NOTE',
+                    backstory: 'PRIVATE_HERO_BACKSTORY',
+                  },
+                ],
           });
     if (path === '/game/directors') return route.fulfill({ json: defaultDirectorCatalog() });
     if (path.endsWith('/playable-versions'))
@@ -129,6 +146,15 @@ async function fixture(
           balanceSubunits: '2480000',
         },
       });
+    if (path === '/reports') {
+      state.reportBodies.push(req.postDataJSON());
+      await new Promise<void>((resolve) => {
+        state.releaseReport = resolve;
+      });
+      return state.reportFails
+        ? route.fulfill({ status: 503, json: { code: 'INTERNAL_ERROR' } })
+        : route.fulfill({ json: {} });
+    }
     if (path === '/game/start-preparations') {
       await new Promise((resolve) => setTimeout(resolve, 200));
       return route.fulfill({ status: 503, json: { code: 'INTERNAL_ERROR' } });
@@ -223,9 +249,14 @@ test('story detail selection, report cancellation and duplicate start preserve s
   await report.click();
   await page.keyboard.press('Escape');
   await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(report).toBeFocused();
+  await report.click();
+  await page.getByRole('dialog').getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  await expect(report).toBeFocused();
   expect(state.posts).toEqual([]);
   await page.getByRole('button', { name: 'Start campaign', exact: true }).click({ clickCount: 2 });
-  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.locator('.sd-prepare-panel').getByRole('alert')).toBeVisible();
   expect(state.posts.filter((path) => path === '/game/start-preparations')).toHaveLength(1);
   expect(state.posts.some((path) => path.endsWith('/dispatch') || path === '/game/campaigns')).toBe(
     false,
@@ -253,10 +284,14 @@ test('story detail loading, safe retry, empty authored data and invited access r
   state.delay = 500;
   await page.goto(storyPath);
   await expect(page.getByRole('status', { name: 'Loading' })).toBeVisible();
-  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.locator('#main-content').getByRole('alert')).toBeVisible();
   state.readsFail = false;
   state.delay = 0;
-  await page.getByRole('button', { name: 'Try again', exact: true }).click();
+  await page
+    .locator('#main-content')
+    .getByRole('alert')
+    .getByRole('button', { name: 'Try again', exact: true })
+    .click();
   await readyImage(page);
   await expect(page.locator('.sd-npc-preview')).toHaveCount(0);
   await expect(page.locator('.sd-story-versions')).toHaveCount(0);
@@ -298,5 +333,207 @@ test('story detail preserves long authored text and selected-hero loading errors
   await expect(page.getByRole('button', { name: 'Start campaign', exact: true })).toBeDisabled();
   await page.getByLabel('Hero for this campaign').selectOption('');
   await expect(page.getByRole('button', { name: 'Start campaign', exact: true })).toBeEnabled();
+  expect(state.posts).toEqual([]);
+});
+
+for (const fails of [false, true]) {
+  test(`story report pending dismissal and duplicate submission remain safe (${fails ? 'failure' : 'success'})`, async ({
+    page,
+  }) => {
+    const { data, state } = await fixture(page);
+    state.reportFails = fails;
+    await page.goto(storyPath);
+    await readyImage(page);
+    const trigger = page.getByRole('button', { name: 'Report content', exact: true });
+    await trigger.click();
+    const dialog = page.getByRole('dialog');
+    await dialog.locator('textarea').fill('Please review this public story.');
+    await dialog.locator('form').evaluate((form) => {
+      (form as HTMLFormElement).requestSubmit();
+      (form as HTMLFormElement).requestSubmit();
+    });
+    await expect.poll(() => state.releaseReport !== null).toBe(true);
+    await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
+    await expect(dialog.locator('textarea')).toBeDisabled();
+    await page.keyboard.press('Escape');
+    await expect(dialog).toBeVisible();
+    await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+    await expect(dialog).toBeVisible();
+    expect(state.posts).toEqual(['/reports']);
+    expect(state.reportBodies).toEqual([
+      { adventureId: data.id, reason: 'Please review this public story.' },
+    ]);
+    state.releaseReport!();
+    if (fails) {
+      await expect(dialog.getByRole('alert')).toBeVisible();
+      await expect(dialog.locator('textarea')).toHaveValue('Please review this public story.');
+      await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
+    }
+    await expect(dialog).toHaveCount(0);
+    await expect(trigger).toBeFocused();
+    expect(state.posts).toEqual(['/reports']);
+    await expect(page).toHaveURL(new RegExp(storyPath));
+  });
+}
+test('expanded owned hero cards only select and close, restore focus and keep launch identity', async ({
+  page,
+}, info) => {
+  const { state } = await fixture(page);
+  await page.goto(storyPath);
+  await readyImage(page);
+  const open = page.getByRole('button', { name: 'Choose a hero', exact: true });
+  // A DOM identity marker would disappear if launch or its selectors were remounted.
+  await page
+    .getByTestId('director-selection')
+    .evaluate((el) => el.setAttribute('data-mount-proof', 'original'));
+  await open.click();
+  const dialog = page.getByRole('dialog', { name: 'Choose a hero' });
+  await expect(dialog).toBeVisible();
+  const hero = dialog.getByRole('radio', { name: /Saved reader hero/ });
+  await expect(dialog.locator(`label img[src="/api/v1/assets/${artId}/file"]`)).toBeVisible();
+  await expect(dialog).toContainText(
+    'A reader-visible opening about distant stars and an unfinished expedition.',
+  );
+  await expect(dialog).toContainText('Solo / with friends (1–4)');
+  await expect(dialog).not.toContainText('PRIVATE_HERO_NOTE');
+  await expect(dialog).not.toContainText('PRIVATE_HERO_BACKSTORY');
+  await hero.focus();
+  await page.keyboard.press('Space');
+  await expect(hero).toBeChecked();
+  await expect(dialog.getByRole('link', { name: /Prepare a hero/ })).toHaveAttribute(
+    'href',
+    `/my-characters?returnTo=${encodeURIComponent(storyPath + '?heroId=' + heroId)}`,
+  );
+  await page.keyboard.press('Tab');
+  await expect(dialog.locator(':focus')).toHaveCount(1);
+  await dialog.getByRole('button', { name: 'Done choosing hero', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(open).toBeFocused();
+  await expect(page.getByLabel('Hero for this campaign')).toHaveValue(heroId);
+  await expect(page.getByTestId('director-selection')).toHaveAttribute(
+    'data-mount-proof',
+    'original',
+  );
+  await open.click();
+  await page.keyboard.press('Escape');
+  await expect(dialog).not.toBeVisible();
+  await expect(open).toBeFocused();
+  await open.click();
+  await dialog.getByRole('button', { name: 'Close hero selection', exact: true }).click();
+  await expect(open).toBeFocused();
+  await expect(page).toHaveURL(new RegExp(storyPath + '$'));
+  expect(state.posts).toEqual([]);
+  await open.click();
+  await noOverflow(page);
+  await info.attach('owned-hero-choice', {
+    body: await page.screenshot({ fullPage: true }),
+    contentType: 'image/png',
+  });
+});
+
+test('hero cards preserve unavailable choice, empty traveler and error retry without starting', async ({
+  page,
+}) => {
+  const { state } = await fixture(page, { empty: true });
+  await page.goto(storyPath + '?heroId=unavailable-hero');
+  await page.getByRole('button', { name: 'Choose a hero', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Choose a hero' });
+  await expect(dialog).toContainText('You have no saved heroes yet.');
+  await expect(dialog.getByRole('alert')).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Done choosing hero' })).toBeDisabled();
+  await dialog.getByRole('radio', { name: 'Traveler without a saved hero' }).check();
+  await expect(dialog.getByRole('button', { name: 'Done choosing hero' })).toBeEnabled();
+  await page.keyboard.press('Escape');
+  state.heroFail = true;
+  await page.reload();
+  await page.getByRole('button', { name: 'Choose a hero', exact: true }).click();
+  await expect(dialog.getByRole('alert')).toBeVisible();
+  await expect(dialog).not.toContainText('You have no saved heroes yet.');
+  state.heroFail = false;
+  await dialog.getByRole('button', { name: 'Try again', exact: true }).click();
+  await expect(dialog).toContainText('You have no saved heroes yet.');
+  expect(state.posts).toEqual([]);
+});
+
+test('hero picker loading and restored pinned preparations keep all choices disabled', async ({
+  page,
+}) => {
+  const { state } = await fixture(page);
+  let release!: () => void;
+  const loading = new Promise<void>((resolve) => {
+    release = resolve;
+  });
+  await page.route('**/api/v1/heroes', async (route) => {
+    await loading;
+    await route.fulfill({ json: [] });
+  });
+  await page.goto(storyPath);
+  await page.getByRole('button', { name: 'Choose a hero', exact: true }).click();
+  const dialog = page.getByRole('dialog', { name: 'Choose a hero' });
+  try {
+    await expect(dialog.getByRole('status')).toHaveText('Loading heroes…');
+    await expect(dialog.getByRole('radio')).toBeDisabled();
+    await expect(dialog.getByRole('link', { name: /Prepare a hero/ })).toHaveCount(0);
+    await expect(dialog.getByRole('button', { name: 'Done choosing hero' })).toBeDisabled();
+  } finally {
+    release();
+  }
+  await expect(dialog.getByRole('radio')).toBeEnabled();
+  await page.keyboard.press('Escape');
+  await page.evaluate(
+    ({ ownerId, versionId }) => {
+      const base = `dreamwalk-start:${ownerId}:${versionId}:`;
+      sessionStorage.setItem(base + ':director', 'coauthor');
+      sessionStorage.setItem(base + ':coauthor:prepare', 'owned-operation');
+    },
+    { ownerId, versionId },
+  );
+  await page.route('**/api/v1/game/start-preparations/by-operation/owned-operation', (route) =>
+    route.fulfill({
+      json: { id: 'restored', status: 'ready', campaignId: 'ready-campaign', jobs: [] },
+    }),
+  );
+  await page.reload();
+  await expect(page.getByRole('button', { name: 'Choose a hero', exact: true })).toBeDisabled();
+  await expect(page.getByLabel('Hero for this campaign')).toBeDisabled();
+  await expect(page.getByTestId('director-selection')).toBeVisible();
+  await expect(page).toHaveURL(new RegExp(storyPath + '$'));
+  expect(state.posts).toEqual([]);
+});
+
+test('closing a picker locked by selection restoration focuses its enabled local group', async ({
+  page,
+}) => {
+  const { state } = await fixture(page);
+  await page.addInitScript(
+    ({ ownerId, versionId, heroId }) => {
+      const base = `dreamwalk-start:${ownerId}:${versionId}:${heroId}`;
+      sessionStorage.setItem(base + ':director', 'coauthor');
+      sessionStorage.setItem(base + ':coauthor:prepare', 'hero-owned-operation');
+    },
+    { ownerId, versionId, heroId },
+  );
+  await page.route('**/api/v1/game/start-preparations/by-operation/hero-owned-operation', (route) =>
+    route.fulfill({
+      json: { id: 'hero-restored', status: 'ready', campaignId: 'hero-ready-campaign', jobs: [] },
+    }),
+  );
+  await page.goto(storyPath);
+  const open = page.getByRole('button', { name: 'Choose a hero', exact: true });
+  await open.click();
+  const dialog = page.getByRole('dialog', { name: 'Choose a hero' });
+  const hero = dialog.getByRole('radio', { name: /Saved reader hero/ });
+  await hero.check();
+  await expect(hero).toBeDisabled();
+  await expect(dialog.getByRole('radio', { name: 'Traveler without a saved hero' })).toBeDisabled();
+  await expect(dialog.getByRole('link', { name: /Prepare a hero/ })).toHaveCount(0);
+  await expect(dialog.getByRole('button', { name: 'Done choosing hero' })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Close hero selection', exact: true }).click();
+  await expect(dialog).not.toBeVisible();
+  await expect(open).toBeDisabled();
+  await expect(page.getByTestId('hero-selection')).toBeFocused();
+  await expect(page.getByTestId('director-selection')).toBeVisible();
+  await expect(page.getByLabel('Hero for this campaign')).toHaveValue(heroId);
+  await expect(page).toHaveURL(new RegExp(storyPath + '$'));
   expect(state.posts).toEqual([]);
 });

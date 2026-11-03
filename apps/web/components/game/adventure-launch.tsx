@@ -9,12 +9,12 @@ import { useEffect, useState } from 'react';
 import { startState, type StartPreparation } from './start-state';
 import { formatSparkSubunits } from '@dreamwalk/contracts';
 import { providerSparkSubunits } from '../visual-authoring/spark-equivalent';
-import type { Adventure } from '@dreamwalk/contracts';
-import { api, ApiError, errorMessage, useClient, useResource } from '@/lib/client';
+import { selectAdventureText, type Adventure } from '@dreamwalk/contracts';
+import { api, ApiError, coverUrl, errorMessage, useClient, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Modal } from '@/components/ui';
 export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
-  const { t } = useT();
+  const { t, locale, taxonomy } = useT();
   const heroSelection = useHeroSelection();
   const router = useRouter();
   const { user, loading: authLoading } = useClient();
@@ -305,6 +305,19 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
         selection={heroSelection}
         disabled={busy || directorSelection.locked || state !== 'estimate'}
         compact
+        presentation={{
+          title: selectAdventureText(adventure, locale).title,
+          synopsis: selectAdventureText(adventure, locale).synopsis,
+          genre: taxonomy(adventure.genre),
+          playersMin: adventure.playersMin,
+          playersMax: adventure.playersMax,
+          cover: coverUrl(adventure),
+          manageHref: withStoryReturn(
+            '/my-characters',
+            storyReturnPath(adventure.slug, heroSelection.heroId) ||
+              storyReturnPath(adventure.slug),
+          ),
+        }}
       />
       <DirectorSelection
         selection={directorSelection}
