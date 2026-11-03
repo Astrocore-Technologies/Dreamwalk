@@ -1155,3 +1155,22 @@
     padding-bottom: 34px;
   }
 }
+
+/* Small labels keep AA contrast even when a bright moon/cloud sits behind them. */
+.intro > a,
+.railControls > a,
+.railControls > button,
+.sectionHint {
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  color: var(--text);
+  border-radius: 9px;
+}
+.intro > a,
+.railControls > a {
+  padding: 8px 10px;
+}
+.sectionHint {
+  width: fit-content;
+  padding: 4px 7px;
+  margin-left: -7px;
+}

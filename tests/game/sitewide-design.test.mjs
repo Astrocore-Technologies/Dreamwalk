@@ -68,3 +68,16 @@ test('scenic world artwork is decorative, theme-specific and excluded from the g
     assert.ok(asset.length < 600_000, 'decorative art stays within the compressed asset budget');
   }
 });
+test('scenic label backplates preserve normal-text AA over black or white artwork', () => {
+  const mix = (background, image) => {
+    const parts = background
+      .match(/[a-f\d]{2}/gi)
+      .map((part) => Math.round(parseInt(part, 16) * 0.9 + image * 0.1));
+    return `#${parts.map((part) => part.toString(16).padStart(2, '0')).join('')}`;
+  };
+  for (const [foreground, background] of [
+    ['#f7f2ea', '#15111d'],
+    ['#241b2f', '#f8f5f0'],
+  ])
+    for (const image of [0, 255]) assert.ok(contrast(foreground, mix(background, image)) >= 4.5);
+});

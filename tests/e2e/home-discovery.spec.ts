@@ -164,9 +164,14 @@ test('390px homepage preserves readable art, manual touch navigation and public-
   await startButton.evaluate((element) => element.scrollIntoView({ block: 'center' }));
   await expect(startButton).toBeInViewport();
   await expect(startButton).toBeEnabled();
-  const buttonBox = await startButton.boundingBox();
-  const bottomNav = await page.locator('.bottom-nav').boundingBox();
-  expect(buttonBox!.y + buttonBox!.height).toBeLessThan(bottomNav!.y);
+  // Native smooth scrolling completes asynchronously; assert the final unobstructed position.
+  await expect
+    .poll(async () => {
+      const buttonBox = await startButton.boundingBox();
+      const bottomNav = await page.locator('.bottom-nav').boundingBox();
+      return buttonBox!.y + buttonBox!.height < bottomNav!.y;
+    })
+    .toBe(true);
   expect(
     await startButton.evaluate((element) => {
       const box = element.getBoundingClientRect();
