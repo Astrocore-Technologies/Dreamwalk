@@ -939,7 +939,10 @@ export class ImageGenerationEngine {
                 mockUpperMicros: 0,
               }
             : input.mode === 'external' &&
-                (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release')
+                (this.policy.generationMode === 'owner' ||
+                  this.policy.generationMode === 'release' ||
+                  (input.requestPolicyVersion === 2 &&
+                    this.policy.costBasis === 'approved_estimate'))
               ? {
                   ...(authorization.livePolicy ?? this.policy),
                   estimatedTotalMicros: Number(q.estimated_total_micros),

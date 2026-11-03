@@ -26,9 +26,9 @@ const rows = {
     'Оцінка не обмежує рахунок провайдера: фактичні витрати можуть бути вищими.',
   ],
   confirmRisk: [
-    'Списание не превысит показанную сумму. Если расход провайдера выше или неизвестен, запрос останется на сверке без дополнительного списания.',
-    'The charge will not exceed the displayed amount. Higher or unknown provider costs remain pending reconciliation without an additional charge.',
-    'Списання не перевищить показану суму. Вищі або невідомі витрати провайдера залишаться на звірці без додаткового списання.',
+    'Списание из кошелька не превысит показанную сумму. Если расход провайдера выше или неизвестен, запрос останется на сверке без дополнительного списания.',
+    'The wallet charge will not exceed the displayed amount. Higher or unknown provider costs remain pending reconciliation without an additional charge.',
+    'Списання з гаманця не перевищить показану суму. Вищі або невідомі витрати провайдера залишаться на звірці без додаткового списання.',
   ],
 
   referencesUnavailable: [
