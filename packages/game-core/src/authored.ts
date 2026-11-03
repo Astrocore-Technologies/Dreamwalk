@@ -427,6 +427,17 @@ export function compilePlayableDraft(input: unknown): {
   const state = createStateFromPlayable(playable, [], 1);
   errors.push(...validateMapState(state));
   for (const m of Object.values(maps)) {
+    if (m.spatialGrounding) {
+      if (m.width !== BATTLEMAP_CELLS || m.height !== BATTLEMAP_CELLS)
+        errors.push(`map:${m.id}:image-grounding-size`);
+      for (const p of m.spawns)
+        if (m.spatialGrounding.rows[p.y]?.[p.x] !== '.') errors.push(`map:${m.id}:image-spawn`);
+      for (const npc of Object.values(entities).filter((e) => e.kind === 'npc' && e.mapId === m.id))
+        for (let y = npc.y; y < npc.y + footprintCells(npc); y++)
+          for (let x = npc.x; x < npc.x + footprintCells(npc); x++)
+            if (m.spatialGrounding.rows[y]?.[x] !== '.')
+              errors.push(`entity:${npc.id}:image-placement`);
+    }
     for (const p of m.blocked)
       if (p.x >= m.width || p.y >= m.height) errors.push(`map:${m.id}:blocked-bounds`);
     if (new Set(m.exits.map((e) => e.id)).size !== m.exits.length)

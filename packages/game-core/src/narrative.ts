@@ -1,3 +1,5 @@
+import { observedVisible } from './observation-visibility';
+import { spatialContext } from './spatial-context';
 import {
   BATTLEMAP_CELLS,
   footprintOverlaps,
@@ -80,6 +82,7 @@ export function buildNarrativeContext(
     constraints = policy(state),
     canon = state.narrativeCanon;
   const context = {
+    ...(spatialContext(state, actorId) ? { spatialContext: spatialContext(state, actorId) } : {}),
     actorId,
     replyLocale: localeSchema.parse(replyLocale),
     ...(state.narrativePreferences?.[actorId]
@@ -103,7 +106,7 @@ export function buildNarrativeContext(
     availableConnections: candidates(state, actorId),
     visibleEntities: actor
       ? Object.values(state.entities)
-          .filter((e) => e.id === actorId || visible(state, actor, e))
+          .filter((e) => e.id === actorId || observedVisible(state, actor, e))
           .map((e) => ({
             id: e.id,
             kind: e.kind,
@@ -119,7 +122,9 @@ export function buildNarrativeContext(
       : [],
     sharedAudience: actor
       ? Object.values(state.entities)
-          .filter((e) => e.kind === 'player' && (e.id === actorId || visible(state, actor, e)))
+          .filter(
+            (e) => e.kind === 'player' && (e.id === actorId || observedVisible(state, actor, e)),
+          )
           .map((e) => ({ id: e.id }))
           .sort((a, b) => a.id.localeCompare(b.id))
       : [],

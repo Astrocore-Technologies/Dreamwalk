@@ -1,4 +1,5 @@
 'use client';
+import { MapImageNotice } from '../game/map-image-notice';
 import { useEffect, useRef, useState } from 'react';
 import { formatSparkSubunits, type AuthoredGameDraft } from '@dreamwalk/contracts';
 import { providerSparkSubunits } from './spark-equivalent';
@@ -26,6 +27,7 @@ type State = {
   }[];
 };
 type Quote = {
+  imageInputCount?: number;
   sparks?: { quoteId: string; reserveSubunits: string; rateVersion: string; walletCharging: true };
   id: string;
   buildId?: string;
@@ -134,7 +136,7 @@ export function StoryPlayableBuilder({
   onApplied?: () => void;
 }) {
   const costs = useSparkCosts();
-  const { locale } = useT(),
+  const { locale, t } = useT(),
     i = locale === 'ru' ? 0 : locale === 'en' ? 1 : 2,
     copyText = (k: keyof typeof copy) => copy[k][i];
   const [state, setState] = useState<State | null>(null),
@@ -389,6 +391,7 @@ export function StoryPlayableBuilder({
             <div>
               {quote.sparks && <SparkQuotePrice quote={quote} />}
               <SparkQuoteNotice quote={quote} />
+              <MapImageNotice count={quote.imageInputCount} />
               <p>
                 {copyText('estimated')}:{' '}
                 {quote.estimatedTotalMicros === undefined
@@ -418,7 +421,11 @@ export function StoryPlayableBuilder({
             <p role="status" key={j.id}>
               {j.error_code === 'STORY_MAP_INTENT_MISMATCH'
                 ? copyText('mapIntentMismatch')
-                : statusText(j.status)}
+                : j.error_code?.startsWith('MAP_IMAGE_')
+                  ? t(
+                      'Не удалось уверенно определить безопасный старт на изображении карты. План не применён.',
+                    )
+                  : statusText(j.status)}
               {j.sparkStatus && (
                 <>
                   {' '}

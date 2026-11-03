@@ -1,3 +1,4 @@
+import { observedVisible } from './observation-visibility';
 import { consumeWorldItem } from './world-items';
 import { projectTurnController, applyTurnAction, applyWorldTurnAction, turnFence } from './turns';
 import { projectObjectives } from './objectives';
@@ -1083,7 +1084,7 @@ export function buildNpcContext(state: GameState, id: string) {
     cooldownTicks: 20,
     ownInventory: [...(npc.inventory ?? [])],
     visible: Object.values(state.entities)
-      .filter((e) => e.id !== id && visible(state, npc, e))
+      .filter((e) => e.id !== id && observedVisible(state, npc, e))
       .map((e) => ({ id: e.id, kind: e.kind, x: e.x, y: e.y, revision: e.revision })),
     // Memorized facts are not live positions or permission to target a hidden entity.
     knownIds: [...(npc.knownIds ?? [])],

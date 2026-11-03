@@ -52,6 +52,7 @@ async function harness(
     timer = 0;
   const jsx = (type, props) => ({ type, props });
   const imports = {
+    './map-image-notice': { MapImageNotice: 'MapImageNotice' },
     '../visual-authoring/spark-equivalent': { providerSparkSubunits },
     react: {
       useState(initial) {

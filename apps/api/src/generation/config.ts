@@ -59,6 +59,18 @@ const textSchema = z
       .optional(),
     maxOutputTokens: z.number().int().min(16).max(32_000),
     storyPlanMaxOutputTokens: z.number().int().min(16).max(32_000).optional(),
+    storyVision: z
+      .object({
+        model,
+        inputTokensPerImage: z.number().int().min(1).max(1048576),
+        maxImages: z.number().int().min(1).max(4),
+        detail: z.literal('high'),
+        billing: z.literal('text_input_rate'),
+        maxPricedInputTokens: z.number().int().min(1).max(1050000),
+        pricing: pricingSchema,
+      })
+      .strict()
+      .optional(),
     maxInputBytes: z.number().int().min(1024).max(TEXT_CONTEXT_TRANSPORT_BYTES).optional(),
     inputMicrosPerMillion: positiveMicros,
     outputMicrosPerMillion: positiveMicros,
@@ -74,6 +86,11 @@ const textSchema = z
     pricing: pricingSchema,
   })
   .strict()
+  .refine(
+    (v) =>
+      !v.storyVision ||
+      (!!v.estimation && v.contextBudgetTokens !== undefined && v.storyVision.model === v.model),
+  )
   // Purpose overrides are explicit operator policy and require per-request quoting.
   .refine((value) => value.storyPlanMaxOutputTokens === undefined || !!value.estimation)
   // Conservative UTF-8 byte bound plus protocol allowance, not a guessed tokenizer ratio.
