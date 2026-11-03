@@ -882,6 +882,48 @@ export class AssetReuseService {
     const available = new Set(rows.map((r) => r.id));
     return new Set(ids.filter((id) => !available.has(id)));
   }
+  /** Read-only recovery of a pinned illustration omitted from an ungrounded playable map.
+   * Never consult mutable author drafts or infer a position on this raster. */
+  private async sceneIllustrationBinding(
+    state: GameState,
+    actorId: string,
+    sourceVersionId: string | null,
+    query: (sql: string, values: unknown[]) => Promise<Record<string, unknown>[]> = (sql, values) =>
+      this.db.query(sql, values),
+  ) {
+    const actor = state.entities[actorId];
+    const map = actor && state.maps[actor.mapId];
+    if (
+      !sourceVersionId ||
+      actor?.kind !== 'player' ||
+      !map ||
+      map.backgroundMode !== 'schematic' ||
+      map.spatialGrounding
+    )
+      return null;
+    const slot = `map:${map.id}:background`;
+    const rows = await query(
+      `SELECT p.slot,r.id AS "revisionId",r.sha256,r.mime,r.width,r.height,p.rights_snapshot
+       FROM art_playable_pins p JOIN art_asset_revisions r ON r.id=p.revision_id
+       JOIN art_asset_families f ON f.id=r.family_id JOIN users u ON u.id=f.owner_id
+       JOIN assets a ON a.id=r.upload_id
+       WHERE p.playable_version_id=$1 AND p.slot=$2 AND u.deleted_at IS NULL
+       AND NOT EXISTS(SELECT 1 FROM art_asset_takedowns t WHERE t.revision_id=r.id)`,
+      [sourceVersionId, slot],
+    );
+    if (rows.length !== 1) return null;
+    const parsed = frozenArtBindingsSchema.safeParse(
+      rows.map(({ rights_snapshot: _rights, ...binding }) => binding),
+    );
+    if (!parsed.success || parsed.data[0].slot !== slot) return null;
+    const rights = rows[0].rights_snapshot as Record<string, unknown> | null;
+    return {
+      ...parsed.data[0],
+      mapId: map.id,
+      attribution: String(rights?.attribution ?? '').slice(0, 240),
+      licenseLabel: String(rights?.licenseLabel ?? '').slice(0, 120),
+    };
+  }
   async visibleManifestForState(
     campaignId: string,
     actorId: string,
@@ -955,7 +997,14 @@ export class AssetReuseService {
         continue;
       framing.set(`${b.slot}:${b.revisionId}`, f);
     }
+    const illustration = await this.sceneIllustrationBinding(state, actorId, sourceVersionId);
     return {
+      sceneIllustration: illustration
+        ? {
+            ...illustration,
+            url: `/api/v1/asset-library/revisions/${illustration.revisionId}/file?campaignId=${campaignId}`,
+          }
+        : null,
       bindings: visible.map((b) => ({
         ...(framing.get(`${b.slot}:${b.revisionId}`)
           ? { imageFraming: framing.get(`${b.slot}:${b.revisionId}`) }
@@ -1022,10 +1071,16 @@ export class AssetReuseService {
           )
         ).rows[0];
         if (!campaign) fail(404, 'NOT_FOUND', 'NOT_FOUND');
-        const visible = projectVisibleArtBindings(
-          this.runtimeStateReader?.(context.campaignId) ?? (campaign.state as GameState),
+        const currentState =
+          this.runtimeStateReader?.(context.campaignId) ?? (campaign.state as GameState);
+        const visible = projectVisibleArtBindings(currentState, campaign.actor_id as string);
+        const illustration = await this.sceneIllustrationBinding(
+          currentState,
           campaign.actor_id as string,
+          campaign.source_version_id,
+          async (sql, values) => (await c.query(sql, values)).rows,
         );
+        if (illustration) visible.push(illustration);
         if (!visible.some((b: FrozenArtBinding) => b.revisionId === revisionId))
           fail(404, 'ASSET_NOT_FOUND', 'ASSET_NOT_FOUND');
         versionId = campaign.source_version_id;

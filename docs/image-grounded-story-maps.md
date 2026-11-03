@@ -80,12 +80,27 @@ fresh disposable local cluster and injected providers only.
 An image-backed story no longer requires an administrator to enable vision before it
 can start. When the configured text profile has no `storyVision` policy, uncompiled
 preparations derive a text-only schematic source. The existing estimate explains that
-the illustration is not analyzed, is not used as the schematic background, and image
-analysis is not priced. Original artwork remains saved in the story assets. The
+the illustration is displayed separately from unverified positions and image analysis
+is not priced. Original artwork remains saved in the story assets. The
 source/checksum and quote distinguish this mode, so an earlier estimate cannot be
 silently reused. No second confirmation or hidden image request is introduced.
 
 This fallback is only for an absent policy. A configured but expired/invalid vision
 policy still fails before dispatch, rather than silently changing an accepted mode.
-Already compiled/live campaigns are unchanged. The schematic is a playable temporary
-alternative, not a claim that the original raster was understood or its spawn repaired.
+Saved campaign state is unchanged. The illustration view is a temporary alternative,
+not a claim that the original raster was understood or its spawn repaired.
+
+### Displaying preserved location art without invented coordinates
+
+When image analysis is not configured, the gameplay scene displays the saved location
+illustration, with separate participant, object, exit and inventory controls. It does
+not overlay unverified tokens or expose the schematic tile renderer as the scene.
+This is an illustration view, not completed image-aware placement. The existing
+estimate and scene explain that distinction without adding a consent step.
+
+Previously created schematic campaigns recover only the current map's exact immutable
+playable background pin. The manifest returns it separately as `sceneIllustration`;
+the ordinary projected art allowlist is unchanged. Both manifest and file access
+recompute current-map eligibility, require source access and a live owner, and honor
+takedowns. Missing or ambiguous pins fail closed. No author draft, campaign rewrite,
+provider call, regeneration or new charge is involved in this recovery.

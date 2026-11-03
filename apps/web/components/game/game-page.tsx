@@ -22,6 +22,7 @@ import { HeroSelection, useHeroSelection, useHeroText, CampaignHero } from './he
 import { useLaunchGate } from './use-launch-gate';
 import { localizedProjection } from './localized-projection';
 import { NarrativePreferences } from './narrative-preferences';
+import { LocationIllustration } from './location-illustration';
 import { GameCanvas } from './game-canvas';
 import { TurnControls } from './turn-controls';
 import { useTurnText } from './turn-messages';
@@ -240,8 +241,8 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
   }>(`/game/campaigns/${campaignId}/members`);
   const game = useGame(campaignId);
   const p = useMemo(() => localizedProjection(game.projection, locale), [game.projection, locale]);
-  const fetchedArt = useCampaignArt(campaignId, p?.map.id || '');
-  const art = p ? authorizedArt(p, fetchedArt) : [];
+  const sceneMedia = useCampaignArt(campaignId, p?.map.id || '');
+  const art = p ? authorizedArt(p, sceneMedia.art) : [];
   const artText = useAssetText();
   const artCredits = art.filter(
     (entry) =>
@@ -494,26 +495,46 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
       </div>
       <div className={styles.playGrid} data-testid="game-play-surface" ref={fitPlaySurface}>
         <div className={styles.sceneColumn}>
-          <GameCanvas
-            projection={p}
-            art={art}
-            disabled={controlsDisabled}
-            planning={!!encounter}
-            onStop={game.stop}
-            onInspectNpc={setInspectedNpcId}
-            onAction={act}
-            onApproach={approach}
-            onSelectNpc={(npcId) => {
-              const npc = p.entities.find((entity) => entity.id === npcId && entity.kind === 'npc');
-              if (npc) setRecipient({ id: npc.id, label: npc.label || t('NPC') });
-            }}
-            onMove={(target) => {
-              if (encounter) setSelected({ kind: 'move_to', target });
-              else game.move(target);
-            }}
-            reducedMotion={!!user?.settings.reducedMotion}
-          />
-          <p className={styles.inspectionHelp}>{turnText('inspectHint')}</p>
+          {p.map.backgroundMode === 'schematic' && !p.map.spatialGrounding ? (
+            <LocationIllustration
+              key={`${campaignId}:${p.map.id}`}
+              projection={p}
+              illustration={sceneMedia.illustration}
+              disabled={controlsDisabled}
+              onAction={act}
+              onApproach={approach}
+              onInspectNpc={setInspectedNpcId}
+              onSay={(npcId) => {
+                const npc = p.entities.find((e) => e.id === npcId && e.kind === 'npc');
+                if (npc) setRecipient({ id: npc.id, label: npc.label || t('NPC') });
+              }}
+            />
+          ) : (
+            <GameCanvas
+              projection={p}
+              art={art}
+              disabled={controlsDisabled}
+              planning={!!encounter}
+              onStop={game.stop}
+              onInspectNpc={setInspectedNpcId}
+              onAction={act}
+              onApproach={approach}
+              onSelectNpc={(npcId) => {
+                const npc = p.entities.find(
+                  (entity) => entity.id === npcId && entity.kind === 'npc',
+                );
+                if (npc) setRecipient({ id: npc.id, label: npc.label || t('NPC') });
+              }}
+              onMove={(target) => {
+                if (encounter) setSelected({ kind: 'move_to', target });
+                else game.move(target);
+              }}
+              reducedMotion={!!user?.settings.reducedMotion}
+            />
+          )}
+          {p.map.backgroundMode !== 'schematic' && (
+            <p className={styles.inspectionHelp}>{turnText('inspectHint')}</p>
+          )}
           <div className={styles.inspectionButtons}>
             {p.entities
               .filter((e) => e.kind === 'npc')
