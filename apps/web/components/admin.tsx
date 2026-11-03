@@ -9,6 +9,10 @@ import { useCallback, useState, type FormEvent } from 'react';
 import {
   Activity,
   ArrowRight,
+  ArrowRightLeft,
+  Clock3,
+  Crown,
+  UserRound,
   BookOpen,
   Check,
   ClipboardList,
@@ -43,6 +47,8 @@ import { useLiveTestStatus } from './live-test/live-test-panel';
 import { useLiveText } from './live-test/messages';
 import styles from './studio/admin.module.css';
 import { AdminTaxonomy } from './studio/admin-taxonomy';
+import detailStyles from './studio/admin-detail.module.css';
+import { AdminAvatar, AdminCover } from './studio/admin-detail-media';
 
 type Report = {
   id: string;
@@ -271,19 +277,20 @@ function AdminUsers() {
     }
   }
   return (
-    <>
-      <div className={styles.sectionHeading}>
+    <section className={detailStyles.surface}>
+      <div className={detailStyles.heading}>
         <Users size={22} />
         <h2>{t('Пользователи')}</h2>
       </div>
       <form
         method="post"
-        className={styles.search}
+        className={detailStyles.search}
         onSubmit={(e) => {
           e.preventDefault();
           setSearch(query);
         }}
       >
+        <Search size={22} aria-hidden="true" />
         <Input
           aria-label={t('Поиск пользователей')}
           placeholder={t('Имя, handle или email')}
@@ -291,7 +298,6 @@ function AdminUsers() {
           onChange={(e) => setQuery(e.target.value)}
         />
         <Button type="submit" variant="secondary">
-          <Search size={16} />
           {t('Найти')}
         </Button>
       </form>
@@ -299,8 +305,8 @@ function AdminUsers() {
       {users.loading ? (
         <Loading />
       ) : users.data?.length ? (
-        <div className="table-wrap">
-          <table className="table">
+        <div className={`table-wrap ${detailStyles.tableWrap}`}>
+          <table className={`table ${detailStyles.table}`}>
             <thead>
               <tr>
                 <th>{t('Пользователь')}</th>
@@ -314,25 +320,37 @@ function AdminUsers() {
               {users.data.map((u) => (
                 <tr key={u.id}>
                   <td>
-                    <strong>{u.name}</strong>
-                    <small className={styles.secondary}>@{u.handle}</small>
+                    <div className={detailStyles.person}>
+                      <AdminAvatar name={u.name} assetId={u.avatarAssetId} />
+                      <span>
+                        <strong>{u.name}</strong>
+                        <small className={detailStyles.secondary}>@{u.handle}</small>
+                      </span>
+                    </div>
                   </td>
                   <td>{u.email}</td>
                   <td>
-                    <Badge tone={u.role === 'admin' ? 'green' : ''}>
+                    <span className={detailStyles.role} data-admin={u.role === 'admin'}>
+                      {u.role === 'admin' ? (
+                        <Crown size={20} aria-hidden="true" />
+                      ) : (
+                        <UserRound size={20} aria-hidden="true" />
+                      )}
                       {u.role === 'admin' ? t('Администратор') : t('Пользователь')}
-                    </Badge>
+                    </span>
                   </td>
                   <td>{date(u.createdAt)}</td>
                   <td>
                     <Button
                       variant="ghost"
+                      className={detailStyles.roleAction}
                       disabled={u.id === user?.id}
                       onClick={() => {
                         setError('');
                         setTarget(u);
                       }}
                     >
+                      <ArrowRightLeft size={20} aria-hidden="true" />
                       {u.id === user?.id ? t('Это вы') : t('Изменить роль')}
                     </Button>
                   </td>
@@ -370,7 +388,7 @@ function AdminUsers() {
           </div>
         </Modal>
       )}
-    </>
+    </section>
   );
 }
 
@@ -433,12 +451,12 @@ function AdminContent() {
       .includes(query.toLowerCase()),
   );
   return (
-    <>
-      <div className={styles.sectionHeading}>
+    <section className={detailStyles.surface}>
+      <div className={detailStyles.heading}>
         <Shield size={22} />
         <h2>{t('Модерация контента')}</h2>
       </div>
-      <div className="row">
+      <div className={detailStyles.contentTabs}>
         <Button
           variant={tab === 'adventures' ? 'primary' : 'secondary'}
           onClick={() => setTab('adventures')}
@@ -449,13 +467,16 @@ function AdminContent() {
           NPC
         </Button>
       </div>
-      <div className={styles.filters}>
-        <Input
-          aria-label={t('Поиск контента')}
-          placeholder={t('Поиск по названию или автору')}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+      <div className={detailStyles.filters}>
+        <div className={detailStyles.filterSearch}>
+          <Search size={22} aria-hidden="true" />
+          <Input
+            aria-label={t('Поиск контента')}
+            placeholder={t('Поиск по названию или автору')}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
         {tab === 'adventures' && (
           <Select
             aria-label={t('Статус публикации')}
@@ -476,8 +497,8 @@ function AdminContent() {
           {adventures.loading ? (
             <Loading />
           ) : filtered.length ? (
-            <div className="table-wrap">
-              <table className="table">
+            <div className={`table-wrap ${detailStyles.tableWrap}`}>
+              <table className={`table ${detailStyles.table}`}>
                 <thead>
                   <tr>
                     <th>{t('Приключение')}</th>
@@ -491,20 +512,34 @@ function AdminContent() {
                   {filtered.map((a) => (
                     <tr key={a.id}>
                       <td>
-                        <strong>{selectAdventureText(a, locale).title}</strong>
-                        <small className={styles.secondary}>
-                          {a.genre} {t(' · версия ')}
-                          {a.version || '—'}
-                        </small>
+                        <div className={detailStyles.story}>
+                          <AdminCover assetId={a.coverAssetId} />
+                          <span>
+                            <strong>{selectAdventureText(a, locale).title}</strong>
+                            <small className={detailStyles.secondary}>
+                              {a.genre} {t(' · версия ')}
+                              {a.version || '—'}
+                            </small>
+                          </span>
+                        </div>
                       </td>
-                      <td>{a.author?.name || a.ownerId}</td>
                       <td>
-                        <Badge>{t(statusLabel[a.status])}</Badge>
+                        <div className={detailStyles.author}>
+                          <AdminAvatar name={a.author?.name || ''} />
+                          <span>{a.author?.name || a.ownerId}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className={detailStyles.status} data-status={a.status}>
+                          {a.status === 'pending_review' && <Clock3 size={18} aria-hidden="true" />}
+                          {a.status === 'published' && <Check size={18} aria-hidden="true" />}
+                          {t(statusLabel[a.status])}
+                        </span>
                       </td>
                       <td>{date(a.updatedAt)}</td>
                       <td>
                         <Button
-                          variant="secondary"
+                          variant="primary"
                           onClick={() => {
                             setTarget(a);
                             setPlayableReviewed(false);
@@ -521,6 +556,7 @@ function AdminContent() {
                           }}
                         >
                           {t('Рассмотреть')}
+                          <ArrowRight size={18} aria-hidden="true" />
                         </Button>
                       </td>
                     </tr>
@@ -600,122 +636,158 @@ function AdminContent() {
           title={t('Проверка: {title}', { title: target.title })}
           onClose={() => setTarget(null)}
         >
-          <div className={styles.reviewContent}>
-            <Badge>{t(statusLabel[target.status])}</Badge>
-            <p className="muted">
-              {t('Оригинал')} · {(target.sourceLanguage || 'ru').toUpperCase()}
-            </p>
-            <p>{target.synopsis}</p>
-            <p>
-              {t('Теги')}: {target.tags.join(' · ')}
-            </p>
-            {Object.entries(target.translations || {}).some(
-              ([, entry]) => entry?.sourceRevision === target.sourceRevision,
-            ) && (
-              <details>
-                <summary>{t('Переводы метаданных')}</summary>
-                {(['uk', 'en', 'ru'] as const).map((language) => {
-                  const translation = target.translations?.[language];
-                  if (!translation || translation.sourceRevision !== target.sourceRevision)
-                    return null;
-                  const text = selectAdventureText(target, language);
-                  return (
-                    <section key={language}>
-                      <Badge>
-                        {language.toUpperCase()} · {t('Актуальный перевод')}
-                      </Badge>
-                      <h4>{text.title}</h4>
-                      <p>{text.synopsis}</p>
-                      <p>
-                        {t('Теги')}:{' '}
-                        {Object.entries(translation.tags ?? {})
-                          .map(([original, label]) => `${original} → ${label}`)
-                          .join(' · ')}
-                      </p>
-                    </section>
-                  );
-                })}
+          <div className={detailStyles.reviewLayout}>
+            <article className={detailStyles.reviewContent}>
+              <div className={detailStyles.reviewHero}>
+                <AdminCover key={target.coverAssetId} assetId={target.coverAssetId} />
+                <div>
+                  <span className={detailStyles.status} data-status={target.status}>
+                    {t(statusLabel[target.status])}
+                  </span>
+                  <p className={detailStyles.secondary}>
+                    {t('Оригинал')} · {(target.sourceLanguage || 'ru').toUpperCase()}
+                  </p>
+                  <h3>{target.title}</h3>
+                </div>
+              </div>
+              <h4>{t('Синопсис')}</h4>
+              <p>{target.synopsis || t('Не указаны')}</p>
+              <h4>{t('Теги')}</h4>
+              <div className={detailStyles.tags}>
+                {target.tags.map((tag) => (
+                  <span key={tag}>{tag}</span>
+                ))}
+                {!target.tags.length && <span>{t('Не указаны')}</span>}
+              </div>
+              {Object.entries(target.translations || {}).some(
+                ([, entry]) => entry?.sourceRevision === target.sourceRevision,
+              ) && (
+                <details>
+                  <summary>{t('Переводы метаданных')}</summary>
+                  {(['uk', 'en', 'ru'] as const).map((language) => {
+                    const translation = target.translations?.[language];
+                    if (!translation || translation.sourceRevision !== target.sourceRevision)
+                      return null;
+                    const text = selectAdventureText(target, language);
+                    return (
+                      <section key={language}>
+                        <Badge>
+                          {language.toUpperCase()} · {t('Актуальный перевод')}
+                        </Badge>
+                        <h4>{text.title}</h4>
+                        <p>{text.synopsis}</p>
+                        <p>
+                          {t('Теги')}:{' '}
+                          {Object.entries(translation.tags ?? {})
+                            .map(([original, label]) => `${original} → ${label}`)
+                            .join(' · ')}
+                        </p>
+                      </section>
+                    );
+                  })}
+                </details>
+              )}
+              <details open>
+                <summary>{t('Мир и правила')}</summary>
+                <p>{target.content.world}</p>
+                <p>{target.content.rules}</p>
               </details>
-            )}
-            <details open>
-              <summary>{t('Мир и правила')}</summary>
-              <p>{target.content.world}</p>
-              <p>{target.content.rules}</p>
-            </details>
-            <details>
-              <summary>{t('Локации и сцены')}</summary>
-              {target.content.locations.map((l) => (
-                <div key={l.id}>
-                  <h4>{l.name}</h4>
-                  <p>{l.description}</p>
-                </div>
-              ))}
-              {target.content.scenes.map((s) => (
-                <div key={s.id}>
-                  <h4>{s.name}</h4>
-                  <p>{s.description}</p>
-                </div>
-              ))}
-            </details>
-            <p>
-              <strong>{t('Предупреждения:')}</strong>{' '}
-              {target.content.boundaries.join(', ') || t('Не указаны')}
-            </p>
-            <p className="muted">
-              NPC: {target.content.npcIds.length}
-              {t('. Содержимое персонажей можно проверить в отдельной вкладке NPC.')}
-            </p>
-          </div>
-          {target.status === 'pending_review' && target.visibility === 'public' && (
-            <PlayableReview
-              key={target.id}
-              adventureId={target.id}
-              onReviewed={onPlayableReviewed}
-            />
-          )}
-          <form method="post" className="stack" onSubmit={(e) => void moderate(e)}>
-            <Field label={t('Решение')}>
-              <Select
-                value={decision}
-                onChange={(e) => setDecision(e.target.value as typeof decision)}
+              <details>
+                <summary>{t('Локации и сцены')}</summary>
+                {target.content.locations.map((l) => (
+                  <div key={l.id}>
+                    <h4>{l.name}</h4>
+                    <p>{l.description}</p>
+                  </div>
+                ))}
+                {target.content.scenes.map((s) => (
+                  <div key={s.id}>
+                    <h4>{s.name}</h4>
+                    <p>{s.description}</p>
+                  </div>
+                ))}
+              </details>
+              <p>
+                <strong>{t('Предупреждения:')}</strong>{' '}
+                {target.content.boundaries.join(', ') || t('Не указаны')}
+              </p>
+              <p className="muted">
+                NPC: {target.content.npcIds.length}
+                {t('. Содержимое персонажей можно проверить в отдельной вкладке NPC.')}
+              </p>
+            </article>
+            <aside className={detailStyles.decision}>
+              <h3>{t('Решение')}</h3>
+              <form
+                id="admin-moderation-decision"
+                method="post"
+                className={detailStyles.decisionForm}
+                onSubmit={(e) => void moderate(e)}
               >
-                <option
-                  value="approve"
-                  disabled={target.status !== 'pending_review' || target.visibility !== 'public'}
+                <Field label={t('Решение')}>
+                  <Select
+                    value={decision}
+                    onChange={(e) => setDecision(e.target.value as typeof decision)}
+                  >
+                    <option
+                      value="approve"
+                      disabled={
+                        target.status !== 'pending_review' || target.visibility !== 'public'
+                      }
+                    >
+                      {t('Одобрить и опубликовать версию')}
+                    </option>
+                    <option value="reject">{t('Вернуть автору на доработку')}</option>
+                    <option value="quarantine">{t('Убрать из каталога (карантин)')}</option>
+                  </Select>
+                </Field>
+                <Field label={t('Причина решения')}>
+                  <Textarea
+                    required
+                    minLength={3}
+                    maxLength={2000}
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder={t('Что проверено или что нужно исправить?')}
+                  />
+                </Field>
+                <ErrorBox message={error} />
+              </form>
+              <section
+                className={detailStyles.readiness}
+                aria-label={t('Проверка игровой готовности')}
+              >
+                <h3>{t('Проверка игровой готовности')}</h3>
+                {target.status === 'pending_review' && target.visibility === 'public' ? (
+                  <PlayableReview
+                    key={target.id}
+                    adventureId={target.id}
+                    onReviewed={onPlayableReviewed}
+                  />
+                ) : (
+                  <p className="muted">
+                    {t('Проверка игровой версии доступна для публичной заявки на модерации.')}
+                  </p>
+                )}
+              </section>
+              <div className={detailStyles.decisionActions}>
+                <Button variant="secondary" type="button" onClick={() => setTarget(null)}>
+                  {t('Отмена')}
+                </Button>
+                <Button
+                  busy={busy}
+                  disabled={decision === 'approve' && !playableReviewed}
+                  type="submit"
+                  form="admin-moderation-decision"
                 >
-                  {t('Одобрить и опубликовать версию')}
-                </option>
-                <option value="reject">{t('Вернуть автору на доработку')}</option>
-                <option value="quarantine">{t('Убрать из каталога (карантин)')}</option>
-              </Select>
-            </Field>
-            <Field label={t('Причина решения')}>
-              <Textarea
-                required
-                minLength={3}
-                maxLength={2000}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder={t('Что проверено или что нужно исправить?')}
-              />
-            </Field>
-            <ErrorBox message={error} />
-            <div className="form-actions">
-              <Button variant="secondary" type="button" onClick={() => setTarget(null)}>
-                {t('Отмена')}
-              </Button>
-              <Button
-                busy={busy}
-                disabled={decision === 'approve' && !playableReviewed}
-                type="submit"
-              >
-                {t('Сохранить решение')}
-              </Button>
-            </div>
-          </form>
+                  {t('Сохранить решение')}
+                </Button>
+              </div>
+            </aside>
+          </div>
         </Modal>
       )}
-    </>
+    </section>
   );
 }
 

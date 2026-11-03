@@ -12,6 +12,16 @@ export const intlLocales: Record<Locale, string> = { uk: 'uk-UA', en: 'en-GB', r
 const messages: Record<string, Record<Locale, string>> = {
   ...gameMessages,
   ...directorMessages,
+  'Проверка игровой готовности': {
+    ru: 'Проверка игровой готовности',
+    en: 'Gameplay readiness review',
+    uk: 'Перевірка ігрової готовності',
+  },
+  'Проверка игровой версии доступна для публичной заявки на модерации.': {
+    ru: 'Проверка игровой версии доступна для публичной заявки на модерации.',
+    en: 'Gameplay review is available for a public submission awaiting moderation.',
+    uk: 'Перевірка ігрової версії доступна для публічної заявки на модерації.',
+  },
   'Анализ изображений карт пока не настроен. Администратору нужно проверить модель и стоимость.': {
     ru: 'Анализ изображений карт пока не настроен. Администратору нужно проверить модель и стоимость.',
     en: 'Map image analysis is not configured yet. An administrator needs to review the model and pricing.',
