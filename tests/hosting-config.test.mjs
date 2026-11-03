@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
 import { readFileSync, readdirSync } from 'node:fs';
 import { partitionBrowserFiles } from '../scripts/browser-shard.mjs';
+import { webEnvironment } from '../scripts/server-environment.mjs';
 function load(overrides) {
   const env = { ...process.env, VERCEL: '1', API_URL: '', ...overrides };
   return spawnSync(
@@ -66,4 +67,40 @@ test('browser partitions preserve every test file exactly once and balance long 
   for (const index of [1, 2])
     assert.ok(workflow.includes(`node scripts/browser-shard.mjs ${index}/2`));
   assert.equal((workflow.match(/runner.temp \}\}\/dreamwalk-web.log/g) ?? []).length, 2);
+});
+
+test('prebuilt browser CI keeps both complete shards and the API test environment', () => {
+  const workflow = readFileSync('.github/workflows/platform.yml', 'utf8');
+  const launcher = readFileSync('scripts/dev.mjs', 'utf8');
+  assert.equal((workflow.match(/NODE_ENV=production npm run build:web/g) ?? []).length, 2);
+  assert.equal(
+    (workflow.match(/NODE_ENV=development npm run dev -- --prebuilt-web/g) ?? []).length,
+    2,
+  );
+  assert.match(launcher, /prebuiltWeb \? 'start' : 'dev'/);
+  assert.match(
+    launcher,
+    /env: webEnvironment\(prebuiltWeb \? \{ \.\.\.process.env, NODE_ENV: 'production' \} : process.env\)/,
+  );
+  const input = {
+    NODE_ENV: 'development',
+    DATABASE_URL: 'synthetic-private-database',
+    NPC_AI_API_KEY: 'synthetic-private-key',
+    API_URL: 'http://127.0.0.1:4000',
+  };
+  assert.deepEqual(webEnvironment({ ...input, NODE_ENV: 'production' }), {
+    NODE_ENV: 'production',
+    API_URL: input.API_URL,
+  });
+  assert.equal(input.NODE_ENV, 'development');
+});
+
+test('prebuilt browser launch rejects absent output before opening a database', () => {
+  const result = spawnSync(process.execPath, ['scripts/dev.mjs', '--prebuilt-web'], {
+    env: { ...process.env, DREAMWALK_WEB_DIST_DIR: '.next-ci-missing-output' },
+    encoding: 'utf8',
+    timeout: 15000,
+  });
+  assert.notEqual(result.status, 0);
+  assert.match(result.stderr, /Run the production web build before --prebuilt-web/);
 });

@@ -145,9 +145,10 @@ jobs:
         env:
           ASSET_DIR: ${{ runner.temp }}/dreamwalk-browser-1-assets
         run: |
-          # The existing dev launcher builds dependencies/API, migrates and seeds
-          # this shard's database before starting the same application as before.
-          setsid env NODE_ENV=development npm run dev > "$RUNNER_TEMP/dreamwalk-web.log" 2>&1 &
+          # Compile this exact checkout once, rather than compiling each route
+          # during browser journeys. API mock gates and shard isolation stay intact.
+          NODE_ENV=production npm run build:web
+          setsid env NODE_ENV=development npm run dev -- --prebuilt-web > "$RUNNER_TEMP/dreamwalk-web.log" 2>&1 &
           APP_PID=$!
           trap 'kill -- "-$APP_PID" 2>/dev/null || true' EXIT
           ready=false
@@ -253,9 +254,10 @@ jobs:
         env:
           ASSET_DIR: ${{ runner.temp }}/dreamwalk-browser-2-assets
         run: |
-          # The existing dev launcher builds dependencies/API, migrates and seeds
-          # this shard's database before starting the same application as before.
-          setsid env NODE_ENV=development npm run dev > "$RUNNER_TEMP/dreamwalk-web.log" 2>&1 &
+          # Compile this exact checkout once, rather than compiling each route
+          # during browser journeys. API mock gates and shard isolation stay intact.
+          NODE_ENV=production npm run build:web
+          setsid env NODE_ENV=development npm run dev -- --prebuilt-web > "$RUNNER_TEMP/dreamwalk-web.log" 2>&1 &
           APP_PID=$!
           trap 'kill -- "-$APP_PID" 2>/dev/null || true' EXIT
           ready=false
