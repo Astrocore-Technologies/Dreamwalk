@@ -138,12 +138,12 @@ test('catalog filters, sorting, hero links, query navigation and empty/error rec
     route.fulfill({ status: 503, json: { message: 'Synthetic unavailable' } }),
   );
   await page.reload();
-  await expect(page.getByRole('alert')).toContainText(
+  await expect(page.locator('.discovery-catalog .error-box[role="alert"]')).toContainText(
     'Не удалось выполнить запрос. Попробуйте ещё раз.',
   );
   await page.unroute('**/api/v1/adventures?*');
   await fixtures(page);
-  await page.getByRole('alert').getByRole('button').click();
+  await page.locator('.discovery-catalog .error-box[role="alert"]').getByRole('button').click();
   await expect(cards).toHaveCount(1);
 });
 
