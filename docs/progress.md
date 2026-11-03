@@ -999,3 +999,26 @@ is a presentation change, not removal of safety rules or existing author data.
 Added source regression checks and a public mobile browser case that checks the
 panels are absent while API metadata remains unchanged. Browser verification uses CI;
 this executor cannot launch Chromium under its Unix-socket restrictions.
+
+## Preserve authored NPC public presentation (2026-11-03)
+
+Public speech now includes the authored speaker's existing public name and role when
+all listeners can see that speaker. Unseen or unauthorized speakers do not disclose
+identity. Legacy saved speech styles map only exact known labels to bounded public
+styles; explicit public style wins. Arbitrary private prose, biographies, motives and
+examples stay private, and saved state is not migrated by projection.
+
+Speech response guidance permits optional concise observable gestures alongside
+spoken words, preserving player agency and treating player assertions as attributed
+claims rather than verified canon. Descriptive gestures do not move tokens, create
+items or grant authority. This does not implement companion following or automatic
+scene/NPC creation. Regression coverage includes old saves, private-text exclusion,
+prototype-key style inputs, hidden speakers and authenticated speech context.
+
+Verification before draft publication: all 207 core tests and 17 focused provider,
+semantic-context and reply-binding tests passed, as did focused lint and formatting.
+Independent review found an inherited-object-key style lookup edge case, fixed with
+an own-property check and regression tests. Full API build and repository-wide lint
+hit local resource/dependency limitations; two dependency-install attempts were
+interrupted or killed (exit 137). Authenticated PostgreSQL integration and aggregate
+checks therefore remain for CI. No paid model call or production mutation was used.

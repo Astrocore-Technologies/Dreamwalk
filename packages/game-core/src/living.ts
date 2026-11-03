@@ -1328,6 +1328,22 @@ export function validateNpcSummary(state: GameState, npcId: string, input: unkno
       c.kind === source[i]!.kind,
   );
 }
+/** Legacy free text is private. Project only exact, known presentation labels, never prose. */
+function publicNpcSpeechStyle(personality: NpcPersonality) {
+  if (personality.publicSpeechStyle) return personality.publicSpeechStyle;
+  const legacyStyles: Record<string, NonNullable<NpcPersonality['publicSpeechStyle']>> = {
+    neutral: 'neutral',
+    warm: 'warm',
+    friendly: 'warm',
+    formal: 'formal',
+    terse: 'terse',
+    brief: 'terse',
+    reserved: 'terse',
+    wry: 'wry',
+  };
+  const style = personality.speechStyle.trim().toLowerCase();
+  return Object.hasOwn(legacyStyles, style) ? legacyStyles[style] : 'neutral';
+}
 /** Disclosure is checked for the complete audience, not just an intended addressee. */
 export function buildNpcPublicSpeechContext(
   state: GameState,
@@ -1395,10 +1411,16 @@ export function buildNpcPublicSpeechContext(
     npcId,
     replyLocale: locale,
     audienceIds: audience,
-    ...(npc.supportingNpc
-      ? { publicIdentity: { name: npc.label, role: npc.supportingNpc.roleLabel } }
+    // An audible but unseen speaker must not reveal a hidden authored identity.
+    ...(audience.every((id) => id === npcId || observedVisible(state, state.entities[id], npc))
+      ? {
+          publicIdentity: {
+            name: npc.label,
+            role: npc.supportingNpc?.roleLabel ?? npc.publicProfile?.role ?? '',
+          },
+        }
       : {}),
-    publicSpeechStyle: m.personality.publicSpeechStyle ?? 'neutral',
+    publicSpeechStyle: publicNpcSpeechStyle(m.personality),
     claims,
     ...(m.personality.characterization
       ? {

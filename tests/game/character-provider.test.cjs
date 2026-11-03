@@ -74,3 +74,19 @@ test('presentation preference is not a canon, action or audience override', () =
     assert.match(body.instructions, /confirmed|committed|authoritative/i);
   }
 });
+
+test('NPC reply permits concise observable roleplay without promoting claims or actions', () => {
+  for (const purpose of ['speech', 'story_turn']) {
+    const body = JSON.parse(
+      buildOpenAiNpcRequestBody(config, purpose, { mode: 'npc', replyLocale: 'ru' }),
+    );
+    assert.match(body.instructions, /brief observable gesture, expression or tone/);
+    assert.match(body.instructions, /do not force an emote into every reply/);
+    assert.match(body.instructions, /not a movement, inventory change or completed game action/);
+    assert.match(body.instructions, /without asserting that the claim is verified/);
+    assert.match(body.instructions, /not proof that the described world fact is true/);
+    assert.match(body.instructions, /never invent the speech of the player/);
+  }
+  const body = JSON.parse(buildOpenAiNpcRequestBody(config, 'speech', {}));
+  assert.match(body.text.format.schema.properties.text.description, /brief observable gesture/);
+});

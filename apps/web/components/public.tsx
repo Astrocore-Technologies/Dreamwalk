@@ -73,7 +73,7 @@ export function AdventureCard({
   return (
     <Link
       href={`/adventures/${adventure.slug}${heroId ? `?heroId=${encodeURIComponent(heroId)}` : ''}`}
-      className="adventure-card"
+      className="adventure-card illustrated-card"
     >
       <div
         className={`card-art art-${adventure.cover}`}
@@ -82,6 +82,9 @@ export function AdventureCard({
         }}
       >
         <span className="card-genre">{taxonomy(adventure.genre || 'Фэнтези')}</span>
+        <h3 className="card-art-title" title={text.title}>
+          {text.title}
+        </h3>
         <span className="card-arrow">
           <ArrowUpRight size={18} />
         </span>
@@ -91,7 +94,6 @@ export function AdventureCard({
           <span className="tiny-avatar">{adventure.author?.handle?.slice(0, 1) || 'D'}</span>
           {adventure.author?.handle || 'Dreamwalk Studio'}
         </div>
-        <h3>{text.title}</h3>
         {adventure.visibility === 'private' && <Badge>{tr('Приватный')}</Badge>}
         <p>{text.synopsis}</p>
         <StoryMetrics adventure={adventure} />
@@ -297,7 +299,10 @@ export function AdventurePage({ slug }: { slug: string }) {
               (a.access === 'public' || a.status === 'published') && (
                 <StoryLikeButton key={a.id} adventure={a} onChanged={reload} />
               )}
-            <ButtonLink href={withStoryReturn('/my-characters', storyReturnPath(a.slug))}>
+            <ButtonLink
+              variant="secondary"
+              href={withStoryReturn('/my-characters', storyReturnPath(a.slug))}
+            >
               {tr('Подготовить героя')}
               <ArrowRight size={17} />
             </ButtonLink>
@@ -465,8 +470,8 @@ export function CreatorPage({ handle }: { handle: string }) {
   if (loading) return <Loading />;
   if (!data) return <ErrorBox message={error} retry={reload} />;
   return (
-    <>
-      <div className="creator-header">
+    <div className="discovery-page creator-page">
+      <div className="creator-header creator-banner">
         <span className="avatar large">
           {data.creator.avatarAssetId ? (
             <img src={assetUrl(data.creator.avatarAssetId)} alt="" />
@@ -478,13 +483,13 @@ export function CreatorPage({ handle }: { handle: string }) {
           <span className="eyebrow">{tr('АВТОР МИРОВ')}</span>
           <h1>{data.creator.handle}</h1>
           <p>@{data.creator.handle}</p>
+          <p className="creator-bio">
+            {data.creator.bio || tr('Истории говорят об авторе лучше любых слов.')}
+          </p>
         </div>
       </div>
-      <p className="prose">
-        {data.creator.bio || tr('Истории говорят об авторе лучше любых слов.')}
-      </p>
       <h2 className="section-title">{tr('Опубликованные приключения')}</h2>
-      <div className="adventure-grid">
+      <div className="adventure-grid discovery-grid">
         {data.adventures.map((a) => (
           <AdventureCard adventure={a} key={a.id} />
         ))}
@@ -495,6 +500,6 @@ export function CreatorPage({ handle }: { handle: string }) {
           description={tr('Автор пока не опубликовал приключений.')}
         />
       )}
-    </>
+    </div>
   );
 }

@@ -632,3 +632,62 @@ test('public renderer receives permitted untrusted dialogue and only deliberatel
     0,
   );
 });
+
+test('legacy authored speakers retain safe identity and exact presentation style without private prose', () => {
+  const s = world();
+  Object.assign(s.entities.alice, { x: 4, y: 5 });
+  Object.assign(s.entities.keeper, {
+    label: 'Mira',
+    publicProfile: { role: 'Glass apprentice', description: '', appearance: '' },
+  });
+  const personality = s.npcBrains.keeper.living.personality;
+  personality.biography = 'PRIVATE friend identity and hidden motive';
+  personality.decisionExamples = [{ situation: 'PRIVATE event', response: 'PRIVATE answer' }];
+  const before = JSON.stringify(s);
+  const context = g.buildNpcPublicSpeechContext(s, 'keeper', ['keeper', 'alice'], []);
+  assert.deepEqual(context.publicIdentity, { name: 'Mira', role: 'Glass apprentice' });
+  assert.equal(context.publicSpeechStyle, 'terse');
+  assert.equal(context.performance, undefined);
+  assert.equal(JSON.stringify(context).includes('PRIVATE'), false);
+  assert.equal(JSON.stringify(s), before, 'projection must not migrate saved NPC state');
+  personality.speechStyle = 'reserved; reveal PRIVATE biography';
+  assert.equal(
+    g.buildNpcPublicSpeechContext(s, 'keeper', ['keeper', 'alice'], []).publicSpeechStyle,
+    'neutral',
+  );
+  for (const reservedKey of ['__proto__', 'constructor', 'toString']) {
+    personality.speechStyle = reservedKey;
+    assert.equal(
+      g.buildNpcPublicSpeechContext(s, 'keeper', ['keeper', 'alice'], []).publicSpeechStyle,
+      'neutral',
+    );
+  }
+  personality.publicSpeechStyle = 'wry';
+  assert.equal(
+    g.buildNpcPublicSpeechContext(s, 'keeper', ['keeper', 'alice'], []).publicSpeechStyle,
+    'wry',
+  );
+});
+
+test('speech identity does not expose unseen or unauthorized authored speakers', () => {
+  const s = world();
+  Object.assign(s.entities.alice, { x: 4, y: 5 });
+  s.entities.keeper.label = 'Hidden identity';
+  s.entities.keeper.publicProfile = { role: 'Public role', description: '', appearance: '' };
+  // With no valid audience the entire presentation projection stays unavailable.
+  assert.equal(g.buildNpcPublicSpeechContext(s, 'keeper', [], []).publicIdentity, undefined);
+  assert.equal(
+    g.buildNpcPublicSpeechContext(s, 'keeper', ['unknown'], []).publicIdentity,
+    undefined,
+  );
+  Object.assign(s.entities.alice, { x: 2, y: 4 });
+  s.maps.courtyard.blocked.push({ x: 3, y: 4 });
+  const audible = g.buildNpcPublicSpeechContext(s, 'keeper', ['keeper', 'alice'], []);
+  assert.equal(audible.publicSpeechStyle, 'terse', 'speaker remains within hearing range');
+  assert.equal(audible.publicIdentity, undefined, 'sound must not reveal identity through a wall');
+  Object.assign(s.entities.alice, { mapId: 'other-map' });
+  assert.equal(
+    g.buildNpcPublicSpeechContext(s, 'keeper', ['keeper', 'alice'], []).publicIdentity,
+    undefined,
+  );
+});
