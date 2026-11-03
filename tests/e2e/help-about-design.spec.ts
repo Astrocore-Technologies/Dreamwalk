@@ -33,6 +33,11 @@ for (const locale of ['ru', 'uk', 'en']) {
             .poll(() => page.evaluate(() => document.documentElement.scrollWidth <= innerWidth))
             .toBe(true);
           if (route === '/help') {
+            await expect(root.locator('.help-banner .page-heading')).toHaveCSS(
+              'background-color',
+              'rgba(0, 0, 0, 0)',
+            );
+            await expect(root.locator('.help-banner h1')).toHaveCSS('color', 'rgb(255, 249, 255)');
             await expect(root.locator('.help-emblem')).toHaveCount(4);
             const links = root.locator('.help-grid a');
             await expect(links).toHaveCount(4);

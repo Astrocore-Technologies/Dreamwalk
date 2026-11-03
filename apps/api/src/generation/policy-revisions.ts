@@ -42,6 +42,7 @@ export function safeOwnerProfile(config: OwnerGenerationConfig) {
       ...(config.text.counting ? { counting: config.text.counting } : {}),
       maxOutputTokens: config.text.maxOutputTokens,
       ...(config.text.storyVision ? { storyVision: config.text.storyVision } : {}),
+      ...(config.text.runtimeVision ? { runtimeVision: config.text.runtimeVision } : {}),
       ...(config.text.storyPlanMaxOutputTokens !== undefined
         ? { storyPlanMaxOutputTokens: config.text.storyPlanMaxOutputTokens }
         : {}),
