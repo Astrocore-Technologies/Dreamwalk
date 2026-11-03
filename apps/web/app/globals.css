@@ -4,18 +4,23 @@
 @import '@fontsource/manrope/700.css';
 @import '@fontsource/manrope/800.css';
 :root {
-  --bg: #17121d;
-  --sidebar: #1b1521;
-  --surface: #251b2c;
-  --surface-hover: #302338;
-  --surface-soft: #2b2033;
-  --text: #f1e9e0;
-  --muted: #b3a7b9;
-  --line: #403248;
-  --accent: #d8b879;
+  --bg: #15111d;
+  --sidebar: #18121f;
+  --surface: #221a2d;
+  --surface-hover: #352940;
+  --surface-soft: #2c2138;
+  --text: #f7f2ea;
+  --muted: #bba8d0;
+  --line: #47374f;
+  --accent: #dfbd79;
   --accent-ink: #241a29;
   --danger: #ffb1aa;
-  --radius: 16px;
+  --surface-raised: var(--surface-soft);
+  --border: var(--line);
+  --gold: #dfbd79;
+  --gold-ink: #241b2f;
+  --font-display: 'Manrope', system-ui, sans-serif;
+  --radius: 18px;
   --shadow: 0 18px 55px #0002;
   --font: 'Manrope', system-ui, -apple-system, sans-serif;
   color-scheme: dark;
@@ -37,15 +42,15 @@ body {
   -webkit-font-smoothing: antialiased;
 }
 html[data-theme='light'] {
-  --bg: #f5eee6;
-  --sidebar: #fbf5ed;
+  --bg: #f8f5f0;
+  --sidebar: #fffcf7;
   --surface: #fff;
-  --surface-hover: #eee4e7;
-  --surface-soft: #eadfe7;
-  --text: #302334;
-  --muted: #736579;
-  --line: #ded0d9;
-  --accent: #795817;
+  --surface-hover: #ede5f0;
+  --surface-soft: #f0eaf2;
+  --text: #241b2f;
+  --muted: #65536e;
+  --line: #d8cbdc;
+  --accent: #775218;
   --accent-ink: #fff;
   --danger: #a43535;
   color-scheme: light;

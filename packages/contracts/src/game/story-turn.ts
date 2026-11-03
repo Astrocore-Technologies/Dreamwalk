@@ -1,3 +1,4 @@
+import type { CurrencyFunding } from '../sparks';
 import { turnFenceSchema } from './turns';
 import { z } from 'zod';
 import { narrativeActionSchema, narrativeSceneSchema, narrativeNpcSchema } from './narrative';
@@ -76,6 +77,7 @@ export type StoryActionPreview = {
 };
 export interface StoryQuote {
   chargeUnit?: 'sparks' | 'credits';
+  funding?: CurrencyFunding;
   sparkReservedSubunits?: string | null;
   sparkQuoteId?: string | null;
   sparkRateVersion?: string;
@@ -154,6 +156,7 @@ export interface StoryTurnReceipt {
   sceneId?: string;
   npcId?: string;
   sparkStatus?: 'held' | 'pending' | 'settled' | 'released';
+  funding?: CurrencyFunding;
   sparkReservedSubunits?: string;
   sparkCapturedSubunits?: string | null;
   generationCost: number | null;

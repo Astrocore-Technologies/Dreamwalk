@@ -141,6 +141,7 @@ test('visible Cyrillic and Latin JSX copy is localized except explicit invariant
     'Українська',
     'English',
     'dreamwalk',
+    'Dreamwalk',
     'NPC',
     'NPC:',
     'DEMO',

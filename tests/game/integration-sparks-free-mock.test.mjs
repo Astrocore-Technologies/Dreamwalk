@@ -8,7 +8,7 @@ const require = createRequire(import.meta.url);
 const { Db } = require('../../apps/api/dist/db.js');
 const { NpcAiEngine } = require('../../apps/api/dist/ai/npc-ai.service.js');
 const { MockNpcProvider } = require('../../apps/api/dist/ai/provider.js');
-test('new 50-Spark account runs free built-in mock without fake paid consent; wrappers remain unverified', async () => {
+test('new 50-Dream account runs free built-in mock without fake paid consent; wrappers remain unverified', async () => {
   const database = new Db();
   try {
     await startApi();
@@ -42,7 +42,15 @@ test('new 50-Spark account runs free built-in mock without fake paid consent; wr
         [user.user.id],
       )
     ).rows[0];
-    assert.deepEqual(wallet, { enabled: true, balance_subunits: '500000', held_subunits: '0' });
+    assert.deepEqual(wallet, { enabled: true, balance_subunits: '0', held_subunits: '0' });
+    assert.equal(
+      (
+        await db.query('SELECT balance_subunits FROM dream_wallets WHERE owner_id=$1', [
+          user.user.id,
+        ])
+      ).rows[0].balance_subunits,
+      '500000',
+    );
     const providers = [
       {
         id: 'fake-free-wrapper',

@@ -678,166 +678,171 @@ function AdventureEditor({ id }: { id: string }) {
               </div>
             </div>
             {step === 0 && (
-              <div className="stack">
-                <Field
-                  label={t('Язык оригинала')}
-                  hint={t(
-                    'Пишите историю один раз. Если актуального перевода нет, читатели увидят оригинал.',
-                  )}
-                >
-                  <Select
-                    value={draft.sourceLanguage}
-                    onChange={(e) =>
-                      change('sourceLanguage', e.target.value as AdventureDraft['sourceLanguage'])
-                    }
+              <div className={styles.basicsGrid}>
+                <div className="stack">
+                  <Field
+                    label={t('Язык оригинала')}
+                    hint={t(
+                      'Пишите историю один раз. Если актуального перевода нет, читатели увидят оригинал.',
+                    )}
                   >
-                    <option value="ru">{t('Русский')}</option>
-                    <option value="uk">{t('Українська')}</option>
-                    <option value="en">{t('English')}</option>
-                  </Select>
-                </Field>
-                <Field label={t('Название приключения')}>
-                  <Input
-                    required
-                    minLength={2}
-                    maxLength={120}
-                    value={draft.title}
-                    onChange={(e) => change('title', e.target.value)}
-                    placeholder={t('Например, Тайна старой обсерватории')}
-                  />
-                </Field>
-                <Field
-                  label={t('Синопсис')}
-                  hint={t('Что ждёт игрока? Не раскрывайте главную тайну.')}
-                >
-                  <Textarea
-                    maxLength={4000}
-                    value={draft.synopsis}
-                    onChange={(e) => change('synopsis', e.target.value)}
-                    placeholder={t('Когда над городом погасла последняя звезда…')}
-                  />
-                </Field>
-                <div className="field-grid">
-                  <Field label={t('Жанр')}>
-                    <Select value={draft.genre} onChange={(e) => change('genre', e.target.value)}>
-                      {[
-                        ...new Set([
-                          draft.genre,
-                          ...(genres.data || ['Тайна', 'Фэнтези', 'Приключение', 'Драма']),
-                        ]),
-                      ].map((g) => (
-                        <option key={g} value={g}>
-                          {taxonomy(g)}
-                        </option>
-                      ))}
-                    </Select>
-                  </Field>
-                  <Field label={t('Сложность')}>
                     <Select
-                      value={draft.difficulty}
+                      value={draft.sourceLanguage}
                       onChange={(e) =>
-                        change('difficulty', e.target.value as AdventureDraft['difficulty'])
+                        change('sourceLanguage', e.target.value as AdventureDraft['sourceLanguage'])
                       }
                     >
-                      <option value="Легко">{t('Легко')}</option>
-                      <option value="Средне">{t('Средне')}</option>
-                      <option value="Сложно">{t('Сложно')}</option>
+                      <option value="ru">{t('Русский')}</option>
+                      <option value="uk">{t('Українська')}</option>
+                      <option value="en">{t('English')}</option>
                     </Select>
                   </Field>
-                  <Field label={t('Минимум игроков')}>
+                  <Field label={t('Название приключения')}>
                     <Input
-                      type="number"
-                      min={1}
-                      max={4}
-                      value={draft.playersMin}
-                      onChange={(e) => change('playersMin', Number(e.target.value))}
+                      required
+                      minLength={2}
+                      maxLength={120}
+                      value={draft.title}
+                      onChange={(e) => change('title', e.target.value)}
+                      placeholder={t('Например, Тайна старой обсерватории')}
                     />
                   </Field>
-                  <Field label={t('Максимум игроков')}>
-                    <Input
-                      type="number"
-                      min={draft.playersMin}
-                      max={4}
-                      value={draft.playersMax}
-                      onChange={(e) => change('playersMax', Number(e.target.value))}
+                  <Field
+                    label={t('Синопсис')}
+                    hint={t('Что ждёт игрока? Не раскрывайте главную тайну.')}
+                  >
+                    <Textarea
+                      maxLength={4000}
+                      value={draft.synopsis}
+                      onChange={(e) => change('synopsis', e.target.value)}
+                      placeholder={t('Когда над городом погасла последняя звезда…')}
                     />
                   </Field>
-                  <fieldset className="stack">
-                    <legend>{t('Теги')}</legend>
-                    <ErrorBox message={tagDefinitions.error} retry={tagDefinitions.reload} />
-                    <div className="chip-list">
-                      {tagDefinitions.data?.map((tag) => {
-                        const checked = draft.tags.some(
-                          (value) =>
-                            findControlledTag(value, tagDefinitions.data ?? [])?.id === tag.id,
-                        );
-                        return (
-                          <Button
-                            key={tag.id}
-                            type="button"
-                            variant={checked ? 'primary' : 'secondary'}
-                            aria-pressed={checked}
-                            onClick={() =>
-                              change(
-                                'tags',
-                                checked
-                                  ? draft.tags.filter(
-                                      (value) =>
-                                        findControlledTag(value, tagDefinitions.data ?? [])?.id !==
-                                        tag.id,
-                                    )
-                                  : [...draft.tags, tag.id].slice(0, 12),
-                              )
-                            }
-                          >
-                            {tag.labels[locale]}
-                          </Button>
-                        );
-                      })}
-                    </div>
-                    <Field label={t('Свои теги')} hint={t('Через запятую, до 12 тегов')}>
-                      <Input
-                        value={draft.tags
-                          .filter((value) => !findControlledTag(value, tagDefinitions.data ?? []))
-                          .join(', ')}
+                  <div className="field-grid">
+                    <Field label={t('Жанр')}>
+                      <Select value={draft.genre} onChange={(e) => change('genre', e.target.value)}>
+                        {[
+                          ...new Set([
+                            draft.genre,
+                            ...(genres.data || ['Тайна', 'Фэнтези', 'Приключение', 'Драма']),
+                          ]),
+                        ].map((g) => (
+                          <option key={g} value={g}>
+                            {taxonomy(g)}
+                          </option>
+                        ))}
+                      </Select>
+                    </Field>
+                    <Field label={t('Сложность')}>
+                      <Select
+                        value={draft.difficulty}
                         onChange={(e) =>
-                          change(
-                            'tags',
-                            [
-                              ...draft.tags.filter((value) =>
-                                findControlledTag(value, tagDefinitions.data ?? []),
-                              ),
-                              ...e.target.value.split(',').map((value) => value.trim()),
-                            ].slice(0, 12),
-                          )
+                          change('difficulty', e.target.value as AdventureDraft['difficulty'])
                         }
+                      >
+                        <option value="Легко">{t('Легко')}</option>
+                        <option value="Средне">{t('Средне')}</option>
+                        <option value="Сложно">{t('Сложно')}</option>
+                      </Select>
+                    </Field>
+                    <Field label={t('Минимум игроков')}>
+                      <Input
+                        type="number"
+                        min={1}
+                        max={4}
+                        value={draft.playersMin}
+                        onChange={(e) => change('playersMin', Number(e.target.value))}
                       />
                     </Field>
-                  </fieldset>
+                    <Field label={t('Максимум игроков')}>
+                      <Input
+                        type="number"
+                        min={draft.playersMin}
+                        max={4}
+                        value={draft.playersMax}
+                        onChange={(e) => change('playersMax', Number(e.target.value))}
+                      />
+                    </Field>
+                    <fieldset className="stack">
+                      <legend>{t('Теги')}</legend>
+                      <ErrorBox message={tagDefinitions.error} retry={tagDefinitions.reload} />
+                      <div className="chip-list">
+                        {tagDefinitions.data?.map((tag) => {
+                          const checked = draft.tags.some(
+                            (value) =>
+                              findControlledTag(value, tagDefinitions.data ?? [])?.id === tag.id,
+                          );
+                          return (
+                            <Button
+                              key={tag.id}
+                              type="button"
+                              variant={checked ? 'primary' : 'secondary'}
+                              aria-pressed={checked}
+                              onClick={() =>
+                                change(
+                                  'tags',
+                                  checked
+                                    ? draft.tags.filter(
+                                        (value) =>
+                                          findControlledTag(value, tagDefinitions.data ?? [])
+                                            ?.id !== tag.id,
+                                      )
+                                    : [...draft.tags, tag.id].slice(0, 12),
+                                )
+                              }
+                            >
+                              {tag.labels[locale]}
+                            </Button>
+                          );
+                        })}
+                      </div>
+                      <Field label={t('Свои теги')} hint={t('Через запятую, до 12 тегов')}>
+                        <Input
+                          value={draft.tags
+                            .filter((value) => !findControlledTag(value, tagDefinitions.data ?? []))
+                            .join(', ')}
+                          onChange={(e) =>
+                            change(
+                              'tags',
+                              [
+                                ...draft.tags.filter((value) =>
+                                  findControlledTag(value, tagDefinitions.data ?? []),
+                                ),
+                                ...e.target.value.split(',').map((value) => value.trim()),
+                              ].slice(0, 12),
+                            )
+                          }
+                        />
+                      </Field>
+                    </fieldset>
+                  </div>
                 </div>
-                <Field label={t('Обложка из коллекции')}>
-                  <Select
-                    value={draft.cover}
-                    onChange={(e) => change('cover', e.target.value as AdventureDraft['cover'])}
+                <div className={styles.coverEditor}>
+                  <img className={styles.editorCover} src={coverUrl(draft)} alt="" />
+                  <Field label={t('Обложка из коллекции')}>
+                    <Select
+                      value={draft.cover}
+                      onChange={(e) => change('cover', e.target.value as AdventureDraft['cover'])}
+                    >
+                      <option value="observatory">{t('Старая обсерватория')}</option>
+                      <option value="forest">{t('Шёпот леса')}</option>
+                      <option value="sea">{t('Туманный порт')}</option>
+                      <option value="city">{t('Город историй')}</option>
+                    </Select>
+                  </Field>
+                  <MediaPicker
+                    value={draft.coverAssetId}
+                    onChange={(id) => change('coverAssetId', id)}
+                  />
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    onClick={() => setCoverGenerationOpen(true)}
                   >
-                    <option value="observatory">{t('Старая обсерватория')}</option>
-                    <option value="forest">{t('Шёпот леса')}</option>
-                    <option value="sea">{t('Туманный порт')}</option>
-                    <option value="city">{t('Город историй')}</option>
-                  </Select>
-                </Field>
-                <MediaPicker
-                  value={draft.coverAssetId}
-                  onChange={(id) => change('coverAssetId', id)}
-                />
-                <Button
-                  type="button"
-                  variant="secondary"
-                  onClick={() => setCoverGenerationOpen(true)}
-                >
-                  <ImagePlus size={16} />
-                  {coverText('title')}
-                </Button>
+                    <ImagePlus size={16} />
+                    {coverText('title')}
+                  </Button>
+                </div>
               </div>
             )}
             {step === 1 && (

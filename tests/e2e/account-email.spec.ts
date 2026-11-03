@@ -86,7 +86,7 @@ test('mandatory email blocks gameplay UI until confirmation and grants starter c
     const passwordHash = `scrypt:${salt}:${scryptSync(password, salt, 64).toString('hex')}`;
     const user = (
       await db.query(
-        'INSERT INTO users(email,password_hash,name,handle,email_verification_required,starter_sparks_eligible,settings) VALUES($1,$2,\'Pending QA\',$3,true,true,\'{"language":"ru"}\') RETURNING id',
+        'INSERT INTO users(email,password_hash,name,handle,email_verification_required,starter_dreams_eligible,settings) VALUES($1,$2,\'Pending QA\',$3,true,true,\'{"language":"ru"}\') RETURNING id',
         [email, passwordHash, `pending_${suffix}`],
       )
     ).rows[0];
@@ -98,7 +98,7 @@ test('mandatory email blocks gameplay UI until confirmation and grants starter c
     await expect(page).toHaveURL(/\/account\/sessions$/);
     await expect(
       page.getByText(
-        'Подтверди почту, чтобы начать игру и получить 50 искр. Проверь письмо или запроси новую ссылку.',
+        'Подтверди почту, чтобы начать игру и получить стартовый подарок. Проверь письмо или запроси новую ссылку.',
       ),
     ).toBeVisible();
     expect((await page.request.get('/api/v1/sparks/wallet')).status()).toBe(403);
@@ -114,13 +114,15 @@ test('mandatory email blocks gameplay UI until confirmation and grants starter c
     await page.goto(`/auth/verify-email#token=${token}`);
     await page.getByRole('button', { name: 'Подтвердить email', exact: true }).click();
     await expect(page.getByRole('status')).toHaveText('Email подтверждён');
-    const wallet = await page.request.get('/api/v1/sparks/wallet');
+    const wallet = await page.request.get('/api/v1/currencies/wallet');
     expect(wallet.status()).toBe(200);
-    expect((await wallet.json()).balanceSubunits).toBe('500000');
+    const currencies = await wallet.json();
+    expect(currencies.dreams.balanceSubunits).toBe('500000');
+    expect(currencies.sparks.balanceSubunits).toBe('0');
     expect(
       (
         await db.query(
-          "SELECT count(*) FROM spark_ledger WHERE owner_id=$1 AND kind='starter_grant'",
+          "SELECT count(*) FROM dream_ledger WHERE owner_id=$1 AND kind='starter_grant'",
           [user.id],
         )
       ).rows[0].count,

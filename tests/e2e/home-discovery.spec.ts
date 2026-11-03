@@ -12,6 +12,22 @@ async function appearance(page: Page, language: 'en' | 'uk' | 'ru', theme: 'dark
     { language, theme },
   );
 }
+async function scenicBackground(page: Page, theme: 'night' | 'dawn') {
+  const name = `dreamwalk-world-${theme}.webp`;
+  const background = await page
+    .locator('.app-shell')
+    .evaluate((shell) => getComputedStyle(shell, '::before').backgroundImage);
+  expect(background).toContain(name);
+  const decoded = await page.evaluate(async (src) => {
+    const image = new Image();
+    image.src = `/images/${src}`;
+    await image.decode();
+    return { width: image.naturalWidth, height: image.naturalHeight };
+  }, name);
+  expect(decoded.width).toBeGreaterThanOrEqual(1600);
+  expect(decoded.height).toBeGreaterThanOrEqual(900);
+  await expect(page.locator('.app-shell')).toHaveCSS('isolation', 'isolate');
+}
 async function publicHome(page: Page, preferredSlug?: string) {
   await exposeDiscoveryFixtures(page);
   const catalog = await page.request.get('/api/v1/adventures?sort=popular');
@@ -86,7 +102,16 @@ test('public homepage is art-led, manually navigable, localized and captures act
   await expect(page.getByTestId('home-continue').locator('a[href="/auth/sign-in"]')).toBeVisible();
   await expect(page.getByTestId('home-continue').locator('a[href^="/game/"]')).toHaveCount(0);
   const first = await featured.getAttribute('data-featured-slug');
+  const headingBox = await featured.getByRole('heading', { level: 2 }).boundingBox();
+  for (const direction of ['previous', 'next']) {
+    const arrow = await page.getByTestId(`home-${direction}`).boundingBox();
+    expect(arrow!.y + arrow!.height).toBeLessThan(headingBox!.y);
+  }
+  await scenicBackground(page, 'night');
   await screenshot(page, info, 'home-desktop-dark.png');
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await screenshot(page, info, 'home-desktop-scenic-wide.png');
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByTestId('home-next').click();
   await expect(featured).not.toHaveAttribute('data-featured-slug', first!);
   expect(stories.map((story) => story.slug)).toContain(
@@ -113,7 +138,17 @@ test('public homepage is art-led, manually navigable, localized and captures act
   await expect(page.locator('html')).toHaveAttribute('lang', 'uk');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await expect(featured).toBeVisible();
+  await expect(featured.getByRole('heading', { level: 2 })).toHaveCSS(
+    'color',
+    'rgb(247, 242, 234)',
+  );
+  await scenicBackground(page, 'dawn');
   await screenshot(page, info, 'home-desktop-light.png');
+  await page.locator('[data-home-rail]').first().scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: info.outputPath('home-light-scrolled-viewport.png'),
+    animations: 'disabled',
+  });
 });
 
 test('390px homepage preserves readable art, manual touch navigation and public-only rails', async ({
@@ -125,6 +160,32 @@ test('390px homepage preserves readable art, manual touch navigation and public-
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
   const first = await featured.getAttribute('data-featured-slug');
   await screenshot(page, info, 'home-mobile.png');
+  const startButton = page.getByTestId('home-start-adventure');
+  await startButton.evaluate((element) => element.scrollIntoView({ block: 'center' }));
+  await expect(startButton).toBeInViewport();
+  await expect(startButton).toBeEnabled();
+  // Native smooth scrolling completes asynchronously; assert the final unobstructed position.
+  await expect
+    .poll(async () => {
+      const buttonBox = await startButton.boundingBox();
+      const bottomNav = await page.locator('.bottom-nav').boundingBox();
+      return buttonBox!.y + buttonBox!.height < bottomNav!.y;
+    })
+    .toBe(true);
+  expect(
+    await startButton.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      return element.contains(
+        document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2),
+      );
+    }),
+  ).toBe(true);
+  await startButton.click({ trial: true });
+  await page.screenshot({
+    path: info.outputPath('home-mobile-start-visible.png'),
+    animations: 'disabled',
+  });
+  await page.evaluate(() => scrollTo(0, 0));
   await featured.dispatchEvent('pointerdown', {
     pointerId: 1,
     pointerType: 'touch',

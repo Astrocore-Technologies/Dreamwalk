@@ -599,6 +599,30 @@ await test(
           );
         },
       );
+      await t.test(
+        'Dreams-only account has active release status and receives a free-first real authoring quote',
+        async () => {
+          const user = await actor();
+          await db.query('UPDATE spark_wallets SET balance_subunits=0 WHERE owner_id=$1', [
+            user.id,
+          ]);
+          await db.query(
+            'INSERT INTO dream_wallets(owner_id,enabled,balance_subunits) VALUES($1,true,500000)',
+            [user.id],
+          );
+          const status = await authority.status(user.id);
+          assert.equal(status.state, 'active');
+          assert.equal(status.stopCode, null);
+          const quoted = await engine.quote(
+            user.id,
+            { ...user.binding, operationId: randomUUID() },
+            user.guard,
+          );
+          assert.equal(quoted.funding.allocation, 'estimate');
+          assert.ok(BigInt(quoted.funding.dreamsReservedSubunits) > 0n);
+          assert.equal(quoted.funding.sparksReservedSubunits, '0');
+        },
+      );
     } finally {
       await database.onApplicationShutdown();
       await db.end();

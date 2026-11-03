@@ -37,6 +37,12 @@ const messages = {
     'Sign in to find your saved campaigns.',
     'Твої збереження доступні після входу.',
   ],
+  popular: ['Популярные истории', 'Popular stories', 'Популярні історії'],
+  popularHint: [
+    'Истории, которые выбирают и любят игроки.',
+    'Stories players choose and enjoy.',
+    'Історії, які обирають і люблять гравці.',
+  ],
   mystery: ['Тайны и открытия', 'Mysteries & discoveries', 'Таємниці й відкриття'],
   mysteryHint: [
     'Для тех, кто всегда заглядывает за следующую дверь.',

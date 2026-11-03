@@ -419,6 +419,16 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             )}
           </span>
         </div>
+        <TurnControls
+          projection={p}
+          connected={connected}
+          busy={game.busy || storyBusy}
+          activeName={
+            members.data?.members.find((m) => m.actorId === p.turn?.activeActorId)?.username
+          }
+          onEnd={() => void game.command({ type: 'turn.end' })}
+          onReaction={(decision) => void game.command({ type: 'turn.reaction', decision })}
+        />
       </div>
       {game.error && (
         <ErrorBox
@@ -442,16 +452,6 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           )}
         </p>
       )}
-      <TurnControls
-        projection={p}
-        connected={connected}
-        busy={game.busy || storyBusy}
-        activeName={
-          members.data?.members.find((m) => m.actorId === p.turn?.activeActorId)?.username
-        }
-        onEnd={() => void game.command({ type: 'turn.end' })}
-        onReaction={(decision) => void game.command({ type: 'turn.reaction', decision })}
-      />
       <NarrativePreferences
         key={campaignId}
         campaignId={campaignId}

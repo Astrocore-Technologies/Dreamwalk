@@ -1,4 +1,5 @@
 'use client';
+import { StoryMetrics } from '../story-metrics';
 import Link from 'next/link';
 import { isDiscoveryStory } from '@/lib/discovery';
 import { storyReturnPath, withStoryReturn } from '../story-return';
@@ -30,7 +31,7 @@ function Rail({
   adventures,
   heroId,
 }: {
-  kind: 'mystery' | 'wonder';
+  kind: 'popular' | 'mystery' | 'wonder';
   adventures: Adventure[];
   heroId: string;
 }) {
@@ -50,7 +51,13 @@ function Rail({
           <p className={styles.eyebrow}>{h('curated')}</p>
           <h2>{h(kind)}</h2>
           <p className={styles.sectionHint}>
-            {h(kind === 'mystery' ? 'mysteryHint' : 'wonderHint')}
+            {h(
+              kind === 'popular'
+                ? 'popularHint'
+                : kind === 'mystery'
+                  ? 'mysteryHint'
+                  : 'wonderHint',
+            )}
           </p>
         </div>
         <div className={styles.railControls}>
@@ -90,6 +97,7 @@ function Rail({
               </div>
               <h3>{text.title}</h3>
               <p>{text.synopsis}</p>
+              <StoryMetrics adventure={adventure} />
               <div className={styles.cardFoot}>
                 <span>{adventure.author.handle}</span>
                 <span>
@@ -195,7 +203,7 @@ export function HomePage() {
       <header className={styles.intro}>
         <div>
           <span className={styles.introMark}>✦</span>
-          <p>{h('intro')}</p>
+          <h1>{h('intro')}</h1>
         </div>
         <Link href="/library">
           {h('library')}
@@ -295,7 +303,7 @@ export function HomePage() {
                   <span className={styles.goldDot} />
                   {h('spotlight')}
                 </p>
-                <h1>{text.title}</h1>
+                <h2 className={styles.featureTitle}>{text.title}</h2>
                 <p className={styles.hook}>{text.synopsis}</p>
                 <Link className={styles.byline} href={`/creators/${active.author.handle}`}>
                   @{active.author.handle}
@@ -319,6 +327,7 @@ export function HomePage() {
                     {(active.sourceLanguage || 'ru').toUpperCase()}
                   </span>
                 </div>
+                <StoryMetrics adventure={active} />
                 {cast.length > 0 && (
                   <div className={styles.cast}>
                     <p>{h('meet')}</p>
@@ -440,6 +449,7 @@ export function HomePage() {
         </Link>
       </section>
       {user && campaigns.error && <ErrorBox message={campaigns.error} retry={campaigns.reload} />}
+      <Rail kind="popular" adventures={adventures.slice(0, 12)} heroId={heroSelection.heroId} />
       <Rail kind="mystery" adventures={mystery} heroId={heroSelection.heroId} />
       <Rail kind="wonder" adventures={wonder.length ? wonder : []} heroId={heroSelection.heroId} />
     </div>

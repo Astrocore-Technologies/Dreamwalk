@@ -1,7 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { spawnSync } from 'node:child_process';
-import { readFileSync } from 'node:fs';
+import { readFileSync, readdirSync } from 'node:fs';
+import { partitionBrowserFiles } from '../scripts/browser-shard.mjs';
 function load(overrides) {
   const env = { ...process.env, VERCEL: '1', API_URL: '', ...overrides };
   return spawnSync(
@@ -46,4 +47,23 @@ test('release startup activates only after listen and health stays unready until
   assert.doesNotMatch(main, /registerReleaseDeployment\(/);
   assert.match(migration, /registerReleaseDeployment\(/);
   assert.doesNotMatch(migration, /activateRegisteredReleaseDeployment\(/);
+});
+
+test('browser partitions preserve every test file exactly once and balance long game journeys', () => {
+  const files = readdirSync('tests/e2e', { recursive: true }).filter((file) =>
+    file.endsWith('.spec.ts'),
+  );
+  const groups = partitionBrowserFiles(files);
+  assert.deepEqual(groups.flatMap((group) => group.files).sort(), [...files].sort());
+  assert.deepEqual(partitionBrowserFiles([...files].reverse()), groups);
+  assert.notEqual(
+    groups.findIndex((group) => group.files.includes('game-adventure-completion.spec.ts')),
+    groups.findIndex((group) => group.files.includes('game-director.spec.ts')),
+  );
+  assert.ok(Math.abs(groups[0].seconds - groups[1].seconds) <= 20);
+  assert.throws(() => partitionBrowserFiles(['same', 'same']));
+  const workflow = readFileSync('.github/workflows/platform.yml', 'utf8');
+  for (const index of [1, 2])
+    assert.ok(workflow.includes(`node scripts/browser-shard.mjs ${index}/2`));
+  assert.equal((workflow.match(/runner.temp \}\}\/dreamwalk-web.log/g) ?? []).length, 2);
 });

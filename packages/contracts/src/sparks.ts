@@ -176,3 +176,15 @@ export function formatSparkSubunits(
   const digits = precision === 'exact' ? 4 : 2;
   return `${units / scale}${separator}${(units % scale).toString().padStart(digits, '0')}`;
 }
+
+/** Both currencies share pricing, not balances. Quotes estimate; held allocations are exact. */
+export interface CurrencyFunding {
+  policyVersion: 'dreams-first-v1';
+  allocation: 'estimate' | 'reserved';
+  dreamsReservedSubunits: string;
+  sparksReservedSubunits: string;
+  totalReservedSubunits: string;
+  maxSparksSubunits: string;
+  dreamsCapturedSubunits?: string;
+  sparksCapturedSubunits?: string;
+}

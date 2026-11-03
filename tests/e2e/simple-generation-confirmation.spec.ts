@@ -2,7 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
 /** Browser-only quotes and submissions: no external provider or wallet mutation is reachable. */
-async function setup(page: Page, expired = false, failFirstSubmission = false) {
+async function setup(page: Page, expired = false, failFirstSubmission = false, dualWallet = false) {
   const handle = `simple_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const registered = await page.request.post('/api/v1/auth/register', {
     data: {
@@ -52,6 +52,18 @@ async function setup(page: Page, expired = false, failFirstSubmission = false) {
           providerUpperMicros: 12500,
           chargeUnit: 'sparks',
           sparkReservedSubunits: '12500',
+          ...(dualWallet
+            ? {
+                funding: {
+                  policyVersion: 'dreams-first-v1',
+                  dreamsReservedSubunits: '10000',
+                  sparksReservedSubunits: '2500',
+                  totalReservedSubunits: '12500',
+                  maxSparksSubunits: '12500',
+                  allocation: 'estimate',
+                },
+              }
+            : {}),
         },
       },
     });
@@ -251,5 +263,23 @@ test('a stale unpaid reply gets one fresh estimate and consent without reposting
   expect(quoteOperations[1]).not.toBe(quoteOperations[0]);
   expect(consents[0].quoteId).toBeTruthy();
   expect(submissions).toHaveLength(0);
+  expect(forbidden).toEqual([]);
+});
+
+test('dual-wallet estimate shows both balances and paid ceiling with the same single consent', async ({
+  page,
+}) => {
+  const { story, quotes, submissions, forbidden } = await setup(page, false, false, true);
+  await story.getByLabel('Твой ход', { exact: true }).fill('Осматриваю звёздную карту.');
+  await story.getByRole('button', { name: 'Отправить', exact: true }).click();
+  const price = story.getByTestId('story-cost');
+  await expect(price.locator('[data-wallet-funding="estimate"]')).toBeVisible();
+  await expect(price).toContainText('Грёзы: 1');
+  await expect(price).toContainText('Искры: 0,25');
+  await expect(price).toContainText('не более 1,25');
+  expect(submissions).toHaveLength(0);
+  await story.getByRole('button', { name: 'Подтвердить ход', exact: true }).click();
+  await expect.poll(() => submissions.length).toBe(1);
+  expect(quotes).toHaveLength(1);
   expect(forbidden).toEqual([]);
 });

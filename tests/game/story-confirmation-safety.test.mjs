@@ -65,6 +65,7 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
     '@/lib/i18n': { useT: () => ({ locale }) },
     '../ui': { Button: 'button', ErrorBox: 'error' },
     './story-cost': { StoryCost: 'cost' },
+    '../wallet-funding': { FundingBreakdown: 'funding', FundingNotice: 'funding-notice' },
     './narrative-guards': { providerBoundKnown },
     './story-messages': { useStoryText: () => copy },
     './story-feed.module.css': {},
@@ -369,4 +370,29 @@ test('cancel invalidates the quote synchronously before a stale confirm handler 
   staleConfirm();
   await tick();
   assert.equal(calls.filter((path) => path.endsWith('/consent')).length, 0);
+});
+
+test('currency-aware story estimates pass the original allocation through without labeling total as Sparks', async () => {
+  const ui = await harness('story-cost');
+  const funding = {
+    policyVersion: 'dreams-first-v1',
+    dreamsReservedSubunits: '10000',
+    sparksReservedSubunits: '2500',
+    totalReservedSubunits: '12500',
+    maxSparksSubunits: '12500',
+    allocation: 'estimate',
+  };
+  const tree = ui.render({
+    quote: {
+      external: true,
+      credits: 0,
+      chargeUnit: 'sparks',
+      sparkReservedSubunits: '12500',
+      funding,
+    },
+  });
+  assert.equal(tree.props.children[0].type, 'funding');
+  assert.equal(tree.props.children[0].props.funding, funding);
+  assert.equal(tree.props.children[1].type, 'funding-notice');
+  assert.doesNotMatch(ui.text(), /estimatedHold|estimatedCost/);
 });
