@@ -1,7 +1,9 @@
+import { schematicStorySource, playableMapBindings } from './story-map-mode';
+import { AuthoringTextEngine } from '../live-test/authoring-text';
 import { prepareStoryMapImages } from './story-map-images';
 import { compileStoryPlan, type StoryPlanSource } from './story-plan';
 import { ownedCharacterPackage } from '../visual-authoring/character-package';
-import { Inject, Injectable } from '@nestjs/common';
+import { Inject, Injectable, Optional } from '@nestjs/common';
 import type { Request } from 'express';
 import type { PoolClient } from 'pg';
 import { createHash, randomUUID } from 'node:crypto';
@@ -52,6 +54,7 @@ export class PlayableService {
     @Inject(Db) private db: Db,
     @Inject(Auth) private auth: Auth,
     @Inject(AssetReuseService) private art: AssetReuseService,
+    @Optional() @Inject('STORY_BUILD_ENGINE') private storyEngine?: AuthoringTextEngine,
   ) {}
   async lockAuthor(c: PoolClient, userId: string) {
     return this.art.lockAuthor(c, userId);
@@ -403,7 +406,11 @@ export class PlayableService {
     );
     if (expectedArtRevision !== undefined && preparedArt.draftRevision !== expectedArtRevision)
       fail(409, 'STALE_ART_REVISION', 'STALE_ART_REVISION');
-    if (preparedArt.bindings.length) compiled.playable!.artBindings = preparedArt.bindings;
+    if (preparedArt.bindings.length)
+      compiled.playable!.artBindings = playableMapBindings(
+        preparedArt.bindings,
+        compiled.playable!.maps,
+      );
     const payload = {
       schemaVersion: 1,
       compiled: compiled.playable,
@@ -615,7 +622,10 @@ export class PlayableService {
     proposal: unknown,
   ) {
     const checked = compileStoryPlan(sourcePackage.plannerSource, proposal);
-    checked.playable.artBindings = sourcePackage.sourceArtBindings ?? [];
+    checked.playable.artBindings = playableMapBindings(
+      sourcePackage.sourceArtBindings ?? [],
+      checked.playable.maps,
+    );
     checked.playable.narrativePremise = sourcePackage.narrativePremise;
     for (const npc of sourcePackage.npcDefinitions ?? []) {
       const memory = checked.playable.npcBrains[npc.id]?.living;
@@ -849,7 +859,18 @@ export class PlayableService {
       if (images.length) {
         const mapImages = await prepareStoryMapImages(c, this.art, String(row.owner_id), images);
         const upgraded = { ...row.package, plannerSource: { ...source, mapImages } };
-        return { ...row, package: upgraded, checksum: hash(upgraded) };
+        row.package = upgraded;
+        row.checksum = hash(upgraded);
+      }
+    }
+    if (row.package.kind === 'launch-source' && !row.package.compiled) {
+      const plannerSource = schematicStorySource(
+        row.package.plannerSource,
+        this.storyEngine?.provider.profile,
+      );
+      if (plannerSource !== row.package.plannerSource) {
+        const adapted = { ...row.package, plannerSource };
+        return { ...row, package: adapted, checksum: hash(adapted) };
       }
     }
     return row;

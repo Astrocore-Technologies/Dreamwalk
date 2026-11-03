@@ -28,6 +28,7 @@ type State = {
 };
 type Quote = {
   imageInputCount?: number;
+  schematicMapCount?: number;
   sparks?: { quoteId: string; reserveSubunits: string; rateVersion: string; walletCharging: true };
   id: string;
   buildId?: string;
@@ -391,7 +392,10 @@ export function StoryPlayableBuilder({
             <div>
               {quote.sparks && <SparkQuotePrice quote={quote} />}
               <SparkQuoteNotice quote={quote} />
-              <MapImageNotice count={quote.imageInputCount} />
+              <MapImageNotice
+                count={quote.imageInputCount}
+                schematicCount={quote.schematicMapCount}
+              />
               <p>
                 {copyText('estimated')}:{' '}
                 {quote.estimatedTotalMicros === undefined

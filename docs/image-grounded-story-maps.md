@@ -74,3 +74,18 @@ integrity, contain framing, quote/body pinning, actual mocked multimodal dispatc
 unsafe cells, disconnected spawns, confidence, doors, visible landmarks and stale art.
 The test is included in `npm run test:game`. Paid-start PostgreSQL tests run against a
 fresh disposable local cluster and injected providers only.
+
+## Playable fallback when vision is not configured
+
+An image-backed story no longer requires an administrator to enable vision before it
+can start. When the configured text profile has no `storyVision` policy, uncompiled
+preparations derive a text-only schematic source. The existing estimate explains that
+the illustration is not analyzed, is not used as the schematic background, and image
+analysis is not priced. Original artwork remains saved in the story assets. The
+source/checksum and quote distinguish this mode, so an earlier estimate cannot be
+silently reused. No second confirmation or hidden image request is introduced.
+
+This fallback is only for an absent policy. A configured but expired/invalid vision
+policy still fails before dispatch, rather than silently changing an accepted mode.
+Already compiled/live campaigns are unchanged. The schematic is a playable temporary
+alternative, not a claim that the original raster was understood or its spawn repaired.
