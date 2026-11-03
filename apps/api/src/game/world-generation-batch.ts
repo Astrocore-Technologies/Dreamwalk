@@ -30,7 +30,8 @@ const entryIdentity = (rows: QueryResultRow[]) =>
     context: digest(r.context),
     requester: r.requester_user_id,
   }));
-/** No provider calls or wallet mutation during quote/consent: native queue owns every financial hold. */
+/** No generation or wallet holds during quote/consent. The explicit outer quote
+ * may preflight image tokens outside these locks; native queue owns every financial hold. */
 export class WorldGenerationBatch {
   constructor(
     private readonly db: Db,
@@ -228,6 +229,11 @@ export class WorldGenerationBatch {
         ...optionalFunding(aggregateFunding(entries.map((entry) => entry.quote))),
         providerUpperMicros: null,
         providerReserveMicros: reserve,
+        ...(entries.some((e) => e.quote.runtimeMapImages)
+          ? {
+              runtimeMapImages: entries.reduce((n, e) => n + (e.quote.runtimeMapImages ?? 0), 0),
+            }
+          : {}),
         estimatedTotalMicros: estimate,
         providerEnforcesQuotedCap: false,
         expiresAt,

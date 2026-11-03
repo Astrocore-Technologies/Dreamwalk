@@ -314,6 +314,29 @@ test(
         },
       );
       await t.test(
+        'runtime map pixels obey real membership, private-source revocation and takedown SQL',
+        async () => {
+          await require('./runtime-map-acl.fixture.cjs').verifyRuntimeMapAcl({
+            pool,
+            owner,
+            player,
+            storyId,
+            version,
+          });
+        },
+      );
+      await t.test(
+        'runtime exact count uses a durable one-quote preflight outside game locks',
+        async () => {
+          await require('./runtime-map-preflight.fixture.cjs').verifyRuntimeMapPreflight({
+            pool,
+            owner,
+            player,
+            version,
+          });
+        },
+      );
+      await t.test(
         'a paid initial plan is reused for this same player and source without another charge',
         async () => {
           const p = await service.prepare(player, {
@@ -593,6 +616,7 @@ test(
           const {
             eraseVisualAuthoring,
           } = require('../../apps/api/dist/visual-authoring/data-requests.js');
+          const { purgeGameData } = await import('../../scripts/game-data-requests.mjs');
           await pool.query('UPDATE spark_wallets SET enabled=true WHERE owner_id=$1', [owner]);
           const latest = (
             await db.query(
@@ -632,8 +656,24 @@ test(
             await c.query('UPDATE users SET deleted_at=now() WHERE id=$1', [owner]);
             await c.query("SET LOCAL dreamwalk.erasure='confirmed'");
             await eraseVisualAuthoring(c, owner);
+            await purgeGameData(c, owner);
           });
           assert.equal((await db.query('SELECT id FROM game_start_preparations')).length, 0);
+          const counts = await db.query(
+            'SELECT actor_id,campaign_id,body_sha256,status,result_code FROM runtime_map_token_counts',
+          );
+          assert.ok(counts.length >= 2);
+          assert.ok(
+            counts.every(
+              (r) =>
+                !r.actor_id &&
+                !r.campaign_id &&
+                !r.body_sha256 &&
+                ['erased', 'unknown'].includes(r.status) &&
+                r.result_code === 'DATA_ERASED',
+            ),
+          );
+
           assert.equal(
             (
               await db.query('SELECT held_subunits FROM spark_wallets WHERE owner_id=$1', [owner])

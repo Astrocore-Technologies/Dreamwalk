@@ -1,10 +1,20 @@
 import { directorStyleInstructions } from './director-style';
 import {
+  readRuntimeMapImage,
+  runtimeVisionInput,
+  runtimeVisionCounter,
+  runtimeVisionInstructions,
+  usesRuntimeExactCount,
+  RUNTIME_MAP_COUNT_VERSION,
+  type RuntimeVisionPolicy,
+} from './runtime-vision';
+import {
   textUsageCostMicros,
   textInputReserveRate,
   type TextCachePricing,
 } from '../generation/text-pricing';
-import { modelContext, evidenceCounter, countOpenAiInput } from './text-preflight';
+import { modelContext, evidenceCounter, countOpenAiInput, bodyHash } from './text-preflight';
+import { RuntimeMapCountRequired } from './runtime-map-preflight';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { canonical } from './context';
@@ -64,6 +74,7 @@ export interface OpenAiNpcConfig {
   inputMicrosPerMillion: number;
   outputMicrosPerMillion: number;
   cachePricing?: TextCachePricing;
+  runtimeVision?: RuntimeVisionPolicy;
 }
 const object = (properties: Record<string, unknown>) => ({
   type: 'object',
@@ -401,6 +412,7 @@ export function buildOpenAiNpcRequestBody(
     | 'maxOutputTokens'
     | 'estimation'
     | 'contextBudgetTokens'
+    | 'runtimeVision'
   >,
   purpose: ProviderRequest['purpose'],
   context: unknown,
@@ -465,11 +477,14 @@ export function buildOpenAiNpcRequestBody(
     ...(config.reasoningEffort ? { reasoning: { effort: config.reasoningEffort } } : {}),
     store: false,
     stream: false,
-    instructions,
-    input: JSON.stringify({
-      purpose: purpose,
-      context: config.estimation ? canonical(context) : context,
-    }),
+    instructions:
+      instructions + (readRuntimeMapImage(context) ? ' ' + runtimeVisionInstructions : ''),
+    input: runtimeVisionInput(
+      purpose,
+      config.estimation ? canonical(context) : context,
+      config.model,
+      config.runtimeVision,
+    ),
     max_output_tokens: config.maxOutputTokens,
     text: {
       format: {
@@ -505,13 +520,29 @@ export function prepareOpenAiNpcTextRequest(
     ...(config.estimation ? { estimation: config.estimation } : {}),
     ...(config.pricing ? { pricing: config.pricing } : {}),
   };
-  return { body, snapshot: estimateTextRequest(body, profile, providerFingerprint, counter) };
+  return {
+    body,
+    snapshot: estimateTextRequest(
+      body,
+      profile,
+      providerFingerprint,
+      runtimeVisionCounter(body, config.model, config.runtimeVision, counter),
+    ),
+  };
 }
 /** Actual Responses API protocol. Fixed official endpoint, no arbitrary origin or automatic retry. */
 export class OpenAiNpcProvider implements NpcProvider {
   readonly id = 'openai-responses';
   readonly external = true;
   readonly version: string;
+  private readonly runtimeCounts = new Map<string, { tokens: number; expiresAt: number }>();
+  private rememberRuntimeCount(hash: string, tokens: number, expiresAt = Date.now() + 600000) {
+    if (!Number.isSafeInteger(tokens) || tokens < 0) throw new Error('TEXT_TOKEN_COUNT_INVALID');
+    this.runtimeCounts.delete(hash);
+    if (this.runtimeCounts.size >= 512)
+      this.runtimeCounts.delete(this.runtimeCounts.keys().next().value!);
+    this.runtimeCounts.set(hash, { tokens, expiresAt });
+  }
   constructor(
     private config: OpenAiNpcConfig,
     private transport: typeof fetch = fetch,
@@ -555,6 +586,14 @@ export class OpenAiNpcProvider implements NpcProvider {
     this.config = Object.freeze({
       ...config,
       ...(config.cachePricing ? { cachePricing: Object.freeze({ ...config.cachePricing }) } : {}),
+      ...(config.runtimeVision
+        ? {
+            runtimeVision: Object.freeze({
+              ...config.runtimeVision,
+              pricing: Object.freeze({ ...config.runtimeVision.pricing }),
+            }),
+          }
+        : {}),
       ...(config.estimation ? { estimation: Object.freeze({ ...config.estimation }) } : {}),
       ...(config.pricing ? { pricing: Object.freeze({ ...config.pricing }) } : {}),
     });
@@ -574,6 +613,7 @@ export class OpenAiNpcProvider implements NpcProvider {
                   counter: tokenCounter?.id ?? 'utf8-envelope-plus-protocol-v1',
                 }
               : {}),
+            runtimeVision: config.runtimeVision,
             maxOutputTokens: config.maxOutputTokens,
             maxResponseBytes: config.maxResponseBytes,
             inputMicrosPerMillion: config.inputMicrosPerMillion,
@@ -609,6 +649,82 @@ export class OpenAiNpcProvider implements NpcProvider {
         .digest('hex')
         .slice(0, 16);
   }
+  runtimeVisionEnabled() {
+    return !!this.config.runtimeVision;
+  }
+  private counter(
+    body: string,
+    context: unknown,
+    enforcePricedRange = true,
+    pinned?: TextReserveSnapshot,
+  ) {
+    if (usesRuntimeExactCount(this.config.runtimeVision) && readRuntimeMapImage(context)) {
+      if (!enforcePricedRange)
+        return runtimeVisionCounter(
+          body,
+          this.config.model,
+          this.config.runtimeVision,
+          undefined,
+          false,
+        );
+      const hash = bodyHash(body);
+      const cached = this.runtimeCounts.get(hash);
+      const count = cached && cached.expiresAt > Date.now() ? cached.tokens : undefined;
+      if (cached && count === undefined) this.runtimeCounts.delete(hash);
+      // Pinned server-owned evidence is local to its accepted job, never promoted
+      // into the quote cache: an old queued job must not refresh a model alias.
+      const exact =
+        pinned?.contextWindow?.counterId === RUNTIME_MAP_COUNT_VERSION &&
+        pinned.contextWindow.precision === 'exact' &&
+        pinned.bodySha256 === hash &&
+        pinned.providerFingerprint === this.version &&
+        pinned.model === this.config.model &&
+        Number.isSafeInteger(pinned.estimatedInputTokens) &&
+        pinned.estimatedInputTokens >= 0
+          ? {
+              id: RUNTIME_MAP_COUNT_VERSION,
+              precision: 'exact' as const,
+              supports: (model: string) => model === this.config.model,
+              countInput: (candidate: string) => {
+                if (bodyHash(candidate) !== hash) throw new Error('RUNTIME_MAP_QUOTE_CHANGED');
+                return pinned.estimatedInputTokens;
+              },
+            }
+          : evidenceCounter(body, this.config.model, this.version, context);
+      if (count === undefined && !exact)
+        throw new RuntimeMapCountRequired(
+          body,
+          this.config.model,
+          this.version,
+          (id) => {
+            if (!this.config.enabled) throw new ProviderFailure('PROVIDER_DISABLED', false);
+            return countOpenAiInput(body, this.config.apiKey, id, this.transport);
+          },
+          (tokens, expiresAt) => this.rememberRuntimeCount(hash, tokens, expiresAt),
+        );
+      return runtimeVisionCounter(
+        body,
+        this.config.model,
+        this.config.runtimeVision,
+        exact ?? {
+          id: RUNTIME_MAP_COUNT_VERSION,
+          precision: 'exact',
+          supports: (model) => model === this.config.model,
+          countInput: (candidate) => {
+            if (bodyHash(candidate) !== hash) throw new Error('RUNTIME_MAP_QUOTE_CHANGED');
+            return count!;
+          },
+        },
+      );
+    }
+    return runtimeVisionCounter(
+      body,
+      this.config.model,
+      this.config.runtimeVision,
+      evidenceCounter(body, this.config.model, this.version, context) ?? this.tokenCounter,
+      enforcePricedRange,
+    );
+  }
   private cost(input: number, output: number) {
     return textUsageCostMicros(
       {
@@ -625,15 +741,16 @@ export class OpenAiNpcProvider implements NpcProvider {
   prepareTextRequest(
     purpose: ProviderRequest['purpose'],
     context: unknown,
+    pinned?: TextReserveSnapshot,
   ): PreparedTextRequest | undefined {
     if (!this.config.estimation) return undefined;
+    const body = this.body(purpose, context);
     return prepareOpenAiNpcTextRequest(
       this.config,
       purpose,
       context,
       this.version,
-      evidenceCounter(this.body(purpose, context), this.config.model, this.version, context) ??
-        this.tokenCounter,
+      this.counter(body, context, true, pinned),
     );
   }
   countBody(purpose: ProviderRequest['purpose'], context: unknown) {
@@ -666,10 +783,14 @@ export class OpenAiNpcProvider implements NpcProvider {
     const m = measureTextContext(
       this.body(purpose, context),
       { ...this.config, contextTokens: this.config.maxModelInputTokens! },
-      evidenceCounter(this.body(purpose, context), this.config.model, this.version, context) ??
-        this.tokenCounter,
+      this.counter(this.body(purpose, context), context, false),
     );
-    return m.serializedBytes <= m.transportLimitBytes && m.totalTokens <= m.effectiveContextTokens;
+    return (
+      m.serializedBytes <= m.transportLimitBytes &&
+      m.totalTokens <= m.effectiveContextTokens &&
+      (!readRuntimeMapImage(context) ||
+        m.inputTokens <= this.config.runtimeVision!.maxPricedInputTokens)
+    );
   }
   contextBudgetBytes(maxCostMicros: number): number {
     if (this.config.contextBudgetTokens !== undefined) return this.config.maxInputBytes;
@@ -753,6 +874,8 @@ export class OpenAiNpcProvider implements NpcProvider {
       throw new ProviderFailure('GENERATION_PRICING_EXPIRED', false);
     const { mockProposal, ...context } = request.context;
     const body = this.body(request.purpose, context);
+    if (request.textReservationSnapshot)
+      this.prepareTextRequest(request.purpose, context, request.textReservationSnapshot);
     const bytes = Buffer.byteLength(body);
     if (this.config.contextBudgetTokens !== undefined) {
       try {
@@ -760,8 +883,7 @@ export class OpenAiNpcProvider implements NpcProvider {
           measureTextContext(
             body,
             { ...this.config, contextTokens: this.config.maxModelInputTokens! },
-            evidenceCounter(body, this.config.model, this.version, request.context) ??
-              this.tokenCounter,
+            this.counter(body, request.context, true, request.textReservationSnapshot),
           ),
         );
       } catch {
@@ -771,7 +893,11 @@ export class OpenAiNpcProvider implements NpcProvider {
     if (bytes > this.config.maxInputBytes) throw new ProviderFailure('CONTEXT_TOO_LARGE', false);
     let snapshot: TextReserveSnapshot | undefined;
     if (this.config.estimation) {
-      const prepared = this.prepareTextRequest(request.purpose, context)!;
+      const prepared = this.prepareTextRequest(
+        request.purpose,
+        context,
+        request.textReservationSnapshot,
+      )!;
       const pinned = request.textReservationSnapshot;
       if (
         !pinned ||
@@ -900,6 +1026,12 @@ export class OpenAiNpcProvider implements NpcProvider {
     // cannot be settled using the configured Standard rates or retried blindly.
     if (value.service_tier !== 'default')
       throw new ProviderFailure('PROVIDER_TIER_UNKNOWN', true, value.id);
+    if (
+      readRuntimeMapImage(context) &&
+      (!this.config.runtimeVision ||
+        value.usage.input_tokens > this.config.runtimeVision.maxPricedInputTokens)
+    )
+      throw new ProviderFailure('PROVIDER_USAGE_UNKNOWN', true, value.id);
     const details = value.usage.input_tokens_details;
     if (
       this.config.cachePricing &&

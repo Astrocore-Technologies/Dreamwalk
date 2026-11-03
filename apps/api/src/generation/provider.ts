@@ -1,4 +1,5 @@
 import { digest } from '../ai/context';
+import type { TextReserveSnapshot } from './estimates';
 import {
   ProviderFailure,
   type NpcProvider,
@@ -31,8 +32,11 @@ export class GenerationProvider implements NpcProvider {
       });
     }
   }
-  prepareTextRequest(purpose: AiPurpose, context: unknown) {
-    return this.inner.prepareTextRequest?.(purpose, context);
+  runtimeVisionEnabled() {
+    return this.inner.runtimeVisionEnabled?.() ?? false;
+  }
+  prepareTextRequest(purpose: AiPurpose, context: unknown, pinned?: TextReserveSnapshot) {
+    return this.inner.prepareTextRequest?.(purpose, context, pinned);
   }
   contextWindow() {
     return this.inner.contextWindow?.();
@@ -50,7 +54,11 @@ export class GenerationProvider implements NpcProvider {
     return this.session.canDispatchJob(id);
   }
   async generate(request: ProviderRequest) {
-    const prepared = this.inner.prepareTextRequest?.(request.purpose, request.context);
+    const prepared = this.inner.prepareTextRequest?.(
+      request.purpose,
+      request.context,
+      request.textReservationSnapshot,
+    );
     if (
       prepared &&
       (!request.textReservationSnapshot ||
