@@ -1,4 +1,5 @@
 import WebSocket, { type RawData } from 'ws';
+import { trustedBrowserOrigin } from './hosted-origin';
 
 const CLIENT_LIMIT = 8192;
 const SERVER_LIMIT = 1024 * 1024;
@@ -20,7 +21,7 @@ export function socketRelayTarget(request: Request, env: NodeJS.ProcessEnv) {
     api.hash ||
     web.protocol !== 'https:' ||
     web.origin !== env.WEB_ORIGIN ||
-    request.headers.get('origin') !== web.origin
+    !trustedBrowserOrigin(request, env)
   )
     throw new Error('RELAY_ORIGIN');
   const cookie = request.headers.get('cookie') ?? '';
