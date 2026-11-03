@@ -1,0 +1,475 @@
+.library {
+  gap: 18px;
+}
+.heading {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  flex-wrap: wrap;
+}
+.heading h2 {
+  margin: 0;
+  font-size: clamp(26px, 3vw, 42px);
+  line-height: 1.2;
+  letter-spacing: -0.035em;
+}
+.rightsHelp {
+  max-width: 600px;
+  color: var(--muted);
+}
+.rightsHelp summary {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  cursor: pointer;
+  font-size: 12px;
+}
+.rightsHelp[open] {
+  flex-basis: 100%;
+  max-width: none;
+}
+.rightsHelp p {
+  margin: 10px 0 0;
+}
+.workspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(250px, 29%);
+  align-items: start;
+  gap: 20px;
+}
+.browser {
+  min-width: 0;
+}
+.searchRow {
+  display: flex;
+  gap: 12px;
+  align-items: center;
+  margin-bottom: 14px;
+}
+.searchRow > button {
+  white-space: nowrap;
+  min-height: 48px;
+}
+.searchBox {
+  display: flex;
+  align-items: center;
+  flex: 1;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-soft);
+  padding-left: 15px;
+}
+.searchBox input {
+  border: 0;
+  background: none;
+  min-height: 48px;
+  box-shadow: none;
+}
+.searchBox svg {
+  flex-shrink: 0;
+  color: var(--muted);
+}
+.filterForm {
+  margin: 0;
+}
+.filters {
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 10px;
+}
+.filters label {
+  gap: 4px;
+  font-size: 11px;
+  color: var(--muted);
+}
+.filters input,
+.filters select {
+  padding: 9px 10px;
+  font-size: 13px;
+  min-height: 42px;
+  background: var(--surface);
+}
+.advanced {
+  margin-top: 10px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.advanced summary {
+  cursor: pointer;
+  padding: 4px 0;
+}
+.advanced[open] {
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  padding: 12px;
+}
+.advanced[open] summary {
+  margin-bottom: 10px;
+}
+.advanced p {
+  margin: 10px 0;
+}
+.resultBar {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  justify-content: space-between;
+  margin: 8px 0;
+}
+.resultBar p {
+  margin: 0;
+  color: var(--muted);
+  font-size: 11px;
+}
+.resultBar button {
+  font-size: 11px;
+  padding: 5px 7px;
+  flex-shrink: 0;
+}
+.artGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 14px;
+}
+.artCard {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  overflow: hidden;
+  min-width: 0;
+  background: linear-gradient(145deg, var(--surface-soft), var(--surface));
+}
+.artCard[data-selected='true'] {
+  border-color: var(--accent);
+  box-shadow: 0 0 0 2px var(--accent);
+}
+.cardImage {
+  position: relative;
+  display: grid;
+  place-items: center;
+  padding: 0;
+  border: 0;
+  border-bottom: 1px solid var(--line);
+  width: 100%;
+  aspect-ratio: 5 / 4;
+  background: var(--bg);
+  color: var(--muted);
+}
+.cardImage img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.cardBody {
+  padding: 12px;
+}
+.cardBody h3 {
+  font-size: 16px;
+  line-height: 1.35;
+  margin: 0 0 7px;
+  overflow-wrap: anywhere;
+}
+.kind {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  margin: 0 0 12px;
+  color: var(--muted);
+  font-size: 12px;
+}
+.kind svg {
+  flex-shrink: 0;
+}
+.cardMeta {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 7px;
+  font-size: 10px;
+  color: var(--muted);
+}
+.cardMeta > span:first-child,
+.revision {
+  border: 1px solid var(--line);
+  background: var(--surface-hover);
+  padding: 1px 7px;
+  border-radius: 20px;
+  white-space: nowrap;
+}
+.cardActions {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 4px;
+  margin-top: 8px;
+}
+.cardActions button {
+  padding: 4px 7px;
+  font-size: 11px;
+}
+.cardActions button:last-child:not(:first-child) {
+  margin-left: auto;
+}
+.inspector {
+  position: sticky;
+  top: 100px;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: linear-gradient(145deg, var(--surface-soft), var(--surface));
+  scroll-margin-top: 100px;
+}
+.inspector > h3 {
+  margin: 0;
+  padding: 16px;
+  border-bottom: 1px solid var(--line);
+  font-size: 17px;
+}
+.inspectorBody {
+  padding: 16px;
+}
+.inspectorImage {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 280px;
+  object-fit: contain;
+  border-radius: 10px;
+  background: var(--bg);
+  margin-bottom: 12px;
+}
+.inspectorBody > h4 {
+  font-size: 21px;
+  line-height: 1.3;
+  margin: 0 0 10px;
+}
+.revision {
+  margin-left: auto;
+}
+.metadata {
+  display: grid;
+  grid-template-columns: minmax(80px, 0.8fr) minmax(0, 1fr);
+  gap: 12px;
+  border-block: 1px solid var(--line);
+  padding: 16px 0;
+  margin: 0 0 16px;
+  font-size: 12px;
+}
+.metadata dt {
+  color: var(--muted);
+}
+.metadata dd {
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.tags {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px;
+}
+.tags span {
+  padding: 2px 8px;
+  border-radius: 20px;
+  background: var(--surface-hover);
+}
+.inspectorBody > p {
+  font-size: 11px;
+}
+.inspectorBody > section {
+  border-top: 1px solid var(--line);
+  margin-top: 20px;
+  padding-top: 18px;
+  font-size: 12px;
+}
+.inspectorBody > section h3 {
+  font-size: 15px;
+  margin: 0;
+}
+.inspectorEmpty {
+  padding: 20px 16px;
+  color: var(--muted);
+}
+.empty {
+  min-height: 220px;
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 16px;
+  color: var(--muted);
+}
+.registerDialog {
+  padding: 24px;
+  width: min(980px, calc(100vw - 32px));
+  max-height: calc(100dvh - 32px);
+  color: var(--text);
+  background: linear-gradient(135deg, var(--surface-soft), var(--bg));
+  border: 1px solid var(--muted);
+  border-radius: 24px;
+  box-shadow: 0 30px 90px #0008;
+  overflow: auto;
+}
+.registerDialog::backdrop {
+  background: #080510b8;
+  backdrop-filter: blur(3px);
+}
+.dialogHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 16px;
+  margin-bottom: 20px;
+}
+.dialogHeader h2 {
+  font-size: clamp(24px, 3vw, 38px);
+  letter-spacing: -0.03em;
+  line-height: 1.2;
+  margin: 0;
+}
+.registerForm fieldset {
+  border: 0;
+  padding: 0;
+}
+.registrationGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 0.95fr) minmax(0, 1.05fr);
+  gap: 28px;
+  align-items: start;
+}
+.uploadPanel {
+  display: grid;
+  gap: 16px;
+  justify-items: center;
+  align-content: start;
+  border: 1px dashed var(--muted);
+  border-radius: 20px;
+  padding: 20px;
+  text-align: center;
+  min-width: 0;
+}
+.uploadPreview {
+  position: relative;
+  width: 100%;
+  aspect-ratio: 1 / 1.1;
+  border-radius: 12px;
+  background: var(--surface);
+  display: grid;
+  align-content: center;
+  justify-items: center;
+  gap: 16px;
+  color: var(--muted);
+  overflow: hidden;
+}
+.uploadPreview img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+}
+.uploadPreview p {
+  padding: 0 12px;
+  margin: 0;
+}
+.uploadInfo {
+  margin: 0;
+  color: var(--muted);
+}
+.uploadPanel > p:last-child {
+  font-size: 12px;
+  margin: 0;
+}
+.uploadPanel small {
+  display: block;
+  margin-top: 10px;
+}
+.registrationFields {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.registrationFields label {
+  font-size: 13px;
+}
+.registrationFields input,
+.registrationFields select {
+  min-height: 39px;
+  padding: 8px 11px;
+}
+.registrationFields input[type='checkbox'] {
+  min-height: auto;
+  margin-top: 4px;
+}
+.registrationFields > p {
+  font-size: 11px;
+  margin: 0;
+}
+.fullField {
+  grid-column: 1 / -1;
+  min-width: 0;
+}
+.registrationActions {
+  display: flex;
+  justify-content: flex-end;
+  gap: 12px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.registrationActions button {
+  flex: 1;
+}
+@media (min-width: 1100px) and (max-width: 1350px) {
+  .artGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 1099px) {
+  .workspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .inspector {
+    position: static;
+  }
+  .inspectorImage {
+    max-height: 360px;
+  }
+}
+@media (max-width: 700px) {
+  .registrationGrid {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 18px;
+  }
+  .uploadPreview {
+    aspect-ratio: 16 / 9;
+  }
+  .registerDialog {
+    padding: 18px;
+    border-radius: 18px;
+  }
+  .artGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .searchRow {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .filters {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .cardBody {
+    padding: 10px;
+  }
+  .cardBody h3 {
+    font-size: 14px;
+  }
+}
+@media (max-width: 390px) {
+  .artGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}

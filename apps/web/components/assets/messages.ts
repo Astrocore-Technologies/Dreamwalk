@@ -1,6 +1,45 @@
 'use client';
 import { useT } from '@/lib/i18n';
 const rows = {
+  rightsOwned: ['Права автора', 'Author-owned rights', 'Права автора'],
+  rightsLicensed: ['Лицензия', 'Licensed rights', 'Ліцензія'],
+  rightsGenerated: ['Права на генерацию', 'Generated-art rights', 'Права на генерацію'],
+  browseSearch: [
+    'Поиск по названию или тегам',
+    'Search by title or tags',
+    'Пошук за назвою або тегами',
+  ],
+  anyKind: ['Все типы', 'All types', 'Усі типи'],
+  anyCamera: ['Все ракурсы', 'All cameras', 'Усі ракурси'],
+  rightsHelp: ['Права и использование', 'Rights and reuse', 'Права та використання'],
+  matchOptions: [
+    'Размер и поиск совместимых ревизий',
+    'Size and compatible revision search',
+    'Розмір і пошук сумісних ревізій',
+  ],
+  matchHint: [
+    'Фильтры работают с загруженными материалами. Выбери тип и ракурс для поиска по всей доступной библиотеке; текстовый поиск уточняет полученные результаты.',
+    'Filters apply to loaded art. Choose a type and camera to search all accessible art; text search narrows the returned results.',
+    'Фільтри працюють із завантаженими матеріалами. Вибери тип і ракурс для пошуку в усій доступній бібліотеці; текстовий пошук уточнює отримані результати.',
+  ],
+  selectedArt: ['Выбранный арт', 'Selected art', 'Вибраний арт'],
+  selectHint: [
+    'Выбери материал, чтобы увидеть его параметры и права.',
+    'Select art to see its details and rights.',
+    'Вибери матеріал, щоб побачити його параметри й права.',
+  ],
+  dimensions: ['Размер', 'Dimensions', 'Розмір'],
+  tagLabel: ['Теги', 'Tags', 'Теги'],
+  provenance: ['Источник', 'Source', 'Джерело'],
+  uploadedSource: ['Загрузка файла', 'Uploaded file', 'Завантажений файл'],
+  generatedSource: ['Генерация', 'Generated art', 'Згенерований арт'],
+  'licensed-import': ['Импорт по лицензии', 'Licensed import', 'Імпорт за ліцензією'],
+  close: ['Закрыть', 'Close', 'Закрити'],
+  uploadPrompt: [
+    'Выбери рисунок для новой ревизии',
+    'Choose artwork for the new revision',
+    'Вибери малюнок для нової ревізії',
+  ],
   review: [
     'Закреплённая графика на модерации',
     'Pinned art for moderation',
