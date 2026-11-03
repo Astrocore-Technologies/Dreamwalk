@@ -44,6 +44,7 @@ import {
   markTurnSpeechResolved,
   finishWorldPhase,
   applyWorldTurnAction,
+  companionAction,
   turnFence,
   matchesTurnFence,
   createStateFromPlayable,
@@ -1441,6 +1442,7 @@ export class GameService implements OnModuleDestroy {
             observationIds: context.observationIds,
             requestedFactIds: context.requestedFactIds,
             contextHash: context.speechHash,
+            replyToObservationId: request.data.replyToObservationId,
             replyLocale: request.data.replyLocale,
             ...(request.data.deferredSpeechId
               ? { deferredSpeechId: request.data.deferredSpeechId }
@@ -1592,7 +1594,14 @@ export class GameService implements OnModuleDestroy {
     const requests: NpcDecisionRequest[] = [];
     for (const [npcId, b] of Object.entries(live.state.npcBrains ?? {})) {
       const npc = live.state.entities[npcId];
-      if (!b.living || npc.encounterId || b.cursor < b.plan.length || npc.path?.length) continue;
+      if (
+        !b.living ||
+        b.living.companionship ||
+        npc.encounterId ||
+        b.cursor < b.plan.length ||
+        npc.path?.length
+      )
+        continue;
       const previousCauses = await this.db.query(
         "SELECT cause_key,context FROM game_npc_decision_requests WHERE campaign_id=$1 AND npc_id=$2 AND purpose='plan'",
         [id, npcId],
@@ -3237,6 +3246,18 @@ export class GameService implements OnModuleDestroy {
     // A provider chooses bounded plans. Applying their legal actions uses the same core.
     let state = live.state;
     for (const npcId of Object.keys(state.npcBrains ?? {}).sort()) {
+      const companion = companionAction(state, npcId);
+      if (companion) {
+        const applied = applyWorldTurnAction(state, npcId, companion, turnFence(state)!);
+        if (!applied.error)
+          state = recordNpcEvents(
+            state,
+            applied.state,
+            applied.events,
+            `world:${state.turnController!.roundId}:${npcId}:companion`,
+          ).state;
+        continue;
+      }
       const brain = state.npcBrains![npcId];
       while (brain.cursor < brain.plan.length) {
         const action = brain.plan[brain.cursor];

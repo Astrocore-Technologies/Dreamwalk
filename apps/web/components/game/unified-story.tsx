@@ -55,6 +55,7 @@ const actionLabels = {
   pick_up: 'Подобрать',
   give: 'Передать',
   transition: 'Перейти',
+  approach: 'Перейти',
   wait: 'Ждать',
 } as const;
 export function UnifiedStory({
@@ -101,6 +102,7 @@ export function UnifiedStory({
   const feedElement = useRef<HTMLDivElement>(null),
     nearBottom = useRef(true);
   const epoch = useRef(0),
+    feedEpoch = useRef(0),
     polling = useRef(false),
     actionLock = useRef(false);
   const submitted = useRef<Prepared | null>(null),
@@ -130,13 +132,13 @@ export function UnifiedStory({
   const refresh = useCallback(async () => {
     if (polling.current) return;
     polling.current = true;
-    const current = epoch.current;
+    const current = feedEpoch.current;
     const responseLocale = getLocale();
     try {
       const result = await api<StoryTurnFeed>(`${path}/feed`, {
         headers: { 'Accept-Language': responseLocale },
       });
-      if (current !== epoch.current || responseLocale !== getLocale()) return;
+      if (current !== feedEpoch.current || responseLocale !== getLocale()) return;
       setFeed(result);
       const sent = submitted.current;
       const receipt =
@@ -160,7 +162,7 @@ export function UnifiedStory({
         }
       }
     } catch (err) {
-      if (current === epoch.current) {
+      if (current === feedEpoch.current && responseLocale === getLocale()) {
         setError(errorMessage(err));
         if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
           setFeed(null);
@@ -174,12 +176,20 @@ export function UnifiedStory({
     }
     // Keep submissions pinned to their original quote; only the read feed follows the current locale.
   }, [path]);
+  // Locale changes invalidate reads, not the original language/operation of
+  // in-flight quotes, submissions, or their uncertain-response recovery.
   useEffect(() => {
     epoch.current++;
+    return () => {
+      epoch.current++;
+    };
+  }, [path]);
+  useEffect(() => {
+    feedEpoch.current++;
     void refresh();
     const timer = setInterval(() => void refresh(), 2000);
     return () => {
-      epoch.current++;
+      feedEpoch.current++;
       clearInterval(timer);
     };
   }, [refresh, locale]);
@@ -401,6 +411,7 @@ export function UnifiedStory({
       <ul>
         {actions.map((entry, index) => {
           const target =
+            entry.targetLabel ||
             projection.entities.find((entity) => entity.id === entry.action.targetId)?.label ||
             projection.map.exits.find((exit) => exit.id === entry.action.targetId)?.label;
           const item = projection.inventory.find(
@@ -529,7 +540,7 @@ export function UnifiedStory({
                   disabled={busy || pending}
                   onClick={onClearRecipient}
                 >
-                  ×
+                  {h('director')}
                 </button>
               )}
               <button

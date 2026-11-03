@@ -76,6 +76,7 @@ export function useGame(campaignId: string) {
       generation: activeReadScope.current.generation + 1,
     };
   const readGeneration = activeReadScope.current.generation;
+  const projectionContext = useRef<{ campaignId: string; reconnectVersion: number } | null>(null);
   const [error, setError] = useState('');
   const [busy, setBusy] = useState(false);
   const [events, setEvents] = useState<(GameEvent & { id: string })[]>([]);
@@ -147,10 +148,18 @@ export function useGame(campaignId: string) {
   }, [path, accept, locale, readGeneration]);
   useEffect(() => {
     alive.current = true;
-    envelope.current = null;
-    setProjection(null);
+    // A language refresh must not unmount the room and lose a prepared quote,
+    // draft, or uncertain submission. Only a different game/control context resets it.
+    if (
+      projectionContext.current?.campaignId !== campaignId ||
+      projectionContext.current?.reconnectVersion !== reconnectVersion
+    ) {
+      envelope.current = null;
+      setProjection(null);
+      setEvents([]);
+    }
+    projectionContext.current = { campaignId, reconnectVersion };
     setError('');
-    setEvents([]);
     setConnection('connecting');
     let stopped = false;
     let reconnect: ReturnType<typeof setTimeout> | undefined;

@@ -1,6 +1,7 @@
 import type { CurrencyFunding } from '../sparks';
 import { turnFenceSchema } from './turns';
 import { z } from 'zod';
+import { npcCompanionIntentSchema } from './world-items';
 import { narrativeActionSchema, narrativeSceneSchema, narrativeNpcSchema } from './narrative';
 const id = z
   .string()
@@ -37,6 +38,9 @@ export const storyClarificationSchema = z.enum([
   'INVALID_MARKUP',
   'TOO_MANY_SEGMENTS',
 ]);
+export const storyActionSchema = narrativeActionSchema.extend({
+  kind: z.enum([...narrativeActionSchema.shape.kind.options, 'approach']),
+});
 export const storyTurnProposalSchema = z
   .object({
     turnId: z.uuid(),
@@ -48,10 +52,17 @@ export const storyTurnProposalSchema = z
         z
           .object({
             segmentIndex: z.number().int().min(0).max(5),
-            action: narrativeActionSchema.nullable(),
+            action: storyActionSchema.nullable(),
+            replyNpcId: id.nullable().optional(),
+            replyContextHash: z.string().min(1).max(160).nullable().optional(),
             reply: z
               .union([
-                z.object({ text: z.string().trim().min(1).max(1000) }).strict(),
+                z
+                  .object({
+                    text: z.string().trim().min(1).max(1000),
+                    companionIntent: npcCompanionIntentSchema.optional(),
+                  })
+                  .strict(),
                 z.object({ code: z.literal('acknowledged') }).strict(),
               ])
               .nullable(),
@@ -73,7 +84,8 @@ export const storyTurnProposalSchema = z
 export type StoryTurnProposal = z.infer<typeof storyTurnProposalSchema>;
 export type StoryActionPreview = {
   segmentIndex: number;
-  action: z.infer<typeof narrativeActionSchema>;
+  targetLabel?: string;
+  action: z.infer<typeof storyActionSchema>;
 };
 export interface StoryQuote {
   chargeUnit?: 'sparks' | 'credits';
