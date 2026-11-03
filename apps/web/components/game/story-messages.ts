@@ -38,6 +38,41 @@ export const storyMessages = {
   dismiss: ['Отмена', 'Cancel', 'Скасувати'],
   estimatedCost: ['Примерно {amount} Искр', 'About {amount} Sparks', 'Приблизно {amount} Іскор'],
   freeTurn: ['Искры не списываются', 'No Sparks charge', 'Іскри не списуються'],
+  worldMembersError: [
+    'Не удалось проверить участников и владельца кампании. Повторяем проверку; подтверждение генерации пока недоступно.',
+    'Could not verify the campaign members and owner. Retrying; generation confirmation is unavailable until verification succeeds.',
+    'Не вдалося перевірити учасників і власника кампанії. Повторюємо перевірку; підтвердження генерації поки недоступне.',
+  ],
+  worldCheckingOwner: [
+    'Проверяем владельца кампании…',
+    'Checking the campaign owner…',
+    'Перевіряємо власника кампанії…',
+  ],
+  worldOwnerReview: [
+    'Идёт ход мира. Если дополнительные ответы ждут согласия, их стоимость подтверждает владелец кампании.',
+    'The world turn is in progress. The campaign owner reviews the cost of any additional responses awaiting consent.',
+    'Триває хід світу. Якщо додаткові відповіді очікують згоди, їхню вартість підтверджує власник кампанії.',
+  ],
+  worldCheckingStatus: [
+    'Проверяем состояние хода мира…',
+    'Checking world-turn status…',
+    'Перевіряємо стан ходу світу…',
+  ],
+  worldManualAuthorization: [
+    'Решения NPC ждут ручного разрешения. В этом режиме генерации стандартная смета недоступна; ожидание не означает, что AI уже работает.',
+    'NPC decisions await manual authorization. Standard cost confirmation is unavailable in this generation mode; waiting does not mean the AI is running.',
+    'Рішення NPC очікують ручного дозволу. У цьому режимі генерації стандартний кошторис недоступний; очікування не означає, що AI вже працює.',
+  ],
+  worldNoPendingGeneration: [
+    'Ожидающей генерации нет. Ход мира завершится после обработки игровых действий.',
+    'No generation is pending. The world turn can finish after game actions are processed.',
+    'Генерація не очікується. Хід світу завершиться після обробки ігрових дій.',
+  ],
+  worldGenerationUnavailable: [
+    'Ход мира ещё ожидает обработки. Сейчас нет доступной сметы для подтверждения; это не подтверждает запуск AI.',
+    'The world turn is still waiting. No cost estimate is currently available to confirm; this does not confirm that AI work has started.',
+    'Хід світу ще очікує обробки. Зараз немає доступного кошторису для підтвердження; це не підтверджує запуск AI.',
+  ],
   worldEstimate: [
     'Мир готовит следующий ход. Подтверди стоимость дополнительных ответов.',
     'The world is preparing its next turn. Review the cost of additional responses.',
