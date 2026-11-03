@@ -2,6 +2,7 @@ import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import sharp from 'sharp';
 import type { VisualPackage, GameProjection } from '@dreamwalk/contracts';
+import { setUnpaidFixtureLocale } from './support/unpaid-fixture-campaign';
 
 async function api(page: Page, path: string, data?: unknown, method = 'POST') {
   const response =
@@ -19,7 +20,8 @@ async function account(page: Page) {
     name: 'Visual QA',
     password: `Visual-${randomUUID()}!`,
   });
-  await api(page, '/account/settings', { language: 'en' }, 'PATCH');
+  const locale = await setUnpaidFixtureLocale(page.request, 'en');
+  expect(locale.ok(), `fixture language setup: ${locale.status()}`).toBeTruthy();
   await api(page, '/account/onboarding', {
     name: 'Visual QA',
     genres: [],
@@ -314,7 +316,8 @@ test('photo reference requires separate permission and cancel leaves it private'
   page,
   browser,
 }) => {
-  test.setTimeout(60000);
+  // Setup may honor one explicit middleware rate-limit rejection before UI assertions.
+  test.setTimeout(130000);
   await account(page);
   await page.goto('/studio/visuals');
   await page.getByRole('combobox', { name: 'Character', exact: true }).selectOption('photo');
