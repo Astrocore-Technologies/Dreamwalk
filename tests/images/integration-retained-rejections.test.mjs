@@ -30,6 +30,8 @@ await test('a distinct consented image can use remaining budget while confirmed 
       ownerEnvironment(
         {
           ...ownerProfile(),
+          // Keep this retained-liability scenario at 100000 per request under estimate-as-hold.
+          image: { ...ownerProfile().image, estimatedTotalMicros: 100000 },
           totalCapMicros: 200000,
           textCapMicros: 200000,
           imageCapMicros: 200000,

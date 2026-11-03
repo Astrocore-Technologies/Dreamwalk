@@ -348,11 +348,11 @@ test('Studio Locations visibly shows the real-image control, model and plain blo
   const dialog = page.getByTestId('location-image-dialog');
   await expect(
     dialog.getByRole('textbox', { name: 'Saved generation description', exact: true }),
-  ).toHaveValue(/warm reading room/);
-  await expect(dialog.getByLabel('Artwork description', { exact: true })).toHaveAttribute(
-    'readonly',
-    '',
-  );
+  ).toHaveCount(0);
+  await expect(dialog.getByLabel('Artwork description', { exact: true })).toHaveCount(0);
+  await expect(
+    dialog.getByRole('heading', { name: mock.preparedSource!.name, exact: true }),
+  ).toBeVisible();
   await expect(
     dialog.getByRole('option', { name: 'Fixture without API', exact: true }),
   ).toHaveCount(0);
@@ -374,10 +374,9 @@ test('synthetic canonical location image requires quote consent and separate fre
     .click();
   const dialog = page.getByTestId('location-image-dialog'),
     generation = dialog.getByRole('region', { name: 'Image preparation', exact: true });
-  await expect(generation.getByLabel('Artwork description', { exact: true })).toHaveValue(
-    /Updated saved skylight/,
-  );
+  await expect(generation.getByLabel('Artwork description', { exact: true })).toHaveCount(0);
   await generation.getByRole('button', { name: 'Estimate cost', exact: true }).click();
+  expect(mock.quotedBody!.prompt).toContain('Updated saved skylight');
   const run = generation.getByRole('button', { name: 'Confirm and generate', exact: true });
   await expect(run).toBeEnabled();
   expect(mock.calls.jobs).toBe(0);
@@ -507,7 +506,8 @@ test('ordinary author invalid source edits block image work; explicit illustrati
   }
   await expect(
     dialog.getByRole('textbox', { name: 'Saved generation description', exact: true }),
-  ).toHaveValue(new RegExp(revisedName));
+  ).toHaveCount(0);
+  await expect(dialog.getByRole('heading', { name: revisedName, exact: true })).toBeVisible();
   expect(patchCompleted).toBe(true);
   const persistedStory = await page.request.get(`/api/v1/studio/adventures/${mock.adventureId}`);
   expect(persistedStory.ok()).toBeTruthy();

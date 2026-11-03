@@ -202,7 +202,7 @@ await test(
           const q = await e.quote(legacy.user.id, input(legacyStory.id, { mode: 'external' }));
           assert.equal(q.quote.upperMicros, null);
           assert.equal(q.quote.verifiedUpperMicros, null);
-          assert.equal(q.quote.reserveMicros, 100000);
+          assert.equal(q.quote.reserveMicros, 45880);
           assert.equal(q.quote.estimatedTotalMicros, 45880);
           assert.equal(q.quote.costBasis, 'approved_estimate');
           const body = { quoteId: q.quote.id, operationId: randomUUID(), consent: true };
@@ -213,6 +213,7 @@ await test(
           const stored = await row(j.id);
           assert.equal(stored.cost_basis, 'approved_estimate');
           assert.equal(Number(stored.estimated_total_micros), 45880);
+          assert.equal(Number(stored.upper_micros), q.quote.reserveMicros);
           await e.workOnce();
           assert.equal(calls, 1);
           const reconstructed = await engine().get(legacy.user.id, j.id);

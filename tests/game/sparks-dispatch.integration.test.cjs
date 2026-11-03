@@ -541,7 +541,9 @@ test(
           assert.equal(done.status, 'admitted');
           assert.equal(done.sparkStatus, 'settled');
           assert.equal(done.sparkCapturedSubunits, '26');
-          assert.equal(done.sparkReservedSubunits, '200');
+          assert.equal(q.reserveMicros, profile.estimatedTotalMicros);
+          assert.equal(q.sparks.reserveSubunits, '40');
+          assert.equal(done.sparkReservedSubunits, q.sparks.reserveSubunits);
           const cancelled = await imageEnqueue(await imageQuote());
           await images.cancel(owner, cancelled.id);
           assert.equal((await images.get(owner, cancelled.id)).sparkStatus, 'released');

@@ -1,3 +1,4 @@
+import { imageProviderRequest } from './request-policy';
 import { quoteFunding, heldFunding } from '../generation/currency-funding';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import { resolveOwnerImageProfile } from '../generation/config';
@@ -457,10 +458,16 @@ export class ImageGenerationEngine {
     const references = input.referenceRevisionIds.length + input.privateReferenceAssetIds.length;
     if (references > p.maxReferenceImages)
       fail(409, 'IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE', 'IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE');
-    if (Buffer.byteLength(input.prompt, 'utf8') > p.maxPromptUtf8Bytes)
+    if (Buffer.byteLength(imageProviderRequest(input).prompt, 'utf8') > p.maxPromptUtf8Bytes)
       fail(413, 'GENERATION_INPUT_TOO_LARGE', 'GENERATION_INPUT_TOO_LARGE');
     return {
-      estimateSnapshot: estimateImageRequest(input.prompt, references, p, this.provider.id),
+      estimateSnapshot: estimateImageRequest(
+        imageProviderRequest(input).prompt,
+        references,
+        p,
+        this.provider.id,
+        input.requestPolicyVersion === 2,
+      ),
       pricingProfileSnapshot: imagePricingProfileSnapshot(p),
     };
   }
@@ -472,7 +479,9 @@ export class ImageGenerationEngine {
           ? 0
           : this.policy.mockUpperMicros
         : this.policy.costBasis === 'approved_estimate'
-          ? this.policy.operationalReserveMicros!
+          ? input.requestPolicyVersion === 2
+            ? this.policy.estimatedTotalMicros!
+            : this.policy.operationalReserveMicros!
           : this.policy.verifiedUpperMicros!)
     );
   }
@@ -600,7 +609,7 @@ export class ImageGenerationEngine {
       fail(409, 'QUOTE_PROVIDER_CHANGED', 'QUOTE_PROVIDER_CHANGED');
   }
   async quote(actorId: string, body: unknown) {
-    const input = generationRequestSchema.parse(body);
+    const input = { ...generationRequestSchema.parse(body), requestPolicyVersion: 2 as const };
     const authorization = await this.db.tx((c) => this.authorize(c, actorId, input));
     const candidates = await this.assets.search(actorId, {
       kind: input.kind,
@@ -930,7 +939,10 @@ export class ImageGenerationEngine {
                 mockUpperMicros: 0,
               }
             : input.mode === 'external' &&
-                (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release')
+                (this.policy.generationMode === 'owner' ||
+                  this.policy.generationMode === 'release' ||
+                  (input.requestPolicyVersion === 2 &&
+                    this.policy.costBasis === 'approved_estimate'))
               ? {
                   ...(authorization.livePolicy ?? this.policy),
                   estimatedTotalMicros: Number(q.estimated_total_micros),
