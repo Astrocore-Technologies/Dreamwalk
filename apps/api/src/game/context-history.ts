@@ -27,6 +27,15 @@ export async function extendContextHistory<T extends object>(
       }
     : db;
   context = await withDirectorStyle(settingsDb, context, purpose);
+  context = await (ai.withRuntimeMap?.(
+    campaignId,
+    state,
+    actorId,
+    context,
+    purpose,
+    npcId,
+    transaction,
+  ) ?? context);
   const budget = ai.contextWindow();
   if (!budget) return context;
   const value = context as T & Record<string, unknown>;

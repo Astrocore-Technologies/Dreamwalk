@@ -1030,6 +1030,7 @@ checks therefore remain for CI. No paid model call or production mutation was us
 - Removed the passive illustration component and its explanation block. The existing map toolbar has a compact Actions button for keyboard access to all visible targets. No new warning banner, confirmation, paid generation, migration or configuration change.
 - This is a playable fallback, not image analysis: positions come from the existing shared game state and are not evidence of raster terrain understanding. KAN-5 retains real spatial grounding; KAN-14 tracks this visible regression.
 - Added coverage for backdrop isolation and withdrawal plus desktop/mobile/reload, visible player/NPC and movement/menu browser cases in UK/EN/RU. Exact browser execution must be verified in CI because local Chromium fails at sandbox socket creation; the escalation environment also fails before launch.
+
 ### KAN-11: automatic translation preparation (2026-11-03)
 
 Prepared revision-aware, per-viewer cached localization for readable story metadata
@@ -1039,3 +1040,15 @@ Synthetic-only tests cover deduplication, stale translations, permission boundar
 and language-switch races. See `automatic-translation.md` for scope and checks.
 Production dispatch remains disconnected pending the owner's payer, spend and
 content-sharing decision. This is not a claim of live automatic translation.
+
+## Runtime image-aware map context (KAN-5, 2026-11-03)
+
+Added real current-map image input with server-position markers to the existing
+NPC/story request. The common permitted view is masked before raster sampling;
+current-map immutable pins, ownership/source access, takedowns, positions and quote
+body hashes are fenced. The existing confirmation includes map analysis in its one
+estimate. No collision, character relocation, art regeneration, paid request or
+production activation is performed. The reviewed model-specific image accounting
+and separately authorized visual-quality check remain activation prerequisites;
+Luna's undocumented image multiplier/counting-endpoint price is not invented.
+See `docs/runtime-map-vision.md` for behavior and the exact remaining decision.

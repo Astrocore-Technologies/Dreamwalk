@@ -1,3 +1,5 @@
+import { extendRuntimeMap, runtimeMapStillCurrent } from '../game/runtime-map-context';
+import type { GameState } from '@dreamwalk/contracts';
 import { quoteFunding, optionalFunding } from '../generation/currency-funding';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import { textUsageCostMicros } from '../generation/text-pricing';
@@ -112,6 +114,33 @@ function publicRequestMeta(value: unknown) {
 export class NpcAiEngine {
   readonly policy: AiPolicy;
   private inFlight = new Set<string>();
+  private runtimeStateReader?: (campaignId: string) => GameState | undefined;
+  attachRuntimeStateReader(reader: (campaignId: string) => GameState | undefined) {
+    this.runtimeStateReader = reader;
+  }
+  async withRuntimeMap<T extends object>(
+    campaignId: string,
+    state: GameState,
+    actorId: string,
+    context: T,
+    purpose: import('./types').AiPurpose,
+    npcId?: string,
+    transaction?: PoolClient,
+  ): Promise<T> {
+    return this.provider.runtimeVisionEnabled?.()
+      ? extendRuntimeMap(
+          transaction
+            ? { query: async (sql, values) => (await transaction.query(sql, values)).rows }
+            : this.db,
+          campaignId,
+          state,
+          actorId,
+          context,
+          purpose,
+          npcId,
+        )
+      : context;
+  }
   constructor(
     protected db: Db,
     readonly provider: NpcProvider = new MockNpcProvider(),
@@ -397,6 +426,7 @@ export class NpcAiEngine {
               providerEnforcesQuotedCap: false,
             }
           : {}),
+        ...(context.runtimeMapImage ? { runtimeMapImages: 1 } : {}),
         provider: this.provider.id,
         external: this.provider.external,
         policyVersion: this.policy.version,
@@ -407,6 +437,15 @@ export class NpcAiEngine {
   private async turnAuthorized(c: PoolClient, campaignId: string, context: DecisionContext) {
     const row = (await c.query('SELECT state FROM game_campaigns WHERE id=$1', [campaignId]))
       .rows[0];
+    if (
+      !(await runtimeMapStillCurrent(
+        async (sql, values) => (await c.query(sql, values)).rows,
+        campaignId,
+        this.runtimeStateReader?.(campaignId) ?? row?.state,
+        context,
+      ))
+    )
+      return false;
     // Contexts are server-built. Bind presentation to the explicit recipient, never
     // an arbitrary audience member. Check before cache lookup and again at dispatch.
     const actorId =

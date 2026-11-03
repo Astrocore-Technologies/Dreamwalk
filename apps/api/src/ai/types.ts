@@ -87,6 +87,7 @@ export interface NpcProvider {
   readonly version: string;
   readonly external: boolean;
   readonly manualLive?: boolean;
+  runtimeVisionEnabled?(): boolean;
   canDispatchJob?(id: string): Promise<boolean>;
   requestAuthorized?(id: string, context?: unknown): Promise<boolean>;
   generate(request: ProviderRequest): Promise<ProviderResult>;

@@ -24,6 +24,9 @@ export class ReleaseGenerationProvider implements NpcProvider {
     this.version = `${inner.version}:release-v1`;
     this.permitted = new GenerationProvider(inner, session);
   }
+  runtimeVisionEnabled() {
+    return this.inner.runtimeVisionEnabled?.() ?? false;
+  }
   prepareTextRequest(purpose: AiPurpose, context: unknown) {
     return this.inner.prepareTextRequest?.(purpose, context);
   }

@@ -71,6 +71,18 @@ const textSchema = z
       })
       .strict()
       .optional(),
+    runtimeVision: z
+      .object({
+        model,
+        inputTokensPerImage: z.number().int().min(1).max(1048576),
+        maxImages: z.number().int().min(1).max(4),
+        detail: z.literal('high'),
+        billing: z.literal('text_input_rate'),
+        maxPricedInputTokens: z.number().int().min(1).max(1050000),
+        pricing: pricingSchema,
+      })
+      .strict()
+      .optional(),
     maxInputBytes: z.number().int().min(1024).max(TEXT_CONTEXT_TRANSPORT_BYTES).optional(),
     inputMicrosPerMillion: positiveMicros,
     outputMicrosPerMillion: positiveMicros,
@@ -90,6 +102,14 @@ const textSchema = z
     (v) =>
       !v.storyVision ||
       (!!v.estimation && v.contextBudgetTokens !== undefined && v.storyVision.model === v.model),
+  )
+  .refine(
+    (v) =>
+      !v.runtimeVision ||
+      (!!v.estimation &&
+        v.contextBudgetTokens !== undefined &&
+        v.runtimeVision.model === v.model &&
+        v.runtimeVision.maxImages === 1),
   )
   // Purpose overrides are explicit operator policy and require per-request quoting.
   .refine((value) => value.storyPlanMaxOutputTokens === undefined || !!value.estimation)

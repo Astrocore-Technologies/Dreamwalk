@@ -314,6 +314,18 @@ test(
         },
       );
       await t.test(
+        'runtime map pixels obey real membership, private-source revocation and takedown SQL',
+        async () => {
+          await require('./runtime-map-acl.fixture.cjs').verifyRuntimeMapAcl({
+            pool,
+            owner,
+            player,
+            storyId,
+            version,
+          });
+        },
+      );
+      await t.test(
         'a paid initial plan is reused for this same player and source without another charge',
         async () => {
           const p = await service.prepare(player, {

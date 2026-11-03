@@ -88,6 +88,8 @@ export type StoryActionPreview = {
   action: z.infer<typeof storyActionSchema>;
 };
 export interface StoryQuote {
+  /** Current-map vision is part of this same quote, never an extra generation. */
+  runtimeMapImages?: number;
   chargeUnit?: 'sparks' | 'credits';
   funding?: CurrencyFunding;
   sparkReservedSubunits?: string | null;

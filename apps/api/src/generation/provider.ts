@@ -31,6 +31,9 @@ export class GenerationProvider implements NpcProvider {
       });
     }
   }
+  runtimeVisionEnabled() {
+    return this.inner.runtimeVisionEnabled?.() ?? false;
+  }
   prepareTextRequest(purpose: AiPurpose, context: unknown) {
     return this.inner.prepareTextRequest?.(purpose, context);
   }

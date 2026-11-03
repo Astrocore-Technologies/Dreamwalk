@@ -126,6 +126,14 @@ function aggregateReplyQuote(id: string, quotedReplies: QuotedReply[]): StoryQuo
     ...optionalFunding(aggregateFunding(quotedReplies.map((reply) => reply.quote))),
     providerUpperMicros: null,
     providerReserveMicros: reserve,
+    ...(quotedReplies.some((r) => r.quote.runtimeMapImages)
+      ? {
+          runtimeMapImages: quotedReplies.reduce(
+            (sum, r) => sum + (r.quote.runtimeMapImages ?? 0),
+            0,
+          ),
+        }
+      : {}),
     estimatedTotalMicros: estimate,
     providerEnforcesQuotedCap: false,
     expiresAt: new Date(

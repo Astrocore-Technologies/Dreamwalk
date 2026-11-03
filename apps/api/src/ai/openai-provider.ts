@@ -1,5 +1,12 @@
 import { directorStyleInstructions } from './director-style';
 import {
+  readRuntimeMapImage,
+  runtimeVisionInput,
+  runtimeVisionCounter,
+  runtimeVisionInstructions,
+  type RuntimeVisionPolicy,
+} from './runtime-vision';
+import {
   textUsageCostMicros,
   textInputReserveRate,
   type TextCachePricing,
@@ -64,6 +71,7 @@ export interface OpenAiNpcConfig {
   inputMicrosPerMillion: number;
   outputMicrosPerMillion: number;
   cachePricing?: TextCachePricing;
+  runtimeVision?: RuntimeVisionPolicy;
 }
 const object = (properties: Record<string, unknown>) => ({
   type: 'object',
@@ -366,6 +374,7 @@ export function buildOpenAiNpcRequestBody(
     | 'maxOutputTokens'
     | 'estimation'
     | 'contextBudgetTokens'
+    | 'runtimeVision'
   >,
   purpose: ProviderRequest['purpose'],
   context: unknown,
@@ -426,11 +435,14 @@ export function buildOpenAiNpcRequestBody(
     ...(config.reasoningEffort ? { reasoning: { effort: config.reasoningEffort } } : {}),
     store: false,
     stream: false,
-    instructions,
-    input: JSON.stringify({
-      purpose: purpose,
-      context: config.estimation ? canonical(context) : context,
-    }),
+    instructions:
+      instructions + (readRuntimeMapImage(context) ? ' ' + runtimeVisionInstructions : ''),
+    input: runtimeVisionInput(
+      purpose,
+      config.estimation ? canonical(context) : context,
+      config.model,
+      config.runtimeVision,
+    ),
     max_output_tokens: config.maxOutputTokens,
     text: {
       format: {
@@ -466,7 +478,15 @@ export function prepareOpenAiNpcTextRequest(
     ...(config.estimation ? { estimation: config.estimation } : {}),
     ...(config.pricing ? { pricing: config.pricing } : {}),
   };
-  return { body, snapshot: estimateTextRequest(body, profile, providerFingerprint, counter) };
+  return {
+    body,
+    snapshot: estimateTextRequest(
+      body,
+      profile,
+      providerFingerprint,
+      runtimeVisionCounter(body, config.model, config.runtimeVision, counter),
+    ),
+  };
 }
 /** Actual Responses API protocol. Fixed official endpoint, no arbitrary origin or automatic retry. */
 export class OpenAiNpcProvider implements NpcProvider {
@@ -516,6 +536,14 @@ export class OpenAiNpcProvider implements NpcProvider {
     this.config = Object.freeze({
       ...config,
       ...(config.cachePricing ? { cachePricing: Object.freeze({ ...config.cachePricing }) } : {}),
+      ...(config.runtimeVision
+        ? {
+            runtimeVision: Object.freeze({
+              ...config.runtimeVision,
+              pricing: Object.freeze({ ...config.runtimeVision.pricing }),
+            }),
+          }
+        : {}),
       ...(config.estimation ? { estimation: Object.freeze({ ...config.estimation }) } : {}),
       ...(config.pricing ? { pricing: Object.freeze({ ...config.pricing }) } : {}),
     });
@@ -535,6 +563,7 @@ export class OpenAiNpcProvider implements NpcProvider {
                   counter: tokenCounter?.id ?? 'utf8-envelope-plus-protocol-v1',
                 }
               : {}),
+            runtimeVision: config.runtimeVision,
             maxOutputTokens: config.maxOutputTokens,
             maxResponseBytes: config.maxResponseBytes,
             inputMicrosPerMillion: config.inputMicrosPerMillion,
@@ -570,6 +599,18 @@ export class OpenAiNpcProvider implements NpcProvider {
         .digest('hex')
         .slice(0, 16);
   }
+  runtimeVisionEnabled() {
+    return !!this.config.runtimeVision;
+  }
+  private counter(body: string, context: unknown, enforcePricedRange = true) {
+    return runtimeVisionCounter(
+      body,
+      this.config.model,
+      this.config.runtimeVision,
+      evidenceCounter(body, this.config.model, this.version, context) ?? this.tokenCounter,
+      enforcePricedRange,
+    );
+  }
   private cost(input: number, output: number) {
     return textUsageCostMicros(
       {
@@ -593,8 +634,7 @@ export class OpenAiNpcProvider implements NpcProvider {
       purpose,
       context,
       this.version,
-      evidenceCounter(this.body(purpose, context), this.config.model, this.version, context) ??
-        this.tokenCounter,
+      this.counter(this.body(purpose, context), context),
     );
   }
   countBody(purpose: ProviderRequest['purpose'], context: unknown) {
@@ -627,10 +667,14 @@ export class OpenAiNpcProvider implements NpcProvider {
     const m = measureTextContext(
       this.body(purpose, context),
       { ...this.config, contextTokens: this.config.maxModelInputTokens! },
-      evidenceCounter(this.body(purpose, context), this.config.model, this.version, context) ??
-        this.tokenCounter,
+      this.counter(this.body(purpose, context), context, false),
     );
-    return m.serializedBytes <= m.transportLimitBytes && m.totalTokens <= m.effectiveContextTokens;
+    return (
+      m.serializedBytes <= m.transportLimitBytes &&
+      m.totalTokens <= m.effectiveContextTokens &&
+      (!readRuntimeMapImage(context) ||
+        m.inputTokens <= this.config.runtimeVision!.maxPricedInputTokens)
+    );
   }
   contextBudgetBytes(maxCostMicros: number): number {
     if (this.config.contextBudgetTokens !== undefined) return this.config.maxInputBytes;
@@ -721,8 +765,7 @@ export class OpenAiNpcProvider implements NpcProvider {
           measureTextContext(
             body,
             { ...this.config, contextTokens: this.config.maxModelInputTokens! },
-            evidenceCounter(body, this.config.model, this.version, request.context) ??
-              this.tokenCounter,
+            this.counter(body, request.context),
           ),
         );
       } catch {
@@ -861,6 +904,12 @@ export class OpenAiNpcProvider implements NpcProvider {
     // cannot be settled using the configured Standard rates or retried blindly.
     if (value.service_tier !== 'default')
       throw new ProviderFailure('PROVIDER_TIER_UNKNOWN', true, value.id);
+    if (
+      readRuntimeMapImage(context) &&
+      (!this.config.runtimeVision ||
+        value.usage.input_tokens > this.config.runtimeVision.maxPricedInputTokens)
+    )
+      throw new ProviderFailure('PROVIDER_USAGE_UNKNOWN', true, value.id);
     const details = value.usage.input_tokens_details;
     if (
       this.config.cachePricing &&

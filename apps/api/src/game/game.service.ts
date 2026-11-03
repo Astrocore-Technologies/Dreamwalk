@@ -257,6 +257,7 @@ export class GameService implements OnModuleDestroy {
         this.prepareTurnSpeech(state, actorId, npcId, speech, requestId, userId, identity),
     });
     this.art.attachRuntimeStateReader((id) => this.live.get(id)?.state);
+    this.ai.attachRuntimeStateReader?.((id) => this.live.get(id)?.state);
     images?.attachRuntimeStateReader((id) => {
       const cached = this.live.get(id);
       return cached ? { state: cached.state, dbRevision: cached.dbRevision } : undefined;

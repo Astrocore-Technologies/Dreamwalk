@@ -19,15 +19,26 @@ export function StoryCost({ quote }: { quote: StoryQuote & { funding?: WalletFun
           reserve != null ? (quote.sparkRateVersion ?? null) : undefined,
         )
       : null) ?? reserve;
+  const vision = quote.runtimeMapImages ? (
+    <small data-runtime-map-consent>
+      {locale === 'ru'
+        ? 'Изображение текущей карты с видимыми персонажами будет отправлено ИИ. Анализ включён в эту оценку.'
+        : locale === 'uk'
+          ? 'Зображення поточної мапи з видимими персонажами буде надіслано ШІ. Аналіз включено в цю оцінку.'
+          : 'The current map image and visible characters will be sent to the AI. Analysis is included in this estimate.'}
+    </small>
+  ) : null;
   if (quote.funding)
     return (
       <div data-testid="story-cost">
         <FundingBreakdown funding={quote.funding} />
         <FundingNotice />
+        {vision}
       </div>
     );
   return (
     <div data-testid="story-cost">
+      {vision}
       <p data-spark-quote-price>
         <strong>
           {amount !== null
