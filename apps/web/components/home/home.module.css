@@ -1090,20 +1090,68 @@
   }
 }
 
-/* Scenic space remains visible between readable discovery surfaces. */
+/* Keep navigation out of authored text and let the illustrated world frame the page. */
 .intro,
 .sectionHeading {
-  background: color-mix(in srgb, var(--bg) 86%, transparent);
-  border: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
-  border-radius: 16px;
-  padding: 18px 22px;
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 8px 0;
 }
-.intro h1 {
+.intro h1,
+.sectionHeading h2 {
+  text-shadow: 0 2px 12px color-mix(in srgb, var(--bg) 80%, transparent);
+}
+.heroArrow {
+  top: 18px;
+  transform: none;
+  width: 44px;
+  height: 44px;
+  background: #21172bf2;
+}
+.previous {
+  left: auto;
+  right: 72px;
+}
+.next {
+  right: 18px;
+}
+.artStamp {
+  display: none;
+}
+.featureActions > button {
+  scroll-margin-block: 110px;
+  border: 1px solid #ffe6ae;
+  box-shadow:
+    inset 0 0 0 3px #c5913c55,
+    0 5px 20px #0003;
+}
+.pagination {
   color: var(--text);
+}
+.pagination button::after {
+  background: var(--muted);
+}
+.continueLink {
+  color: var(--text);
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
 }
 @media (max-width: 700px) {
   .intro,
   .sectionHeading {
-    padding: 14px 16px;
+    padding: 8px 0;
+  }
+  .heroArrow {
+    top: 14px;
+  }
+  .previous {
+    right: 66px;
+  }
+  .next {
+    right: 14px;
+  }
+  .featureCopy {
+    padding-bottom: 34px;
   }
 }

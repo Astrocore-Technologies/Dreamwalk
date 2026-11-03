@@ -6,11 +6,11 @@ body {
 .app-shell {
   isolation: isolate;
   --world-art: url('/images/dreamwalk-world-night.webp');
-  --world-wash: linear-gradient(180deg, #15111d35, #15111d80 65%, #15111dcc);
+  --world-wash: linear-gradient(180deg, #15111d35, #15111d80 65%, #15111d);
 }
 html[data-theme='light'] .app-shell {
   --world-art: url('/images/dreamwalk-world-dawn.webp');
-  --world-wash: linear-gradient(180deg, #f8f5f020, #f8f5f070 65%, #f8f5f0ba);
+  --world-wash: linear-gradient(180deg, #f8f5f020, #f8f5f070 65%, #f8f5f0);
 }
 .app-shell:not(.game-shell)::before {
   content: '';
@@ -730,4 +730,10 @@ td {
 .funding-breakdown small {
   color: var(--muted);
   line-height: 1.6;
+}
+
+@media (max-width: 900px) {
+  html {
+    scroll-padding-bottom: calc(90px + env(safe-area-inset-bottom));
+  }
 }

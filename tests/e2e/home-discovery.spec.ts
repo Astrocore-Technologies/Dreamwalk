@@ -102,6 +102,11 @@ test('public homepage is art-led, manually navigable, localized and captures act
   await expect(page.getByTestId('home-continue').locator('a[href="/auth/sign-in"]')).toBeVisible();
   await expect(page.getByTestId('home-continue').locator('a[href^="/game/"]')).toHaveCount(0);
   const first = await featured.getAttribute('data-featured-slug');
+  const headingBox = await featured.getByRole('heading', { level: 2 }).boundingBox();
+  for (const direction of ['previous', 'next']) {
+    const arrow = await page.getByTestId(`home-${direction}`).boundingBox();
+    expect(arrow!.y + arrow!.height).toBeLessThan(headingBox!.y);
+  }
   await scenicBackground(page, 'night');
   await screenshot(page, info, 'home-desktop-dark.png');
   await page.setViewportSize({ width: 1920, height: 1080 });
@@ -139,6 +144,11 @@ test('public homepage is art-led, manually navigable, localized and captures act
   );
   await scenicBackground(page, 'dawn');
   await screenshot(page, info, 'home-desktop-light.png');
+  await page.locator('[data-home-rail]').first().scrollIntoViewIfNeeded();
+  await page.screenshot({
+    path: info.outputPath('home-light-scrolled-viewport.png'),
+    animations: 'disabled',
+  });
 });
 
 test('390px homepage preserves readable art, manual touch navigation and public-only rails', async ({
@@ -150,6 +160,27 @@ test('390px homepage preserves readable art, manual touch navigation and public-
   await expect(page.locator('html')).toHaveAttribute('lang', 'ru');
   const first = await featured.getAttribute('data-featured-slug');
   await screenshot(page, info, 'home-mobile.png');
+  const startButton = page.getByTestId('home-start-adventure');
+  await startButton.evaluate((element) => element.scrollIntoView({ block: 'center' }));
+  await expect(startButton).toBeInViewport();
+  await expect(startButton).toBeEnabled();
+  const buttonBox = await startButton.boundingBox();
+  const bottomNav = await page.locator('.bottom-nav').boundingBox();
+  expect(buttonBox!.y + buttonBox!.height).toBeLessThan(bottomNav!.y);
+  expect(
+    await startButton.evaluate((element) => {
+      const box = element.getBoundingClientRect();
+      return element.contains(
+        document.elementFromPoint(box.x + box.width / 2, box.y + box.height / 2),
+      );
+    }),
+  ).toBe(true);
+  await startButton.click({ trial: true });
+  await page.screenshot({
+    path: info.outputPath('home-mobile-start-visible.png'),
+    animations: 'disabled',
+  });
+  await page.evaluate(() => scrollTo(0, 0));
   await featured.dispatchEvent('pointerdown', {
     pointerId: 1,
     pointerType: 'touch',
