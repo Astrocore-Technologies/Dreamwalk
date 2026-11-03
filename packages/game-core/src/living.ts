@@ -1,4 +1,6 @@
 import { observedVisible } from './observation-visibility';
+import { companionAction } from './companionship';
+import { npcCompanionIntentSchema, type NpcCompanionIntent } from '@dreamwalk/contracts';
 import { spatialContext } from './spatial-context';
 import { characterAppraisal, characterPerformance, updateCharacterRelationship } from './character';
 import { materializeNpcItems, npcItemContext } from './world-items';
@@ -185,6 +187,7 @@ function prune(memory: LivingNpcMemory) {
     ...memory.beliefs.flatMap((b) => b.evidenceIds),
     ...memory.causes.map((c) => c.observationId),
     ...memory.goal.evidenceIds,
+    ...(memory.companionship ? [memory.companionship.sourceObservationId] : []),
   ]);
   const recent = new Set(memory.observations.slice(-128).map((o) => o.id));
   memory.observations = memory.observations.filter(
@@ -837,6 +840,26 @@ export function stepLivingNpcs(
   let s = perception.state;
   const events: GameEvent[] = [...perception.events];
   for (const npcId of Object.keys(state.npcBrains ?? {}).sort()) {
+    const companion = companionAction(s, npcId);
+    if (companion) {
+      const npc = s.entities[npcId],
+        brain = s.npcBrains![npcId];
+      if (
+        !options.deferredNpcIds?.includes(npcId) &&
+        !npc.encounterId &&
+        !npc.path?.length &&
+        brain.cursor >= brain.plan.length &&
+        s.tick >= brain.nextDecisionTick &&
+        (brain.living?.distractedUntilTick ?? 0) <= s.tick
+      ) {
+        const planned = plan(s, npcId, [companion]);
+        if (!planned.error) {
+          s = planned.state;
+          events.push(...planned.events);
+        }
+      }
+      continue;
+    }
     const authored = stepNpcAuthoredPolicy(s, npcId, {
       deferPlanning: options.deferredNpcIds?.includes(npcId),
     });
@@ -1475,6 +1498,7 @@ export function commitNpcPublicUtterance(
   input: {
     text?: string;
     itemIntents?: NpcItemIntent[];
+    companionIntent?: NpcCompanionIntent;
     code?: 'acknowledged';
     channel: 'say' | 'whisper';
     recipientId: string;
@@ -1482,6 +1506,7 @@ export function commitNpcPublicUtterance(
     requestedFactIds?: string[];
     contextHash: string;
     deferredSpeechId?: string;
+    replyToObservationId?: string;
     replyLocale?: Locale;
   },
 ): GameResult {
@@ -1552,9 +1577,51 @@ export function commitNpcPublicUtterance(
   if (npcContextFingerprint(context) !== input.contextHash) return result(state, [], 'STALE_STATE');
   const id = `utterance-${hash(`${npcId}:${input.contextHash}:${input.code ?? input.text}`)}`;
   if (state.npcUtterances?.some((u) => u.id === id)) return result(state);
+  if (input.companionIntent) {
+    const parsed = npcCompanionIntentSchema.safeParse(input.companionIntent);
+    if (!parsed.success || !input.text || input.channel !== 'say' || recipient.kind !== 'player')
+      return result(state, [], 'INVALID_ACTION');
+    const intent = parsed.data;
+    const memory = state.npcBrains?.[npcId]?.living;
+    const source = npcReplyObservation(state, recipient.id, npcId, intent.sourceObservationId);
+    const replySource = deferred?.utteranceId ?? input.replyToObservationId;
+    if (
+      intent.actorId !== recipient.id ||
+      !source ||
+      source.kind !== 'said' ||
+      source.actorId !== recipient.id ||
+      source.addressedNpcId !== npcId ||
+      source.disclosure !== 'public' ||
+      replySource !== source.id ||
+      !input.observationIds.includes(source.id) ||
+      (memory?.companionship && memory.companionship.actorId !== recipient.id)
+    )
+      return result(state, [], 'FORBIDDEN');
+  }
   const items = materializeNpcItems(state, npcId, input.recipientId, input.itemIntents ?? [], id);
   if (items.error) return items;
   const s = clone(items.state);
+  if (input.companionIntent) {
+    const brain = s.npcBrains![npcId],
+      memory = brain.living!;
+    if (input.companionIntent.kind === 'stop') delete memory.companionship;
+    else
+      memory.companionship = {
+        actorId: recipient.id,
+        sourceObservationId: input.companionIntent.sourceObservationId,
+        utteranceId: id,
+        crossings: [],
+      };
+    // A superseded patrol/path must not run after agreement or cancellation.
+    brain.plan = [];
+    brain.cursor = 0;
+    brain.waitingForPath = false;
+    brain.generation++;
+    brain.nextDecisionTick = s.tick;
+    s.entities[npcId].path = [];
+    s.entities[npcId].movementGeneration = (npc.movementGeneration ?? 0) + 1;
+    memory.knowledgeRevision++;
+  }
   (s.npcUtterances ??= []).push({
     id,
     speakerId: npcId,

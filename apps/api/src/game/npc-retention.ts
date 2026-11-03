@@ -33,7 +33,10 @@ export function protectedNpcEvidence(value: unknown, result = new Set<string>())
       Array.isArray(child)
     )
       for (const id of child) if (typeof id === 'string') result.add(id);
-    if ((key === 'observationId' || key === 'utteranceId') && typeof child === 'string')
+    if (
+      ['observationId', 'sourceObservationId', 'utteranceId'].includes(key) &&
+      typeof child === 'string'
+    )
       result.add(child);
     protectedNpcEvidence(child, result);
   }

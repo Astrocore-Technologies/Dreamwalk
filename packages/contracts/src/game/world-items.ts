@@ -67,11 +67,21 @@ export const npcItemIntentSchema = z.discriminatedUnion('kind', [
 ]);
 export const npcItemIntentsSchema = z.array(npcItemIntentSchema).max(2);
 export type NpcItemIntent = z.infer<typeof npcItemIntentSchema>;
+/** NPC-authored decision, anchored to the addressed player's actual shared utterance. */
+export const npcCompanionIntentSchema = z
+  .object({
+    kind: z.enum(['follow', 'stop']),
+    actorId: id,
+    sourceObservationId: z.string().min(1).max(200),
+  })
+  .strict();
+export type NpcCompanionIntent = z.infer<typeof npcCompanionIntentSchema>;
 export const npcPublicReplySchema = z.union([
   z
     .object({
       text: z.string().trim().min(1).max(1000),
       itemIntents: npcItemIntentsSchema.optional(),
+      companionIntent: npcCompanionIntentSchema.optional(),
     })
     .strict(),
   z.object({ code: z.literal('acknowledged') }).strict(),
