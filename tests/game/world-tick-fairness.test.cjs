@@ -23,9 +23,14 @@ function harness() {
     const forbidden = new Proxy(
       {},
       {
-        get: () => () => {
-          throw new Error('No external work allowed in scheduler test');
-        },
+        get: (_target, key) =>
+          key === 'attachRuntimeStateReader'
+            ? (reader) => {
+                assert.equal(typeof reader, 'function');
+              }
+            : () => {
+                throw new Error('No external work allowed in scheduler test');
+              },
       },
     );
     service = new GameService(forbidden, forbidden, forbidden, forbidden, {

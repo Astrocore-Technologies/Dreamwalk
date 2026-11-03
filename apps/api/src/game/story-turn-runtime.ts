@@ -1,3 +1,4 @@
+import { runtimeQuoteIdentity } from '../ai/runtime-map-preflight';
 import { aggregateFunding, heldFunding, optionalFunding } from '../generation/currency-funding';
 import { totalQuotedSparkSubunits, commonQuotedSparkRate } from '../generation/sparks-quote-total';
 import { randomUUID } from 'node:crypto';
@@ -131,6 +132,14 @@ function aggregateReplyQuote(id: string, quotedReplies: QuotedReply[]): StoryQuo
     ...optionalFunding(aggregateFunding(quotedReplies.map((reply) => reply.quote))),
     providerUpperMicros: null,
     providerReserveMicros: reserve,
+    ...(quotedReplies.some((r) => r.quote.runtimeMapImages)
+      ? {
+          runtimeMapImages: quotedReplies.reduce(
+            (sum, r) => sum + (r.quote.runtimeMapImages ?? 0),
+            0,
+          ),
+        }
+      : {}),
     estimatedTotalMicros: estimate,
     providerEnforcesQuotedCap: false,
     expiresAt: new Date(
@@ -448,7 +457,7 @@ export class StoryTurnRuntime {
         if (old.request_hash !== hash) fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
         return old.quote_result;
       }
-      const turnId = randomUUID();
+      const turnId = runtimeQuoteIdentity(`turn:${id}:${a.user.id}:${input.operationId}`);
       let simulation: ReturnType<StoryTurnRuntime['simulateTurnPost']>;
       try {
         simulation = this.simulateTurnPost(live.state, a.actorId, input, turnId, a.user.id);
@@ -752,7 +761,7 @@ export class StoryTurnRuntime {
           ).rows[0].n,
         );
         if (count >= 1024) fail(429, 'TURN_LIMIT', 'TURN_LIMIT');
-        const turnId = randomUUID();
+        const turnId = runtimeQuoteIdentity(`turn:${id}:${a.user.id}:${input.operationId}`);
         let context!: ReturnType<typeof buildStoryTurnContext>;
         try {
           context = buildStoryTurnContext(live.state, a.actorId, input, turnId);

@@ -17,9 +17,16 @@ as a conservative estimate. This can reach the configured limit before the real
 model tokenizer. For example, 130000 Cyrillic letters occupy 260000 UTF-8 bytes;
 that is not evidence that a 130000-token model prompt fits or has been tested.
 
+Runtime map vision also has an operational exact-count path for explicit gameplay
+quote POSTs. It releases game/SQL locks before counting and keeps unknown counting
+fees outside the player's generation charge, without claiming a zero fee. This
+separate path is described in `docs/runtime-map-vision.md`; the manual text-context
+preflight below retains its existing price/consent rules.
+
 OpenAI documents `POST /v1/responses/input_tokens` for exact request counts:
-https://developers.openai.com/api/docs/guides/token-counting . It is not silently
-called while quoting, typing or idling. No model-specific exactness is inferred
+https://developers.openai.com/api/docs/guides/token-counting . For the manual text-context path it is not silently
+called while quoting, typing or idling. Runtime map quotes use the disclosed
+operational path above. No model-specific exactness is inferred
 from another tokenizer, and the synthetic exact counter in tests is not a GPT
 implementation. The explicit manual preflight below now integrates this endpoint;
 actual account/model access remains unverified without an owner-triggered live test.
