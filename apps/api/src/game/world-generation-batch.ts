@@ -37,7 +37,12 @@ export class WorldGenerationBatch {
     private readonly db: Db,
     private readonly ai: NpcAiService,
   ) {}
-  private async authorize(c: PoolClient, userId: string, campaignId: string) {
+  private async authorize(
+    c: PoolClient,
+    userId: string,
+    campaignId: string,
+    requireRelease = true,
+  ) {
     const found = await c.query(
       `SELECT c.id FROM game_campaigns c JOIN users u ON u.id=c.owner_id
       WHERE c.id=$1 AND c.owner_id=$2 AND c.status='active' AND u.deleted_at IS NULL
@@ -46,7 +51,8 @@ export class WorldGenerationBatch {
       [campaignId, userId],
     );
     if (!found.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
-    if (!this.ai.releaseGeneration()) fail(409, 'GENERATION_UNAVAILABLE', 'GENERATION_UNAVAILABLE');
+    if (requireRelease && !this.ai.releaseGeneration())
+      fail(409, 'GENERATION_UNAVAILABLE', 'GENERATION_UNAVAILABLE');
   }
   private async lock(c: PoolClient, campaignId: string) {
     await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
@@ -118,9 +124,45 @@ export class WorldGenerationBatch {
         ]);
   }
   async status(userId: string, campaignId: string, state: GameState) {
-    if (!this.ai.releaseGeneration()) return { available: false, pending: false, unknown: false };
     return this.db.tx(async (c) => {
-      await this.authorize(c, userId, campaignId);
+      await this.authorize(c, userId, campaignId, false);
+      // Metadata only: reading a waiting reason must not quote, admit, cancel or retry work.
+      const waiting = await c.query(
+        `SELECT r.result_code FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id
+        WHERE r.campaign_id=$1 AND (r.status='queued' OR (r.status='scheduled' AND
+          (j.id IS NULL OR j.status IN ('queued','reserved','running','result_received','validated'))))`,
+        [campaignId],
+      );
+      if (!this.ai.releaseGeneration()) {
+        const evidence = (
+          await c.query(
+            `SELECT EXISTS(SELECT 1 FROM npc_ai_jobs j LEFT JOIN spark_holds h ON h.id=j.spark_hold_id
+             WHERE j.campaign_id=$1 AND (j.status='reconciling' OR h.status='pending'))
+             OR EXISTS(SELECT 1 FROM live_test_text_permits p WHERE p.campaign_id=$1 AND p.state='unknown')
+             OR EXISTS(SELECT 1 FROM game_npc_decision_requests r JOIN spark_holds h ON h.source_id=r.id::text
+               WHERE r.campaign_id=$1 AND h.status='pending') AS unknown,
+           EXISTS(SELECT 1 FROM npc_ai_jobs j WHERE j.campaign_id=$1 AND
+             j.status IN ('queued','reserved','running','result_received','validated')) AS active`,
+            [campaignId],
+          )
+        ).rows[0];
+        const unknown = evidence.unknown === true,
+          active = evidence.active === true;
+        return {
+          available: false,
+          pending: unknown || active,
+          unknown,
+          reason: unknown
+            ? 'outcome_unknown'
+            : active
+              ? 'processing'
+              : waiting.rows.some((r) => r.result_code === 'MANUAL_AUTHORIZATION_UNAVAILABLE')
+                ? 'manual_authorization_required'
+                : waiting.rowCount
+                  ? 'unavailable'
+                  : 'no_pending_generation',
+        };
+      }
       const progress = await this.progress(c, campaignId);
       const pending =
         progress.active ||
@@ -133,11 +175,21 @@ export class WorldGenerationBatch {
             r.request_status === 'queued' &&
             !r.job_id,
         );
+      const available =
+        !pending && (await this.eligible(c, userId, campaignId, state, false)).length > 0;
       return {
-        available:
-          !pending && (await this.eligible(c, userId, campaignId, state, false)).length > 0,
+        available,
         pending,
         unknown: progress.unknown,
+        reason: progress.unknown
+          ? 'outcome_unknown'
+          : pending
+            ? 'processing'
+            : available
+              ? 'awaiting_consent'
+              : waiting.rowCount
+                ? 'unavailable'
+                : 'no_pending_generation',
       };
     });
   }
