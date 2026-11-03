@@ -30,6 +30,7 @@ import {
 } from '@dreamwalk/contracts';
 export * from '@dreamwalk/contracts';
 export { companionAction } from './companionship';
+export { npcActionContext, stepWorldNpcPlan } from './npc-actions';
 const copy = (s: GameState): GameState => structuredClone(s);
 const result = (state: GameState, events: GameEvent[] = []): GameResult => ({ state, events });
 const fail = (state: GameState, error: GameError): GameResult => ({ state, events: [], error });
@@ -924,7 +925,12 @@ export function projectState(s: GameState, id: string): GameProjection {
             .filter((e) => e.kind === 'npc' && visible(s, actor, e))
             .flatMap((e) => publicNpcFactTopics(s, e.id).map((t) => ({ npcId: e.id, ...t }))),
           npcUtterances: (s.npcUtterances ?? [])
-            .filter((u) => u.mapId === actor.mapId && u.audienceIds.includes(id))
+            .filter(
+              (u) =>
+                u.presentationKind !== 'attempt' &&
+                u.mapId === actor.mapId &&
+                u.audienceIds.includes(id),
+            )
             .slice(-32)
             .map((u) => ({
               id: u.id,

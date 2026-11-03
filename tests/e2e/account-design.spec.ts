@@ -77,12 +77,26 @@ for (const locale of ['ru', 'uk', 'en'] as const) {
             await expect(page.locator('.account-story-art')).toBeVisible();
             await expect(page.locator('.profile-upload .avatar img')).toHaveCount(0);
           }
-          if (route === '/account/privacy')
-            await expect(page.locator('.account-privacy-art')).toBeVisible();
-          if (route === '/account/sessions')
+          if (route === '/account/privacy') {
+            const art = page.locator('.account-privacy-art');
+            await expect(art).toBeVisible();
+            const imageBox = await art.boundingBox();
+            const panelBox = await page.locator('.account-privacy-panel').boundingBox();
+            expect(
+              Math.abs(imageBox!.x + imageBox!.width - panelBox!.x - panelBox!.width),
+            ).toBeLessThan(2);
+          }
+          if (route === '/account/sessions') {
             await expect(page.locator('.session-row')).toContainText('Chrome · Linux');
-          if (route === '/admin')
+            await expect(page.locator('.account-email-copy p').first()).toHaveCSS(
+              'color',
+              'rgb(255, 247, 237)',
+            );
+          }
+          if (route === '/admin') {
             await expect(page.locator('.admin-overview-art img')).toHaveCount(2);
+            await expect(page.locator('.admin-overview-art .button.primary')).toHaveCount(2);
+          }
           for (const img of await page
             .locator('.account-story-art, .account-privacy-art, .admin-overview-art img')
             .all()) {

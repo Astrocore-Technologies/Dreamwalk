@@ -1335,7 +1335,7 @@ td {
   gap: 24px;
   flex-wrap: wrap;
 }
-.account-design .profile-upload .upload-field {
+.account-design .profile-upload > div {
   min-width: 0;
 }
 .account-design .profile-upload + .field-grid {
@@ -1375,6 +1375,7 @@ td {
   padding-right: 28px;
 }
 .account-privacy-art {
+  max-width: none;
   width: calc(100% + 28px);
   height: calc(100% + 56px);
   min-height: 360px;
@@ -1551,6 +1552,21 @@ td {
 .account-email-copy h2 {
   margin-top: 0;
 }
+.account-email-copy p {
+  color: #fff7ed;
+}
+.account-design .profile-upload > div small {
+  display: block;
+  margin-top: 8px;
+}
 .account-email-copy p:last-child {
   margin-bottom: 0;
+}
+
+.account-design .toggle-row strong {
+  font-size: 17px;
+}
+.account-design .toggle-row small {
+  font-size: 14px;
+  line-height: 1.5;
 }

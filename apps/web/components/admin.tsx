@@ -219,7 +219,7 @@ function AdminOverview() {
               'Черновики не попадают в каталог автоматически. Проверяйте мир, предупреждения и персонажей перед одобрением. Отклонение сопровождается понятной автору причиной.',
             )}
           </p>
-          <Link className="button" href="/admin/adventures">
+          <Link className="button primary" href="/admin/adventures">
             {t('Открыть очередь')}
             <ArrowRight size={16} />
           </Link>
@@ -233,7 +233,7 @@ function AdminOverview() {
           <p className="muted">
             {liveText(live.status?.mode === 'owner' ? 'ownerProfiles' : 'adminProfiles')}
           </p>
-          <Link className="button" href="/admin/models">
+          <Link className="button primary" href="/admin/models">
             {t('Каталог профилей')}
             <ArrowRight size={16} />
           </Link>

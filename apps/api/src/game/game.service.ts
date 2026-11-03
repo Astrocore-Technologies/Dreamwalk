@@ -50,6 +50,7 @@ import {
   finishWorldPhase,
   applyWorldTurnAction,
   companionAction,
+  stepWorldNpcPlan,
   turnFence,
   matchesTurnFence,
   createStateFromPlayable,
@@ -3213,14 +3214,16 @@ export class GameService implements OnModuleDestroy {
     state: GameState,
     actorId: string,
     npcId: string,
-    speech: z.infer<typeof npcSpeechSchema>,
+    speech: z.infer<typeof npcSpeechSchema> & { presentationKind?: 'attempt' },
     requestId: string,
     userId: string,
     identity: { turnId: string; segmentIndex: number },
   ) {
-    const applied = applyNpcSpeech(state, actorId, npcId, speech, {
+    const utterance = { channel: speech.channel, text: speech.text };
+    const applied = applyNpcSpeech(state, actorId, npcId, utterance, {
       suppressReply: true,
       identity,
+      presentationKind: speech.presentationKind,
     });
     if (applied.error) fail(409, applied.error, applied.error);
     let next = recordNpcEvents(
@@ -3229,7 +3232,7 @@ export class GameService implements OnModuleDestroy {
       applied.events,
       `turn:${identity.turnId}:${identity.segmentIndex}`,
     ).state;
-    const marker = admittedNpcSpeechObservationId(next, actorId, npcId, speech, identity);
+    const marker = admittedNpcSpeechObservationId(next, actorId, npcId, utterance, identity);
     if (!marker) fail(409, 'STALE_STATE', 'STALE_STATE');
     const context = this.speechContext(
       next,
@@ -3286,9 +3289,28 @@ export class GameService implements OnModuleDestroy {
     };
   }
   /** No wall-clock gameplay ticks. Finite ordered jobs/plans run only in the world phase. */
+  private async reconcileWorldOrphans(id: string) {
+    // A missing job is not permission to retry. Terminalize only demonstrably
+    // unpaid orphans; preserve every permit, hold, liability and accepted consent.
+    await this.db.query(
+      `UPDATE game_npc_decision_requests SET status='failed',result_code='MISSING_PROVIDER_JOB'
+      WHERE id IN (SELECT r.id FROM game_npc_decision_requests r
+        WHERE r.campaign_id=$1 AND r.status='scheduled' AND r.job_id IS NULL
+        AND NOT EXISTS(SELECT 1 FROM npc_ai_jobs j WHERE j.campaign_id=r.campaign_id AND
+          (j.operation_id=r.id OR j.request_meta->>'runtimeRequestId'=r.id::text))
+        AND NOT EXISTS(SELECT 1 FROM live_test_text_permits p WHERE p.request_id=r.id)
+        AND NOT EXISTS(SELECT 1 FROM generation_budget_reservations b WHERE b.operation_key='manual-text:'||r.id::text)
+        AND NOT EXISTS(SELECT 1 FROM spark_holds h WHERE h.source_id=r.id::text)
+        AND NOT EXISTS(SELECT 1 FROM game_world_generation_batches b WHERE b.campaign_id=r.campaign_id AND b.state='accepted'
+          AND b.entries @> jsonb_build_array(jsonb_build_object('requestId',r.id::text)))
+        ORDER BY r.created_at,r.id LIMIT 8)`,
+      [id],
+    );
+  }
   private async advanceTurnWorld(id: string, live: Live) {
     const turn = live.state.turnController;
     if (!turn || turn.phase !== 'world') return;
+    await this.reconcileWorldOrphans(id);
     if (live.aiPending) await this.processAi(id, live);
     await this.processDecisionRequests(id, live);
     await this.scheduleAutonomousRequests(id, live);
@@ -3318,50 +3340,32 @@ export class GameService implements OnModuleDestroy {
       [id],
     );
     if (work.length || live.state.turnController!.deferredSpeech.length) return;
-    // A provider chooses bounded plans. Applying their legal actions uses the same core.
-    let state = live.state;
+    // Every NPC gets the existing bounded local policy opportunity. This is pure
+    // deterministic work, not another model request or a compulsory spoken reply.
+    const routine = stepLivingNpcs(live.state);
+    let state = recordNpcEvents(
+      live.state,
+      routine.state,
+      routine.events,
+      `world:${live.state.turnController!.roundId}:routine`,
+    ).state;
     for (const npcId of Object.keys(state.npcBrains ?? {}).sort()) {
-      const companion = companionAction(state, npcId);
-      if (companion) {
-        const applied = applyWorldTurnAction(state, npcId, companion, turnFence(state)!);
-        if (!applied.error)
-          state = recordNpcEvents(
-            state,
-            applied.state,
-            applied.events,
-            `world:${state.turnController!.roundId}:${npcId}:companion`,
-          ).state;
-        continue;
-      }
       const brain = state.npcBrains![npcId];
-      while (brain.cursor < brain.plan.length) {
-        const action = brain.plan[brain.cursor];
-        const applied = applyWorldTurnAction(state, npcId, action, turnFence(state)!);
-        if (applied.error) {
-          if (applied.error !== 'ROUND_LOCKED') {
-            state = structuredClone(state);
-            state.npcBrains![npcId].cursor = state.npcBrains![npcId].plan.length;
-          }
-          break;
-        }
+      const companion =
+        brain.cursor >= brain.plan.length ? companionAction(state, npcId) : undefined;
+      const applied = companion
+        ? applyWorldTurnAction(state, npcId, companion, turnFence(state)!)
+        : stepWorldNpcPlan(state, npcId);
+      if (!applied.error)
         state = recordNpcEvents(
           state,
           applied.state,
           applied.events,
-          `world:${state.turnController!.roundId}:${npcId}:${brain.cursor}`,
+          `world:${state.turnController!.roundId}:${npcId}:action`,
         ).state;
-        state.npcBrains![npcId].cursor++;
-        if (state.turnController!.phase !== 'world') {
-          await this.persist(id, live, state, 'turn.world.reaction');
-          return;
-        }
-        // Read the current immutable brain on each iteration, never a stale reference.
-        if (
-          state.npcBrains![npcId].cursor >= state.npcBrains![npcId].plan.length ||
-          state.turnController!.worldActions >= state.turnController!.ruleset.maxWorldActions
-        )
-          break;
-        break; // One action per actor per phase keeps the world step short and reviewable.
+      if (state.turnController!.phase !== 'world') {
+        await this.persist(id, live, state, 'turn.world.reaction');
+        return;
       }
     }
     const finished = finishWorldPhase(state, turnFence(state)!);

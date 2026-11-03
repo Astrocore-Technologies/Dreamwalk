@@ -122,7 +122,8 @@ export type NpcObservationKind =
   | 'claim'
   | 'known_entity'
   | 'authored_fact'
-  | 'said';
+  | 'said'
+  | 'attempted';
 export interface NpcObservation {
   id: string;
   eventId: string;
@@ -292,6 +293,7 @@ export const npcUtteranceSchema = z
   .strict();
 export type NpcUtterance = z.infer<typeof npcUtteranceSchema>;
 export interface PrivateNpcUtterance extends NpcUtterance {
+  presentationKind?: 'attempt';
   sourceObservationIds?: string[];
   mapId: string;
   audienceIds: string[];
