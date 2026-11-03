@@ -379,3 +379,80 @@ test('campaign illustration hook clears on map/campaign change and ignores late 
   assert.equal(pending.length, 3);
   cleanup();
 });
+
+test('art browsing narrows only authorized results without inventing reuse permissions', async () => {
+  const { browseArt, canSelectArt } =
+    await import('../../apps/web/components/assets/browse-art.ts');
+  const art = (id, title, kind, camera, tags = []) => ({
+    id,
+    canReuse: true,
+    width: 1536,
+    height: 1024,
+    metadata: { title, kind, camera, tags, variant: 'default' },
+  });
+  const list = [
+    art('one', 'Observatory at dusk', 'background', 'top-down', ['sky']),
+    art('two', 'Keeper', 'portrait', 'portrait', ['sky']),
+    art('three', 'Open sky', 'background', 'unrestricted', ['day']),
+  ];
+  const filters = {
+    query: '',
+    kind: '',
+    camera: '',
+    tags: [],
+    variant: '',
+    minWidth: 1,
+    minHeight: 1,
+  };
+  assert.deepEqual(browseArt(list, filters), list);
+  assert.deepEqual(
+    browseArt(list, { ...filters, query: 'OBSERVATORY sky' }).map((x) => x.id),
+    ['one'],
+  );
+  assert.deepEqual(
+    browseArt(list, { ...filters, kind: 'background', camera: 'top-down' }).map((x) => x.id),
+    ['one', 'three'],
+  );
+  assert.deepEqual(
+    browseArt(list, { ...filters, tags: ['sky'], variant: 'DEFAULT', minWidth: 1500 }).map(
+      (x) => x.id,
+    ),
+    ['one', 'two'],
+  );
+  assert.deepEqual(browseArt(list, { ...filters, query: 'not in library' }), []);
+  assert.deepEqual(browseArt(list, { ...filters, minHeight: 2048 }), []);
+  assert.equal(canSelectArt(list[0], 'background', 'top-down'), true);
+  assert.equal(canSelectArt(list[2], 'background', 'top-down'), true);
+  assert.equal(canSelectArt(list[1], 'background', 'top-down'), false);
+  assert.equal(canSelectArt({ ...list[0], canReuse: false }, 'background', 'top-down'), false);
+});
+
+test('art layout preserves immutable registration, rights controls and safe preview routes', async () => {
+  const library = await readFile(
+    new URL('../../apps/web/components/assets/asset-library.tsx', import.meta.url),
+    'utf8',
+  );
+  const registration = await readFile(
+    new URL('../../apps/web/components/assets/register-art.tsx', import.meta.url),
+    'utf8',
+  );
+  const layout = await readFile(
+    new URL('../../apps/web/components/assets/library-layout.module.css', import.meta.url),
+    'utf8',
+  );
+  assert.match(library, /data-art-inspector/);
+  assert.match(
+    library,
+    /current\.owned &&\s*\(selected\?\.id === current\.id \? \(\s*<AssetGrants/,
+  );
+  assert.match(library, /artPreviewUrl\(current\.url\)/);
+  assert.match(library, /canSelectArt\(revision, requiredKind, requiredCamera\)/);
+  assert.match(library, /generation\.current\+\+/);
+  assert.match(registration, /element\?\.showModal\(\)/);
+  assert.match(registration, /expectedFamilyRevision: base\.revision/);
+  assert.match(registration, /operationId: retry\.current\.operationId/);
+  assert.match(registration, /allowAuthorReuse: allowReuse/);
+  assert.match(registration, /setAttested\(false\)/);
+  assert.match(layout, /\.registrationGrid\s*\{[^}]*grid-template-columns:/);
+  assert.match(layout, /max-width: 700px/);
+});
