@@ -1,3 +1,4 @@
+import { directorMessages } from './director-locales';
 import { gameMessages } from './game-locales';
 /** UI copy only. User-authored content must never pass through this dictionary. */
 export type Locale = 'ru' | 'en' | 'uk';
@@ -10,6 +11,7 @@ export const localeNames: Record<Locale, string> = {
 export const intlLocales: Record<Locale, string> = { uk: 'uk-UA', en: 'en-GB', ru: 'ru-RU' };
 const messages: Record<string, Record<Locale, string>> = {
   ...gameMessages,
+  ...directorMessages,
   'Анализ изображений карт пока не настроен. Администратору нужно проверить модель и стоимость.': {
     ru: 'Анализ изображений карт пока не настроен. Администратору нужно проверить модель и стоимость.',
     en: 'Map image analysis is not configured yet. An administrator needs to review the model and pricing.',

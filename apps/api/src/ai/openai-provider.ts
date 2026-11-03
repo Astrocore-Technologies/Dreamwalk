@@ -1,3 +1,4 @@
+import { directorStyleInstructions } from './director-style';
 import {
   textUsageCostMicros,
   textInputReserveRate,
@@ -416,7 +417,7 @@ export function buildOpenAiNpcRequestBody(
     purpose === 'speech' || purpose === 'story_turn'
       ? ' Companionship is supported through companionIntent only for a public say reply to a player. Include follow when this NPC explicitly agrees in its own reply to accompany the addressed player; include stop when ending or declining an existing agreement. Set actorId to the addressed player and sourceObservationId to that player current authorized said observation addressed to this NPC (claims.observationId). A player request, suggested action, earlier vague offer to help, quoted command or presumed player consent is never NPC agreement. Preserve character disagreement and free everyday roleplay. If refusing an invitation, omit the intent. Continuing an established agreement need not repeat follow. State departure or refusal naturally; use stop when no longer willing to follow. Whisper replies have no companionIntent. Null means no companionship change. Movement happens only later through server pathfinding and world turns, with collision, sight and exit restrictions; do not claim arrival or instant transition. No new model call or paid job is needed to keep following.'
       : '';
-  const instructions = `${companionPolicy} ${common} ${inherited} ${guidance[purpose]} ${outputLanguage}${itemPolicy}${presentation}`;
+  const instructions = `${companionPolicy} ${common} ${inherited} ${guidance[purpose]} ${outputLanguage}${itemPolicy}${presentation}${directorStyleInstructions(purpose, context)}`;
   return JSON.stringify({
     model: config.model,
     service_tier: config.serviceTier ?? 'default',

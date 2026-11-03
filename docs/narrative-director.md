@@ -81,3 +81,33 @@ Arbitrary travel, remote summoning and automatic companion arrival remain unsupp
 by this bridge. The composer explicitly labels the shared destination as the director;
 whisper/selected-character mode does not silently broaden its audience or create a
 public scene. Administrative director personas are separate from these permissions.
+
+## Administrator director styles (KAN-24)
+
+The existing Admin → Models page contains one compact director panel. Administrators
+can choose Coauthor (natural/balanced/balanced), Storyteller
+(atmospheric/deliberate/reactive), or Director (cinematic/brisk/proactive), then
+optionally adjust the three bounded axes. This is one platform-wide active profile,
+not a new player-facing selector or an arbitrary system-prompt editor. Player detail
+and dialogue preferences take precedence over these presentation defaults.
+
+GET/PATCH `/api/v1/admin/director-style` require server-verified admin access. PATCH
+accepts only `style`, `pacing`, `initiative`, and `expectedRevision`. Saves use a
+transactional revision check and record old/new values in the audit log. The default
+is compatible with existing play and needs no database migration; the existing
+`platform_settings` row is created only on the first save.
+
+A shared director turn captures the current profile before token fitting and quoting.
+Its persisted snapshot is used for retry/dispatch, so an admin edit affects new turns,
+not previously prepared replies. The actual profile participates in cache and request
+body identities. Only fixed server-owned guidance selected by the enums enters the
+provider instructions. NPC-only speech, whispers and planning do not use this profile. In a mixed director
+turn, the profile applies only to narration, never overrides the public NPC speaker’s
+own voice or performance.
+Initiative changes the optional opening within the requested turn, never schedules
+additional generation or increases scene/NPC/action limits. No style changes private
+knowledge, protected canon, player agency, validation, consent, provider or budget gates.
+
+Verification uses offline request-body tests, real disposable PostgreSQL/API tests and
+synthetic browser transport fixtures in all three UI languages. No real-provider
+literary quality, paid generation, merge or deployment is implied by these tests.
