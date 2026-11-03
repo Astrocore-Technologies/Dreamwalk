@@ -1,3 +1,5 @@
+import { readGenerationConfig } from './generation/config';
+import { registerReleaseDeployment, releaseDeploymentId } from './generation/release-deployment';
 import { Pool } from 'pg';
 import {
   productionMigrationSql,
@@ -49,6 +51,23 @@ async function main() {
       } catch (e) {
         await c.query('ROLLBACK');
         throw e;
+      }
+    }
+    if (production) {
+      const generation = readGenerationConfig(process.env);
+      if (generation.mode === 'release') {
+        await c.query('BEGIN');
+        try {
+          await registerReleaseDeployment(
+            c,
+            generation,
+            releaseDeploymentId(process.env.RAILWAY_DEPLOYMENT_ID),
+          );
+          await c.query('COMMIT');
+        } catch (error) {
+          await c.query('ROLLBACK');
+          throw error;
+        }
       }
     }
   } finally {

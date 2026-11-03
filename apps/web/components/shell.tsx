@@ -1,4 +1,5 @@
 'use client';
+import { DreamsBalance, useDreamsText } from './dreams-wallet';
 import { SparksBalance } from './sparks-balance';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
@@ -34,6 +35,7 @@ const nav = [
 ];
 export function Shell({ children }: { children: React.ReactNode }) {
   const { t: tr } = useT();
+  const { text: dreamsText } = useDreamsText();
   const { locale, setLocale } = useT();
   const path = usePathname(),
     router = useRouter(),
@@ -110,7 +112,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
               onClick={() => setMenu(false)}
             >
               <Sparkles size={19} />
-              {tr('Мои искры')}
+              {dreamsText.title}
             </Link>
             {user?.role === 'admin' && (
               <Link
@@ -216,6 +218,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
                   <Sparkles size={15} />
                   <span>{tr('Искры')}</span>
                   <SparksBalance key={user.id} ownerId={user.id} />
+                  <span className="currency-divider" aria-hidden="true">
+                    ·
+                  </span>
+                  <MoonStar size={15} aria-hidden="true" />
+                  <span className="wallet-currency-name">{dreamsText.name}</span>
+                  <DreamsBalance key={`dreams-${user.id}`} ownerId={user.id} />
                 </Link>
                 <Link href="/notifications" className="icon-button" aria-label={tr('Уведомления')}>
                   <Bell size={19} />

@@ -2,9 +2,9 @@
 import { useT } from '@/lib/i18n';
 export const spatialMessages = {
   releaseUnavailable: [
-    'Планирование сейчас недоступно. Проверьте баланс Искр и сообщение об ошибке.',
-    'Planning is currently unavailable. Check your Sparks balance and the error message.',
-    'Планування зараз недоступне. Перевірте баланс Іскор і повідомлення про помилку.',
+    'Планирование сейчас недоступно. Проверьте балансы Грёз и Искр и сообщение об ошибке.',
+    'Planning is currently unavailable. Check your Dreams and Sparks balances and the error message.',
+    'Планування зараз недоступне. Перевірте баланси Мрій та Іскор і повідомлення про помилку.',
   ],
   ownerUnavailable: [
     'Текстовое планирование недоступно. Проверь серверную модель, разрешение владельца и доступный бюджет.',

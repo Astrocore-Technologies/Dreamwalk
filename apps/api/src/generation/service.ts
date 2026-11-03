@@ -1,3 +1,4 @@
+import { currentReleaseDeployment } from './release-deployment';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import {
   quoteSparks,
@@ -45,7 +46,7 @@ import {
   type ReleaseGenerationConfig,
 } from './config';
 import { ReleaseAdmission, releaseScope } from './release';
-import { reviewReleasePolicy, adoptReleasePolicy } from './release-policy';
+import { releaseProfileProjection } from './release-policy';
 import { aggregateGenerationExposure } from './aggregate-exposure';
 import { fenceGenerationAdmission } from './scope-fence';
 export const GENERATION_SCOPE_ID = LIVE_TEXT.scopeId;
@@ -418,12 +419,30 @@ export class GenerationAuthority {
             requestId,
           ])
         ).rows[0];
-        const active = await this.assertActivePolicy(c, job.authorization_id);
+        let active: { revision: number; hash: string } | null = null;
+        try {
+          active = await this.assertActivePolicy(c, job.authorization_id);
+        } catch (error) {
+          const response = (error as { getResponse?: () => { code?: string } }).getResponse?.();
+          if (
+            !this.release ||
+            ![
+              'GENERATION_POLICY_CHANGED',
+              'GENERATION_RELEASE_PROFILE_NOT_ACTIVE',
+              'GENERATION_ACCOUNT_REVIEW_REQUIRED',
+              'GENERATION_PRICING_EXPIRED',
+            ].includes(response?.code ?? '')
+          )
+            throw error;
+          // The known provider receipt is still settled at its original fixed price.
+          // A stale count is not adopted into the new model/policy context.
+        }
         const campaign = (
           await c.query('SELECT state FROM game_campaigns WHERE id=$1', [campaignId])
         ).rows[0];
         const t = campaign?.state?.turnController;
         const stale =
+          !active ||
           !row ||
           row.status !== 'queued' ||
           digest(row.context) !== job.source_hash ||
@@ -1140,6 +1159,17 @@ export class GenerationAuthority {
       };
     });
   }
+  async authorizeReleaseResult(
+    c: PoolClient,
+    actorId: string,
+    authorizationId: string,
+    revision: number,
+    hash: string,
+  ) {
+    if (!this.release)
+      fail(409, 'GENERATION_RELEASE_MODE_REQUIRED', 'GENERATION_RELEASE_MODE_REQUIRED');
+    await this.release!.result(c, authorizationId, actorId, revision, hash);
+  }
   async authorizeText(
     c: PoolClient,
     userId: string,
@@ -1376,12 +1406,11 @@ export class GenerationAuthority {
           [campaignId],
         )
       ).rows;
-      const active = this.release
+      let active = this.release
         ? ((
-            await c.query(
-              "SELECT policy_revision,policy_hash,config_hash FROM live_test_sessions WHERE owner_id=$1 AND mode='release'",
-              [userId],
-            )
+            await c.query("SELECT * FROM live_test_sessions WHERE owner_id=$1 AND mode='release'", [
+              userId,
+            ])
           ).rows[0] ?? {
             policy_revision: 1,
             policy_hash: this.release.config.configFingerprint,
@@ -1395,6 +1424,13 @@ export class GenerationAuthority {
               )
             ).rows[0]
           : null;
+      if (this.release && active?.id) {
+        const scope = (
+          await c.query('SELECT * FROM generation_budget_scopes WHERE id=$1', [active.scope_id])
+        ).rows[0];
+        const projected = await releaseProfileProjection(c, active, scope, this.release.config);
+        active = { ...active, policy_revision: projected.revision, policy_hash: projected.hash };
+      }
       const countViews = new Map<string, unknown>();
       for (const r of rows) countViews.set(r.id, await this.countView(c, r));
       return {
@@ -2156,16 +2192,6 @@ export class GenerationAuthority {
     )[0];
     return row ? revisionReceipt(row) : { operationId, status: 'not_found' as const };
   }
-  async reviewReleasePolicy(adminId: string, actorId: string) {
-    if (!this.release)
-      fail(409, 'GENERATION_RELEASE_MODE_REQUIRED', 'GENERATION_RELEASE_MODE_REQUIRED');
-    return reviewReleasePolicy(this.db, this.release!, adminId, actorId);
-  }
-  async adoptReleasePolicy(adminId: string, actorId: string, input: unknown) {
-    if (!this.release)
-      fail(409, 'GENERATION_RELEASE_MODE_REQUIRED', 'GENERATION_RELEASE_MODE_REQUIRED');
-    return adoptReleasePolicy(this.db, this.release!, adminId, actorId, input);
-  }
   async amendPolicy(userId: string, input: unknown) {
     if (this.release) fail(403, 'OPERATOR_ONLY', 'OPERATOR_ONLY');
     await this.owner(userId);
@@ -2275,9 +2301,24 @@ export class GenerationAuthority {
           [releaseScope(userId)],
         )
       ).rows[0];
-      const available = wallet
-        ? Math.max(0, Number(wallet.balance_subunits) - Number(wallet.held_subunits))
-        : 0;
+      const dreams = (
+        await c.query(
+          'SELECT enabled,balance_subunits,held_subunits FROM dream_wallets WHERE owner_id=$1',
+          [userId],
+        )
+      ).rows[0];
+      const dreamAvailable = dreams?.enabled
+        ? BigInt(dreams.balance_subunits) - BigInt(dreams.held_subunits)
+        : 0n;
+      const sparkAvailable = wallet?.enabled
+        ? BigInt(wallet.balance_subunits) - BigInt(wallet.held_subunits)
+        : 0n;
+      // Status is advisory; authoritative reservations stay exact bigint under wallet locks.
+      const available = Number(
+        dreamAvailable + sparkAvailable > BigInt(Number.MAX_SAFE_INTEGER)
+          ? BigInt(Number.MAX_SAFE_INTEGER)
+          : dreamAvailable + sparkAvailable,
+      );
       const exposure = await aggregateGenerationExposure(c);
       const aggregateRemaining =
         cfg.aggregateCapMicros === null
@@ -2285,6 +2326,24 @@ export class GenerationAuthority {
           : Math.max(0, cfg.aggregateCapMicros - Number(exposure.totalMicros));
       const current =
         ownerPricingIsCurrent(cfg.text.pricing) && ownerPricingIsCurrent(cfg.image.pricing);
+      let projected = { revision: Number(row?.policy_revision ?? 1), hash: cfg.configFingerprint };
+      let profileError: string | null = null;
+      try {
+        await currentReleaseDeployment(c, cfg);
+      } catch {
+        profileError = 'GENERATION_RELEASE_PROFILE_NOT_ACTIVE';
+      }
+      if (row && !profileError) {
+        const scope = (
+          await c.query('SELECT * FROM generation_budget_scopes WHERE id=$1', [row.scope_id])
+        ).rows[0];
+        try {
+          projected = await releaseProfileProjection(c, row, scope, cfg);
+        } catch (error) {
+          const response = (error as { getResponse?: () => { code?: string } }).getResponse?.();
+          profileError = response?.code ?? 'GENERATION_POLICY_CHANGED';
+        }
+      }
       const stopCode = !current
         ? 'GENERATION_PRICING_EXPIRED'
         : wallet?.enabled !== true
@@ -2295,9 +2354,7 @@ export class GenerationAuthority {
               ? 'GENERATION_AGGREGATE_BUDGET_EXCEEDED'
               : row && (row.state !== 'active' || row.blocked || !row.approved)
                 ? 'GENERATION_ACCOUNT_REVIEW_REQUIRED'
-                : row && row.config_hash !== cfg.configFingerprint
-                  ? 'GENERATION_POLICY_CHANGED'
-                  : null;
+                : profileError;
       const cap =
         cfg.totalCapMicros === null
           ? null
@@ -2305,6 +2362,8 @@ export class GenerationAuthority {
       return {
         ownerId: userId,
         mode: 'release' as const,
+        dreamsAvailableSubunits: dreamAvailable.toString(),
+        sparksAvailableSubunits: sparkAvailable.toString(),
         ...(cfg.allowance ? { allowance: cfg.allowance } : {}),
         enabled: true,
         authorizationId: row?.id ?? null,
@@ -2348,8 +2407,8 @@ export class GenerationAuthority {
           ),
         ),
         priorHeldReservations: 0,
-        policyRevision: Number(row?.policy_revision ?? 1),
-        policyHash: row?.policy_hash ?? cfg.configFingerprint,
+        policyRevision: projected.revision,
+        policyHash: projected.hash,
         configFingerprint: cfg.configFingerprint,
         activeConfigFingerprint: row?.config_hash ?? cfg.configFingerprint,
         text: { ...cfg.text, costEvidence: 'operator_estimate', reasoningEffort: 'none' },

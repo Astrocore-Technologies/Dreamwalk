@@ -1,3 +1,4 @@
+import { quoteFunding, heldFunding } from '../generation/currency-funding';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import {
   quoteSparks,
@@ -100,6 +101,17 @@ export class AuthoringTextEngine {
         : row.status;
     return {
       id: row.id,
+      ...(row.spark_funding
+        ? { funding: row.spark_funding }
+        : row.spark_paid_reserved_subunits != null
+          ? {
+              funding: heldFunding({
+                reserved_subunits: row.spark_reserved_subunits,
+                sparks_reserved_subunits: row.spark_paid_reserved_subunits,
+                captured_subunits: row.spark_captured_subunits,
+              }),
+            }
+          : {}),
       ...(row.spark_quote_id
         ? {
             sparkHoldId: row.spark_quote_id,
@@ -310,7 +322,7 @@ export class AuthoringTextEngine {
     return this.db.tx(async (c) => {
       const previous = (
         await c.query<AuthoringJob>(
-          'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.operation_id=$2',
+          'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_paid_reserved_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.operation_id=$2',
           [ownerId, value.operationId],
         )
       ).rows[0];
@@ -331,7 +343,7 @@ export class AuthoringTextEngine {
       // A concurrent identical request may have committed while this transaction waited for the owner lock.
       const serializedPrevious = (
         await c.query<AuthoringJob>(
-          'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.operation_id=$2',
+          'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_paid_reserved_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.operation_id=$2',
           [ownerId, value.operationId],
         )
       ).rows[0];
@@ -413,6 +425,7 @@ export class AuthoringTextEngine {
         ...job,
         spark_quote_id: locked.spark_quote_id,
         spark_status: locked.spark_quote_id ? 'held' : undefined,
+        spark_funding: await quoteFunding(c, locked.spark_quote_id),
         spark_reserved_subunits: (await sparkQuoteView(c, locked.spark_quote_id)).sparks
           ?.reserveSubunits,
         budget_upper_micros: String(quote.upper_micros),
@@ -424,7 +437,7 @@ export class AuthoringTextEngine {
     z.uuid().parse(id);
     const row = (
       await this.db.query<AuthoringJob>(
-        'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
+        'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_paid_reserved_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
         [id, ownerId],
       )
     )[0];
@@ -436,7 +449,7 @@ export class AuthoringTextEngine {
     z.uuid().parse(projectId);
     return (
       await this.db.query<AuthoringJob>(
-        'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.project_id=$2 ORDER BY j.created_at DESC LIMIT 20',
+        'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_paid_reserved_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.actor_id=$1 AND j.project_id=$2 ORDER BY j.created_at DESC LIMIT 20',
         [ownerId, projectId],
       )
     ).map((j) => this.dto(j));
@@ -495,7 +508,7 @@ export class AuthoringTextEngine {
     z.uuid().parse(id);
     const row = (
       await this.db.query<AuthoringJob>(
-        'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
+        'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_paid_reserved_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
         [id, ownerId],
       )
     )[0];
@@ -547,7 +560,7 @@ export class AuthoringTextEngine {
       claimed = await this.db.tx(async (c) => {
         const row = (
           await c.query<AuthoringJob>(
-            'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
+            'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_paid_reserved_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
             [id, ownerId],
           )
         ).rows[0];
@@ -556,7 +569,7 @@ export class AuthoringTextEngine {
         await this.lockSource(c, ownerId);
         const serialized = (
           await c.query<AuthoringJob>(
-            'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
+            'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_paid_reserved_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
             [id, ownerId],
           )
         ).rows[0];
@@ -598,7 +611,9 @@ export class AuthoringTextEngine {
         (response &&
           typeof response === 'object' &&
           'code' in response &&
-          response.code === 'GENERATION_POLICY_CHANGED')
+          ['GENERATION_POLICY_CHANGED', 'GENERATION_RELEASE_PROFILE_NOT_ACTIVE'].includes(
+            String(response.code),
+          ))
           ? 'GENERATION_POLICY_CHANGED'
           : 'AUTHORING_STALE';
       await this.failure(id, new ProviderFailure(policyCode, false), true, ownerId);
@@ -748,7 +763,7 @@ export class AuthoringTextEngine {
   ) {
     const current = (
       await this.db.query<AuthoringJob>(
-        'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
+        'SELECT j.*,(SELECT status FROM spark_holds WHERE id=j.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=j.spark_quote_id) AS spark_paid_reserved_subunits,r.upper_micros AS budget_upper_micros FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.id=$1 AND j.actor_id=$2',
         [id, ownerId],
       )
     )[0];
@@ -757,8 +772,17 @@ export class AuthoringTextEngine {
       await this.db.tx(async (c) => {
         await this.lockSource(c, current.actor_id);
         await assertBoundedTextSource(c, current.session_id, current.project_id);
-        await this.live.authorizeText(c, current.actor_id, current.session_id);
-        const activePolicy = await this.activePolicy(c, current.session_id);
+        if (this.live.mode === 'release')
+          await this.live.authorizeReleaseResult(
+            c,
+            current.actor_id,
+            current.session_id,
+            Number(current.generation_policy_revision),
+            current.generation_policy_hash ?? '',
+          );
+        else await this.live.authorizeText(c, current.actor_id, current.session_id);
+        const activePolicy =
+          this.live.mode === 'release' ? null : await this.activePolicy(c, current.session_id);
         await validateFence(c, this.binding(current));
         const row = (
           await c.query<AuthoringJob>(
@@ -767,10 +791,10 @@ export class AuthoringTextEngine {
           )
         ).rows[0];
         if (row.status !== 'generated' || row.cancel_requested) return;
-        if (!this.policyMatches(row, activePolicy))
+        if (this.live.mode !== 'release' && !this.policyMatches(row, activePolicy))
           throw new ProviderFailure('GENERATION_POLICY_CHANGED', false);
         if (
-          row.provider_version !== this.provider.version ||
+          (this.live.mode !== 'release' && row.provider_version !== this.provider.version) ||
           row.deadline_at === null ||
           row.completed_at === null ||
           row.completed_at.getTime() > row.deadline_at.getTime() ||
@@ -789,7 +813,14 @@ export class AuthoringTextEngine {
           Number(spend.actual_micros) !== Number(row.actual_micros)
         )
           throw new Error('cost not settled');
-        const applied = await commit(c, this.binding(row), row.proposal);
+        // Provider identity includes rates/model envelope. A restarted release process may
+        // complete an admitted result only after its current bounded parser and source
+        // validator accept it; the immutable old receipt still determines its cost.
+        const proposal =
+          this.live.mode === 'release'
+            ? this.definition.validateProposal(row.proposal)
+            : row.proposal;
+        const applied = await commit(c, this.binding(row), proposal);
         await settleReservationSparks(c, row.reservation_id, {
           outcome: 'success',
           actualMicros: String(row.actual_micros),

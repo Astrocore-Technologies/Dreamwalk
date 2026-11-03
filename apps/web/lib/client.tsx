@@ -6,8 +6,11 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import type { User, Adventure } from '@dreamwalk/contracts';
 export type { User, Adventure, Hero, Asset, Settings } from '@dreamwalk/contracts';
 const errorKeys: Record<string, string> = {
+  GENERATION_RELEASE_PROFILE_NOT_ACTIVE:
+    'Сервис генерации обновляется. Обнови страницу чуть позже.',
+  AUTHORING_QUOTE_EXPIRED: 'Оценка стоимости устарела. Получи новую оценку перед запуском.',
   GENERATION_POLICY_CHANGED:
-    'Настройки генерации изменились. Администратору нужно подтвердить их обновление для аккаунта.',
+    'Настройки генерации обновились. Получи новую оценку стоимости перед запуском.',
   GENERATION_PRICING_EXPIRED:
     'Оценка стоимости временно недоступна: администратору нужно обновить тарифы генерации.',
   STORY_PLANNER_UNAVAILABLE:

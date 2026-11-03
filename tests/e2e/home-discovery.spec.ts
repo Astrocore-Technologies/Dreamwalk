@@ -113,6 +113,10 @@ test('public homepage is art-led, manually navigable, localized and captures act
   await expect(page.locator('html')).toHaveAttribute('lang', 'uk');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
   await expect(featured).toBeVisible();
+  await expect(featured.getByRole('heading', { level: 2 })).toHaveCSS(
+    'color',
+    'rgb(247, 242, 234)',
+  );
   await screenshot(page, info, 'home-desktop-light.png');
 });
 

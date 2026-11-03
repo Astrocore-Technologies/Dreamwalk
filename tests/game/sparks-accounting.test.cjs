@@ -220,6 +220,7 @@ test(
         'CREATE TABLE users(id uuid PRIMARY KEY); CREATE TABLE npc_ai_jobs(id uuid PRIMARY KEY,input_tokens integer); CREATE TABLE npc_ai_quotes(id uuid PRIMARY KEY); CREATE TABLE generation_text_counts(id uuid PRIMARY KEY); CREATE TABLE generation_budget_reservations(id uuid PRIMARY KEY); CREATE TABLE image_generation_quotes(id uuid PRIMARY KEY); CREATE TABLE image_generation_jobs(id uuid PRIMARY KEY); CREATE TABLE live_test_text_permits(id uuid PRIMARY KEY); CREATE TABLE live_authoring_text_quotes(id uuid PRIMARY KEY); CREATE TABLE live_authoring_text_jobs(id uuid PRIMARY KEY);',
       );
       await pool.query(await readFile('packages/db/migrations/042_sparks_accounting.sql', 'utf8'));
+      await pool.query(await readFile('packages/db/migrations/054_dreams_accounting.sql', 'utf8'));
       await pool.query('INSERT INTO users(id) VALUES($1)', [owner]);
       await tx((c) => accounting.ensureWallet(c, owner));
       let wallet = (await pool.query('SELECT * FROM spark_wallets')).rows[0];

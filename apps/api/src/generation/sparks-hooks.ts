@@ -1,3 +1,4 @@
+import { quoteFunding } from './currency-funding';
 /** Transactional usage accounting: mandatory in release, opt-in for historical modes.
  * No wallet creation, funding or activation. */
 import type { PoolClient } from 'pg';
@@ -53,8 +54,17 @@ export async function quoteSparks(
       input.ownerId,
     ])
   ).rows[0];
+  const dreams = (
+    await c.query(
+      'SELECT balance_subunits,held_subunits,enabled FROM dream_wallets WHERE owner_id=$1 FOR UPDATE',
+      [input.ownerId],
+    )
+  ).rows[0];
+  const dreamAvailable = dreams?.enabled
+    ? BigInt(dreams.balance_subunits) - BigInt(dreams.held_subunits)
+    : 0n;
   if (
-    BigInt(wallet.balance_subunits) - BigInt(wallet.held_subunits) <
+    BigInt(wallet.balance_subunits) - BigInt(wallet.held_subunits) + dreamAvailable <
     BigInt(input.reserveSubunits)
   )
     fail(409, 'INSUFFICIENT_SPARKS', 'INSUFFICIENT_SPARKS');
@@ -138,6 +148,7 @@ export async function sparkQuoteView(
   ).rows[0];
   if (!quote) fail(409, 'SPARK_QUOTE_NOT_FOUND', 'SPARK_QUOTE_NOT_FOUND');
   return {
+    funding: await quoteFunding(c, quoteId),
     sparks: {
       quoteId,
       reserveSubunits: String(quote.reserve_subunits),
@@ -160,6 +171,7 @@ export async function sparkHoldView(
   ).rows[0];
   return h
     ? {
+        funding: await quoteFunding(c, quoteId),
         sparkHoldId: quoteId,
         sparkStatus: h.status,
         sparkReservedSubunits: String(h.reserved_subunits),

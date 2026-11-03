@@ -509,9 +509,9 @@
   align-items: center;
 }
 :global(html[data-theme='light']) .page {
-  --hero-surface: #f0e7ec;
-  --hero-text: #302234;
-  --hero-muted: #726176;
+  --hero-surface: #17111f;
+  --hero-text: #f7f2ea;
+  --hero-muted: #e1d5e8;
 }
 .page :global(.button) {
   white-space: normal;
@@ -521,20 +521,20 @@
   overflow-wrap: anywhere;
 }
 :global(html[data-theme='light']) .featureCopy > .eyebrow {
-  color: #85652e;
+  color: #dfbd79;
 }
 :global(html[data-theme='light']) .byline,
 :global(html[data-theme='light']) .metadata,
 :global(html[data-theme='light']) .cast > p,
 :global(html[data-theme='light']) .cast figcaption,
 :global(html[data-theme='light']) .featureActions > a {
-  color: #806c85;
+  color: #e1d5e8;
 }
 :global(html[data-theme='light']) .portrait {
-  background: linear-gradient(150deg, #ded0df, #ccb9cf);
+  background: linear-gradient(150deg, #493950, #302238);
 }
 :global(html[data-theme='light']) .portrait > span {
-  color: #806785;
+  color: #e1d5e8;
 }
 @media (min-width: 1450px) {
   .feature {

@@ -62,6 +62,9 @@ test(
     const { PaidStartService } = require('../../apps/api/dist/game/paid-start.service.js');
     const { GameService } = require('../../apps/api/dist/game/game.service.js');
     const { GenerationAuthority } = require('../../apps/api/dist/generation/service.js');
+    const {
+      activateReleaseDeployment,
+    } = require('../images/release-deployment-fixture.cjs');
     const { readGenerationConfig } = require('../../apps/api/dist/generation/config.js');
     const { AuthoringTextEngine } = require('../../apps/api/dist/live-test/authoring-text.js');
     const { storyPlanDefinition } = require('../../apps/api/dist/game/story-plan.js');
@@ -131,6 +134,7 @@ test(
         .filter((x) => x.endsWith('.sql'))
         .sort())
         await pool.query(await readFile('packages/db/migrations/' + f, 'utf8'));
+      await db.tx((c) => activateReleaseDeployment(c, cfg));
       for (const id of [owner, player, other]) {
         await pool.query(
           "INSERT INTO users(id,email,password_hash,name,handle) VALUES($1,$2,'synthetic','Fixture',$3)",

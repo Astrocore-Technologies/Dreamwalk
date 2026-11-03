@@ -84,7 +84,7 @@ h3,
   background: color-mix(in srgb, var(--accent) 4%, transparent);
 }
 .wallet-chip .sparks-balance {
-  font-size: 15px;
+  font-size: 16px;
 }
 .icon-button {
   min-width: 40px;
@@ -527,7 +527,7 @@ tr:hover td {
     display: none;
   }
   .wallet-chip .sparks-balance {
-    font-size: 13px;
+    font-size: 16px;
   }
   .main-content {
     padding-inline: 16px;
@@ -649,4 +649,41 @@ td {
   .balance-card {
     padding: 22px;
   }
+}
+.wallet-chip .dreams-balance {
+  display: inline-flex;
+  font-size: 16px;
+  font-weight: 700;
+  font-variant-numeric: tabular-nums;
+  color: var(--text);
+}
+.currency-divider {
+  color: var(--muted);
+}
+.dreams-wallet-section {
+  display: grid;
+  grid-template-columns: minmax(280px, 0.8fr) minmax(0, 1.2fr);
+  gap: 24px;
+  margin-bottom: 28px;
+}
+.dreams-wallet-section > .error-box {
+  grid-column: 1 / -1;
+}
+.dreams-card {
+  background: radial-gradient(ellipse at top right, #bba8d022, transparent 70%), var(--surface);
+  border-color: var(--line);
+}
+@media (max-width: 1000px) {
+  .dreams-wallet-section {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.funding-breakdown {
+  display: grid;
+  gap: 4px;
+  font-variant-numeric: tabular-nums;
+}
+.funding-breakdown small {
+  color: var(--muted);
+  line-height: 1.6;
 }

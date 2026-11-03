@@ -4,6 +4,9 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
+import { DreamsAccounting } from './dreams-accounting';
+const dreamsAccounting = new DreamsAccounting();
+export const DREAMS_FIRST_POLICY = 'dreams-first-v1';
 import {
   actualSparkCost,
   createSparkTariffSnapshot,
@@ -78,6 +81,8 @@ export interface SparkHold {
   status: 'held' | 'pending' | 'settled' | 'released';
   settlement_fingerprint: string | null;
   spark_rate_version: SparkRateVersion;
+  dream_hold_id?: string | null;
+  sparks_reserved_subunits?: string | null;
 }
 
 /** Derive settlement using the admitted tariff, never today's mutable pricing configuration. */
@@ -177,7 +182,11 @@ export class SparksAccounting {
     const tariff = createSparkTariffSnapshot(input.tariff);
     z.record(z.string(), z.unknown()).parse(input.providerQuote);
     const priceSnapshot = JSON.parse(
-      JSON.stringify({ tariff, providerQuote: input.providerQuote }),
+      JSON.stringify({
+        tariff,
+        providerQuote: input.providerQuote,
+        fundingPolicy: DREAMS_FIRST_POLICY,
+      }),
     );
     if (Buffer.byteLength(JSON.stringify(priceSnapshot)) > 64000) reject('SPARK_QUOTE_TOO_LARGE');
     const requestHash = digest({
@@ -239,10 +248,20 @@ export class SparksAccounting {
     sparkQuoteRateVersion(quote.price_snapshot);
     if (new Date(quote.expires_at).getTime() <= Date.now()) reject('SPARK_QUOTE_EXPIRED');
     const reserve = parseSparkInteger(String(quote.reserve_subunits));
+    const dreamWallet =
+      quote.price_snapshot?.fundingPolicy === DREAMS_FIRST_POLICY
+        ? (await c.query('SELECT * FROM dream_wallets WHERE owner_id=$1 FOR UPDATE', [ownerId]))
+            .rows[0]
+        : null;
+    const dreamAvailable = dreamWallet?.enabled
+      ? BigInt(dreamWallet.balance_subunits) - BigInt(dreamWallet.held_subunits)
+      : 0n;
+    const dreamReserve = dreamAvailable < reserve ? dreamAvailable : reserve;
+    const sparkReserve = reserve - dreamReserve;
     const available =
       parseSparkInteger(String(wallet.balance_subunits)) -
       parseSparkInteger(String(wallet.held_subunits));
-    if (reserve > available) reject('INSUFFICIENT_SPARKS');
+    if (sparkReserve > available) reject('INSUFFICIENT_SPARKS');
     const duplicateSource = (
       await c.query(
         'SELECT id FROM spark_holds WHERE owner_id=$1 AND source_kind=$2 AND source_id=$3',
@@ -250,19 +269,41 @@ export class SparksAccounting {
       )
     ).rows[0];
     if (duplicateSource) reject('SPARK_SOURCE_ALREADY_RESERVED');
+    let dreamHoldId: string | null = null;
+    if (dreamReserve > 0n) {
+      const dreamQuote = await dreamsAccounting.quote(c, {
+        ownerId,
+        operationId: quoteId,
+        sourceKind: quote.source_kind,
+        sourceId: quote.source_id,
+        reserveSubunits: dreamReserve.toString(),
+        expiresAt: new Date(quote.expires_at).toISOString(),
+        policyVersion: DREAMS_FIRST_POLICY,
+        providerQuote: { sparkQuoteId: quoteId, priceSnapshot: quote.price_snapshot },
+      });
+      dreamHoldId = (await dreamsAccounting.reserve(c, ownerId, dreamQuote.id)).id;
+    }
     const hold = (
       await c.query<SparkHold>(
-        "INSERT INTO spark_holds(id,owner_id,source_kind,source_id,reserved_subunits,status) VALUES($1,$2,$3,$4,$5,'held') RETURNING *",
-        [quoteId, ownerId, quote.source_kind, quote.source_id, reserve.toString()],
+        "INSERT INTO spark_holds(id,owner_id,source_kind,source_id,reserved_subunits,status,dream_hold_id,sparks_reserved_subunits) VALUES($1,$2,$3,$4,$5,'held',$6,$7) RETURNING *",
+        [
+          quoteId,
+          ownerId,
+          quote.source_kind,
+          quote.source_id,
+          reserve.toString(),
+          dreamHoldId,
+          sparkReserve.toString(),
+        ],
       )
     ).rows[0];
     await c.query('UPDATE spark_wallets SET held_subunits=held_subunits+$2 WHERE owner_id=$1', [
       ownerId,
-      reserve.toString(),
+      sparkReserve.toString(),
     ]);
     await c.query(
       "INSERT INTO spark_ledger(owner_id,hold_id,event_key,kind,amount_subunits) VALUES($1,$2,$3,'reserve',$4)",
-      [ownerId, quoteId, `reserve:${quoteId}`, reserve.toString()],
+      [ownerId, quoteId, `reserve:${quoteId}`, sparkReserve.toString()],
     );
     return hold;
   }
@@ -297,6 +338,27 @@ export class SparksAccounting {
       reconciliation,
     );
     if (plan.duplicate) return hold;
+    const sparkReserved = BigInt(hold.sparks_reserved_subunits ?? hold.reserved_subunits);
+    const dreamReserved = BigInt(hold.reserved_subunits) - sparkReserved;
+    const totalCaptured = plan.pending ? 0n : BigInt(plan.captured);
+    const dreamCaptured = totalCaptured < dreamReserved ? totalCaptured : dreamReserved;
+    const sparkCaptured = totalCaptured - dreamCaptured;
+    if (hold.dream_hold_id)
+      await dreamsAccounting.settle(
+        c,
+        ownerId,
+        hold.dream_hold_id,
+        plan.pending
+          ? { outcome: 'unknown', receiptId: settlement.receiptId }
+          : {
+              outcome: 'success',
+              actualSubunits: dreamCaptured.toString(),
+              policyVersion: DREAMS_FIRST_POLICY,
+              evidence: 'configured_rates',
+              receiptId: settlement.receiptId,
+            },
+        reconciliation,
+      );
     if (plan.pending) {
       await c.query("UPDATE spark_holds SET status='pending',reason=$2 WHERE id=$1", [
         holdId,
@@ -308,22 +370,22 @@ export class SparksAccounting {
           ownerId,
           holdId,
           `pending:${holdId}:${plan.fingerprint}`,
-          hold.reserved_subunits,
+          sparkReserved.toString(),
           JSON.stringify(settlement),
         ],
       );
     } else {
       await c.query(
         'UPDATE spark_wallets SET held_subunits=held_subunits-$2,balance_subunits=balance_subunits-$3 WHERE owner_id=$1',
-        [ownerId, hold.reserved_subunits, plan.captured],
+        [ownerId, sparkReserved.toString(), sparkCaptured.toString()],
       );
       await c.query(
         'UPDATE spark_holds SET status=$2,captured_subunits=$3,settlement_fingerprint=$4,settled_at=now(),reason=NULL WHERE id=$1',
         [holdId, plan.captured === '0' ? 'released' : 'settled', plan.captured, plan.fingerprint],
       );
       for (const [kind, amount] of [
-        ['capture', plan.captured],
-        ['release', plan.released],
+        ['capture', sparkCaptured.toString()],
+        ['release', (sparkReserved - sparkCaptured).toString()],
       ])
         await c.query(
           'INSERT INTO spark_ledger(owner_id,hold_id,event_key,kind,amount_subunits,evidence) VALUES($1,$2,$3,$4,$5,$6)',

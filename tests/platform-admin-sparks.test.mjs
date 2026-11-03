@@ -54,6 +54,9 @@ test('real Sparks admin adjustments preserve holds, audit, replay and legacy sep
     };
     const before = await member.request('GET', '/sparks/wallet');
     const demo = await member.request('GET', '/wallet');
+    const dreams = (await member.request('GET', '/currencies/wallet')).dreams;
+    assert.equal(before.balanceSubunits, '0');
+    assert.equal(dreams.balanceSubunits, '500000');
     await t.test('authorization and bounded exact whole-Spark input', async () => {
       await member.request('POST', '/admin/credits', grant, 403);
       for (const amount of [0, 0.1, 922337203685478, Number.MAX_SAFE_INTEGER])
@@ -61,6 +64,25 @@ test('real Sparks admin adjustments preserve holds, audit, replay and legacy sep
       await admin.request('POST', '/admin/credits', { ...grant, userId: randomUUID() }, 404);
       assert.deepEqual(await member.request('GET', '/sparks/wallet'), before);
     });
+    await t.test(
+      'unverified Dreams recipient retains the existing admin funding safeguard',
+      async () => {
+        const pending = await session();
+        await pool.query(
+          'UPDATE users SET starter_sparks_eligible=false,starter_dreams_eligible=true,email_verified=false WHERE id=$1',
+          [pending.user.id],
+        );
+        const before = await pending.request('GET', '/sparks/wallet');
+        const result = await admin.request(
+          'POST',
+          '/admin/credits',
+          { ...grant, userId: pending.user.id, idempotencyKey: randomUUID() },
+          409,
+        );
+        assert.equal(result.code, 'SPARKS_RECIPIENT_VERIFICATION_REQUIRED');
+        assert.deepEqual(await pending.request('GET', '/sparks/wallet'), before);
+      },
+    );
     await t.test(
       'parallel identical retries create exactly one ledger and audit entry',
       async () => {
@@ -90,6 +112,7 @@ test('real Sparks admin adjustments preserve holds, audit, replay and legacy sep
           '1',
         );
         assert.deepEqual(await member.request('GET', '/wallet'), demo);
+        assert.deepEqual((await member.request('GET', '/currencies/wallet')).dreams, dreams);
         await admin.request(
           'POST',
           '/admin/credits',

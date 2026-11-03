@@ -125,6 +125,12 @@ try {
         heroes: await rows('SELECT id,data,created_at,updated_at FROM heroes WHERE owner_id=$1', [
           user.id,
         ]),
+        dreams: {
+          wallets: await rows('SELECT * FROM dream_wallets WHERE owner_id=$1', [user.id]),
+          quotes: await rows('SELECT * FROM dream_quotes WHERE owner_id=$1', [user.id]),
+          holds: await rows('SELECT * FROM dream_holds WHERE owner_id=$1', [user.id]),
+          ledger: await rows('SELECT * FROM dream_ledger WHERE owner_id=$1', [user.id]),
+        },
         sparks: {
           wallets: await rows('SELECT * FROM spark_wallets WHERE owner_id=$1', [user.id]),
           quotes: await rows('SELECT * FROM spark_quotes WHERE owner_id=$1', [user.id]),

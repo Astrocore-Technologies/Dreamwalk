@@ -1,3 +1,4 @@
+import { quoteFunding, heldFunding } from '../generation/currency-funding';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import { resolveOwnerImageProfile } from '../generation/config';
 import {
@@ -115,7 +116,7 @@ export class ImageGenerationEngine {
     return this.db.tx(async (c) => {
       const peek = (
         await c.query<Job>(
-          'SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits FROM image_generation_jobs WHERE id=$1 AND actor_id=$2',
+          'SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_paid_reserved_subunits FROM image_generation_jobs WHERE id=$1 AND actor_id=$2',
           [id, actorId],
         )
       ).rows[0];
@@ -171,6 +172,18 @@ export class ImageGenerationEngine {
     ) => Promise<ImagePolicy>,
   ) {
     this.liveAuthorizer = authorizer;
+  }
+  private releaseResultAuthorizer?: (
+    c: PoolClient,
+    owner: string,
+    authorizationId: string,
+    revision: number,
+    hash: string,
+  ) => Promise<void>;
+  setReleaseResultAuthorizer(
+    authorizer: NonNullable<ImageGenerationEngine['releaseResultAuthorizer']>,
+  ) {
+    this.releaseResultAuthorizer = authorizer;
   }
   private runtimeStateReader?: (
     campaignId: string,
@@ -290,6 +303,7 @@ export class ImageGenerationEngine {
     input: GenerationRequest,
     expected?: Record<string, string>,
     legacyFraming = false,
+    completedRelease?: Job,
   ) {
     await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`art-owner:${actorId}`]);
     if (
@@ -358,6 +372,23 @@ export class ImageGenerationEngine {
     const hashes = Object.fromEntries(refs.map((r) => [r.id, r.sha256]));
     if (expected && hash(hashes) !== hash(expected))
       fail(409, 'REFERENCE_CHANGED', 'REFERENCE_CHANGED');
+    if (completedRelease) {
+      if (
+        this.policy.generationMode !== 'release' ||
+        input.mode !== 'external' ||
+        !this.releaseResultAuthorizer ||
+        !input.generationAuthorizationId
+      )
+        fail(409, 'GENERATION_AUTHORIZATION_MISMATCH', 'GENERATION_AUTHORIZATION_MISMATCH');
+      await this.releaseResultAuthorizer!(
+        c,
+        actorId,
+        input.generationAuthorizationId!,
+        completedRelease.generation_policy_revision!,
+        completedRelease.generation_policy_hash!,
+      );
+      return { hashes, refs, livePolicy: undefined };
+    }
     let livePolicy: ImagePolicy | undefined;
     if (input.mode === 'external' && this.capabilities) {
       const authorizationId = input.generationAuthorizationId ?? input.liveTestSessionId;
@@ -506,22 +537,26 @@ export class ImageGenerationEngine {
     )
       fail(409, 'IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE', 'IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE');
   }
-  private assertQuotedProvider(row: {
-    input: unknown;
-    reference_hashes: unknown;
-    policy_version: string;
-    upper_micros: unknown;
-    request_hash: string;
-    cost_basis?: string;
-    estimated_total_micros?: unknown;
-    estimate_snapshot?: ImageReserveSnapshot | null;
-    pricing_profile_snapshot?: ImagePricingProfileSnapshot | null;
-    generation_policy_revision?: number | null;
-    generation_policy_hash?: string | null;
-  }) {
+  private assertQuotedProvider(
+    row: {
+      input: unknown;
+      reference_hashes: unknown;
+      policy_version: string;
+      upper_micros: unknown;
+      request_hash: string;
+      cost_basis?: string;
+      estimated_total_micros?: unknown;
+      estimate_snapshot?: ImageReserveSnapshot | null;
+      pricing_profile_snapshot?: ImagePricingProfileSnapshot | null;
+      generation_policy_revision?: number | null;
+      generation_policy_hash?: string | null;
+    },
+    completedProvider?: string,
+  ) {
     const input = generationRequestSchema.parse(row.input),
-      planned = this.planning(input);
+      planned = completedProvider ? undefined : this.planning(input);
     if (
+      !completedProvider &&
       (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release') &&
       input.mode === 'external'
     ) {
@@ -545,8 +580,8 @@ export class ImageGenerationEngine {
     const expected = hash({
       input: row.input,
       refs: row.reference_hashes,
-      policy: this.policy.version,
-      provider: this.provider.id,
+      policy: completedProvider ? row.policy_version : this.policy.version,
+      provider: completedProvider ?? this.provider.id,
       upper: Number(row.upper_micros),
       ...(row.estimate_snapshot
         ? {
@@ -558,7 +593,10 @@ export class ImageGenerationEngine {
         ? { policyRevision: row.generation_policy_revision, policyHash: row.generation_policy_hash }
         : {}),
     });
-    if (row.policy_version !== this.policy.version || expected !== row.request_hash)
+    if (
+      (!completedProvider && row.policy_version !== this.policy.version) ||
+      expected !== row.request_hash
+    )
       fail(409, 'QUOTE_PROVIDER_CHANGED', 'QUOTE_PROVIDER_CHANGED');
   }
   async quote(actorId: string, body: unknown) {
@@ -739,6 +777,17 @@ export class ImageGenerationEngine {
   private dto(j: Job) {
     return {
       id: j.id,
+      ...(j.spark_funding
+        ? { funding: j.spark_funding }
+        : j.spark_paid_reserved_subunits != null
+          ? {
+              funding: heldFunding({
+                reserved_subunits: j.spark_reserved_subunits,
+                sparks_reserved_subunits: j.spark_paid_reserved_subunits,
+                captured_subunits: j.spark_captured_subunits,
+              }),
+            }
+          : {}),
       ...(j.spark_quote_id
         ? {
             sparkHoldId: j.spark_quote_id,
@@ -804,7 +853,7 @@ export class ImageGenerationEngine {
         fail(401, 'UNAUTHORIZED', 'UNAUTHORIZED');
       const previous = (
         await c.query<Job>(
-          'SELECT * FROM image_generation_jobs WHERE actor_id=$1 AND operation_id=$2',
+          'SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_paid_reserved_subunits FROM image_generation_jobs WHERE actor_id=$1 AND operation_id=$2',
           [actorId, b.operationId],
         )
       ).rows[0];
@@ -933,6 +982,7 @@ export class ImageGenerationEngine {
       ]);
       job.spark_quote_id = q.spark_quote_id;
       job.spark_status = q.spark_quote_id ? 'held' : undefined;
+      job.spark_funding = await quoteFunding(c, q.spark_quote_id);
       job.spark_reserved_subunits = (await sparkQuoteView(c, q.spark_quote_id)).sparks
         ?.reserveSubunits;
       return this.dto(job);
@@ -942,7 +992,7 @@ export class ImageGenerationEngine {
     z.uuid().parse(id);
     const j = (
       await this.db.query<Job>(
-        'SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits FROM image_generation_jobs WHERE id=$1 AND actor_id=$2',
+        'SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_paid_reserved_subunits FROM image_generation_jobs WHERE id=$1 AND actor_id=$2',
         [id, actorId],
       )
     )[0];
@@ -953,7 +1003,7 @@ export class ImageGenerationEngine {
     return {
       jobs: (
         await this.db.query<Job>(
-          `SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits FROM image_generation_jobs WHERE actor_id=$1 AND input ? 'heroPortraitContext' ORDER BY created_at DESC LIMIT 50`,
+          `SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_paid_reserved_subunits FROM image_generation_jobs WHERE actor_id=$1 AND input ? 'heroPortraitContext' ORDER BY created_at DESC LIMIT 50`,
           [actorId],
         )
       ).map((j) => this.dto(j)),
@@ -974,7 +1024,7 @@ export class ImageGenerationEngine {
     return {
       jobs: (
         await this.db.query<Job>(
-          `SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits FROM image_generation_jobs WHERE actor_id=$1 AND input ? 'storyCoverContext' ORDER BY created_at DESC LIMIT 50`,
+          `SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_paid_reserved_subunits FROM image_generation_jobs WHERE actor_id=$1 AND input ? 'storyCoverContext' ORDER BY created_at DESC LIMIT 50`,
           [actorId],
         )
       ).map((j) => this.dto(j)),
@@ -1019,7 +1069,7 @@ export class ImageGenerationEngine {
     return {
       jobs: (
         await this.db.query<Job>(
-          `SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits FROM image_generation_jobs WHERE actor_id=$1 AND adventure_id=$2
+          `SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_paid_reserved_subunits FROM image_generation_jobs WHERE actor_id=$1 AND adventure_id=$2
            AND ($3::text IS NULL OR input->'campaignContext'->>'campaignId'=$3) ORDER BY created_at DESC LIMIT 50`,
           [actorId, adventureId, campaignId ?? null],
         )
@@ -1416,8 +1466,22 @@ export class ImageGenerationEngine {
       row.mode === 'external' &&
       (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release')
     ) {
+      const authorizationId = row.input.generationAuthorizationId ?? row.input.liveTestSessionId;
+      const savedProfile =
+        this.policy.generationMode === 'release' && !row.pricing_profile_snapshot?.size
+          ? (
+              await this.db.query(
+                'SELECT profile_snapshot FROM generation_policy_revisions WHERE authorization_id=$1 AND revision=$2 AND profile_hash=$3',
+                [authorizationId, row.generation_policy_revision, row.generation_policy_hash],
+              )
+            )[0]?.profile_snapshot
+          : undefined;
+      const originalSize = row.pricing_profile_snapshot?.size ?? savedProfile?.image?.size;
       const expected = (
-        row.pricing_profile_snapshot?.size ?? this.capabilities?.requestProfile.size
+        originalSize ??
+        (this.policy.generationMode === 'release'
+          ? undefined
+          : this.capabilities?.requestProfile.size)
       )
         ?.split('x')
         .map(Number);
@@ -1429,15 +1493,21 @@ export class ImageGenerationEngine {
     try {
       await this.db.tx(async (c) => {
         const input = generationRequestSchema.parse(row.input);
+        const completedRelease =
+          this.policy.generationMode === 'release' && row.mode === 'external';
         const admissionAuthorization = await this.authorize(
           c,
           row.actor_id,
           input,
           row.reference_hashes,
           input.framingVersion === undefined,
+          completedRelease ? row : undefined,
         );
-        this.assertPolicyRevision(row, admissionAuthorization.livePolicy);
-        if (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release') {
+        if (!completedRelease) this.assertPolicyRevision(row, admissionAuthorization.livePolicy);
+        if (
+          !completedRelease &&
+          (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release')
+        ) {
           this.liveGate(input);
           this.assertQuotedProvider(row);
         }
@@ -1456,6 +1526,7 @@ export class ImageGenerationEngine {
           await c.query('SELECT provider FROM image_generation_attempts WHERE job_id=$1', [id])
         ).rows[0];
         if (!attempt) fail(409, 'NO_PROVIDER_ATTEMPT', 'NO_PROVIDER_ATTEMPT');
+        if (completedRelease) this.assertQuotedProvider(j, String(attempt.provider));
         const admitted = await admitGeneratedRaster(
           c,
           this.assets,

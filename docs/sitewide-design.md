@@ -10,8 +10,14 @@ The shared shell and surface system cover discovery, story details, library, her
 
 ## Deployment dependency
 
-Apply migration `053_story_popularity.sql` before starting the updated API. See `story-popularity.md` for metric definitions, privacy and ranking behavior. This PR does not execute production migrations or deploy itself.
+Apply migrations `053_story_popularity.sql` and `054_dreams_accounting.sql` before starting the updated API. See `story-popularity.md` for metric definitions, privacy and ranking behavior, and `dual-currency-accounting.md` for the wallet migration and accounting rules. This PR does not execute production migrations or deploy itself.
 
 ## Verification
 
 Shared palette tests enforce WCAG AA normal-text contrast for foreground/muted/accent text on the main surfaces and gold actions. Browser tests cover language/theme persistence, public and signed-in route layout, actual like/unlike persistence, draft action eligibility, tablet drawer visibility and sidebar-free desktop/mobile play. Existing end-to-end suites remain the functional regression gate for authoring, maps, game turns, account/admin, assets and paid-action confirmation boundaries. Screenshot artifacts use anonymous pages or synthetic test accounts, not private user data.
+
+## Dual wallet
+
+The wallet and header show Грёзы / Мрії / Dreams separately from Sparks, with real account-bound integer balances and separate history. New accounts receive 50 Dreams instead of the old 50-Sparks welcome grant; existing Sparks balances and history are preserved. No daily grant or currency conversion is introduced.
+
+Both currencies cover the same supported generation uses at the same two-units-per-provider-cent rate. A quote shows an estimated Dreams-first split and an explicit maximum Sparks reserve if the free balance changes before confirmation. The original confirmation button authorizes the request; no additional payment click is introduced. Each atomic reservation and final receipt show the actual currency split, and unused reservations return to their original currency. Pending or unknown costs remain held for reconciliation. Provider consent, hard limits and fail-closed controls remain in effect.

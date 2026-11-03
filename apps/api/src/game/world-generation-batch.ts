@@ -1,3 +1,4 @@
+import { aggregateFunding } from '../generation/currency-funding';
 import { totalQuotedSparkSubunits, commonQuotedSparkRate } from '../generation/sparks-quote-total';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -224,6 +225,7 @@ export class WorldGenerationBatch {
         chargeUnit: 'sparks',
         sparkReservedSubunits: totalQuotedSparkSubunits(entries.map((entry) => entry.quote)),
         ...commonQuotedSparkRate(entries.map((entry) => entry.quote)),
+        funding: aggregateFunding(entries.map((entry) => entry.quote)),
         providerUpperMicros: null,
         providerReserveMicros: reserve,
         estimatedTotalMicros: estimate,
@@ -339,8 +341,17 @@ export class WorldGenerationBatch {
         )
       ).rows[0];
       if (!wallet?.enabled) fail(409, 'SPARK_WALLET_NOT_ENABLED', 'SPARK_WALLET_NOT_ENABLED');
+      const dreams = (
+        await c.query(
+          'SELECT enabled,balance_subunits,held_subunits FROM dream_wallets WHERE owner_id=$1 FOR UPDATE',
+          [userId],
+        )
+      ).rows[0];
+      const dreamAvailable = dreams?.enabled
+        ? BigInt(dreams.balance_subunits) - BigInt(dreams.held_subunits)
+        : 0n;
       if (
-        BigInt(wallet.balance_subunits) - BigInt(wallet.held_subunits) <
+        BigInt(wallet.balance_subunits) - BigInt(wallet.held_subunits) + dreamAvailable <
         BigInt(batch.quote.sparkReservedSubunits)
       )
         fail(409, 'INSUFFICIENT_SPARKS', 'INSUFFICIENT_SPARKS');

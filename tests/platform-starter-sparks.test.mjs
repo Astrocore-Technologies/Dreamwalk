@@ -3,6 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import pg from 'pg';
+import { grantRegistrationDreams } from '../apps/api/dist/generation/starter-dreams.js';
 import { grantRegistrationSparks } from '../apps/api/dist/generation/starter-sparks.js';
 
 const base = process.env.TEST_API_URL || 'http://127.0.0.1:4000/api/v1';
@@ -51,7 +52,7 @@ async function insertUser(c, id, account) {
     account.handle,
   ]);
 }
-test('new registration receives exactly 50 real Sparks once, without changing demo money or old users', async (t) => {
+test('new registration receives exactly 50 Dreams and zero Sparks once, without changing demo money or old users', async (t) => {
   try {
     await t.test(
       'concurrent duplicate registration grants once and authenticated balance is actual',
@@ -74,17 +75,20 @@ test('new registration receives exactly 50 real Sparks once, without changing de
           .getSetCookie()
           .map((s) => s.split(';')[0])
           .join('; ');
-        const response = await fetch(`${base}/sparks/wallet`, { headers: { cookie, origin } });
+        const response = await fetch(`${base}/currencies/wallet`, { headers: { cookie, origin } });
         assert.equal(response.status, 200);
-        const wallet = await response.json();
+        const currencies = await response.json();
+        const wallet = currencies.dreams;
+        assert.equal(currencies.sparks.balanceSubunits, '0');
+        assert.equal(currencies.sparks.ledger.length, 0);
+        assert.equal(wallet.subunitsPerDream, '10000');
+        assert.equal(wallet.spendingAvailable, true);
         assert.equal(wallet.balanceSubunits, '500000');
         assert.equal(wallet.availableSubunits, '500000');
         assert.equal(wallet.heldSubunits, '0');
-        assert.equal(wallet.enabled, true);
-        assert.equal(wallet.purchaseAvailable, false);
         assert.equal(wallet.ledger.filter((e) => e.kind === 'starter_grant').length, 1);
         assert.equal(wallet.ledger[0].amountSubunits, '500000');
-        const anonymous = await fetch(`${base}/sparks/wallet`);
+        const anonymous = await fetch(`${base}/currencies/wallet`);
         assert.equal(anonymous.status, 401);
         assert.equal((await register(account)).status, 409);
         assert.deepEqual(
@@ -104,7 +108,7 @@ test('new registration receives exactly 50 real Sparks once, without changing de
         assert.equal(
           (
             await pool.query(
-              "SELECT count(*) FROM spark_ledger WHERE owner_id=$1 AND kind='starter_grant'",
+              "SELECT count(*) FROM dream_ledger WHERE owner_id=$1 AND kind='starter_grant'",
               [user.id],
             )
           ).rows[0].count,
@@ -112,26 +116,26 @@ test('new registration receives exactly 50 real Sparks once, without changing de
         );
         // Concurrent internal replay after use is a no-op, never re-enables or restores spent credit.
         await pool.query(
-          'UPDATE spark_wallets SET balance_subunits=123,enabled=false WHERE owner_id=$1',
+          'UPDATE dream_wallets SET balance_subunits=123,enabled=false WHERE owner_id=$1',
           [user.id],
         );
         await Promise.all([
-          transaction((c) => grantRegistrationSparks(c, user.id)),
-          transaction((c) => grantRegistrationSparks(c, user.id)),
+          transaction((c) => grantRegistrationDreams(c, user.id)),
+          transaction((c) => grantRegistrationDreams(c, user.id)),
         ]);
         const replay = (
-          await pool.query('SELECT enabled,balance_subunits FROM spark_wallets WHERE owner_id=$1', [
+          await pool.query('SELECT enabled,balance_subunits FROM dream_wallets WHERE owner_id=$1', [
             user.id,
           ])
         ).rows[0];
         assert.deepEqual(replay, { enabled: false, balance_subunits: '123' });
         await assert.rejects(
-          pool.query('UPDATE spark_ledger SET amount_subunits=500000 WHERE owner_id=$1', [user.id]),
+          pool.query('UPDATE dream_ledger SET amount_subunits=500000 WHERE owner_id=$1', [user.id]),
           /immutable/,
         );
         await assert.rejects(
           pool.query(
-            "INSERT INTO spark_ledger(owner_id,event_key,kind,amount_subunits) VALUES($1,'invalid-without-hold','capture',1)",
+            "INSERT INTO dream_ledger(owner_id,event_key,kind,amount_subunits) VALUES($1,'invalid-without-hold','capture',1)",
             [user.id],
           ),
           /check constraint/,
@@ -146,7 +150,8 @@ test('new registration receives exactly 50 real Sparks once, without changing de
         await assert.rejects(
           transaction(async (c) => {
             await insertUser(c, id, account);
-            await grantRegistrationSparks(c, id);
+            await c.query('UPDATE users SET starter_dreams_eligible=true WHERE id=$1', [id]);
+            await grantRegistrationDreams(c, id);
             throw new Error('synthetic failure after grant');
           }),
           /synthetic failure/,
@@ -155,6 +160,8 @@ test('new registration receives exactly 50 real Sparks once, without changing de
           ['users', 'id'],
           ['spark_wallets', 'owner_id'],
           ['spark_ledger', 'owner_id'],
+          ['dream_wallets', 'owner_id'],
+          ['dream_ledger', 'owner_id'],
         ]) {
           assert.equal(
             (await pool.query(`SELECT count(*) FROM ${table} WHERE ${column}=$1`, [id])).rows[0]
@@ -164,6 +171,82 @@ test('new registration receives exactly 50 real Sparks once, without changing de
         }
         const retry = await register(account);
         assert.equal(retry.status, 201);
+      },
+    );
+    await t.test(
+      'old accounts never receive Dreams, including pending legacy Sparks eligibility',
+      async () => {
+        for (const eligible of [false, true]) {
+          const id = randomUUID();
+          await transaction(async (c) => {
+            await insertUser(c, id, identity());
+            await c.query('UPDATE users SET starter_sparks_eligible=$2 WHERE id=$1', [
+              id,
+              eligible,
+            ]);
+            await c.query('INSERT INTO spark_wallets(owner_id,balance_subunits) VALUES($1,77)', [
+              id,
+            ]);
+            assert.equal(await grantRegistrationDreams(c, id), false);
+          });
+          assert.equal(
+            (await pool.query('SELECT count(*) FROM dream_wallets WHERE owner_id=$1', [id])).rows[0]
+              .count,
+            '0',
+          );
+          assert.deepEqual(
+            (
+              await pool.query(
+                'SELECT starter_sparks_eligible,starter_dreams_eligible FROM users WHERE id=$1',
+                [id],
+              )
+            ).rows[0],
+            { starter_sparks_eligible: eligible, starter_dreams_eligible: false },
+          );
+          assert.equal(
+            (await pool.query('SELECT balance_subunits FROM spark_wallets WHERE owner_id=$1', [id]))
+              .rows[0].balance_subunits,
+            '77',
+          );
+        }
+      },
+    );
+    await t.test(
+      'historical Sparks grant replay still preserves spent credit and immutable history',
+      async () => {
+        const id = randomUUID();
+        await transaction(async (c) => {
+          await insertUser(c, id, identity());
+          await grantRegistrationSparks(c, id);
+        });
+        await pool.query(
+          'UPDATE spark_wallets SET balance_subunits=123,enabled=false WHERE owner_id=$1',
+          [id],
+        );
+        await Promise.all([
+          transaction((c) => grantRegistrationSparks(c, id)),
+          transaction((c) => grantRegistrationSparks(c, id)),
+        ]);
+        assert.deepEqual(
+          (
+            await pool.query(
+              'SELECT enabled,balance_subunits FROM spark_wallets WHERE owner_id=$1',
+              [id],
+            )
+          ).rows[0],
+          { enabled: false, balance_subunits: '123' },
+        );
+        await assert.rejects(
+          pool.query('UPDATE spark_ledger SET amount_subunits=500000 WHERE owner_id=$1', [id]),
+          /immutable/,
+        );
+        await assert.rejects(
+          pool.query(
+            "INSERT INTO spark_ledger(owner_id,event_key,kind,amount_subunits) VALUES($1,'invalid-without-hold','capture',1)",
+            [id],
+          ),
+          /check constraint/,
+        );
       },
     );
     await t.test(

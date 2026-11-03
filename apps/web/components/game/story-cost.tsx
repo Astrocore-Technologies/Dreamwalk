@@ -1,11 +1,12 @@
 'use client';
+import { FundingBreakdown, FundingNotice, type WalletFunding } from '../wallet-funding';
 import { formatSparkSubunits, type StoryQuote } from '@dreamwalk/contracts';
 import { providerSparkSubunits } from '../visual-authoring/spark-equivalent';
 import { useT } from '@/lib/i18n';
 import { useStoryText } from './story-messages';
 
 /** One estimate for the exact prepared message; a wallet hold is not a final debit. */
-export function StoryCost({ quote }: { quote: StoryQuote }) {
+export function StoryCost({ quote }: { quote: StoryQuote & { funding?: WalletFunding } }) {
   const { locale } = useT();
   const h = useStoryText();
   const reserve = quote.chargeUnit === 'sparks' ? (quote.sparkReservedSubunits ?? null) : null;
@@ -18,6 +19,13 @@ export function StoryCost({ quote }: { quote: StoryQuote }) {
           reserve != null ? (quote.sparkRateVersion ?? null) : undefined,
         )
       : null) ?? reserve;
+  if (quote.funding)
+    return (
+      <div data-testid="story-cost">
+        <FundingBreakdown funding={quote.funding} />
+        <FundingNotice />
+      </div>
+    );
   return (
     <div data-testid="story-cost">
       <p data-spark-quote-price>

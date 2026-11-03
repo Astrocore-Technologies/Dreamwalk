@@ -28,6 +28,8 @@ export type LiveTestStatus = {
   usedMicros: number;
   heldMicros: number;
   remainingMicros: number;
+  dreamsAvailableSubunits?: string;
+  sparksAvailableSubunits?: string;
   priorHeldReservations: number;
   imagesEnabled: boolean;
   imageConfiguration?: { requestProfile?: { maxReferenceImages?: number } | null };

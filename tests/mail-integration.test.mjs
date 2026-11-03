@@ -291,7 +291,7 @@ test('SMTP capture: reset, verification, nonenumeration, expiry, replay, session
     assert.deepEqual(pendingRace.map((r) => r.status).sort(), [201, 400]);
     assert.equal(
       (
-        await pool.query('SELECT balance_subunits FROM spark_wallets WHERE owner_id=$1', [
+        await pool.query('SELECT balance_subunits FROM dream_wallets WHERE owner_id=$1', [
           pending.user.id,
         ])
       ).rows[0].balance_subunits,
@@ -300,7 +300,7 @@ test('SMTP capture: reset, verification, nonenumeration, expiry, replay, session
     assert.equal(
       (
         await pool.query(
-          "SELECT count(*) FROM spark_ledger WHERE owner_id=$1 AND kind='starter_grant'",
+          "SELECT count(*) FROM dream_ledger WHERE owner_id=$1 AND kind='starter_grant'",
           [pending.user.id],
         )
       ).rows[0].count,
@@ -354,12 +354,24 @@ test('SMTP capture: reset, verification, nonenumeration, expiry, replay, session
     await call('/auth/verify-email', { token: retryToken });
     assert.equal(
       (
-        await pool.query('SELECT balance_subunits FROM spark_wallets WHERE owner_id=$1', [
+        await pool.query('SELECT balance_subunits FROM dream_wallets WHERE owner_id=$1', [
           failedDelivery.user.id,
         ])
       ).rows[0].balance_subunits,
       '500000',
     );
+    for (const id of [pending.user.id, failedDelivery.user.id]) {
+      assert.equal(
+        (await pool.query('SELECT balance_subunits FROM spark_wallets WHERE owner_id=$1', [id]))
+          .rows[0].balance_subunits,
+        '0',
+      );
+      assert.equal(
+        (await pool.query('SELECT count(*) FROM spark_ledger WHERE owner_id=$1', [id])).rows[0]
+          .count,
+        '0',
+      );
+    }
     // Provisioning uses signed-claim-shaped local fixtures; no Google endpoints called.
     process.env.SMTP_HOST = '127.0.0.1';
     process.env.SMTP_FROM = 'test@example.test';
@@ -395,11 +407,27 @@ test('SMTP capture: reset, verification, nonenumeration, expiry, replay, session
     assert.equal(
       (
         await pool.query(
-          "SELECT count(*) FROM spark_ledger WHERE owner_id=$1 AND kind='starter_grant'",
+          "SELECT count(*) FROM dream_ledger WHERE owner_id=$1 AND kind='starter_grant'",
           [google1.id],
         )
       ).rows[0].count,
       '1',
+    );
+    assert.equal(
+      (
+        await pool.query('SELECT balance_subunits FROM dream_wallets WHERE owner_id=$1', [
+          google1.id,
+        ])
+      ).rows[0].balance_subunits,
+      '500000',
+    );
+    assert.equal(
+      (
+        await pool.query('SELECT balance_subunits FROM spark_wallets WHERE owner_id=$1', [
+          google1.id,
+        ])
+      ).rows[0].balance_subunits,
+      '0',
     );
     await assert.rejects(
       provisionGoogleUser(dbAdapter, {
@@ -420,6 +448,37 @@ test('SMTP capture: reset, verification, nonenumeration, expiry, replay, session
       (await pool.query('SELECT count(*) FROM spark_wallets WHERE owner_id=$1', [thirdParty.id]))
         .rows[0].count,
       '0',
+    );
+    // Pending accounts enrolled before Dreams keep their original Sparks eligibility.
+    const legacyId = randomUUID();
+    await pool.query(
+      "INSERT INTO users(id,email,password_hash,name,handle,email_verification_required,starter_sparks_eligible) VALUES($1,$2,'unused','Legacy pending',$3,true,true)",
+      [legacyId, `${legacyId}@example.test`, `legacy_${legacyId.replaceAll('-', '').slice(0, 12)}`],
+    );
+    const legacyToken = randomUUID().replaceAll('-', '') + randomUUID().replaceAll('-', '');
+    await pool.query(
+      "INSERT INTO auth_email_tokens(token_hash,user_id,purpose,expires_at) VALUES($1,$2,'verify',now()+interval '30 minutes')",
+      [hash(legacyToken), legacyId],
+    );
+    await call('/auth/verify-email', { token: legacyToken });
+    assert.equal(
+      (await pool.query('SELECT balance_subunits FROM spark_wallets WHERE owner_id=$1', [legacyId]))
+        .rows[0].balance_subunits,
+      '500000',
+    );
+    assert.equal(
+      (await pool.query('SELECT count(*) FROM dream_wallets WHERE owner_id=$1', [legacyId])).rows[0]
+        .count,
+      '0',
+    );
+    assert.deepEqual(
+      (
+        await pool.query(
+          'SELECT starter_sparks_eligible,starter_dreams_eligible FROM users WHERE id=$1',
+          [legacyId],
+        )
+      ).rows[0],
+      { starter_sparks_eligible: false, starter_dreams_eligible: false },
     );
     const returning = await provisionGoogleUser(dbAdapter, {
       ...googleClaims,

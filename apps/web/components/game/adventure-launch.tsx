@@ -8,7 +8,7 @@ import { startState, type StartPreparation } from './start-state';
 import { formatSparkSubunits } from '@dreamwalk/contracts';
 import { providerSparkSubunits } from '../visual-authoring/spark-equivalent';
 import type { Adventure } from '@dreamwalk/contracts';
-import { api, errorMessage, useClient, useResource } from '@/lib/client';
+import { api, ApiError, errorMessage, useClient, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Modal } from '@/components/ui';
 export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
@@ -173,7 +173,26 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
         setConfirm(false);
       }
     } catch (err) {
-      if (gate.accepts(lease)) setError(errorMessage(err));
+      if (gate.accepts(lease)) {
+        // These explicit responses are rejected before admission. A network error,
+        // unknown response, or any other code must retain the pending-dispatch guard.
+        if (
+          action === 'confirm' &&
+          err instanceof ApiError &&
+          err.status === 409 &&
+          [
+            'GENERATION_POLICY_CHANGED',
+            'AUTHORING_QUOTE_EXPIRED',
+            'GENERATION_RELEASE_PROFILE_NOT_ACTIVE',
+          ].includes(err.code)
+        ) {
+          sessionStorage.removeItem(storageKey + ':dispatch-pending');
+          setDispatchUncertain(false);
+          setQuote(null);
+          setConfirm(false);
+        }
+        setError(errorMessage(err));
+      }
     } finally {
       if (action === 'restore' && gate.accepts(lease)) setRestoredKey(storageKey);
       if (!navigating && gate.finish(lease)) setBusy(false);

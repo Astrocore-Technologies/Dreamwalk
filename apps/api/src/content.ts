@@ -51,7 +51,7 @@ function checkEditRevision(row: Record<string, unknown>, expected: number | unde
     fail(409, 'STALE_STATE', 'Draft changed in another editor. Reload before saving.');
 }
 export const publicAdventureSql =
-  "a.visibility='public' AND a.published_snapshot IS NOT NULL AND a.status<>'archived' AND u.deleted_at IS NULL";
+  "a.visibility='public' AND a.published_snapshot IS NOT NULL AND a.status<>'archived' AND EXISTS(SELECT 1 FROM users public_owner WHERE public_owner.id=a.owner_id AND public_owner.deleted_at IS NULL)";
 // Separate correlated aggregates avoid multiplying rounds by likes or party members.
 // Only approved source versions contribute; private/draft playtests remain private.
 export const adventureSelect = `SELECT a.*,(SELECT r.snapshot FROM adventure_private_releases r WHERE r.id=a.private_release_id) AS private_snapshot,u.name AS author_name,u.handle AS author_handle,

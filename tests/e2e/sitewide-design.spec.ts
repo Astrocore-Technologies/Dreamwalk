@@ -71,6 +71,9 @@ test('real likes are independent from saved stories and refresh public metrics',
 }) => {
   await syntheticAccount(page);
   await page.addInitScript(() => localStorage.setItem('dreamwalk-language', 'en'));
+  expect(
+    (await page.request.patch('/api/v1/account/settings', { data: { language: 'en' } })).ok(),
+  ).toBeTruthy();
   const catalog = await page.request.get('/api/v1/adventures?sort=popular');
   expect(catalog.ok()).toBeTruthy();
   const stories = await catalog.json();
@@ -124,6 +127,7 @@ test('author, player and account surfaces retain controls in both themes; gamepl
   test.setTimeout(120_000);
   await syntheticAccount(page);
   await page.goto('/home');
+  await expect(page.locator('.profile-chip')).toBeVisible();
   const routes = [
     '/library',
     '/my-characters',
@@ -165,7 +169,7 @@ test('author, player and account surfaces retain controls in both themes; gamepl
     }
   }
   const response = await page.request.post('/api/v1/game/campaigns', {
-    data: { template: 'observatory-v1' },
+    data: { template: 'observatory-v1', turnBased: true },
   });
   expect(response.ok()).toBeTruthy();
   const { campaignId } = await response.json();
@@ -174,6 +178,7 @@ test('author, player and account surfaces retain controls in both themes; gamepl
   await expect(page.locator('canvas')).toBeVisible();
   await expect(page.getByTestId('game-position')).toBeVisible();
   await expect(page.locator('[data-turn-phase]')).toBeVisible();
+  await expect(page.getByTestId('unified-story')).toBeVisible();
   await expect(page.locator('#main-sidebar')).toHaveCount(0);
   await expect(page.locator('.bottom-nav')).toHaveCount(0);
   await expect(page.getByTestId('campaign-objectives')).toHaveCount(0);

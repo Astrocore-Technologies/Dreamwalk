@@ -2,6 +2,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { db, startApi, stopApi, client } from '../game/support-runtime.mjs';
 import { storyInput } from '../game/support-authored.mjs';
+import { publicAdventureSql } from '../../apps/api/dist/content.js';
 
 await test('public popularity counts completed rounds and distinct authenticated likes, never favorites or private playtests', async (t) => {
   try {
@@ -132,6 +133,12 @@ await test('public popularity counts completed rounds and distinct authenticated
         await owner.request(`/likes/${draft.id}`, {}, 'PUT', 404);
         await db.query('UPDATE users SET deleted_at=now() WHERE id=$1', [owner.user.id]);
         assert.equal((await catalog()).length, 0);
+        // The exported predicate must remain usable by callers with only adventures a.
+        const raw = await db.query(
+          `SELECT count(*)::int AS count FROM adventures a WHERE ${publicAdventureSql} AND a.id=ANY($1::uuid[])`,
+          [[a.id, b.id]],
+        );
+        assert.equal(raw.rows[0].count, 0);
       },
     );
   } finally {

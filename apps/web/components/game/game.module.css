@@ -799,3 +799,13 @@
     gap: 4px 10px;
   }
 }
+:global(.game-shell) .connection {
+  max-width: 220px;
+  justify-self: end;
+}
+:global(.game-shell) .roomHeader:not(:has(.turnPanel)) {
+  grid-template-columns: minmax(0, 1fr) auto;
+}
+:global(html[data-theme='light'] .game-shell) .connection[data-connected='true'] {
+  color: #276443;
+}
