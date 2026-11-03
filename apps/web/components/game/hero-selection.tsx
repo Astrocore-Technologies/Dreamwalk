@@ -9,6 +9,7 @@ import { assetUrl, useClient, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox, Field, Modal, Select } from '@/components/ui';
 const rows = {
+  group: ['Выбор героя', 'Hero selection', 'Вибір героя'],
   solo: ['Соло', 'Solo', 'Соло'],
   friends: ['С друзьями', 'With friends', 'З друзями'],
   soloFriends: ['Соло / с друзьями', 'Solo / with friends', 'Соло / з друзями'],
@@ -121,7 +122,7 @@ export function HeroSelection({
       ref={root}
       tabIndex={compact ? -1 : undefined}
       role={compact ? 'group' : undefined}
-      aria-label={compact ? h('choose') : undefined}
+      aria-label={compact ? h('group') : undefined}
       className="stack"
       data-testid="hero-selection"
       style={{ minWidth: 0, maxWidth: '100%' }}

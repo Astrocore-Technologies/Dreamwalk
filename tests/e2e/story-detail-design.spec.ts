@@ -381,6 +381,8 @@ test('expanded owned hero cards only select and close, restore focus and keep la
   const { state } = await fixture(page);
   await page.goto(storyPath);
   await readyImage(page);
+  await expect(page.getByLabel('Hero for this campaign')).toHaveCount(1);
+  await expect(page.getByRole('group', { name: 'Hero selection', exact: true })).toBeVisible();
   const open = page.getByRole('button', { name: 'Choose a hero', exact: true });
   // A DOM identity marker would disappear if launch or its selectors were remounted.
   await page

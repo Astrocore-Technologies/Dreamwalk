@@ -191,6 +191,13 @@ test('hero dialog keeps the authoritative selection when reopened and reacts to 
     return flatten(module.exports.HeroSelection({ selection, compact: true, disabled }));
   }
   let nodes = render();
+  assert.equal(nodes.find((n) => n.props?.role === 'group').props['aria-label'], 'Hero selection');
+  assert.equal(nodes.find((n) => n.type === 'field').props.label, 'Hero for this campaign');
+  assert.notEqual(
+    nodes.find((n) => n.props?.role === 'group').props['aria-label'],
+    nodes.find((n) => n.type === 'field').props.label,
+    'The focus fallback group must not duplicate the native select label',
+  );
   nodes.find((n) => n.props?.['aria-haspopup'] === 'dialog').props.onClick();
   nodes = render();
   nodes.find((n) => n.type === 'input' && n.props.value === 'owned').props.onChange();
