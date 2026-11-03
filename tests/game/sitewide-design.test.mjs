@@ -43,11 +43,13 @@ test('metrics render only real API values and likes do not reuse bookmarks', asy
 test('game shell removes navigation without removing global language and theme controls', async () => {
   const shell = await read('components/shell.tsx');
   assert.match(shell, /!inGame && \(/);
-  assert.match(shell, /game-return/);
+  assert.match(shell, /id="game-toolbar"/);
   assert.match(shell, /className="locale-select"/);
   assert.match(shell, /className="icon-button theme-button"/);
   const page = await read('components/game/game-page.tsx');
   assert.doesNotMatch(page, /<CampaignObjectives/);
+  assert.match(page, /game-return/);
+  assert.match(page, /createPortal/);
   const layout = await read('app/layout.tsx');
   assert.match(layout, /dreamwalk-theme/);
   assert.match(layout, /design-system.css/);
