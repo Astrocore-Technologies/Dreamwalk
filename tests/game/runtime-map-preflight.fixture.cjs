@@ -131,7 +131,8 @@ exports.verifyRuntimeMapPreflight = async ({ pool, owner, player, version }) => 
     };
     let calls = 0,
       serialLocked = false,
-      uncertain = false;
+      uncertain = false,
+      afterCount;
     const transport = async (url) => {
       calls++;
       assert.equal(serialLocked, false, 'campaign serial scope unwound before network');
@@ -145,6 +146,7 @@ exports.verifyRuntimeMapPreflight = async ({ pool, owner, player, version }) => 
         assert.equal(lock.acquired, true, 'quote transaction lock released before network');
       });
       if (uncertain) throw new Error('injected unknown');
+      afterCount?.();
       return new Response(JSON.stringify({ object: 'response.input_tokens', input_tokens: 1234 }));
     };
     let provider;
@@ -343,6 +345,68 @@ exports.verifyRuntimeMapPreflight = async ({ pool, owner, player, version }) => 
       await revisionGate.query('ROLLBACK');
       revisionGate.release();
     }
+    uncertain = false;
+    const changeDuringAdmission = async (salt, mutate) => {
+      const gate = await pool.connect();
+      await gate.query('BEGIN');
+      await gate.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+        `runtime-map-count:${player}`,
+      ]);
+      const result = prepare(salt).then(
+        (quote) => ({ quote }),
+        (error) => ({ error }),
+      );
+      try {
+        const deadline = Date.now() + 5000;
+        while (
+          !(await db.query("SELECT 1 FROM pg_locks WHERE locktype='advisory' AND NOT granted"))
+            .length
+        ) {
+          assert.ok(Date.now() < deadline, 'preflight reached clock-change admission gate');
+          await new Promise((r) => setTimeout(r, 10));
+        }
+        await mutate();
+        await gate.query('COMMIT');
+        return await result;
+      } finally {
+        await gate.query('ROLLBACK');
+        gate.release();
+      }
+    };
+    assert.ok(
+      (
+        await changeDuringAdmission('idle-tick', async () => {
+          state.tick++;
+        })
+      ).quote,
+      'an idle root clock change does not invalidate unchanged map/body admission',
+    );
+    assert.equal(calls, 3);
+    assert.ok(
+      (
+        await changeDuringAdmission('idle-checkpoint', async () => {
+          state.tick++;
+          state.revision++;
+          await db.query('UPDATE game_campaigns SET revision=revision+1 WHERE id=$1', [current.id]);
+          current.revision = Number(current.revision) + 1;
+        })
+      ).quote,
+      'a clock-only checkpoint is accepted only with matching current hot/durable revision',
+    );
+    assert.equal(calls, 4);
+    const x = state.entities[actor].x;
+    const moved = await changeDuringAdmission('actor-moved', async () => {
+      state.entities[actor].x++;
+    });
+    assert.equal(moved.error.getResponse?.().code, 'RUNTIME_MAP_QUOTE_CHANGED');
+    assert.equal(calls, 4, 'changed authoritative positions never dispatch');
+    state.entities[actor].x = x;
+    afterCount = () => {
+      state.tick++;
+    };
+    assert.ok(await prepare('tick-during-count'));
+    afterCount = undefined;
+    assert.equal(calls, 5, 'unchanged exact body after an idle tick reuses the single count');
     await db.query(
       "INSERT INTO art_asset_takedowns(revision_id,reason_code) VALUES($1,'rights_issue')",
       [revision],
@@ -357,7 +421,7 @@ exports.verifyRuntimeMapPreflight = async ({ pool, owner, player, version }) => 
       'narrative',
     );
     assert.equal(context.runtimeMapImage, undefined);
-    assert.equal(calls, 2);
+    assert.equal(calls, 5);
   } finally {
     await db.query('UPDATE game_campaigns SET state=$2 WHERE id=$1', [current.id, originalState]);
     config.ASSET_DIR = prior;

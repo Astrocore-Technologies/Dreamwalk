@@ -3,7 +3,11 @@ import {
   runtimeMapStillCurrent,
   runtimeMapSourceStillCurrent,
 } from '../game/runtime-map-context';
-import { RuntimeMapCountRequired, withRuntimeMapPreflight } from './runtime-map-preflight';
+import {
+  RuntimeMapCountRequired,
+  runtimeMapAdmissionStateHash,
+  withRuntimeMapPreflight,
+} from './runtime-map-preflight';
 import type { GameState } from '@dreamwalk/contracts';
 import { quoteFunding, optionalFunding } from '../generation/currency-funding';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
@@ -355,9 +359,9 @@ export class NpcAiEngine {
       } else {
         error.scope = scope;
         error.context = context;
-        error.stateHash = digest(
-          this.runtimeStateReader?.(scope.campaignId) ?? context.contextHash,
-        );
+        const state = this.runtimeStateReader?.(scope.campaignId);
+        error.stateHash = digest(state ?? context.contextHash);
+        error.admissionStateHash = runtimeMapAdmissionStateHash(state, context.contextHash);
         error.durableRevision =
           this.runtimeRevisionReader?.(scope.campaignId) ??
           Number(
@@ -410,10 +414,11 @@ export class NpcAiEngine {
         await this.authorize(c, { ...scope, origin: 'user' });
         // Erasure/admin writes can update the durable state without touching the
         // hot cache. Never send a context captured before that committed revision.
-        if (!campaign || Number(campaign.revision) !== request.durableRevision)
+        const hotRevision = this.runtimeRevisionReader?.(scope.campaignId);
+        if (!campaign || Number(campaign.revision) !== (hotRevision ?? request.durableRevision))
           fail(409, 'RUNTIME_MAP_QUOTE_CHANGED', 'RUNTIME_MAP_QUOTE_CHANGED');
         const state = this.runtimeStateReader?.(scope.campaignId);
-        if (digest(state ?? context.contextHash) !== request.stateHash)
+        if (runtimeMapAdmissionStateHash(state, context.contextHash) !== request.admissionStateHash)
           fail(409, 'RUNTIME_MAP_QUOTE_CHANGED', 'RUNTIME_MAP_QUOTE_CHANGED');
         if (
           state &&

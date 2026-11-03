@@ -64,6 +64,12 @@ not replayed automatically, including after restart. A changed state during coun
 requires a fresh quote. Missing count access and over-window/tariff inputs produce
 specific errors before generation.
 
+Idle root clock ticks and matching local checkpoints do not invalidate count
+admission. Nested map/entity revisions, positions, NPC state and private memory
+remain fenced, and the durable revision must match the current hot checkpoint.
+The full state hash still stops a changed replay body after counting, so moving
+requests cannot trigger successive automatic counts.
+
 The exact input count is combined with the existing output reservation and margin.
 Final generation settlement still uses actual reported input/output/cache usage.
 The count response does not prove an invoice amount: `provider_fee_micros` stays

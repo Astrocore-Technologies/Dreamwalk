@@ -1,7 +1,15 @@
 import { AsyncLocalStorage } from 'node:async_hooks';
 import { randomUUID } from 'node:crypto';
+import type { GameState } from '@dreamwalk/contracts';
 import type { AiScope, DecisionContext } from './types';
 import { bodyHash } from './text-preflight';
+import { digest } from './context';
+
+/** Idle clock ticks are not changed pixels or private context. Keep every nested
+ * revision and memory field; the full state hash still fences replay/recount. */
+export function runtimeMapAdmissionStateHash(state: GameState | undefined, fallback: string) {
+  return digest(state ? { ...state, tick: 0, revision: 0 } : fallback);
+}
 
 /** Internal control flow only. The quote transaction and campaign queue must unwind
  * before the explicit quote request may send an image to the counting endpoint. */
@@ -10,6 +18,7 @@ export class RuntimeMapCountRequired extends Error {
   scope?: AiScope;
   context?: DecisionContext;
   stateHash?: string;
+  admissionStateHash?: string;
   durableRevision?: number;
   constructor(
     body: string,

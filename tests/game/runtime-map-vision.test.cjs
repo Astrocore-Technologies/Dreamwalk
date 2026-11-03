@@ -642,3 +642,52 @@ test('operational count cache respects original expiry and bounds all insertions
   }
   assert.equal(provider.runtimeCounts.size, 512);
 });
+
+test('clock-only admission does not permit counting a changed replay body', async () => {
+  const {
+    RuntimeMapCountRequired,
+    withRuntimeMapPreflight,
+    runtimeMapAdmissionStateHash,
+  } = require('../../apps/api/dist/ai/runtime-map-preflight');
+  const state = { tick: 1, revision: 1, entities: { hero: { x: 1, revision: 1 } } };
+  const initial = runtimeMapAdmissionStateHash(state, 'unused');
+  const changedClock = { ...state, tick: 2, revision: 2 };
+  assert.equal(runtimeMapAdmissionStateHash(changedClock, 'unused'), initial);
+  assert.notEqual(
+    runtimeMapAdmissionStateHash(
+      { ...changedClock, entities: { hero: { x: 2, revision: 2 } } },
+      'unused',
+    ),
+    initial,
+  );
+  const { config, context } = fixture();
+  delete config.runtimeVision.inputTokensPerImage;
+  config.runtimeVision.counting = 'operational_exact';
+  let calls = 0;
+  const provider = new OpenAiNpcProvider(config, async () => {
+    calls++;
+    state.tick++;
+    return new Response(JSON.stringify({ object: 'response.input_tokens', input_tokens: 1234 }));
+  });
+  await assert.rejects(
+    withRuntimeMapPreflight(
+      async () => {
+        try {
+          return provider.prepareTextRequest('speech', {
+            ...context,
+            contextHash: 'clock-' + state.tick,
+          });
+        } catch (error) {
+          assert.ok(error instanceof RuntimeMapCountRequired);
+          error.scope = { campaignId: 'campaign' };
+          error.context = context;
+          error.stateHash = hash(JSON.stringify(state));
+          throw error;
+        }
+      },
+      async (request) => request.accept(await request.count(randomUUID())),
+    ),
+    /RUNTIME_MAP_QUOTE_CHANGED/,
+  );
+  assert.equal(calls, 1, 'clock-driven request changes never produce repeated network counts');
+});
