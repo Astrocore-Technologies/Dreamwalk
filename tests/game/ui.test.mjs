@@ -334,7 +334,13 @@ test('saved NPC textarea labels do not include their hydrated text content', asy
     'utf8',
   );
   assert.match(profile, /aria-label=\{t\('Биография и мотивы'\)\}/);
-  assert.match(profile, /aria-label=\{t\('Частные заметки о манере речи'\)\}/);
+  assert.match(profile, /label=\{t\('Частные заметки о манере речи'\)\}/);
+  const templateField = await readFile(
+    new URL('../../apps/web/components/studio/npc-template-field.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(templateField, /<label htmlFor=\{id\}>\{label\}<\/label>/);
+  assert.match(templateField, /<Textarea\s+id=\{id\}/);
 });
 
 test('completed living flows preserve explicit actions and private author data', async () => {
