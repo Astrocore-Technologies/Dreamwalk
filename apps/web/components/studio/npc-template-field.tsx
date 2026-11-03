@@ -91,7 +91,7 @@ export function NpcTemplateField({
         })}
       </div>
       <small id={`${id}-hint`}>{text(templateCopy.hint)}</small>
-      <small id={`${id}-status`} role="status">
+      <small id={`${id}-status`} role={error ? 'status' : undefined}>
         {error}
       </small>
     </div>
