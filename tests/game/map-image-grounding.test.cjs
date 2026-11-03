@@ -566,3 +566,170 @@ test('builder analyzes effective manual art bindings, aliases old map IDs and ho
     imagesModule.prepareStoryMapImages = original;
   }
 });
+
+test('missing vision policy offers a text-only schematic without pretending to analyze images', () => {
+  const { schematicStorySource } = require('../../apps/api/dist/game/story-map-mode');
+  const { source, proposal } = fixture();
+  const fallback = schematicStorySource(source, {});
+  assert.equal(fallback.mapImages, undefined);
+  assert.deepEqual(
+    fallback.omittedMapImages,
+    source.mapImages.map(({ locationId, revisionId, sha256 }) => ({
+      locationId,
+      revisionId,
+      sha256,
+    })),
+  );
+  assert.ok(source.mapImages, 'the original source and assets are not mutated');
+  assert.equal(
+    schematicStorySource(source, undefined),
+    source,
+    'an unknown provider is not treated as supported fallback',
+  );
+  assert.equal(
+    schematicStorySource(source, { storyVision: { invalid: true } }),
+    source,
+    'configured invalid policy does not silently downgrade',
+  );
+  const planned = structuredClone(proposal);
+  delete planned.rooms[0].spatialGrounding;
+  assert.ok(compileStoryPlan(fallback, planned).playable);
+  const body = JSON.parse(
+    buildAuthoringTextRequestBody(
+      storyPlanDefinition,
+      { model: 'synthetic', maxOutputTokens: 8192 },
+      fallback,
+    ),
+  );
+  assert.equal(typeof body.input, 'string');
+  assert.equal(body.input.includes('data:image/'), false);
+  assert.equal(body.input.includes('omittedMapImages'), true);
+});
+
+test('schematic launch never binds unanalysed artwork over invented coordinates', () => {
+  const { schematicStorySource } = require('../../apps/api/dist/game/story-map-mode');
+  const { PlayableService } = require('../../apps/api/dist/game/playable.service');
+  const { source, proposal } = fixture();
+  const planned = structuredClone(proposal);
+  delete planned.rooms[0].spatialGrounding;
+  const portrait = { slot: 'npc:portrait:portrait', revisionId: randomUUID() };
+  const original = {
+    plannerSource: source,
+    sourceArtBindings: [
+      { slot: 'map:room:background', revisionId: source.mapImages[0].revisionId },
+      portrait,
+    ],
+  };
+  const schematic = { ...original, plannerSource: schematicStorySource(source, {}) };
+  const service = new PlayableService({}, {}, {});
+  const playable = service.compileLaunchPlan(schematic, planned);
+  assert.deepEqual(playable.artBindings, [portrait]);
+  assert.equal(playable.maps.room.spatialGrounding, undefined);
+  assert.equal(original.sourceArtBindings.length, 2);
+  assert.equal(
+    service.compileLaunchPlan(original, proposal).artBindings.length,
+    2,
+    'vision-enabled binding remains intact',
+  );
+});
+
+test('launch fallback is source-hash fenced, repeatable, private, and leaves compiled campaigns alone', async () => {
+  const { PlayableService } = require('../../apps/api/dist/game/playable.service');
+  const { visualDigest } = require('../../apps/api/dist/visual-authoring/fingerprint');
+  const { source } = fixture();
+  const rawPackage = {
+    kind: 'launch-source',
+    plannerSource: source,
+    sourceArtBindings: [
+      { slot: 'map:room:background', revisionId: source.mapImages[0].revisionId },
+    ],
+  };
+  const row = {
+    package: rawPackage,
+    checksum: visualDigest(rawPackage),
+    audience: 'private',
+    owner_id: 'owner',
+    status: 'draft',
+  };
+  let pins = 0;
+  const client = { query: async () => ({ rows: [structuredClone(row)] }) };
+  const service = new PlayableService(
+    {},
+    {},
+    { assertPinsAvailable: async () => pins++ },
+    { provider: { profile: {} } },
+  );
+  const first = await service.sourceForStart(client, 'owner', randomUUID());
+  const again = await service.sourceForStart(client, 'owner', randomUUID());
+  assert.equal(first.package.plannerSource.mapImages, undefined);
+  assert.equal(first.package.plannerSource.omittedMapImages.length, 1);
+  assert.notEqual(
+    first.checksum,
+    row.checksum,
+    'old estimates/preparations cannot be silently reused',
+  );
+  assert.equal(first.checksum, again.checksum);
+  assert.equal(pins, 2);
+  assert.ok(row.package.plannerSource.mapImages);
+  row.package.compiled = { existing: true };
+  row.checksum = visualDigest(row.package);
+  const compiled = await service.sourceForStart(client, 'owner', randomUUID());
+  assert.equal(compiled.checksum, row.checksum);
+  assert.ok(compiled.package.plannerSource.mapImages);
+});
+
+test('schematic author drafts preserve the image association but publication filters its playable view', () => {
+  const {
+    schematicStorySource,
+    playableMapBindings,
+  } = require('../../apps/api/dist/game/story-map-mode');
+  const { source, proposal } = fixture();
+  const planned = structuredClone(proposal);
+  delete planned.rooms[0].spatialGrounding;
+  const checked = compileStoryPlan(schematicStorySource(source, {}), planned);
+  assert.equal(checked.draft.maps[0].backgroundMode, 'schematic');
+  const binding = { slot: 'map:room:background', revisionId: source.mapImages[0].revisionId };
+  const authoredBindings = [binding];
+  assert.deepEqual(playableMapBindings(authoredBindings, checked.playable.maps), []);
+  assert.deepEqual(authoredBindings, [binding]);
+  assert.deepEqual(
+    playableMapBindings(authoredBindings, compileStoryPlan(source, proposal).playable.maps),
+    [binding],
+  );
+});
+
+test('stale preparation recovery is explicitly safe only when the server confirms no jobs', async () => {
+  const { PaidStartService } = require('../../apps/api/dist/game/paid-start.service');
+  const { visualDigest } = require('../../apps/api/dist/visual-authoring/fingerprint');
+  const input = { operationId: randomUUID(), playableVersionId: randomUUID() };
+  let jobs = [];
+  const prior = {
+    id: randomUUID(),
+    status: 'prepared',
+    request_hash: visualDigest(input),
+    source_checksum: 'old',
+    source_version_id: input.playableVersionId,
+  };
+  const client = {
+    query: async (sql) => ({
+      rows: sql.includes('SELECT * FROM game_start_preparations')
+        ? [prior]
+        : sql.includes('SELECT id FROM live_authoring_text_jobs')
+          ? jobs
+          : [],
+    }),
+  };
+  const service = new PaidStartService(
+    { tx: (fn) => fn(client) },
+    { sourceForStart: async () => ({ checksum: 'new' }) },
+  );
+  await assert.rejects(
+    service.prepare('actor', input),
+    (e) => e.getResponse().code === 'START_PREPARATION_STALE',
+  );
+  jobs = [{ id: 'running-or-unknown-job' }];
+  await assert.rejects(
+    service.prepare('actor', input),
+    (e) => e.getResponse().code === 'START_SOURCE_CHANGED',
+  );
+});

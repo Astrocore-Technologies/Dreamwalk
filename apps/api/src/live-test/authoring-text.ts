@@ -167,6 +167,9 @@ export class AuthoringTextEngine {
       expiresAt: new Date(row.expires_at).toISOString(),
       requiresConsent: true,
       imageInputCount: readStoryImages(row.context).length,
+      schematicMapCount: Array.isArray(row.context?.omittedMapImages)
+        ? row.context.omittedMapImages.length
+        : 0,
       model: row.request_snapshot?.model ?? this.live.textProfile().model,
       costEvidence: row.request_snapshot ? 'operator_estimate' : 'conservative_configured_rates',
     };

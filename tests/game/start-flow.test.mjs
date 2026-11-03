@@ -559,3 +559,42 @@ for (const error of [
       h.nodes().some((n) => n.type === 'button' && n.props.children === 'Проверить состояние'),
     );
   });
+
+test('schematic fallback is disclosed in the existing estimate without another confirmation or dispatch', async () => {
+  let dispatches = 0;
+  const h = await harness(async (path) => {
+    if (path.endsWith('/quote')) return { ...quote, imageInputCount: 0, schematicMapCount: 1 };
+    if (path.endsWith('/dispatch')) dispatches++;
+    return prepared;
+  });
+  h.render();
+  await h.click('Начать прохождение');
+  const notice = h.nodes().find((node) => node.type === 'MapImageNotice');
+  assert.equal(notice.props.schematicCount, 1);
+  assert.equal(notice.props.count, 0);
+  assert.equal(dispatches, 0);
+});
+
+test('a stale never-dispatched preparation can be replaced with a fresh estimate after a mode change', async () => {
+  let attempts = 0,
+    quotes = 0,
+    dispatches = 0;
+  const saved = new Map([['dreamwalk-start:u:v::prepare', 'old-operation']]);
+  const h = await harness(async (path) => {
+    if (path === '/game/start-preparations' && ++attempts === 1)
+      throw new ApiError('Source changed safely', 409, 'START_PREPARATION_STALE');
+    if (path.endsWith('/quote')) {
+      quotes++;
+      return quote;
+    }
+    if (path.endsWith('/dispatch')) dispatches++;
+    return prepared;
+  }, saved);
+  h.render();
+  await h.flush();
+  assert.equal(saved.has('dreamwalk-start:u:v::prepare'), false);
+  await h.click('Начать прохождение');
+  assert.equal(attempts, 2);
+  assert.equal(quotes, 1);
+  assert.equal(dispatches, 0);
+});

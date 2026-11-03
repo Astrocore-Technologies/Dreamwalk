@@ -6,6 +6,7 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import type { User, Adventure } from '@dreamwalk/contracts';
 export type { User, Adventure, Hero, Asset, Settings } from '@dreamwalk/contracts';
 const errorKeys: Record<string, string> = {
+  START_PREPARATION_STALE: 'Оценка стоимости устарела. Получи новую оценку перед запуском.',
   MAP_VISION_POLICY_REQUIRED:
     'Анализ изображений карт пока не настроен. Администратору нужно проверить модель и стоимость.',
   MAP_IMAGE_UNAVAILABLE: 'Сохранённое изображение карты недоступно. Подготовка остановлена.',

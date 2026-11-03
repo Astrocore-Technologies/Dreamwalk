@@ -229,6 +229,7 @@ export interface GameMap {
   description?: string;
   composition?: SceneComposition;
   spatialGrounding?: MapSpatialGrounding;
+  backgroundMode?: 'schematic';
   sceneProfile?: 'observatory-interior-v1' | 'observatory-roof-v1';
   id: string;
   label?: string;
@@ -482,6 +483,7 @@ export const gameMapSchema = z
     labelTranslations: gameLabelTranslationsSchema.optional(),
     composition: sceneCompositionSchema.optional(),
     spatialGrounding: mapSpatialGroundingSchema.optional(),
+    backgroundMode: z.literal('schematic').optional(),
     sceneProfile: z.enum(['observatory-interior-v1', 'observatory-roof-v1']).optional(),
     width: z.number().int().min(1).max(64),
     height: z.number().int().min(1).max(64),
@@ -772,6 +774,7 @@ export const authoredGameDraftSchema = z
             labelTranslations: gameLabelTranslationsSchema.optional(),
             composition: sceneCompositionSchema.optional(),
             spatialGrounding: mapSpatialGroundingSchema.optional(),
+            backgroundMode: z.literal('schematic').optional(),
             sceneProfile: z.enum(['observatory-interior-v1', 'observatory-roof-v1']).optional(),
             description: z.string().trim().max(6000).optional(),
             sourceLocationId: z.string().min(1).max(80).optional(),

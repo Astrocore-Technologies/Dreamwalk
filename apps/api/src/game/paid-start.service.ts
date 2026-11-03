@@ -58,7 +58,22 @@ export class PaidStartService {
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
         if (prior.status === 'started')
           await this.playable.sourceForStart(c, actor, prior.source_version_id);
-        else await this.validate(c, actor, prior);
+        else {
+          try {
+            await this.validate(c, actor, prior);
+          } catch (error) {
+            const code = (error as { getResponse?: () => { code?: string } }).getResponse?.()?.code;
+            if (code === 'START_SOURCE_CHANGED' && prior.status === 'prepared') {
+              const jobs = await c.query(
+                'SELECT id FROM live_authoring_text_jobs WHERE project_id=$1',
+                [prior.id],
+              );
+              if (!jobs.rows.length)
+                fail(409, 'START_PREPARATION_STALE', 'START_PREPARATION_STALE');
+            }
+            throw error;
+          }
+        }
         return this.dto(prior);
       }
       const source = await this.playable.sourceForStart(c, actor, body.playableVersionId);

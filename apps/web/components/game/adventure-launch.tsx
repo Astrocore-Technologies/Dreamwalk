@@ -39,6 +39,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
   const gate = useLaunchGate(`${user?.id}:${adventure.id}:${versionId}:${heroSelection.heroId}`);
   type Quote = {
     imageInputCount?: number;
+    schematicMapCount?: number;
     id: string;
     expiresAt: string;
     sparks?: { reserveSubunits: string; rateVersion?: string };
@@ -193,6 +194,20 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
           setQuote(null);
           setConfirm(false);
         }
+        if (
+          err instanceof ApiError &&
+          err.status === 409 &&
+          err.code === 'START_PREPARATION_STALE' &&
+          action !== 'confirm' &&
+          !dispatchUncertain &&
+          !sessionStorage.getItem(storageKey + ':dispatch-pending') &&
+          (!preparation || (preparation.status === 'prepared' && !preparation.jobs?.length))
+        ) {
+          sessionStorage.removeItem(storageKey + ':prepare');
+          setPreparation(null);
+          setQuote(null);
+          setConfirm(false);
+        }
         setError(errorMessage(err));
       }
     } finally {
@@ -273,7 +288,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
             if (!busy) setConfirm(false);
           }}
         >
-          <MapImageNotice count={quote.imageInputCount} />
+          <MapImageNotice count={quote.imageInputCount} schematicCount={quote.schematicMapCount} />
           <p>
             {t('Оценка в искрах')}:{' '}
             {estimatedSubunits === null ? '—' : formatSparkSubunits(estimatedSubunits)}

@@ -1,3 +1,4 @@
+import { schematicStorySource } from './story-map-mode';
 import { prepareStoryMapImages } from './story-map-images';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
@@ -113,7 +114,7 @@ export class StoryBuildService {
         .sort(([a], [b]) => a.localeCompare(b))
         .map(([location_id, revision_id]) => ({ location_id, revision_id })),
     );
-    const source: StoryPlanSource = {
+    const rawSource: StoryPlanSource = {
       ...(mapImages.length ? { mapImages } : {}),
       title: story.data.title ?? story.title,
       synopsis: story.data.synopsis ?? story.synopsis ?? '',
@@ -132,6 +133,7 @@ export class StoryBuildService {
       })),
       priorDraft,
     };
+    const source = schematicStorySource(rawSource, this.engine?.provider.profile);
     return {
       hash,
       source,
@@ -212,7 +214,10 @@ export class StoryBuildService {
     };
   }
   private imageIdentity(source: StoryPlanSource) {
-    return digest((source.mapImages ?? []).map(({ dataUrl: _dataUrl, ...image }) => image));
+    return digest({
+      images: (source.mapImages ?? []).map(({ dataUrl: _dataUrl, ...image }) => image),
+      omitted: source.omittedMapImages ?? [],
+    });
   }
   private sameAuthorSource(a: StoryPlanSource, b: StoryPlanSource) {
     return (
