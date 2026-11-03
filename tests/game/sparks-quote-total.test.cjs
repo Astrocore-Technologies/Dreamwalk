@@ -56,3 +56,37 @@ test('only homogeneous versioned child quotes expose a common rate', () => {
   assert.deepEqual(commonQuotedSparkRate([legacy, quote('10000')]), {});
   assert.deepEqual(commonQuotedSparkRate([]), {});
 });
+
+test('absent funding is omitted so immediate and persisted quote/hold DTOs replay identically', async () => {
+  const {
+    optionalFunding,
+    aggregateFunding,
+    heldFunding,
+  } = require('../../apps/api/dist/generation/currency-funding');
+  const { sparkQuoteView, sparkHoldView } = require('../../apps/api/dist/generation/sparks-hooks');
+  const legacy = {
+    reserve_subunits: '100',
+    reserved_subunits: '100',
+    captured_subunits: null,
+    status: 'held',
+    price_snapshot: { tariff: { sparkRateVersion: 'api-cent-2-sparks-v2' } },
+  };
+  const c = { query: async () => ({ rows: [legacy] }) };
+  for (const result of [
+    optionalFunding(undefined),
+    optionalFunding(aggregateFunding([quote('100')])),
+    await sparkQuoteView(c, 'legacy-quote'),
+    await sparkHoldView(c, 'legacy-quote'),
+  ]) {
+    assert.equal(Object.hasOwn(result, 'funding'), false);
+    assert.deepEqual(result, JSON.parse(JSON.stringify(result)));
+  }
+  const funding = heldFunding({
+    reserved_subunits: '100',
+    sparks_reserved_subunits: '25',
+    captured_subunits: '80',
+  });
+  const result = optionalFunding(funding);
+  assert.strictEqual(result.funding, funding);
+  assert.deepEqual(result, JSON.parse(JSON.stringify(result)));
+});

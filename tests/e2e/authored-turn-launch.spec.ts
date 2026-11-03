@@ -40,6 +40,15 @@ for (const entry of ['home', 'detail'] as const) {
           request.method() === 'POST' && request.url().endsWith('/api/v1/game/campaigns'),
       );
       if (entry === 'home') {
+        const featured = page.getByTestId('home-featured');
+        await expect(featured).toHaveAttribute('data-featured-slug', /.+/);
+        for (
+          let i = 0;
+          i < 30 && (await featured.getAttribute('data-featured-slug')) !== 'old-observatory';
+          i++
+        )
+          await page.getByTestId('home-next').click();
+        await expect(featured).toHaveAttribute('data-featured-slug', 'old-observatory');
         await page.getByTestId('home-start-adventure').click();
         await expect(page).toHaveURL(/\/adventures\/old-observatory/);
       }

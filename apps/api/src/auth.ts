@@ -25,6 +25,7 @@ import {
 } from '@dreamwalk/contracts';
 import { Db, camel } from './db';
 import { grantRegistrationSparks } from './generation/starter-sparks';
+import { grantRegistrationDreams } from './generation/starter-dreams';
 import { config } from './config';
 import { fail } from './errors';
 import { mailEnabled, sendAccountMail } from './mail';
@@ -168,7 +169,7 @@ export class AccountController {
     const hash = await hashPassword(b.password);
     const row = await this.db.tx(async (c) => {
       const r = await c.query(
-        'INSERT INTO users(email,password_hash,name,handle,settings,email_verification_required,starter_sparks_eligible) VALUES($1,$2,$3,$4,$5,$6,true) RETURNING *',
+        'INSERT INTO users(email,password_hash,name,handle,settings,email_verification_required,starter_sparks_eligible,starter_dreams_eligible) VALUES($1,$2,$3,$4,$5,$6,false,true) RETURNING *',
         [
           b.email,
           hash,
@@ -180,7 +181,7 @@ export class AccountController {
       );
       await c.query('INSERT INTO wallets(user_id) VALUES($1)', [r.rows[0].id]);
       if (!config.AUTH_EMAIL_VERIFICATION_REQUIRED) {
-        await grantRegistrationSparks(c, r.rows[0].id);
+        await grantRegistrationDreams(c, r.rows[0].id);
         await c.query('UPDATE users SET starter_sparks_eligible=false WHERE id=$1', [r.rows[0].id]);
       }
       await c.query(
@@ -268,7 +269,7 @@ export class AccountController {
       // Match request/password/deletion lock order: user first, then bearer row.
       const user = (
         await c.query(
-          'SELECT id,starter_sparks_eligible FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE',
+          'SELECT id,starter_sparks_eligible,starter_dreams_eligible FROM users WHERE id=$1 AND deleted_at IS NULL FOR UPDATE',
           [candidate.user_id],
         )
       ).rows[0];
@@ -288,7 +289,8 @@ export class AccountController {
         await c.query('DELETE FROM sessions WHERE user_id=$1', [row.user_id]);
       } else {
         await c.query('UPDATE users SET email_verified=true WHERE id=$1', [row.user_id]);
-        if (user.starter_sparks_eligible) {
+        if (user.starter_dreams_eligible) await grantRegistrationDreams(c, row.user_id);
+        else if (user.starter_sparks_eligible) {
           await grantRegistrationSparks(c, row.user_id);
           await c.query('UPDATE users SET starter_sparks_eligible=false WHERE id=$1', [
             row.user_id,

@@ -509,9 +509,9 @@
   align-items: center;
 }
 :global(html[data-theme='light']) .page {
-  --hero-surface: #f0e7ec;
-  --hero-text: #302234;
-  --hero-muted: #726176;
+  --hero-surface: #17111f;
+  --hero-text: #f7f2ea;
+  --hero-muted: #e1d5e8;
 }
 .page :global(.button) {
   white-space: normal;
@@ -521,20 +521,20 @@
   overflow-wrap: anywhere;
 }
 :global(html[data-theme='light']) .featureCopy > .eyebrow {
-  color: #85652e;
+  color: #dfbd79;
 }
 :global(html[data-theme='light']) .byline,
 :global(html[data-theme='light']) .metadata,
 :global(html[data-theme='light']) .cast > p,
 :global(html[data-theme='light']) .cast figcaption,
 :global(html[data-theme='light']) .featureActions > a {
-  color: #806c85;
+  color: #e1d5e8;
 }
 :global(html[data-theme='light']) .portrait {
-  background: linear-gradient(150deg, #ded0df, #ccb9cf);
+  background: linear-gradient(150deg, #493950, #302238);
 }
 :global(html[data-theme='light']) .portrait > span {
-  color: #806785;
+  color: #e1d5e8;
 }
 @media (min-width: 1450px) {
   .feature {
@@ -755,4 +755,422 @@
   .railArt img {
     transition: none;
   }
+}
+
+/* Cinematic, full-width stories with a restrained modern interface. */
+.page {
+  --gold: #dfbd79;
+  --hero-surface: #17111f;
+  --hero-text: #f7f2ea;
+  --hero-muted: #e1d5e8;
+}
+.intro {
+  padding: 0;
+  margin-bottom: 24px;
+}
+.intro h1 {
+  font-size: clamp(27px, 3.2vw, 44px);
+  font-weight: 800;
+  letter-spacing: -0.045em;
+  margin: 0;
+  line-height: 1.2;
+}
+.introMark {
+  display: none;
+}
+.carousel {
+  padding: 0;
+  border-radius: 18px;
+}
+.feature {
+  display: flex;
+  align-items: flex-end;
+  min-height: 570px;
+  border: 1px solid #6b537b;
+  border-radius: 18px;
+}
+.featureArt {
+  position: absolute;
+  inset: 0;
+  min-height: 0;
+}
+.featureArt > img {
+  object-position: center 42%;
+  filter: none;
+}
+.featureArt:after {
+  background:
+    linear-gradient(90deg, #17111fe8 0%, #17111fba 28%, #17111f38 58%, transparent 78%),
+    linear-gradient(0deg, #17111fa8, transparent 48%);
+}
+.artStamp {
+  top: 22px;
+  right: 24px;
+  bottom: auto;
+  left: auto;
+}
+.featureCopy {
+  width: min(64%, 710px);
+  padding: 34px 36px;
+  background: none;
+  justify-content: flex-end;
+}
+.featureTitle {
+  font-size: clamp(30px, 3.7vw, 52px);
+  font-weight: 800;
+  color: var(--hero-text);
+  line-height: 1.12;
+  letter-spacing: -0.04em;
+  margin: 14px 0;
+  overflow-wrap: anywhere;
+}
+.hook {
+  font-size: 15px;
+  line-height: 1.65;
+  color: var(--hero-muted);
+}
+.byline,
+.metadata,
+.metadata svg,
+.cast > p,
+.cast figcaption {
+  color: var(--hero-muted);
+}
+.byline {
+  font-size: 12px;
+}
+.metadata {
+  font-size: 12px;
+  margin-top: 14px;
+}
+.cast {
+  margin-top: 16px;
+}
+.cast figure {
+  width: 58px;
+}
+.portrait {
+  width: 54px;
+  height: 58px;
+  border: 1px solid #a38aab;
+}
+.cast > p {
+  margin-bottom: 7px;
+}
+.cast figcaption {
+  font-size: 10px;
+}
+.featureCopy :global(.story-metrics) {
+  color: var(--hero-muted);
+  margin: 12px 0 0;
+  font-size: 12px;
+}
+.featureCopy :global(.story-metrics) svg {
+  color: var(--gold);
+}
+.featureCopy :global(.field) {
+  margin-top: 14px;
+  color: var(--hero-text);
+  font-size: 12px;
+}
+.featureCopy :global(select) {
+  background: #261c32;
+  border-color: #806789;
+  color: #f7f2ea;
+  min-height: 40px;
+}
+.featureActions {
+  margin-top: 16px;
+  gap: 16px;
+}
+.featureActions > button {
+  min-height: 46px;
+  padding-inline: 25px;
+  border-radius: 11px;
+  font-size: 14px;
+  background: linear-gradient(135deg, #f4d48e, #dfb568);
+  color: #241b2f;
+}
+.featureActions > a {
+  color: #f7f2ea;
+  font-size: 12px;
+}
+.peek {
+  display: none;
+}
+.heroArrow {
+  top: 38%;
+  width: 38px;
+  height: 46px;
+  background: #21172bd9;
+  color: #f7f2ea;
+  border: 1px solid #a38aab;
+  box-shadow: none;
+}
+.previous {
+  left: 12px;
+}
+.next {
+  right: 12px;
+}
+.pagination {
+  padding: 14px 0 20px;
+}
+.pagination button {
+  min-width: 24px;
+  min-height: 20px;
+  position: relative;
+  background: transparent;
+}
+.pagination button::after {
+  content: '';
+  position: absolute;
+  top: 8px;
+  left: 8px;
+  width: 6px;
+  height: 6px;
+  border-radius: 4px;
+  background: var(--line);
+}
+.pagination button[aria-current='true'] {
+  width: 30px;
+  background: transparent;
+}
+.pagination button[aria-current='true']::after {
+  width: 24px;
+  left: 3px;
+  background: var(--accent);
+}
+.continue {
+  margin: 0 0 30px;
+  padding: 20px 24px;
+  border: 1px solid var(--line);
+  background: linear-gradient(110deg, var(--surface-raised), var(--surface));
+  border-radius: 16px;
+}
+.continueCopy h2 {
+  font-size: 19px;
+}
+.continueCopy > p:last-child {
+  font-size: 12px;
+}
+.continueLink {
+  padding: 10px 14px;
+  border-radius: 10px;
+  background: var(--surface-soft);
+  font-size: 13px;
+}
+.railSection {
+  margin: 0 0 34px;
+}
+.sectionHeading h2 {
+  font-family: var(--font);
+  font-size: 25px;
+  font-weight: 800;
+}
+.sectionHint {
+  font-size: 13px;
+}
+.railControls button {
+  width: 38px;
+  height: 38px;
+}
+.railControls > a {
+  font-size: 12px;
+}
+.rail {
+  gap: 20px;
+}
+.railCard {
+  border: 1px solid var(--line);
+  border-radius: 15px;
+  background: var(--surface);
+  overflow: hidden;
+  padding-bottom: 15px;
+}
+.railArt {
+  border-radius: 0;
+  aspect-ratio: 1.65;
+}
+.railCard h3 {
+  font-size: 21px;
+  margin: 15px 17px 8px;
+}
+.railCard > p {
+  margin-inline: 17px;
+  font-size: 13px;
+}
+.railCard :global(.story-metrics) {
+  margin-inline: 17px;
+}
+.cardFoot {
+  padding-inline: 17px;
+  font-size: 11px;
+}
+@media (min-width: 1600px) {
+  .feature {
+    min-height: 620px;
+  }
+}
+@media (max-width: 1100px) {
+  .featureCopy {
+    width: 75%;
+    padding: 30px;
+  }
+  .feature {
+    min-height: 550px;
+  }
+}
+@media (max-width: 700px) {
+  .intro {
+    padding: 0;
+    margin-bottom: 18px;
+  }
+  .intro h1 {
+    font-size: 28px;
+  }
+  .intro > a {
+    display: none;
+  }
+  .carousel {
+    padding: 0;
+  }
+  .feature {
+    min-height: 640px;
+  }
+  .featureCopy {
+    width: 100%;
+    padding: 180px 22px 24px;
+  }
+  .featureTitle {
+    font-size: 34px;
+  }
+  .featureArt:after {
+    background: linear-gradient(0deg, #17111f 0%, #17111fea 40%, #17111f65 76%, #17111f10);
+  }
+  .featureArt > img {
+    object-position: 62% top;
+  }
+  .hook {
+    font-size: 14px;
+  }
+  .heroArrow {
+    top: 120px;
+  }
+  .continue {
+    margin: 0 0 28px;
+    padding: 18px;
+    gap: 12px;
+  }
+  .continueIcon {
+    width: 38px;
+    height: 38px;
+  }
+  .continueCopy h2 {
+    font-size: 16px;
+  }
+  .continueLink {
+    padding: 8px;
+    font-size: 12px;
+  }
+  .railSection {
+    margin-inline: 0;
+  }
+  .railCard {
+    flex-basis: min(82vw, 310px);
+  }
+  .railCard h3 {
+    font-size: 19px;
+  }
+  .sectionHeading h2 {
+    font-size: 23px;
+  }
+  .railControls > a {
+    display: none;
+  }
+}
+
+/* Keep navigation out of authored text and let the illustrated world frame the page. */
+.intro,
+.sectionHeading {
+  background: transparent;
+  border: 0;
+  border-radius: 0;
+  padding: 8px 0;
+}
+.intro h1,
+.sectionHeading h2 {
+  text-shadow: 0 2px 12px color-mix(in srgb, var(--bg) 80%, transparent);
+}
+.heroArrow {
+  top: 18px;
+  transform: none;
+  width: 44px;
+  height: 44px;
+  background: #21172bf2;
+}
+.previous {
+  left: auto;
+  right: 72px;
+}
+.next {
+  right: 18px;
+}
+.artStamp {
+  display: none;
+}
+.featureActions > button {
+  scroll-margin-block: 110px;
+  border: 1px solid #ffe6ae;
+  box-shadow:
+    inset 0 0 0 3px #c5913c55,
+    0 5px 20px #0003;
+}
+.pagination {
+  color: var(--text);
+}
+.pagination button::after {
+  background: var(--muted);
+}
+.continueLink {
+  color: var(--text);
+  border: 1px solid var(--line);
+  background: var(--surface-raised);
+}
+@media (max-width: 700px) {
+  .intro,
+  .sectionHeading {
+    padding: 8px 0;
+  }
+  .heroArrow {
+    top: 14px;
+  }
+  .previous {
+    right: 66px;
+  }
+  .next {
+    right: 14px;
+  }
+  .featureCopy {
+    padding-bottom: 34px;
+  }
+}
+
+/* Small labels keep AA contrast even when a bright moon/cloud sits behind them. */
+.intro > a,
+.railControls > a,
+.railControls > button,
+.sectionHint {
+  background: color-mix(in srgb, var(--bg) 90%, transparent);
+  color: var(--text);
+  border-radius: 9px;
+}
+.intro > a,
+.railControls > a {
+  padding: 8px 10px;
+}
+.sectionHint {
+  width: fit-content;
+  padding: 4px 7px;
+  margin-left: -7px;
 }

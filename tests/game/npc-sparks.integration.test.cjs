@@ -44,6 +44,20 @@ function fixture(enabled = true, mode = 'success') {
         { enabled: mode === 'flip' && sql.includes('FOR UPDATE') ? !enabled : enabled },
       ]);
     if (
+      sql.startsWith(
+        'SELECT owner_id,reserve_subunits,price_snapshot FROM spark_quotes WHERE id=$1',
+      )
+    )
+      return result(state.sparkQuotes.filter((q) => q.id === p[0]));
+    if (
+      sql.startsWith('SELECT balance_subunits,held_subunits FROM dream_wallets WHERE owner_id=$1')
+    )
+      return result([]); // These historical scenarios have no Dreams wallet.
+    if (
+      sql.startsWith('SELECT id,reserved_subunits FROM spark_holds') ||
+      sql.startsWith(
+        'SELECT reserved_subunits,sparks_reserved_subunits,captured_subunits FROM spark_holds',
+      ) ||
       sql.startsWith('SELECT status FROM spark_holds') ||
       sql.startsWith('SELECT reserved_subunits FROM spark_holds')
     )

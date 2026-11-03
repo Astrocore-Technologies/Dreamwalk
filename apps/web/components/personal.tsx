@@ -1,4 +1,5 @@
 'use client';
+import { DreamsWalletSection, useDreamsText } from './dreams-wallet';
 import { useSparksWallet } from '@/lib/use-sparks-wallet';
 import { sparksBalanceMessages } from './sparks-balance';
 import { HeroPortraitControl } from './hero-portrait-control';
@@ -532,6 +533,7 @@ export function HeroesPage() {
   );
 }
 export function WalletPage() {
+  const { text: dreamsText } = useDreamsText();
   const date = useDate();
   const { t: tr, locale } = useT();
   const { user } = useClient();
@@ -572,9 +574,10 @@ export function WalletPage() {
     <>
       <PageHeading
         eyebrow={tr('НЕМНОГО МАГИИ НА БУДУЩЕЕ')}
-        title={tr('Мои искры')}
-        description={text.description}
+        title={dreamsText.title}
+        description={dreamsText.description}
       />
+      <DreamsWalletSection />
       <section className="balance-card" aria-label={text.available}>
         <Sparkles size={24} />
         <p>{text.available}</p>
@@ -586,6 +589,11 @@ export function WalletPage() {
               : '…'}
           <span>✦</span>
         </h2>
+        {sparks.data && (
+          <small>
+            {dreamsText.held}: {formatSparkSubunits(sparks.data.heldSubunits, locale, 'exact')}
+          </small>
+        )}
       </section>
       <ErrorBox message={sparks.unavailable ? text.unavailable : ''} retry={sparks.reload} />
       <Panel>

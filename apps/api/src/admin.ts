@@ -70,6 +70,37 @@ export class AdminController {
     const owner = (await this.auth.require(req)).id;
     return this.sparksWalletFor(owner);
   }
+  @Get('currencies/wallet')
+  async currenciesWallet(@Req() req: Request) {
+    const ownerId = (await this.auth.require(req)).id;
+    const row = (
+      await this.db.query(
+        `
+      SELECT w.balance_subunits,w.held_subunits,
+        COALESCE((SELECT json_agg(entry) FROM (
+          SELECT id::text,kind,amount_subunits::text,created_at
+          FROM dream_ledger WHERE owner_id=$1 ORDER BY id DESC LIMIT 100
+        ) entry),'[]'::json) AS ledger
+      FROM (SELECT $1::uuid AS owner_id) owner LEFT JOIN dream_wallets w USING(owner_id)`,
+        [ownerId],
+      )
+    )[0];
+    const balance = BigInt(row?.balance_subunits ?? '0'),
+      held = BigInt(row?.held_subunits ?? '0');
+    return {
+      sparks: await this.sparksWalletFor(ownerId),
+      dreams: {
+        ownerId,
+        currency: 'dreams',
+        balanceSubunits: balance.toString(),
+        heldSubunits: held.toString(),
+        availableSubunits: (balance - held).toString(),
+        subunitsPerDream: '10000',
+        spendingAvailable: true,
+        ledger: row.ledger.map(camel),
+      },
+    };
+  }
   private async sparksWalletFor(owner: string) {
     const row = (
       await this.db.query(
@@ -677,13 +708,13 @@ export class AdminController {
       }
       const target = (
         await c.query(
-          'SELECT id,starter_sparks_eligible FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE',
+          'SELECT id,starter_sparks_eligible,starter_dreams_eligible FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE',
           [b.userId],
         )
       ).rows[0];
       if (!target) fail(404, 'NOT_FOUND', 'Кошелёк не найден.');
       // Do not create a wallet before the recipient's verification-only welcome gift.
-      if (target.starter_sparks_eligible)
+      if (target.starter_sparks_eligible || target.starter_dreams_eligible)
         fail(
           409,
           'SPARKS_RECIPIENT_VERIFICATION_REQUIRED',

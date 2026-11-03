@@ -1,4 +1,5 @@
 'use client';
+import { formatSparkSubunits } from '@dreamwalk/contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError, useClient } from '@/lib/client';
 import { SPARKS_REFRESH_EVENT } from '@/lib/sparks-wallet';
@@ -354,7 +355,15 @@ export function LiveTestPanel({
           {status.allowance === 'unlimited' && (
             <p data-generation-unlimited>
               {m('releaseUnlimited')} {m('releaseWalletAvailable')}:{' '}
-              {sparkAmount(status.remainingMicros)}
+              {status.dreamsAvailableSubunits !== undefined &&
+              status.sparksAvailableSubunits !== undefined ? (
+                <span>
+                  {m('dreams')}: {formatSparkSubunits(status.dreamsAvailableSubunits, locale)} ·{' '}
+                  {m('sparks')}: {formatSparkSubunits(status.sparksAvailableSubunits, locale)}
+                </span>
+              ) : (
+                sparkAmount(status.remainingMicros)
+              )}
             </p>
           )}
           {!pricingCurrent && <p role="status">{m('pricingExpired')}</p>}

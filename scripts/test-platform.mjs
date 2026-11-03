@@ -48,6 +48,33 @@ async function run(command, args) {
   });
 }
 let api;
+async function startApi() {
+  api = spawn(process.execPath, ['apps/api/dist/main.js'], { stdio: 'inherit', env: process.env });
+  for (let attempt = 0; attempt < 60; attempt++) {
+    if (api.exitCode !== null || api.signalCode !== null)
+      throw new Error('Nest API exited before becoming ready.');
+    try {
+      if ((await fetch(process.env.TEST_API_URL + '/health')).ok) return;
+    } catch {
+      /* Retry only local startup, never test requests or external calls. */
+    }
+    await delay(250);
+  }
+  throw new Error('Nest API did not become ready.');
+}
+async function stopApi() {
+  if (api && api.exitCode === null && api.signalCode === null) {
+    const exited = once(api, 'exit');
+    const deadline = setTimeout(() => api.kill('SIGKILL'), 10_000);
+    api.kill('SIGTERM');
+    try {
+      await exited;
+    } finally {
+      clearTimeout(deadline);
+    }
+  }
+  api = undefined;
+}
 try {
   if (!process.argv.includes('--skip-build')) {
     await run(npm, ['run', 'build', '-w', '@dreamwalk/contracts']);
@@ -73,40 +100,22 @@ try {
   } finally {
     await checkDb.end();
   }
-  api = spawn(process.execPath, ['apps/api/dist/main.js'], { stdio: 'inherit', env: process.env });
-  let ready = false;
-  for (let attempt = 0; attempt < 60; attempt++) {
+  // Test files have independent fixture traffic but intentionally share persisted data.
+  // A fresh real API per file isolates its in-memory rate-limit window without changing
+  // the production limiter, trusting spoofed IPs, or retrying rate-limited requests.
+  const files = readdirSync('tests')
+    .filter((name) => /^platform-.*\.test\.mjs$/.test(name))
+    .sort();
+  for (const file of files) {
+    await startApi();
     try {
-      if ((await fetch(process.env.TEST_API_URL + '/auth/me')).ok) {
-        ready = true;
-        break;
-      }
-    } catch {
-      /* Retry only local startup, never external calls. */
-    }
-    await delay(250);
-  }
-  if (!ready) throw new Error('Nest API did not become ready.');
-  await run(process.execPath, [
-    '--import',
-    'tsx',
-    '--test',
-    '--test-concurrency=1',
-    ...readdirSync('tests')
-      .filter((name) => /^platform-.*\.test\.mjs$/.test(name))
-      .map((name) => `tests/${name}`),
-  ]);
-} finally {
-  if (api && api.exitCode === null && api.signalCode === null) {
-    const exited = once(api, 'exit');
-    const deadline = setTimeout(() => api.kill('SIGKILL'), 10_000);
-    api.kill('SIGTERM');
-    try {
-      await exited;
+      await run(process.execPath, ['--import', 'tsx', '--test', `tests/${file}`]);
     } finally {
-      clearTimeout(deadline);
+      await stopApi();
     }
   }
+} finally {
+  await stopApi();
   if (database) await database.stop();
   await rm(assetDir, { recursive: true, force: true });
 }

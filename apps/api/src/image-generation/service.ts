@@ -1,3 +1,4 @@
+import { quoteFunding, heldFunding } from '../generation/currency-funding';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import { resolveOwnerImageProfile } from '../generation/config';
 import {
@@ -115,7 +116,7 @@ export class ImageGenerationEngine {
     return this.db.tx(async (c) => {
       const peek = (
         await c.query<Job>(
-          'SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits FROM image_generation_jobs WHERE id=$1 AND actor_id=$2',
+          'SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_paid_reserved_subunits FROM image_generation_jobs WHERE id=$1 AND actor_id=$2',
           [id, actorId],
         )
       ).rows[0];
@@ -776,6 +777,17 @@ export class ImageGenerationEngine {
   private dto(j: Job) {
     return {
       id: j.id,
+      ...(j.spark_funding
+        ? { funding: j.spark_funding }
+        : j.spark_paid_reserved_subunits != null
+          ? {
+              funding: heldFunding({
+                reserved_subunits: j.spark_reserved_subunits,
+                sparks_reserved_subunits: j.spark_paid_reserved_subunits,
+                captured_subunits: j.spark_captured_subunits,
+              }),
+            }
+          : {}),
       ...(j.spark_quote_id
         ? {
             sparkHoldId: j.spark_quote_id,
@@ -841,7 +853,7 @@ export class ImageGenerationEngine {
         fail(401, 'UNAUTHORIZED', 'UNAUTHORIZED');
       const previous = (
         await c.query<Job>(
-          'SELECT * FROM image_generation_jobs WHERE actor_id=$1 AND operation_id=$2',
+          'SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_paid_reserved_subunits FROM image_generation_jobs WHERE actor_id=$1 AND operation_id=$2',
           [actorId, b.operationId],
         )
       ).rows[0];
@@ -970,6 +982,7 @@ export class ImageGenerationEngine {
       ]);
       job.spark_quote_id = q.spark_quote_id;
       job.spark_status = q.spark_quote_id ? 'held' : undefined;
+      job.spark_funding = await quoteFunding(c, q.spark_quote_id);
       job.spark_reserved_subunits = (await sparkQuoteView(c, q.spark_quote_id)).sparks
         ?.reserveSubunits;
       return this.dto(job);
@@ -979,7 +992,7 @@ export class ImageGenerationEngine {
     z.uuid().parse(id);
     const j = (
       await this.db.query<Job>(
-        'SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits FROM image_generation_jobs WHERE id=$1 AND actor_id=$2',
+        'SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_paid_reserved_subunits FROM image_generation_jobs WHERE id=$1 AND actor_id=$2',
         [id, actorId],
       )
     )[0];
@@ -990,7 +1003,7 @@ export class ImageGenerationEngine {
     return {
       jobs: (
         await this.db.query<Job>(
-          `SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits FROM image_generation_jobs WHERE actor_id=$1 AND input ? 'heroPortraitContext' ORDER BY created_at DESC LIMIT 50`,
+          `SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_paid_reserved_subunits FROM image_generation_jobs WHERE actor_id=$1 AND input ? 'heroPortraitContext' ORDER BY created_at DESC LIMIT 50`,
           [actorId],
         )
       ).map((j) => this.dto(j)),
@@ -1011,7 +1024,7 @@ export class ImageGenerationEngine {
     return {
       jobs: (
         await this.db.query<Job>(
-          `SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits FROM image_generation_jobs WHERE actor_id=$1 AND input ? 'storyCoverContext' ORDER BY created_at DESC LIMIT 50`,
+          `SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_paid_reserved_subunits FROM image_generation_jobs WHERE actor_id=$1 AND input ? 'storyCoverContext' ORDER BY created_at DESC LIMIT 50`,
           [actorId],
         )
       ).map((j) => this.dto(j)),
@@ -1056,7 +1069,7 @@ export class ImageGenerationEngine {
     return {
       jobs: (
         await this.db.query<Job>(
-          `SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits FROM image_generation_jobs WHERE actor_id=$1 AND adventure_id=$2
+          `SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_paid_reserved_subunits FROM image_generation_jobs WHERE actor_id=$1 AND adventure_id=$2
            AND ($3::text IS NULL OR input->'campaignContext'->>'campaignId'=$3) ORDER BY created_at DESC LIMIT 50`,
           [actorId, adventureId, campaignId ?? null],
         )

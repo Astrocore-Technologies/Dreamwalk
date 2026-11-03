@@ -171,3 +171,48 @@
     scroll-behavior: auto;
   }
 }
+
+:global(.game-shell) .panel {
+  border-radius: 16px;
+  background: linear-gradient(150deg, var(--surface-raised), var(--surface));
+}
+:global(.game-shell) .tabs {
+  padding: 12px 14px;
+}
+:global(.game-shell) .tabs button {
+  font-size: 14px;
+  font-weight: 700;
+}
+:global(.game-shell) .story {
+  flex: 1;
+}
+:global(.game-shell) .feed {
+  flex: 1;
+  height: max(380px, calc(100dvh - 470px));
+  padding: 22px;
+}
+:global(.game-shell) .entry p {
+  font-size: 14px;
+  line-height: 1.8;
+}
+:global(.game-shell) .player {
+  border: 1px solid var(--line);
+  border-left: 3px solid var(--accent);
+  border-radius: 12px;
+  background: var(--surface-raised);
+}
+:global(.game-shell) .composer {
+  background: color-mix(in srgb, var(--bg) 35%, transparent);
+  padding: 16px;
+}
+:global(.game-shell) .composer textarea {
+  border-radius: 12px;
+  background: var(--surface-raised);
+}
+@media (max-width: 760px) {
+  :global(.game-shell) .feed {
+    flex: auto;
+    height: 400px;
+    padding: 18px;
+  }
+}

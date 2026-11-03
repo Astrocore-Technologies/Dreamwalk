@@ -125,6 +125,12 @@ try {
         heroes: await rows('SELECT id,data,created_at,updated_at FROM heroes WHERE owner_id=$1', [
           user.id,
         ]),
+        dreams: {
+          wallets: await rows('SELECT * FROM dream_wallets WHERE owner_id=$1', [user.id]),
+          quotes: await rows('SELECT * FROM dream_quotes WHERE owner_id=$1', [user.id]),
+          holds: await rows('SELECT * FROM dream_holds WHERE owner_id=$1', [user.id]),
+          ledger: await rows('SELECT * FROM dream_ledger WHERE owner_id=$1', [user.id]),
+        },
         sparks: {
           wallets: await rows('SELECT * FROM spark_wallets WHERE owner_id=$1', [user.id]),
           quotes: await rows('SELECT * FROM spark_quotes WHERE owner_id=$1', [user.id]),
@@ -148,6 +154,9 @@ try {
           'SELECT v.* FROM adventure_versions v JOIN adventures a ON a.id=v.adventure_id WHERE a.owner_id=$1',
           [user.id],
         ),
+        likes: await rows('SELECT adventure_id,created_at FROM adventure_likes WHERE user_id=$1', [
+          user.id,
+        ]),
         favorites: await rows('SELECT adventure_id,created_at FROM favorites WHERE user_id=$1', [
           user.id,
         ]),
@@ -239,6 +248,10 @@ try {
       );
       await c.query(
         'DELETE FROM favorites WHERE user_id=$1 OR adventure_id IN(SELECT id FROM adventures WHERE owner_id=$1)',
+        [user.id],
+      );
+      await c.query(
+        'DELETE FROM adventure_likes WHERE user_id=$1 OR adventure_id IN(SELECT id FROM adventures WHERE owner_id=$1)',
         [user.id],
       );
       await c.query('DELETE FROM sessions WHERE user_id=$1', [user.id]);

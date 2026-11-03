@@ -349,6 +349,10 @@ export type Adventure = z.infer<typeof adventureSchema> & {
   createdAt: string;
   updatedAt: string;
   favoriteCount: number;
+  /** Completed persisted rounds across approved public source versions, not the current round. */
+  totalRounds: number;
+  likeCount: number;
+  likedByMe: boolean;
   versions?: {
     id: string;
     version: number;

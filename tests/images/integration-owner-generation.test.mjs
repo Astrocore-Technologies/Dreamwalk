@@ -35,8 +35,13 @@ await test(
     let sql;
     try {
       await startApi();
-      const owner = await client().register(),
+      const owner = await client().registerLegacyFixture(),
         other = await client().register();
+      // Preserve this suite's existing paid-Sparks hold semantics; dual-currency images have their own integration coverage.
+      await db.query(
+        'INSERT INTO spark_wallets(owner_id,enabled,balance_subunits) VALUES($1,true,500000)',
+        [owner.user.id],
+      );
       const story = await owner.request('/studio/adventures', storyInput('private'));
       const otherStory = await other.request('/studio/adventures', storyInput('private'));
       const draft = authoredDraft();

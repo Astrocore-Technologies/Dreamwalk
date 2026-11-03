@@ -47,8 +47,9 @@ test('player: register, save account settings, reload, and cancel deletion', asy
   await expect(page.getByRole('button', { name: 'Сохранить настройки' })).toBeVisible();
   await page.goto('/wallet');
   await expect(page.getByTestId('wallet-sparks-balance')).toBeVisible();
-  await expect(page.getByTestId('wallet-sparks-balance')).toHaveText(/50[,.]00✦/);
+  await expect(page.getByTestId('wallet-sparks-balance')).toHaveText(/0[,.]00✦/);
   await expect(page.getByText(/демо/i)).toHaveCount(0);
+  await expect(page.getByTestId('wallet-dreams-balance')).toHaveText(/50[,.]00/);
   await page.goto('/admin');
   await expect(page.getByText('Этот раздел только для команды')).toBeVisible();
 });

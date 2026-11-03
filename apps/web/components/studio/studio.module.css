@@ -13,7 +13,7 @@
   );
 }
 .studioIntro h2 {
-  font-family: var(--font-display, Georgia, serif);
+  font-family: var(--font-display);
   margin: 0 0 9px;
   font-size: 27px;
 }
@@ -117,9 +117,7 @@
   margin-bottom: 28px;
 }
 .editorTitle > span {
-  font:
-    32px Georgia,
-    serif;
+  font: 700 32px var(--font);
   color: var(--accent, #d8b879);
   opacity: 0.65;
 }
@@ -209,9 +207,7 @@
   place-items: center;
   background: color-mix(in srgb, var(--accent) 12%, transparent);
   color: var(--accent, #d8b879);
-  font:
-    22px Georgia,
-    serif;
+  font: 700 22px var(--font);
   border-radius: 50%;
   flex-shrink: 0;
 }
@@ -242,9 +238,7 @@
   justify-content: flex-end;
 }
 .previewCover h2 {
-  font:
-    40px Georgia,
-    serif;
+  font: 700 40px var(--font);
   max-width: 600px;
   margin: 15px 0;
 }
@@ -328,9 +322,7 @@
   gap: 12px;
 }
 .npcCard h2 {
-  font:
-    25px Georgia,
-    serif;
+  font: 700 25px var(--font);
   margin: 4px 0;
 }
 .npcCard p {
@@ -361,9 +353,7 @@
 .portraitLetter {
   display: grid;
   place-items: center;
-  font:
-    34px Georgia,
-    serif;
+  font: 700 34px var(--font);
   color: var(--accent, #d8b879);
   background: radial-gradient(circle at 30% 20%, #66503b, #251b2c);
 }
@@ -445,5 +435,68 @@
   }
   .nestedCard {
     padding: 15px;
+  }
+}
+
+/* Compact authoring navigation retains every existing editing and safety step. */
+.steps {
+  padding: 7px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  gap: 5px;
+}
+.steps button {
+  border: 1px solid transparent;
+  border-radius: 9px;
+  padding: 11px 13px;
+  min-width: max-content;
+  min-height: 48px;
+}
+.steps button span {
+  display: inline;
+  margin-right: 8px;
+  letter-spacing: 0;
+}
+.steps button.stepActive {
+  background: var(--surface-soft);
+  border-color: color-mix(in srgb, var(--accent) 35%, var(--line));
+}
+.nestedCard {
+  background: color-mix(in srgb, var(--surface-raised) 50%, var(--surface));
+  border-radius: 14px;
+}
+.editorTitle > span {
+  opacity: 1;
+  font-size: 22px;
+  padding: 9px 12px;
+  background: var(--surface-raised);
+  border-radius: 10px;
+}
+.basicsGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.1fr) minmax(280px, 1fr);
+  gap: 28px;
+  align-items: start;
+}
+.coverEditor {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+.editorCover {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 16px;
+  border: 1px solid var(--line);
+}
+@media (max-width: 1100px) {
+  .basicsGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .editorCover {
+    aspect-ratio: 2;
   }
 }

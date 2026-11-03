@@ -1,4 +1,5 @@
 'use client';
+import { FundingBreakdown, FundingNotice, type WalletFunding } from '../wallet-funding';
 import { formatSparkSubunits } from '@dreamwalk/contracts';
 import { providerSparkSubunits } from './spark-equivalent';
 import { useT } from '@/lib/i18n';
@@ -44,6 +45,7 @@ export function SparksEquivalentNotice() {
 }
 
 export type SparkQuotedCharge = {
+  funding?: WalletFunding;
   sparks?: { quoteId: string; reserveSubunits: string; rateVersion: string; walletCharging: true };
   chargeUnit?: 'sparks' | 'credits';
   sparkReservedSubunits?: string | null;
@@ -57,6 +59,12 @@ export function SparkQuotePrice({ quote }: { quote: SparkQuotedCharge }) {
     : quote.chargeUnit === 'sparks'
       ? quote.sparkReservedSubunits
       : null;
+  if (quote.funding)
+    return (
+      <p data-spark-quote-price>
+        <FundingBreakdown funding={quote.funding} />
+      </p>
+    );
   const label =
     locale === 'ru' ? 'Резерв Искр' : locale === 'uk' ? 'Резерв Іскор' : 'Sparks reservation';
   const demo =
@@ -85,6 +93,7 @@ export function SparkQuotePrice({ quote }: { quote: SparkQuotedCharge }) {
 }
 export function SparkQuoteNotice({ quote }: { quote: SparkQuotedCharge }) {
   const { locale } = useT();
+  if (quote.funding) return <FundingNotice />;
   if (quote.sparks?.walletCharging || quote.chargeUnit === 'sparks')
     return (
       <small data-sparks-wallet-charge>
@@ -134,6 +143,7 @@ export function SparkReceiptCost({
   receipt,
 }: {
   receipt: {
+    funding?: WalletFunding;
     sparkStatus?: string;
     sparkReservedSubunits?: string;
     sparkCapturedSubunits?: string | null;
@@ -141,6 +151,12 @@ export function SparkReceiptCost({
   };
 }) {
   const { locale } = useT();
+  if (receipt.funding)
+    return (
+      <span data-spark-receipt>
+        <FundingBreakdown funding={receipt.funding} status={receipt.sparkStatus} />
+      </span>
+    );
   if (!receipt.sparkStatus)
     return (
       <>

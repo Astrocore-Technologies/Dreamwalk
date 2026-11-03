@@ -115,8 +115,8 @@ await test(
                 [owner.user.id],
               )
             ).rows[0],
-            { enabled: true, balance_subunits: '500000', held_subunits: '0' },
-            'The built-in zero-cost fixture must not consume starter Sparks',
+            { enabled: true, balance_subunits: '0', held_subunits: '0' },
+            'The built-in zero-cost fixture must not consume Sparks balance',
           );
           await other.request(`/image-generation/jobs/${j.id}`, undefined, 'GET', 404);
           const receipt = await owner.request(`/asset-library/revisions/${done.revisionId}`);

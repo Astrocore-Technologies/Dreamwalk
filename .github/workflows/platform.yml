@@ -167,7 +167,7 @@ jobs:
             echo "Application did not become ready" >&2
             exit 1
           fi
-          npm run test:e2e -- --shard=1/2 --workers=1
+          node scripts/browser-shard.mjs 1/2
       # Retain the initial failure trace even if its one configured retry succeeds.
       - uses: actions/upload-artifact@v4
         if: always()
@@ -176,6 +176,7 @@ jobs:
           path: |
             test-results/
             playwright-report/
+            ${{ runner.temp }}/dreamwalk-web.log
           if-no-files-found: ignore
           retention-days: 3
       - name: Save actual reusable-art canvas preview
@@ -274,7 +275,7 @@ jobs:
             echo "Application did not become ready" >&2
             exit 1
           fi
-          npm run test:e2e -- --shard=2/2 --workers=1
+          node scripts/browser-shard.mjs 2/2
       # Retain the initial failure trace even if its one configured retry succeeds.
       - uses: actions/upload-artifact@v4
         if: always()
@@ -283,6 +284,7 @@ jobs:
           path: |
             test-results/
             playwright-report/
+            ${{ runner.temp }}/dreamwalk-web.log
           if-no-files-found: ignore
           retention-days: 3
       - name: Save actual reusable-art canvas preview

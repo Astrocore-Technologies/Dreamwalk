@@ -7,7 +7,7 @@ import { Auth, requestAccountEmail, tokenHash, userView } from './auth';
 import { config } from './config';
 import { Db } from './db';
 import { mailEnabled } from './mail';
-import { grantRegistrationSparks } from './generation/starter-sparks';
+import { grantRegistrationDreams } from './generation/starter-dreams';
 
 const keys = createRemoteJWKSet(new URL('https://www.googleapis.com/oauth2/v3/certs'));
 export function googleEmailIsAuthoritative(claims: JWTPayload) {
@@ -71,7 +71,7 @@ export async function provisionGoogleUser(
     if (!verified && !mailEnabled) throw new Error('EMAIL_DELIVERY_UNAVAILABLE');
     const created = (
       await c.query(
-        'INSERT INTO users(email,password_hash,name,handle,settings,email_verified,email_verification_required,starter_sparks_eligible) VALUES($1,$2,$3,$4,$5,$6,true,$7) RETURNING *',
+        'INSERT INTO users(email,password_hash,name,handle,settings,email_verified,email_verification_required,starter_sparks_eligible,starter_dreams_eligible) VALUES($1,$2,$3,$4,$5,$6,true,false,true) RETURNING *',
         [
           email,
           'oauth:google',
@@ -81,7 +81,6 @@ export async function provisionGoogleUser(
           `wanderer_${randomBytes(10).toString('hex')}`,
           JSON.stringify(settingsSchema.parse({})),
           verified,
-          !verified,
         ],
       )
     ).rows[0];
@@ -90,7 +89,7 @@ export async function provisionGoogleUser(
       created.id,
     ]);
     await c.query('INSERT INTO wallets(user_id) VALUES($1)', [created.id]);
-    if (verified) await grantRegistrationSparks(c, created.id);
+    if (verified) await grantRegistrationDreams(c, created.id);
     await c.query(
       "INSERT INTO notifications(user_id,title,message,type,payload) VALUES($1,'','','welcome','{}')",
       [created.id],

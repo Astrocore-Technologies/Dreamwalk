@@ -1,15 +1,17 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const liveMessages = {
+  dreams: ['Грёзы', 'Dreams', 'Мрії'],
+  sparks: ['Искры', 'Sparks', 'Іскри'],
   walletNotEnabled: [
-    'Кошелёк Искр ещё не активирован для этого аккаунта.',
-    'The Sparks wallet is not enabled for this account yet.',
-    'Гаманець Іскор ще не активовано для цього акаунта.',
+    'Оплата генерации ещё не активирована для этого аккаунта.',
+    'Generation billing is not enabled for this account yet.',
+    'Оплату генерації ще не активовано для цього акаунта.',
   ],
   insufficientSparks: [
-    'Недостаточно доступных Искр для генерации.',
-    'Not enough available Sparks for generation.',
-    'Недостатньо доступних Іскор для генерації.',
+    'Недостаточно доступных Грёз и Искр для генерации.',
+    'Not enough available Dreams and Sparks for generation.',
+    'Недостатньо доступних Мрій та Іскор для генерації.',
   ],
   accountReview: [
     'Расход по предыдущему запросу требует проверки. Резерв сохранён; повтор автоматически не запускается.',
@@ -22,9 +24,9 @@ export const liveMessages = {
     'Налаштування генерації змінилися. Оновіть сторінку й отримайте нову оцінку.',
   ],
   releaseUnlimited: [
-    'Общий потолок расходов не задан. Генерация оплачивается Искрами.',
-    'There is no aggregate spending ceiling. Generation is paid with Sparks.',
-    'Загальну межу витрат не встановлено. Генерація оплачується Іскрами.',
+    'Общий потолок расходов не задан. Генерация оплачивается сначала Грёзами, затем Искрами.',
+    'There is no aggregate spending ceiling. Generation uses Dreams first, then Sparks.',
+    'Загальну межу витрат не встановлено. Генерація оплачується спочатку Мріями, потім Іскрами.',
   ],
   releaseWalletAvailable: ['Доступно в кошельке', 'Available in wallet', 'Доступно в гаманці'],
   releaseTitle: ['Генерация', 'Generation', 'Генерація'],
@@ -35,9 +37,9 @@ export const liveMessages = {
     'Генерація зараз недоступна',
   ],
   releaseBilling: [
-    'Стоимость показывается в Искрах перед запуском. Резерв удерживается до получения результата; повтор неизвестного запроса не запускается автоматически.',
-    'The Sparks cost is shown before generation. A reservation remains until the outcome is known; uncertain requests are never retried automatically.',
-    'Вартість показується в Іскрах перед запуском. Резерв утримується до отримання результату; запит із невідомим результатом не повторюється автоматично.',
+    'Стоимость и распределение между Грёзами и Искрами показаны перед запуском. Резерв удерживается до получения результата; повтор неизвестного запроса не запускается автоматически.',
+    'Cost and the Dreams/Sparks split are shown before generation. A reservation remains until the outcome is known; uncertain requests are never retried automatically.',
+    'Вартість і розподіл між Мріями та Іскрами показано перед запуском. Резерв утримується до отримання результату; запит із невідомим результатом не повторюється автоматично.',
   ],
   countSucceeded: ['Подсчёт сохранён', 'Count saved', 'Підрахунок збережено'],
   countDispatched: ['Подсчёт выполняется', 'Count in progress', 'Підрахунок виконується'],

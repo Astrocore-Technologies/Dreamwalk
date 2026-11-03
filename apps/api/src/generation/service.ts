@@ -2301,9 +2301,24 @@ export class GenerationAuthority {
           [releaseScope(userId)],
         )
       ).rows[0];
-      const available = wallet
-        ? Math.max(0, Number(wallet.balance_subunits) - Number(wallet.held_subunits))
-        : 0;
+      const dreams = (
+        await c.query(
+          'SELECT enabled,balance_subunits,held_subunits FROM dream_wallets WHERE owner_id=$1',
+          [userId],
+        )
+      ).rows[0];
+      const dreamAvailable = dreams?.enabled
+        ? BigInt(dreams.balance_subunits) - BigInt(dreams.held_subunits)
+        : 0n;
+      const sparkAvailable = wallet?.enabled
+        ? BigInt(wallet.balance_subunits) - BigInt(wallet.held_subunits)
+        : 0n;
+      // Status is advisory; authoritative reservations stay exact bigint under wallet locks.
+      const available = Number(
+        dreamAvailable + sparkAvailable > BigInt(Number.MAX_SAFE_INTEGER)
+          ? BigInt(Number.MAX_SAFE_INTEGER)
+          : dreamAvailable + sparkAvailable,
+      );
       const exposure = await aggregateGenerationExposure(c);
       const aggregateRemaining =
         cfg.aggregateCapMicros === null
@@ -2347,6 +2362,8 @@ export class GenerationAuthority {
       return {
         ownerId: userId,
         mode: 'release' as const,
+        dreamsAvailableSubunits: dreamAvailable.toString(),
+        sparksAvailableSubunits: sparkAvailable.toString(),
         ...(cfg.allowance ? { allowance: cfg.allowance } : {}),
         enabled: true,
         authorizationId: row?.id ?? null,
