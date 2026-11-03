@@ -345,7 +345,7 @@ test('runtime provider changes stay disabled and taxonomy cancel preserves sourc
   const runtimeEdit = page.locator('[data-admin-tool="models"] tbody button');
   await runtimeEdit.click();
   const dialog = page.getByRole('dialog');
-  await dialog.getByLabel('Провайдер', { exact: true }).selectOption('openai');
+  await dialog.getByRole('combobox', { name: 'Провайдер', exact: true }).selectOption('openai');
   await expect(dialog.getByRole('checkbox')).toHaveCount(0);
   await dialog.getByRole('button', { name: 'Сохранить', exact: true }).click();
   await expect.poll(() => state.requests.length).toBe(1);
@@ -363,7 +363,9 @@ test('runtime provider changes stay disabled and taxonomy cancel preserves sourc
   await dialog.getByRole('button', { name: 'Отмена', exact: true }).click();
   await expect(runtimeEdit).toBeFocused();
   await runtimeEdit.click();
-  await expect(dialog.getByLabel('Провайдер', { exact: true })).toHaveValue('mock');
+  await expect(dialog.getByRole('combobox', { name: 'Провайдер', exact: true })).toHaveValue(
+    'mock',
+  );
   await page.keyboard.press('Escape');
   await page.goto('/admin/taxonomy');
   const tool = page.locator('[data-admin-tool="taxonomy"]');
