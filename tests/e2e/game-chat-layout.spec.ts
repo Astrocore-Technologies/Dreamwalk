@@ -64,6 +64,11 @@ for (const locale of ['ru', 'en', 'uk']) {
     await expect(page.getByTestId('scene-media')).toHaveCount(0);
     const gap = () => feed.evaluate((el) => el.scrollHeight - el.clientHeight - el.scrollTop);
     await expect.poll(gap).toBeLessThan(2);
+    await expect(input).toBeInViewport();
+    await expect
+      .poll(() => feed.evaluate((el) => el.scrollHeight - el.clientHeight))
+      .toBeGreaterThan(100);
+    expect((await bounds(page)).height).toBeLessThanOrEqual(1);
     const originalInput = await input.boundingBox();
     fixture.entries.push(entry(45));
     await expect(feed.locator('[data-story-entry]')).toHaveCount(46);

@@ -184,7 +184,7 @@ test('two realtime players coauthor committed evolving scenes, travel and retain
     const background = await prepResponse.json();
     expect(
       (
-        await owner.request.post(`${mediaPath}/media-attach`, {
+        await owner.request.post(`${mediaPath}/media-bindings`, {
           data: {
             operationId: randomUUID(),
             expectedCanonRevision: background.canonRevision,
@@ -257,7 +257,7 @@ test('two realtime players coauthor committed evolving scenes, travel and retain
       .toBe('admitted');
     expect(
       (
-        await owner.request.post(`${mediaPath}/media-attach`, {
+        await owner.request.post(`${mediaPath}/media-bindings`, {
           data: {
             operationId: randomUUID(),
             expectedCanonRevision: prep.canonRevision,

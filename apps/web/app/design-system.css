@@ -1246,3 +1246,11 @@ td {
     padding: 0 8px 8px;
   }
 }
+
+@media (min-width: 761px) {
+  /* The route's locale wrapper is part of the percentage-height chain. */
+  .game-shell:has([data-testid='game-room']) .main-content > [data-locale] {
+    height: 100%;
+    min-height: 0;
+  }
+}

@@ -217,6 +217,7 @@ test('viewport layout separates history from stable composer and removes the sce
   assert.match(css, /resize: none/);
   const shell = await read('app/design-system.css');
   assert.match(shell, /height: 100dvh/);
+  assert.match(shell, /\.main-content > \[data-locale\]/);
   assert.match(shell, /\.game-shell:has\(\[data-testid='game-room'\]\)/);
   // Underlying explicit image generation / binding and cost-consent components remain.
   assert.match(await read('components/game/scene-media.tsx'), /media-preparation/);
