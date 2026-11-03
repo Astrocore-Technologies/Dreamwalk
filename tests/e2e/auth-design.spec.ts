@@ -5,7 +5,7 @@ for (const locale of ['ru', 'uk', 'en'] as const) {
     test.setTimeout(120_000);
     await page.addInitScript((language) => {
       localStorage.setItem('dreamwalk-language', language);
-      localStorage.setItem('dreamwalk-theme', 'dark');
+      if (!localStorage.getItem('dreamwalk-theme')) localStorage.setItem('dreamwalk-theme', 'dark');
     }, locale);
     await page.route('**/api/v1/**', (route) =>
       route.fulfill({ status: 404, json: { code: 'NOT_FOUND' } }),
@@ -49,6 +49,10 @@ for (const locale of ['ru', 'uk', 'en'] as const) {
         await expect(page.locator('#auth-email')).toHaveAccessibleName('Email');
         await expect(page.locator('.locale-select')).toBeVisible();
         await expect(page.locator('.theme-button')).toBeVisible();
+        await expect(page.locator('.legal-note')).toHaveCSS(
+          'font-size',
+          width === 390 ? '13px' : '16px',
+        );
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
           true,
         );
