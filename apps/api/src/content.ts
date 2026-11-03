@@ -70,6 +70,7 @@ export function adventureView(
   row: Record<string, unknown>,
   usePublished = false,
   reader = false,
+  publicReview = false,
 ): Adventure {
   const released = row.visibility === 'private' ? row.private_snapshot : row.published_snapshot;
   const snapshot = usePublished && released ? released : null;
@@ -82,12 +83,38 @@ export function adventureView(
     translations: (data.translations ?? {}) as MetadataTranslations,
   };
   const exposedMetadata = usePublished || reader ? safeAdventureMetadata(metadata) : metadata;
+  const readerView = (usePublished || reader) && !publicReview;
+  // Published snapshots are storage, not public DTOs. Project legacy releases on
+  // every read; never spread private author prose or future unknown fields.
+  const exposedData = readerView
+    ? {
+        genre: data.genre,
+        tags: data.tags,
+        cover: data.cover,
+        coverAssetId: data.coverAssetId,
+        playersMin: data.playersMin,
+        playersMax: data.playersMax,
+        duration: data.duration,
+        difficulty: data.difficulty,
+      }
+    : data;
   return {
-    ...data,
-    ...((usePublished || reader) && data.content
+    ...exposedData,
+    ...(readerView
       ? {
-          content: readerStoryContent(data.content as Record<string, unknown>),
+          content: {
+            world: '',
+            rules: '',
+            locations: [],
+            npcIds: [],
+            scenes: [],
+            startSceneId: '',
+            boundaries: [],
+          },
         }
+      : {}),
+    ...(publicReview && data.content
+      ? { content: readerStoryContent(data.content as Record<string, unknown>) }
       : {}),
     ...exposedMetadata,
     id: row.id,
@@ -354,15 +381,12 @@ export class ContentController {
           )
         ).length > 0
       : false;
-    const result = adventureView(row, usePublished, access !== 'owner');
+    const result = adventureView(row, usePublished, access !== 'owner', access === 'reviewer');
     const npcIds = result.content.npcIds;
     let npcPreview: Record<string, unknown>[];
-    if (usePublished) {
-      const releaseSnapshot = access === 'invited' ? row.private_snapshot : row.published_snapshot;
-      npcPreview = ((releaseSnapshot as Record<string, unknown>).publicNpcs ?? []) as Record<
-        string,
-        unknown
-      >[];
+    if (access !== 'owner') {
+      // Author NPC records are not an explicitly spoiler-safe public cast.
+      npcPreview = [];
     } else {
       const npcs = npcIds.length
         ? await this.db.query('SELECT * FROM npcs WHERE id=ANY($1::uuid[])', [npcIds])

@@ -192,7 +192,7 @@ test('inspection portraits require the current visible NPC and matching authoriz
     source.indexOf('  const selectedTarget ='),
   );
   assert.match(selection, /artPreviewUrl/);
-  assert.match(source, /const art = p \? authorizedArt\(p, fetchedArt\) : \[\]/);
+  assert.match(source, /const art = p \? authorizedArt\(p, sceneMedia.art\) : \[\]/);
   assert.match(source, /inspectedPortraitUrl && \([\s\S]*?src=\{inspectedPortraitUrl\}/);
   const select = new Function(
     'p',
@@ -221,4 +221,132 @@ test('inspection portraits require the current visible NPC and matching authoriz
     render(p, [{ ...portrait, url: 'https://private.invalid/original.png' }]),
     undefined,
   );
+});
+
+test('ungrounded location uses illustration with participant actions, never coordinate overlays', async () => {
+  const { transformSync } = await import('esbuild');
+  const source = await readFile(
+    new URL('../../apps/web/components/game/location-illustration.tsx', import.meta.url),
+    'utf8',
+  );
+  const code = transformSync(source, { loader: 'tsx', format: 'cjs', jsx: 'automatic' }).code;
+  const jsx = (type, props) => ({ type, props });
+  const module = { exports: {} };
+  new Function('require', 'module', 'exports', code)(
+    (name) =>
+      ({
+        'react/jsx-runtime': { jsx, jsxs: jsx },
+        react: { useState: (value) => [value, () => {}] },
+        'next/image': { __esModule: true, default: 'image' },
+        '../assets/types': { artPreviewUrl },
+        '@/lib/i18n': { useT: () => ({ locale: 'en' }) },
+        './map-actions': { MapActions: 'actions', InventoryPanel: 'inventory' },
+        './item-messages': { useItemText: () => String },
+        './game.module.css': { default: {} },
+      })[name],
+    module,
+    module.exports,
+  );
+  const projection = {
+    map: { id: 'room', label: 'Tower', exits: [] },
+    entities: [
+      { id: 'hero', kind: 'player' },
+      { id: 'npc', kind: 'npc', label: 'Guide' },
+    ],
+    actorId: 'hero',
+    inventory: [],
+  };
+  const illustration = { ...entry('map:room:background'), mapId: 'room', attribution: 'Artist' };
+  const walk = (node) =>
+    !node || typeof node !== 'object'
+      ? []
+      : [node, ...[node.props?.children].flat(Infinity).flatMap(walk)];
+  const render = (image) =>
+    walk(module.exports.LocationIllustration({ projection, illustration: image, disabled: false }));
+  const nodes = render(illustration);
+  assert.equal(nodes.filter((n) => n.type === 'image').length, 1);
+  assert.equal(nodes.find((n) => n.type === 'image').props.src, illustration.url);
+  assert.equal(nodes.find((n) => n.type === 'image').props.onClick, undefined);
+  assert.ok(nodes.some((n) => n.type === 'button' && n.props.children === 'Guide'));
+  for (const invalid of [
+    null,
+    { ...illustration, mapId: 'other' },
+    { ...illustration, slot: 'map:other:background' },
+    { ...illustration, url: 'https://private.invalid/art' },
+  ]) {
+    assert.equal(render(invalid).filter((n) => n.type === 'image').length, 0);
+  }
+  assert.doesNotMatch(source, /GameCanvas|onMove|entity\.x|entity\.y|pixi|onPointer/);
+});
+
+test('campaign illustration hook clears on map/campaign change and ignores late prior responses', async () => {
+  const { transformSync } = await import('esbuild');
+  const source = await readFile(
+    new URL('../../apps/web/components/assets/use-campaign-art.ts', import.meta.url),
+    'utf8',
+  );
+  const code = transformSync(source, { loader: 'ts', format: 'cjs' }).code;
+  let value, deps, cleanup, effect, resolve;
+  const pending = [];
+  const module = { exports: {} };
+  new Function('require', 'module', 'exports', 'setInterval', 'clearInterval', code)(
+    (name) =>
+      ({
+        react: {
+          useState: (initial) => {
+            value ??= initial;
+            return [
+              value,
+              (next) => {
+                value = next;
+              },
+            ];
+          },
+          useEffect: (fn, next) => {
+            if (!deps || next.some((v, i) => v !== deps[i])) {
+              cleanup?.();
+              deps = next;
+              effect = fn;
+            }
+          },
+        },
+        '@/lib/client': {
+          api: () =>
+            new Promise((r) => {
+              resolve = r;
+              pending.push(r);
+            }),
+        },
+        './types': { artPreviewUrl },
+      })[name],
+    module,
+    module.exports,
+    () => 1,
+    () => {},
+  );
+  const render = (campaign, map) => {
+    const result = module.exports.useCampaignArt(campaign, map);
+    if (effect) {
+      const run = effect;
+      effect = null;
+      cleanup = run();
+    }
+    return result;
+  };
+  const illustration = { ...entry('map:room:background'), mapId: 'room' };
+  render('first', 'room');
+  resolve({ bindings: [], sceneIllustration: illustration });
+  await Promise.resolve();
+  assert.equal(render('first', 'room').illustration.mapId, 'room');
+  assert.equal(render('second', 'room').illustration, null);
+  const late = resolve;
+  render('second', 'other');
+  late({ bindings: [], sceneIllustration: illustration });
+  await Promise.resolve();
+  assert.equal(render('second', 'other').illustration, null);
+  resolve({ bindings: [], sceneIllustration: illustration });
+  await Promise.resolve();
+  assert.equal(render('second', 'other').illustration, null);
+  assert.equal(pending.length, 3);
+  cleanup();
 });

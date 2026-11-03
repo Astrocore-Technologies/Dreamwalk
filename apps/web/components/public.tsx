@@ -394,7 +394,7 @@ export function AdventurePage({ slug }: { slug: string }) {
           )}
           <section className="story-section">
             <h2>{tr('За порогом истории')}</h2>
-            <p className="prose">{a.content?.world || text.synopsis}</p>
+            <p className="prose">{text.synopsis}</p>
           </section>
           {a.access !== 'invited' && (
             <details className="story-versions">

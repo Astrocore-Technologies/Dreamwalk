@@ -1,3 +1,4 @@
+import { authoringResultFailureCode } from './authoring-result-failure';
 import { quoteFunding, heldFunding } from '../generation/currency-funding';
 import { readStoryImages } from '../ai/story-vision';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
@@ -783,6 +784,7 @@ export class AuthoringTextEngine {
       )
     )[0];
     if (!current || current.status !== 'generated') return;
+    let resultPhase: 'fence' | 'validate' | 'apply' = 'fence';
     try {
       await this.db.tx(async (c) => {
         await this.lockSource(c, current.actor_id);
@@ -831,10 +833,12 @@ export class AuthoringTextEngine {
         // Provider identity includes rates/model envelope. A restarted release process may
         // complete an admitted result only after its current bounded parser and source
         // validator accept it; the immutable old receipt still determines its cost.
+        resultPhase = 'validate';
         const proposal =
           this.live.mode === 'release'
             ? this.definition.validateProposal(row.proposal)
             : row.proposal;
+        resultPhase = 'apply';
         const applied = await commit(c, this.binding(row), proposal);
         await settleReservationSparks(c, row.reservation_id, {
           outcome: 'success',
@@ -848,21 +852,8 @@ export class AuthoringTextEngine {
         );
       });
     } catch (error) {
-      // A stable public validation category only; never persist raw model/source details.
-      const errorCode =
-        error instanceof Error &&
-        [
-          'STORY_MAP_INTENT_MISMATCH',
-          'MAP_IMAGE_UNCERTAIN',
-          'MAP_IMAGE_UNSAFE_SPAWN',
-          'MAP_IMAGE_UNSAFE_NPC',
-          'MAP_IMAGE_DISCONNECTED_SPAWN',
-          'MAP_IMAGE_UNSAFE_PASSAGE',
-          'MAP_IMAGE_SOURCE_MISMATCH',
-          'MAP_IMAGE_DUPLICATE_GEOMETRY',
-        ].includes(error.message)
-          ? error.message
-          : 'AUTHORING_STALE';
+      // Persist only a bounded category, never the model output or exception details.
+      const errorCode = authoringResultFailureCode(error, resultPhase);
       await this.db.tx(async (c) => {
         await this.live.lockAuthorization(c, current.session_id);
         await c.query('SELECT id FROM live_authoring_text_jobs WHERE id=$1 FOR UPDATE', [id]);

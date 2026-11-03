@@ -1179,3 +1179,45 @@ td {
     margin: 12px 0 0;
   }
 }
+/* One toolbar for active gameplay, with the scene title and turn action in the slot. */
+.game-shell .topbar {
+  min-height: 64px;
+  padding: 8px 12px;
+  gap: 16px;
+  z-index: 40;
+}
+.game-toolbar-slot {
+  flex: 1;
+  min-width: 0;
+}
+.game-shell .top-actions {
+  flex: 0 0 auto;
+}
+.game-shell .top-actions .wallet-chip,
+.game-shell .top-actions .profile-chip,
+.game-shell .top-actions a[href='/notifications'] {
+  display: none;
+}
+.game-shell .main-content {
+  padding: 0 8px 20px;
+}
+@media (max-width: 760px) {
+  .game-shell .topbar {
+    flex-wrap: wrap;
+    gap: 6px;
+    padding: 6px 8px;
+  }
+  .game-toolbar-slot {
+    flex-basis: calc(100% - 100px);
+  }
+  .game-shell .top-actions {
+    gap: 2px;
+  }
+  .game-shell .main-content {
+    padding-inline: 6px;
+  }
+}
+
+.game-toolbar-slot:has([data-game-toolbar]) > .game-return {
+  display: none;
+}

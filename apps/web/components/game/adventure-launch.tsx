@@ -56,11 +56,14 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
   const [confirm, setConfirm] = useState(false);
   const [dispatchUncertain, setDispatchUncertain] = useState(false);
   const [restoredKey, setRestoredKey] = useState('');
+  // Consent to enter is local to this visit and selection, never restored from storage.
+  const [entryKey, setEntryKey] = useState('');
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   const storageKey = `dreamwalk-start:${user?.id}:${versionId}:${heroSelection.heroId}`;
   useEffect(() => {
     setPreparation(null);
+    setEntryKey('');
     setQuote(null);
     setConfirm(false);
     setDispatchUncertain(sessionStorage.getItem(storageKey + ':dispatch-pending') === 'yes');
@@ -88,7 +91,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
     return id;
   }
   async function launch(
-    action: 'prepare' | 'confirm' | 'refresh' | 'restart' | 'restore' = 'prepare',
+    action: 'prepare' | 'confirm' | 'refresh' | 'restart' | 'restore' | 'open' = 'prepare',
   ) {
     if (!user) {
       router.push(
@@ -99,6 +102,9 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
     if (!versionId || !heroSelection.ready) return;
     const lease = gate.begin();
     if (!lease) return;
+    const enterRequested = ['prepare', 'confirm', 'restart', 'open'].includes(action);
+    if (enterRequested) setEntryKey(storageKey);
+    const mayEnter = action !== 'restore' && (enterRequested || entryKey === storageKey);
     let navigating = false;
     setBusy(true);
     setError('');
@@ -111,7 +117,16 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
         sessionStorage.removeItem(storageKey + ':prepare');
         action = 'prepare';
       }
-      if (action === 'prepare' || action === 'restore') {
+      if (action === 'restore') {
+        // Legacy sessions store the operation ID, not the preparation ID. Lookup
+        // must not replay POST prepare, create a campaign, quote or dispatch.
+        const operationId = sessionStorage.getItem(storageKey + ':prepare');
+        current = operationId
+          ? await api<StartPreparation | null>(
+              `/game/start-preparations/by-operation/${encodeURIComponent(operationId)}`,
+            )
+          : null;
+      } else if (action === 'prepare') {
         current = await api<StartPreparation>('/game/start-preparations', {
           method: 'POST',
           body: JSON.stringify({
@@ -121,7 +136,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
           }),
         });
         current = await api<StartPreparation>(`/game/start-preparations/${current.id}`);
-      } else if (action === 'refresh' && current) {
+      } else if ((action === 'refresh' || action === 'open') && current) {
         current = await api<StartPreparation>(`/game/start-preparations/${current.id}`);
       } else if (action === 'confirm' && current && quote) {
         if (
@@ -141,13 +156,14 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
           }),
         });
       }
-      if (!gate.accepts(lease) || !current) return;
+      if (!gate.accepts(lease)) return;
       setPreparation(current);
+      if (!current) return;
       if (current.jobs?.length || current.status === 'ready' || current.campaignId) {
         sessionStorage.removeItem(storageKey + ':dispatch-pending');
         setDispatchUncertain(false);
       }
-      if (current.status === 'ready' || current.campaignId) {
+      if ((current.status === 'ready' || current.campaignId) && mayEnter) {
         const result = current.campaignId
           ? { campaignId: current.campaignId }
           : await api<{ campaignId: string }>('/game/campaigns', {
@@ -229,16 +245,20 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
         : state === 'failed'
           ? 'Не удалось подготовить игру. Можно запросить новую оценку.'
           : state === 'running'
-            ? 'Готовим игру. Она откроется автоматически.'
+            ? entryKey === storageKey
+              ? 'Готовим игру. Она откроется автоматически.'
+              : 'Подготовка игры'
             : state === 'checking'
               ? 'Проверяем результат запроса. Повторной оплаты не будет.'
               : '';
   const primaryAction =
     state === 'failed'
       ? 'restart'
-      : ['review', 'unknown', 'running', 'checking', 'ready'].includes(state)
-        ? 'refresh'
-        : 'prepare';
+      : state === 'ready'
+        ? 'open'
+        : ['review', 'unknown', 'running', 'checking'].includes(state)
+          ? 'refresh'
+          : 'prepare';
   return (
     <>
       <HeroSelection selection={heroSelection} disabled={busy || state !== 'estimate'} compact />

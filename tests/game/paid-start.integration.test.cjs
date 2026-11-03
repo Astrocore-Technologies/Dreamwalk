@@ -62,9 +62,7 @@ test(
     const { PaidStartService } = require('../../apps/api/dist/game/paid-start.service.js');
     const { GameService } = require('../../apps/api/dist/game/game.service.js');
     const { GenerationAuthority } = require('../../apps/api/dist/generation/service.js');
-    const {
-      activateReleaseDeployment,
-    } = require('../images/release-deployment-fixture.cjs');
+    const { activateReleaseDeployment } = require('../images/release-deployment-fixture.cjs');
     const { readGenerationConfig } = require('../../apps/api/dist/generation/config.js');
     const { AuthoringTextEngine } = require('../../apps/api/dist/live-test/authoring-text.js');
     const { storyPlanDefinition } = require('../../apps/api/dist/game/story-plan.js');
@@ -212,6 +210,17 @@ test(
         preparation = await service.prepare(player, input);
         assert.equal((await service.prepare(player, input)).id, preparation.id);
         assert.equal(preparation.status, 'prepared');
+        const beforeRestore = await pool.query(
+          'SELECT count(*)::int AS n FROM game_start_preparations',
+        );
+        assert.equal((await service.byOperation(player, input.operationId)).id, preparation.id);
+        assert.equal(await service.byOperation(other, input.operationId), null);
+        assert.equal(await service.byOperation(player, randomUUID()), null);
+        const afterRestore = await pool.query(
+          'SELECT count(*)::int AS n FROM game_start_preparations',
+        );
+        assert.equal(afterRestore.rows[0].n, beforeRestore.rows[0].n);
+        assert.equal((await service.state(player, preparation.id)).jobs.length, 0);
         await assert.rejects(service.state(other, preparation.id), code('NOT_FOUND'));
         await assert.rejects(
           game.create(request(player), { playableVersionId: version }),
