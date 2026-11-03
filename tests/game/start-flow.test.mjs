@@ -7,9 +7,9 @@ import { LaunchGate } from '../../apps/web/components/home/launch-gate.ts';
 const prepared = { id: 'prep', status: 'prepared', reused: false, campaignId: null, jobs: [] };
 test('terminal jobs never suggest a new paid attempt before settlement', () => {
   for (const status of ['failed', 'rejected', 'stale', 'cancelled']) {
-    for (const sparkStatus of [undefined, null, 'pending', 'held', 'reserved'])
+    for (const sparkStatus of [undefined, null, 'pending', 'held', 'reserved', 'captured'])
       assert.equal(startState({ ...prepared, jobs: [{ status, sparkStatus }] }), 'review');
-    for (const sparkStatus of ['released', 'captured'])
+    for (const sparkStatus of ['released', 'settled'])
       assert.equal(startState({ ...prepared, jobs: [{ status, sparkStatus }] }), 'failed');
   }
   assert.equal(

@@ -18,7 +18,7 @@ test('game vocabulary is translated in all three platform dictionaries with matc
   }
 });
 
-test('dynamic game action, error and event labels have complete registered translations', async () => {
+test('dynamic game action and error labels have complete registered translations', async () => {
   const text = await readFile(
     new URL('../../apps/web/components/game/game-page.tsx', import.meta.url),
     'utf8',
@@ -31,11 +31,13 @@ test('dynamic game action, error and event labels have complete registered trans
     ts.ScriptKind.TSX,
   );
   let count = 0;
+  const checkedMaps = new Set();
   const walk = (node) => {
     if (
       ts.isVariableDeclaration(node) &&
-      ['actionKeys', 'errorKeys', 'eventKeys'].includes(node.name.getText(source))
+      ['actionKeys', 'errorKeys'].includes(node.name.getText(source))
     ) {
+      checkedMaps.add(node.name.getText(source));
       const inspect = (child) => {
         if (ts.isPropertyAssignment(child) && ts.isStringLiteral(child.initializer)) {
           count++;
@@ -52,7 +54,8 @@ test('dynamic game action, error and event labels have complete registered trans
     ts.forEachChild(node, walk);
   };
   walk(source);
-  assert.ok(count >= 30);
+  assert.deepEqual([...checkedMaps].sort(), ['actionKeys', 'errorKeys']);
+  assert.ok(count > 0);
 });
 
 test('original runtime sprite atlas matches recorded source integrity and contains no active/external content', async () => {

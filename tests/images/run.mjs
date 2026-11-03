@@ -82,6 +82,7 @@ try {
   ]);
   let files = [
     'integration-hero-portrait.test.mjs',
+    'integration-story-cover.test.mjs',
     'integration-release-budget.test.mjs',
     'integration-release-authority.test.mjs',
     'integration-release-npc.test.mjs',

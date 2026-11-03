@@ -443,3 +443,5 @@ export * from './game';
 
 export * from './sparks';
 export * from './image-framing';
+
+export * from './image-style';

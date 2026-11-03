@@ -1,4 +1,5 @@
 'use client';
+import { defaultImageStylePrompt } from '@dreamwalk/contracts';
 import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage } from '@/lib/client';
 import { useT } from '@/lib/i18n';
@@ -78,7 +79,7 @@ export function HeroPortraitControl({
               draftId: crypto.randomUUID(),
               title: (name.trim() || 'Hero portrait').slice(0, 120),
               prompt:
-                `Drawn 2D fantasy hero portrait. ${name.trim()}. ${backstory.trim()} ${traits.join(', ')}`.slice(
+                `${defaultImageStylePrompt('character')} Hero portrait. ${name.trim()}. ${backstory.trim()} ${traits.join(', ')}`.slice(
                   0,
                   2000,
                 ),

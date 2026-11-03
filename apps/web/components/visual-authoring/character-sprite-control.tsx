@@ -179,6 +179,7 @@ export function CharacterSpriteControl({
       {project && !saved && (
         <>
           <ExternalGeneration
+            compactActions
             project={project}
             session={session}
             disabled={busy}

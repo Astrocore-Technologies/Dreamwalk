@@ -1,4 +1,5 @@
 'use client';
+import { GenerationProgress } from './generation-progress';
 import { imageFramingEvidenceMatches } from '@dreamwalk/contracts';
 import { ImageConfirmation } from '../assets/image-confirmation';
 import { ImageFramingNotice } from './image-framing-notice';
@@ -454,8 +455,12 @@ export function LocationImageInline(p: Props) {
           />
         </>
       )}
-      {jobs.some((j) => ['queued', 'dispatched'].includes(j.status)) && (
-        <p role="status">{m('pending')}</p>
+      {jobs.some((j) => ['queued', 'dispatched', 'generated'].includes(j.status)) && (
+        <GenerationProgress
+          status={
+            jobs.find((j) => ['queued', 'dispatched', 'generated'].includes(j.status))!.status
+          }
+        />
       )}
       {jobs
         .filter((job) => job.sparkStatus)

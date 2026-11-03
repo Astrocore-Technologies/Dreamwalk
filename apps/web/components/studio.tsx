@@ -7,6 +7,7 @@ import { LocationMapIntent } from './studio/location-map-intent';
 import { StoryLorebookEditor } from './studio/story-lorebook-editor';
 import { StoryNpcEditor } from './studio/story-npc-editor';
 import { PrivateRelease } from './studio/private-release';
+import { StoryCoverDialog, useStoryCoverText } from './studio/story-cover-dialog';
 import { CharacterSpriteControl } from './visual-authoring/character-sprite-control';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
@@ -379,6 +380,8 @@ function MediaPicker({
 }
 
 function AdventureEditor({ id }: { id: string }) {
+  const coverText = useStoryCoverText();
+  const [coverGenerationOpen, setCoverGenerationOpen] = useState(false);
   const locationImages = useLocationImageConfiguration();
   const [locationImageId, setLocationImageId] = useState<string | null>(null);
   const date = useDate();
@@ -833,6 +836,14 @@ function AdventureEditor({ id }: { id: string }) {
                   value={draft.coverAssetId}
                   onChange={(id) => change('coverAssetId', id)}
                 />
+                <Button
+                  type="button"
+                  variant="secondary"
+                  onClick={() => setCoverGenerationOpen(true)}
+                >
+                  <ImagePlus size={16} />
+                  {coverText('title')}
+                </Button>
               </div>
             )}
             {step === 1 && (
@@ -1341,6 +1352,15 @@ function AdventureEditor({ id }: { id: string }) {
           </div>
         </fieldset>
       </form>
+      {coverGenerationOpen && (
+        <StoryCoverDialog
+          adventureId={isNew ? undefined : id}
+          title={draft.title}
+          synopsis={draft.synopsis}
+          onSelected={(assetId) => change('coverAssetId', assetId)}
+          onClose={() => setCoverGenerationOpen(false)}
+        />
+      )}
       {!isNew && locationImageId && (
         <LocationImageDialog
           adventureId={id}

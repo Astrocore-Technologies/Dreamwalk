@@ -13,7 +13,7 @@ export function startState(preparation: StartPreparation | null, dispatchUncerta
   if (job.status === 'unknown') return 'unknown';
   if (['failed', 'rejected', 'stale', 'cancelled'].includes(job.status)) {
     // A failed provider response does not imply a released payment reservation.
-    return ['released', 'captured'].includes(job.sparkStatus ?? '') ? 'failed' : 'review';
+    return ['released', 'settled'].includes(job.sparkStatus ?? '') ? 'failed' : 'review';
   }
   return 'checking';
 }

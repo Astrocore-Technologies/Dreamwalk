@@ -301,7 +301,7 @@ export class ImageGenerationEngine {
       fail(401, 'UNAUTHORIZED', 'UNAUTHORIZED');
     if (input.studioLocationContext)
       await authorizeStudioLocationTx(c, this.assets, actorId, input, legacyFraming);
-    else if (input.heroPortraitContext) {
+    else if (input.heroPortraitContext || (input.storyCoverContext && !input.adventureId)) {
       // No persisted hero is created or modified. The authenticated actor owns this draft scope.
       // Quote, enqueue, dispatch and admission all recheck the active actor above.
     } else if (input.authoringContext) {
@@ -571,9 +571,10 @@ export class ImageGenerationEngine {
       minWidth: 1,
       minHeight: 1,
     });
-    const matches = input.heroPortraitContext
-      ? candidates.filter((item) => item.owned)
-      : candidates;
+    const matches =
+      input.heroPortraitContext || input.storyCoverContext
+        ? candidates.filter((item) => item.owned)
+        : candidates;
     if (matches.length && !input.declineReuse)
       return { decision: 'reuse', matches, charge: 0, providerCalls: 0 };
     this.liveGate(input);
@@ -961,6 +962,27 @@ export class ImageGenerationEngine {
     const row = (
       await this.db.query(
         `SELECT r.upload_id FROM art_asset_revisions r JOIN art_asset_families f ON f.id=r.family_id JOIN assets a ON a.id=r.upload_id WHERE r.id=$1 AND f.owner_id=$2 AND a.owner_id=$2 AND f.archived_at IS NULL AND r.metadata->>'kind'='portrait' AND NOT EXISTS(SELECT 1 FROM art_asset_takedowns t WHERE t.revision_id=r.id)`,
+        [revisionId, actorId],
+      )
+    )[0];
+    if (!row) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+    return { assetId: row.upload_id };
+  }
+  async storyCovers(actorId: string) {
+    return {
+      jobs: (
+        await this.db.query<Job>(
+          `SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits FROM image_generation_jobs WHERE actor_id=$1 AND input ? 'storyCoverContext' ORDER BY created_at DESC LIMIT 50`,
+          [actorId],
+        )
+      ).map((j) => this.dto(j)),
+    };
+  }
+  async storyCoverAsset(actorId: string, revisionId: string) {
+    z.uuid().parse(revisionId);
+    const row = (
+      await this.db.query(
+        `SELECT r.upload_id FROM art_asset_revisions r JOIN art_asset_families f ON f.id=r.family_id JOIN assets a ON a.id=r.upload_id WHERE r.id=$1 AND f.owner_id=$2 AND a.owner_id=$2 AND f.archived_at IS NULL AND r.metadata->>'kind'='background' AND NOT EXISTS(SELECT 1 FROM art_asset_takedowns t WHERE t.revision_id=r.id)`,
         [revisionId, actorId],
       )
     )[0];

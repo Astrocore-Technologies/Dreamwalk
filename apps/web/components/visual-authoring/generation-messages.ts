@@ -1,6 +1,27 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const generationMessages = {
+  checkingOutcome: [
+    'Результат или списание пока не подтверждены. Проверяем статус; повторная генерация отключена.',
+    'The result or charge is not confirmed yet. Checking status; repeat generation is disabled.',
+    'Результат або списання ще не підтверджено. Перевіряємо стан; повторну генерацію вимкнено.',
+  ],
+  jobExpired: ['Срок задания истёк.', 'The job expired.', 'Термін завдання минув.'],
+  characterArtwork: ['Графика персонажа', 'Character artwork', 'Графіка персонажа'],
+  loadingArtwork: ['Загрузка…', 'Loading…', 'Завантаження…'],
+  generate: ['Сгенерировать', 'Generate', 'Згенерувати'],
+  takeFromLibrary: ['Взять из библиотеки', 'Take from library', 'Взяти з бібліотеки'],
+  selectArtwork: ['Выбрать', 'Select', 'Обрати'],
+  emptyOwnedLibrary: [
+    'В вашей библиотеке пока нет подходящих изображений.',
+    'No compatible images in your library yet.',
+    'У вашій бібліотеці поки немає відповідних зображень.',
+  ],
+  generateConsent: [
+    'Нажимая «Сгенерировать», вы разрешаете этот запрос и использование выбранных референсов. Искры резервируются по показанной цене; автоматического повтора нет.',
+    'By choosing Generate, you authorize this request and use of the selected references. Sparks are reserved at the displayed price; there is no automatic retry.',
+    'Натискаючи «Згенерувати», ви дозволяєте цей запит і використання вибраних референсів. Іскри резервуються за показаною ціною; автоматичного повтору немає.',
+  ],
   releaseBlocked: [
     'Генерация сейчас недоступна. Проверьте баланс Искр и сообщение об ошибке.',
     'Generation is currently unavailable. Check your Sparks balance and the error message.',
