@@ -1,5 +1,7 @@
 'use client';
+import styles from './library-wallet.module.css';
 import { DreamsWalletSection, useDreamsText } from './dreams-wallet';
+import { useDreamsWallet } from '@/lib/use-dreams-wallet';
 import { useSparksWallet } from '@/lib/use-sparks-wallet';
 import { sparksBalanceMessages } from './sparks-balance';
 import { HeroPortraitControl } from './hero-portrait-control';
@@ -86,21 +88,14 @@ export function LibraryPage() {
     }
   }
   return (
-    <>
+    <div className={styles.library}>
       <PageHeading
-        eyebrow={tr('СОХРАНЕНО ДЛЯ ТЕБЯ')}
         title={tr('Моя библиотека')}
         description={tr(
           'Миры, к которым хочется вернуться. И истории, которым ещё предстоит случиться.',
         )}
-        action={
-          <ButtonLink href="/explore" variant="secondary">
-            {tr('Найти новый мир')}
-            <ArrowUpRight size={16} />
-          </ButtonLink>
-        }
       />
-      <div className="filter-chips library-tabs">
+      <div className={styles.tabs} aria-label={tr('Моя библиотека')}>
         {[
           ['favorites', tr('Избранные миры'), data?.favorites.length],
           ['shared', tr('Приглашённые миры'), data?.shared?.length],
@@ -123,13 +118,22 @@ export function LibraryPage() {
         ].map(([key, label, count]) => (
           <button
             key={key}
-            className={tab === key ? 'active' : ''}
+            type="button"
+            aria-pressed={tab === key}
+            className={tab === key ? styles.active : ''}
             onClick={() => setTab(String(key))}
           >
             {label}
             <span>{count || 0}</span>
           </button>
         ))}
+      </div>
+      <div className={styles.actionBand}>
+        <ButtonLink href="/explore">
+          <Plus size={20} />
+          {tr('Найти новый мир')}
+          <ArrowUpRight size={20} />
+        </ButtonLink>
       </div>
       <ErrorBox message={error} retry={reload} />
       {tab === 'invitations' ? (
@@ -143,7 +147,7 @@ export function LibraryPage() {
           {invitations.loading ? (
             <Loading />
           ) : invitations.data?.length ? (
-            <div className="stack invitation-list">
+            <div className={`stack invitation-list ${styles.invitations}`}>
               {invitations.data.map((invite) => (
                 <Panel key={invite.id}>
                   <div className="section-heading invitation-heading">
@@ -267,10 +271,18 @@ export function LibraryPage() {
           />
         )
       ) : data?.drafts.length ? (
-        <div className="stack">
+        <div className={styles.drafts}>
           {data.drafts.map((a) => (
-            <Link className="draft-row panel" key={a.id} href={`/studio/adventures/${a.id}`}>
-              <Feather size={22} />
+            <Link
+              className={`panel ${styles.draft}`}
+              key={a.id}
+              href={`/studio/adventures/${a.id}`}
+            >
+              {a.coverAssetId ? (
+                <img className={styles.draftCover} src={assetUrl(a.coverAssetId)} alt="" />
+              ) : (
+                <Feather size={28} aria-hidden="true" />
+              )}
               <span>
                 <strong>{selectAdventureText(a, locale).title}</strong>
                 <small>{tr('Обновлено {date}', { date: date(a.updatedAt) })}</small>
@@ -288,7 +300,7 @@ export function LibraryPage() {
           action={<ButtonLink href="/studio/adventures/new">{tr('Создать историю')}</ButtonLink>}
         />
       )}
-    </>
+    </div>
   );
 }
 export function HeroesPage() {
@@ -538,6 +550,7 @@ export function WalletPage() {
   const { t: tr, locale } = useT();
   const { user } = useClient();
   const sparks = useSparksWallet(user?.id);
+  const dreams = useDreamsWallet(user?.id);
   const text = sparksBalanceMessages[locale];
   const labels =
     locale === 'ru'
@@ -571,33 +584,33 @@ export function WalletPage() {
           };
   const kinds: Record<string, string> = { ...labels, starter_grant: text.starter };
   return (
-    <>
-      <PageHeading
-        eyebrow={tr('НЕМНОГО МАГИИ НА БУДУЩЕЕ')}
-        title={dreamsText.title}
-        description={dreamsText.description}
-      />
-      <DreamsWalletSection />
-      <section className="balance-card" aria-label={text.available}>
-        <Sparkles size={24} />
-        <p>{text.available}</p>
-        <h2 aria-live="polite" data-testid="wallet-sparks-balance">
-          {sparks.data
-            ? formatSparkSubunits(sparks.data.availableSubunits, locale)
-            : sparks.unavailable
-              ? '—'
-              : '…'}
-          <span>✦</span>
-        </h2>
-        {sparks.data && (
-          <small>
-            {dreamsText.held}: {formatSparkSubunits(sparks.data.heldSubunits, locale, 'exact')}
-          </small>
-        )}
-      </section>
+    <div className={styles.wallet}>
+      <PageHeading title={dreamsText.title} description={dreamsText.description} />
+      <div className={styles.balanceBanner}>
+        <DreamsWalletSection part="balance" wallet={dreams} />
+        <section className="balance-card" aria-label={text.available}>
+          <Sparkles size={24} />
+          <p>{text.available}</p>
+          <h2 aria-live="polite" data-testid="wallet-sparks-balance">
+            {sparks.data
+              ? formatSparkSubunits(sparks.data.availableSubunits, locale)
+              : sparks.unavailable
+                ? '—'
+                : '…'}
+            <span>✦</span>
+          </h2>
+          {sparks.data && (
+            <small>
+              {dreamsText.held}: {formatSparkSubunits(sparks.data.heldSubunits, locale, 'exact')}
+            </small>
+          )}
+        </section>
+      </div>
       <ErrorBox message={sparks.unavailable ? text.unavailable : ''} retry={sparks.reload} />
       <Panel>
-        <h2>{tr('История операций')}</h2>
+        <h2>
+          {tr('Искры')} · {tr('История операций')}
+        </h2>
         {!sparks.data && !sparks.unavailable ? (
           <Loading />
         ) : sparks.data?.ledger.length ? (
@@ -617,7 +630,10 @@ export function WalletPage() {
                   return (
                     <tr key={entry.id}>
                       <td>
-                        {kinds[entry.kind]}
+                        <span className={styles.operation}>
+                          <Sparkles size={18} aria-hidden="true" />
+                          {kinds[entry.kind]}
+                        </span>
                         {entry.reason && <small className="cell-subtitle">{entry.reason}</small>}
                       </td>
                       <td>{date(entry.createdAt)}</td>
@@ -635,7 +651,8 @@ export function WalletPage() {
           <Empty title={tr('Здесь пока тихо')} description={labels.empty} />
         ) : null}
       </Panel>
-    </>
+      <DreamsWalletSection part="history" wallet={dreams} />
+    </div>
   );
 }
 export function NotificationsPage() {
