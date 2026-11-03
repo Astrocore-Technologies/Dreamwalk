@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { exposeDiscoveryFixtures } from './support/discovery-fixtures';
 
-for (const outcome of ['ready', 'failed', 'stale'] as const)
+for (const outcome of ['ready', 'failed', 'stale', 'queued', 'unknown'] as const)
   test(
     'start preparation ' + outcome + ': consent, reload and exactly-once dispatch',
     async ({ page }) => {
@@ -37,7 +37,9 @@ for (const outcome of ['ready', 'failed', 'stale'] as const)
       let dispatches = 0,
         quotes = 0,
         ready = false,
-        starts = 0;
+        starts = 0,
+        preparePosts = 0,
+        restoredCampaign = false;
       await page.route('**/api/v1/game/start-preparations**', async (route) => {
         const req = route.request(),
           path = new URL(req.url()).pathname;
@@ -45,11 +47,13 @@ for (const outcome of ['ready', 'failed', 'stale'] as const)
           id: preparationId,
           status: ready ? 'ready' : 'prepared',
           reused: false,
-          campaignId: null,
+          campaignId: restoredCampaign ? campaignId : null,
           jobs:
             dispatches > 0 && outcome === 'failed'
               ? [{ status: 'failed', error_code: 'PROVIDER_INCOMPLETE', sparkStatus: 'pending' }]
-              : [],
+              : dispatches > 0 && ['queued', 'unknown'].includes(outcome) && !ready
+                ? [{ status: outcome }]
+                : [],
         };
         if (path.endsWith('/quote')) {
           quotes++;
@@ -71,11 +75,12 @@ for (const outcome of ['ready', 'failed', 'stale'] as const)
           dispatches++;
           if (outcome === 'stale' && dispatches === 1)
             return route.fulfill({ status: 409, json: { code: 'GENERATION_POLICY_CHANGED' } });
-          ready = outcome !== 'failed';
+          ready = ['ready', 'stale'].includes(outcome);
           await new Promise((r) => setTimeout(r, 200));
           return route.fulfill({
-            json:
-              outcome !== 'failed'
+            json: ['queued', 'unknown'].includes(outcome)
+              ? { ...state, jobs: [{ status: outcome }] }
+              : outcome !== 'failed'
                 ? { ...state, status: 'ready' }
                 : {
                     ...state,
@@ -90,6 +95,7 @@ for (const outcome of ['ready', 'failed', 'stale'] as const)
           });
         }
         if (req.method() === 'POST') {
+          preparePosts++;
           const body = req.postDataJSON();
           expect(body.heroId).toBe(heroId);
           if (preparedOperation) expect(body.operationId).toBe(preparedOperation);
@@ -147,6 +153,34 @@ for (const outcome of ['ready', 'failed', 'stale'] as const)
         expect(dispatches).toBe(1);
         await page.getByRole('button', { name: 'Подтвердить и начать', exact: true }).click();
       }
+      if (outcome === 'queued' || outcome === 'unknown') {
+        await expect(page.getByRole('dialog')).toHaveCount(0);
+        const postsBeforeReload = preparePosts;
+        await page.reload();
+        await expect(
+          page
+            .getByRole('status')
+            .filter({
+              hasText:
+                outcome === 'queued' ? 'Подготовка игры' : 'Результат запроса пока неизвестен',
+            }),
+        ).toBeVisible();
+        expect(preparePosts).toBe(postsBeforeReload);
+        expect(dispatches).toBe(1);
+        expect(starts).toBe(0);
+        ready = true;
+        if (outcome === 'unknown')
+          await page.getByRole('button', { name: 'Проверить состояние', exact: true }).click();
+        await expect(page.getByRole('button', { name: 'Открыть игру', exact: true })).toBeVisible();
+        await expect(page).toHaveURL(new RegExp('/adventures/old-observatory'));
+        expect(starts).toBe(0);
+        expect(preparePosts).toBe(postsBeforeReload);
+        await page.getByRole('button', { name: 'Открыть игру', exact: true }).click();
+        await expect(page).toHaveURL(new RegExp('/game/' + campaignId + '$'));
+        expect(starts).toBe(1);
+        expect(dispatches).toBe(1);
+        return;
+      }
       if (outcome === 'failed') {
         await expect(
           page.getByRole('status').filter({ hasText: 'Подготовка не удалась.' }),
@@ -171,6 +205,21 @@ for (const outcome of ['ready', 'failed', 'stale'] as const)
       }
       await expect(page).toHaveURL(new RegExp('/game/' + campaignId + '$'));
       expect(dispatches).toBe(outcome === 'stale' ? 2 : 1);
+      expect(starts).toBe(1);
+      // Reopening and reloading the story can restore status, but cannot start or enter.
+      const postsBeforeRevisit = preparePosts;
+      await page.goto(path);
+      await expect(page.getByRole('button', { name: 'Открыть игру', exact: true })).toBeVisible();
+      expect(starts).toBe(1);
+      expect(preparePosts).toBe(postsBeforeRevisit);
+      restoredCampaign = true;
+      await page.reload();
+      await expect(page.getByRole('button', { name: 'Открыть игру', exact: true })).toBeVisible();
+      await expect(page).toHaveURL(new RegExp('/adventures/old-observatory'));
+      expect(starts).toBe(1);
+      expect(preparePosts).toBe(postsBeforeRevisit);
+      await page.getByRole('button', { name: 'Открыть игру', exact: true }).click();
+      await expect(page).toHaveURL(new RegExp('/game/' + campaignId + '$'));
       expect(starts).toBe(1);
     },
   );

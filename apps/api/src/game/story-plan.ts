@@ -22,7 +22,18 @@ const id = z
   .regex(/^[A-Za-z0-9_-]{1,80}$/)
   .refine((v) => !(v in Object.prototype));
 const point = z
-  .object({ x: z.number().int().min(1).max(30), y: z.number().int().min(1).max(30) })
+  .object({
+    x: z
+      .number()
+      .int()
+      .min(1)
+      .max(BATTLEMAP_CELLS - 1),
+    y: z
+      .number()
+      .int()
+      .min(1)
+      .max(BATTLEMAP_CELLS - 1),
+  })
   .strict();
 export const storyPlanSchema = z
   .object({
@@ -299,7 +310,7 @@ export function removeNullFields(v: unknown): unknown {
 }
 export const storyPlanDefinition: AuthoringTextDefinition = {
   purpose: 'story_plan',
-  version: 'authored-story-plan-v6-image-grounded',
+  version: 'authored-story-plan-v7-bounded-grid',
   schema: nullableStrict(z.toJSONSchema(storyPlanSchema)),
   instructions:
     'When omittedMapImages is present, those illustrations were NOT analyzed or sent. Produce a standalone text-based schematic, never claim it matches their terrain, landmarks or safe cells. ' +

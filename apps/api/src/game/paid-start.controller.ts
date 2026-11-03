@@ -11,6 +11,12 @@ export class PaidStartController {
   @Post() async prepare(@Req() req: Request, @Body() body: unknown) {
     return this.service.prepare((await this.auth.require(req)).id, body);
   }
+  @Get('by-operation/:operationId') async restore(
+    @Req() req: Request,
+    @Param('operationId') operationId: string,
+  ) {
+    return this.service.byOperation((await this.auth.require(req)).id, operationId);
+  }
   @Get(':id') async state(@Req() req: Request, @Param('id') id: string) {
     return this.service.state((await this.auth.require(req)).id, id);
   }

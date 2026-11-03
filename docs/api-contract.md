@@ -440,3 +440,13 @@ last receipt. Statuses include `dispatched`, `succeeded`, `over_context`, `stale
 `unknown` and `erased`. Stale evidence cannot authorize a changed model/body,
 policy, phase or a different request. Unknown outcomes retain liabilities and
 stop dispatch; changing policy cannot clear the stop.
+
+## Story start restoration
+
+`GET /api/v1/game/start-preparations/by-operation/:operationId` requires authentication
+and a UUID operation ID. It returns the requesting player's existing preparation and
+current job/payment status, or an empty result when that player has no such operation.
+It enforces current story access before returning an existing preparation. This lookup
+never prepares a story, quotes or dispatches generation, or creates a campaign.
+Reopening a story restores status with this read-only endpoint. Entering a restored
+ready/existing game requires the player's “Open game” click on that visit.
