@@ -1067,3 +1067,22 @@ restart; source ACLs, erasure and immutable body checks remain enforced.
 The API service was checked read-only through Railway. OAuth hides its variable
 values, so the live model/profile is not confirmed. No live calls or deployment were
 performed. Real visual accuracy remains unverified. See docs/runtime-map-vision.md.
+
+## Studio dashboard and editor composition (2026-11-03)
+
+Aligned the author workspace with references 14–22 using only each owned story's
+actual cover, title, status and updated time: latest-edit feature, cover-card grid,
+compact editor title/actions, all eight wrapped steps and a World cover context panel.
+Title and synopsis now lead the Basics form. Preview and Publication toolbar buttons
+only select their existing steps; save, moderation, private release, consent, lore,
+NPC, location/map, scene, boundaries and autosave conflict/error controls remain.
+No reference-only story, character, cover replacement or global-shell change was added.
+
+Added a synthetic-account browser journey for 1536/390 screenshots, RU/UK/EN,
+light/dark, all eight steps, persisted title/world, invalid-title Back/Stay and media
+Cancel. It checks that Preview/Publication navigation sends no mutation. Browser
+execution/screenshots and full API/database gates remain CI-only, not locally passed.
+Focused cover/metadata/autosave tests: 17 passed; focused lint and format passed.
+Current contracts and game-core builds passed; local web typecheck was killed twice
+by executor resource limits. Final remote-base synchronization preserves main's
+runtime-vision locale/progress additions; no local tests during synchronization.

@@ -217,63 +217,79 @@ function StudioTabs({ npcs = false, assets = false }: { npcs?: boolean; assets?:
 function StudioHome() {
   const date = useDate();
   const { t, taxonomy, locale } = useT();
+  const a = useAssetText();
   const items = useResource<Adventure[]>('/studio/adventures');
+  const stories = [...(items.data || [])].sort(
+    (left, right) => Date.parse(right.updatedAt) - Date.parse(left.updatedAt),
+  );
+  const recent = stories[0];
   return (
-    <>
-      <PageHeading
-        eyebrow={t('ТВОРЧЕСКАЯ МАСТЕРСКАЯ')}
-        title={t('Здесь начинаются миры')}
-        description={t(
-          'Превратите идею в место, куда захочется вернуться. Всё начинается с первого черновика.',
-        )}
-        action={
-          <ButtonLink href="/studio/adventures/new">
-            <Plus size={17} />
-            {t('Создать приключение')}
-          </ButtonLink>
-        }
-      />
-      <StudioTabs />
-      <div className={styles.studioIntro}>
-        <div className={styles.introIcon}>
-          <Feather size={32} />
-        </div>
-        <div>
-          <h2>{t('Ваша история. Ваши правила.')}</h2>
-          <p>
-            {t(
-              'Соберите мир, локации и персонажей. Сохраните личный черновик или отправьте его на проверку для каталога.',
-            )}
-          </p>
-        </div>
-        <Badge>{t('Ручные инструменты')}</Badge>
-      </div>
+    <section className={styles.dashboard}>
+      <h1>{t('Студия автора')}</h1>
+      <nav className={styles.dashboardActions} aria-label={t('Студия автора')}>
+        <ButtonLink href="/studio/adventures/new">
+          <Plus size={20} />
+          {t('Создать приключение')}
+        </ButtonLink>
+        <ButtonLink href="/studio/npcs" variant="ghost">
+          <Users size={20} />
+          {t('Библиотека NPC')}
+        </ButtonLink>
+        <ButtonLink href="/studio/assets" variant="ghost">
+          <ImagePlus size={20} />
+          {a('title')}
+        </ButtonLink>
+      </nav>
       <ErrorBox message={items.error} retry={items.reload} />
       {items.loading ? (
         <Loading />
-      ) : items.data?.length ? (
-        <div className={styles.adventureList}>
-          {items.data.map((a) => (
-            <Link href={`/studio/adventures/${a.id}`} key={a.id} className={styles.storyRow}>
-              <img src={coverUrl(a)} alt="" />
-              <div>
-                <Badge tone={a.status === 'published' ? 'green' : ''}>
-                  {t(statuses[a.status])}
-                </Badge>
-                <h2>{selectAdventureText(a, locale).title}</h2>
-                <p>
-                  {selectAdventureText(a, locale).synopsis || t('У этой истории ещё всё впереди.')}
-                </p>
-                <small>
-                  {taxonomy(a.genre)} {t(' · Версия ')}
-                  {a.version || '—'} {t(' · Изменено ')}
-                  {date(a.updatedAt)}
-                </small>
-              </div>
-              <ArrowRight size={22} />
-            </Link>
-          ))}
-        </div>
+      ) : recent ? (
+        <>
+          <article className={styles.recentStory}>
+            <img src={coverUrl(recent)} alt="" />
+            <div className={styles.recentContent}>
+              <p>{t('Недавно редактировали')}</p>
+              <h2>{selectAdventureText(recent, locale).title}</h2>
+              <Badge tone={recent.status === 'published' ? 'green' : ''}>
+                {t(statuses[recent.status])}
+              </Badge>
+              <p>
+                {t('Изменено')}: {date(recent.updatedAt)}
+              </p>
+              <ButtonLink href={`/studio/adventures/${recent.id}`}>
+                <Feather size={18} />
+                {t('Редактировать')}
+              </ButtonLink>
+            </div>
+          </article>
+          <h2 className={styles.collectionTitle}>
+            {t('Мои истории')} ({stories.length})
+          </h2>
+          <div className={styles.storyGrid}>
+            {stories.map((story) => (
+              <article key={story.id} className={styles.storyCard}>
+                <img src={coverUrl(story)} alt="" loading="lazy" />
+                <div className={styles.storyCardContent}>
+                  <Badge tone={story.status === 'published' ? 'green' : ''}>
+                    {t(statuses[story.status])}
+                  </Badge>
+                  <h3>{selectAdventureText(story, locale).title}</h3>
+                  <p>
+                    {taxonomy(story.genre)} {t(' · Версия ')}
+                    {story.version || '—'}
+                  </p>
+                  <small>
+                    {t('Изменено')}: {date(story.updatedAt)}
+                  </small>
+                  <ButtonLink href={`/studio/adventures/${story.id}`}>
+                    <Feather size={18} />
+                    {t('Редактировать')}
+                  </ButtonLink>
+                </div>
+              </article>
+            ))}
+          </div>
+        </>
       ) : (
         !items.error && (
           <Empty
@@ -290,13 +306,7 @@ function StudioHome() {
           />
         )
       )}
-      <div className="notice">
-        <ShieldCheck size={18} />
-        {t(
-          'Публичные истории проходят проверку. Игровые сессии и AI-генерация появятся на следующем этапе.',
-        )}
-      </div>
-    </>
+    </section>
   );
 }
 
@@ -589,34 +599,43 @@ function AdventureEditor({ id }: { id: string }) {
   if (resource.error) return <ErrorBox message={resource.error} retry={resource.reload} />;
   return (
     <>
-      <div className="row">
+      <header className={styles.editorHeader}>
         <Button
           variant="ghost"
+          aria-label={t('В мастерскую')}
           onClick={() => (dirty ? setConfirm('leave') : router.push('/studio'))}
         >
-          <ArrowLeft size={16} />
-          {t('В мастерскую')}
+          <ArrowLeft size={20} />
         </Button>
-        <Badge tone={status === 'published' ? 'green' : ''}>{t(statuses[status])}</Badge>
-        <span className="muted">
-          {dirty
-            ? t('Есть несохранённые изменения')
-            : isNew
-              ? t('Новая история')
-              : t('Все изменения сохранены')}
-        </span>
-      </div>
-      <PageHeading
-        eyebrow={t('РЕДАКТОР ПРИКЛЮЧЕНИЯ')}
-        title={draft.title || t('Новая история')}
-        description={t('Создайте мир, в который захочется шагнуть.')}
-        action={
+        <div className={styles.editorIdentity}>
+          <h1>{draft.title || t('Новая история')}</h1>
+          <Badge tone={status === 'published' ? 'green' : ''}>{t(statuses[status])}</Badge>
+        </div>
+        <div className={styles.editorActions}>
+          <Button variant="secondary" onClick={() => setStep(6)}>
+            <Eye size={17} />
+            {t('Просмотр')}
+          </Button>
+          <Button variant="secondary" onClick={() => setStep(7)}>
+            <Send size={17} />
+            {t('Публикация')}
+          </Button>
           <Button busy={busy} onClick={() => void save()}>
             <Save size={17} />
             {t('Сохранить черновик')}
           </Button>
-        }
-      />
+        </div>
+      </header>
+      <div className={styles.editorSaveStatus}>
+        <AutosaveStatus
+          status={autosave.status}
+          enabled={!isNew && hydration > 0}
+          retry={() => {
+            void autosave.flush().catch(() => {});
+          }}
+          reload={reloadDraft}
+        />
+      </div>
       {status === 'published' && (
         <div className="notice">
           {t(
@@ -633,19 +652,10 @@ function AdventureEditor({ id }: { id: string }) {
             aria-current={i === step ? 'step' : undefined}
             onClick={() => setStep(i)}
           >
-            <span>{i + 1}</span>
             {t(label)}
           </button>
         ))}
       </nav>
-      <AutosaveStatus
-        status={autosave.status}
-        enabled={!isNew && hydration > 0}
-        retry={() => {
-          void autosave.flush().catch(() => {});
-        }}
-        reload={reloadDraft}
-      />
       <ErrorBox message={error} />
       <form
         method="post"
@@ -680,23 +690,6 @@ function AdventureEditor({ id }: { id: string }) {
             {step === 0 && (
               <div className={styles.basicsGrid}>
                 <div className="stack">
-                  <Field
-                    label={t('Язык оригинала')}
-                    hint={t(
-                      'Пишите историю один раз. Если актуального перевода нет, читатели увидят оригинал.',
-                    )}
-                  >
-                    <Select
-                      value={draft.sourceLanguage}
-                      onChange={(e) =>
-                        change('sourceLanguage', e.target.value as AdventureDraft['sourceLanguage'])
-                      }
-                    >
-                      <option value="ru">{t('Русский')}</option>
-                      <option value="uk">{t('Українська')}</option>
-                      <option value="en">{t('English')}</option>
-                    </Select>
-                  </Field>
                   <Field label={t('Название приключения')}>
                     <Input
                       required
@@ -717,6 +710,23 @@ function AdventureEditor({ id }: { id: string }) {
                       onChange={(e) => change('synopsis', e.target.value)}
                       placeholder={t('Когда над городом погасла последняя звезда…')}
                     />
+                  </Field>
+                  <Field
+                    label={t('Язык оригинала')}
+                    hint={t(
+                      'Пишите историю один раз. Если актуального перевода нет, читатели увидят оригинал.',
+                    )}
+                  >
+                    <Select
+                      value={draft.sourceLanguage}
+                      onChange={(e) =>
+                        change('sourceLanguage', e.target.value as AdventureDraft['sourceLanguage'])
+                      }
+                    >
+                      <option value="ru">{t('Русский')}</option>
+                      <option value="uk">{t('Українська')}</option>
+                      <option value="en">{t('English')}</option>
+                    </Select>
                   </Field>
                   <div className="field-grid">
                     <Field label={t('Жанр')}>
@@ -846,29 +856,36 @@ function AdventureEditor({ id }: { id: string }) {
               </div>
             )}
             {step === 1 && (
-              <div className="stack">
-                <Field
-                  label={t('Мир и атмосфера')}
-                  hint={t('Где происходит история, какие у мира особенности?')}
-                >
-                  <Textarea
-                    rows={8}
-                    maxLength={12000}
-                    value={draft.content.world}
-                    onChange={(e) => content('world', e.target.value)}
-                  />
-                </Field>
-                <Field
-                  label={t('Правила мира')}
-                  hint={t('Что возможно, что запрещено и какие последствия важны?')}
-                >
-                  <Textarea
-                    rows={6}
-                    maxLength={8000}
-                    value={draft.content.rules}
-                    onChange={(e) => content('rules', e.target.value)}
-                  />
-                </Field>
+              <div className={styles.worldGrid}>
+                <div className="stack">
+                  <Field
+                    label={t('Мир и атмосфера')}
+                    hint={t('Где происходит история, какие у мира особенности?')}
+                  >
+                    <Textarea
+                      rows={8}
+                      maxLength={12000}
+                      value={draft.content.world}
+                      onChange={(e) => content('world', e.target.value)}
+                    />
+                  </Field>
+                  <Field
+                    label={t('Правила мира')}
+                    hint={t('Что возможно, что запрещено и какие последствия важны?')}
+                  >
+                    <Textarea
+                      rows={6}
+                      maxLength={8000}
+                      value={draft.content.rules}
+                      onChange={(e) => content('rules', e.target.value)}
+                    />
+                  </Field>
+                </div>
+                <aside className={styles.worldContext}>
+                  <img src={coverUrl(draft)} alt="" />
+                  <h3>{draft.title || t('Новая история')}</h3>
+                  <p>{t('Задайте атмосферу и законы вашего мира.')}</p>
+                </aside>
               </div>
             )}
             {step === 2 && (

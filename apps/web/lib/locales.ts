@@ -10,6 +10,11 @@ export const localeNames: Record<Locale, string> = {
 };
 export const intlLocales: Record<Locale, string> = { uk: 'uk-UA', en: 'en-GB', ru: 'ru-RU' };
 const messages: Record<string, Record<Locale, string>> = {
+  'Недавно редактировали': {
+    ru: 'Недавно редактировали',
+    en: 'Recently edited',
+    uk: 'Нещодавно редагували',
+  },
   ...gameMessages,
   ...directorMessages,
   'Анализ изображений карт пока не настроен. Администратору нужно проверить модель и стоимость.': {

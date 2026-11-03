@@ -29,3 +29,33 @@ test('public detail never renders the private author world even in the owner pre
   assert.doesNotMatch(publicUi, /a\.content(?:\?|)\.world/);
   assert.match(publicUi, /className="prose">\{text\.synopsis\}/);
 });
+
+test('Studio composition uses only owned story data and preserves all authoring steps', async () => {
+  const studio = await read('apps/web/components/studio.tsx');
+  assert.match(studio, /useResource<Adventure\[\]>\('\/studio\/adventures'\)/);
+  assert.match(studio, /Date\.parse\(right\.updatedAt\) - Date\.parse\(left\.updatedAt\)/);
+  assert.match(studio, /src=\{coverUrl\(recent\)\}/);
+  assert.match(studio, /src=\{coverUrl\(story\)\}/);
+  assert.match(studio, /src=\{coverUrl\(draft\)\}/);
+  for (const step of [
+    'Основное',
+    'Мир и правила',
+    'Локации',
+    'NPC',
+    'Стартовая сцена',
+    'Ограничения',
+    'Просмотр',
+    'Публикация',
+  ])
+    assert.ok(
+      studio
+        .slice(studio.indexOf('const steps ='), studio.indexOf('const newContent'))
+        .includes(step),
+    );
+  assert.match(studio, /onClick=\{\(\) => setStep\(6\)\}/);
+  assert.match(studio, /onClick=\{\(\) => setStep\(7\)\}/);
+  assert.match(studio, /reload=\{reloadDraft\}/);
+  assert.match(studio, /<StoryLorebookEditor/);
+  assert.match(studio, /<LocationMapIntent/);
+  assert.match(studio, /<StoryNpcEditor/);
+});
