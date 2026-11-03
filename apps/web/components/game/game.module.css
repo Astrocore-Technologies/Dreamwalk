@@ -809,3 +809,23 @@
 :global(html[data-theme='light'] .game-shell) .connection[data-connected='true'] {
   color: #276443;
 }
+
+.locationIllustration {
+  position: relative;
+  min-width: 0;
+}
+.locationArtwork {
+  display: grid;
+  place-items: center;
+  min-height: 20rem;
+  background: #171321;
+  border-radius: var(--radius-lg);
+  overflow: hidden;
+}
+.locationArtwork img {
+  display: block;
+  width: 100%;
+  height: auto;
+  max-height: 75vh;
+  object-fit: contain;
+}

@@ -15,24 +15,42 @@ export type VisibleArtBinding = {
   licenseLabel: string;
   imageFraming?: ImageFraming;
 };
+export type SceneIllustration = VisibleArtBinding & { mapId: string };
 /** Only the audience-filtered campaign endpoint. Never load an author's full manifest. */
 export function useCampaignArt(campaignId: string, mapId: string) {
-  const [art, setArt] = useState<VisibleArtBinding[]>([]);
+  const [result, setResult] = useState<{
+    campaignId: string;
+    mapId: string;
+    art: VisibleArtBinding[];
+    illustration: SceneIllustration | null;
+  }>({ campaignId, mapId, art: [], illustration: null });
   useEffect(() => {
     let active = true,
       pending = false;
-    setArt([]);
+    setResult({ campaignId, mapId, art: [], illustration: null });
     async function refresh() {
       if (pending) return;
       pending = true;
       try {
-        const result = await api<{ bindings: VisibleArtBinding[] }>(
-          `/asset-library/campaigns/${campaignId}/manifest`,
-        );
-        if (active) setArt(result.bindings.filter((entry) => !!artPreviewUrl(entry.url)));
+        const response = await api<{
+          bindings: VisibleArtBinding[];
+          sceneIllustration?: SceneIllustration | null;
+        }>(`/asset-library/campaigns/${campaignId}/manifest`);
+        if (active)
+          setResult({
+            campaignId,
+            mapId,
+            art: response.bindings.filter((entry) => !!artPreviewUrl(entry.url)),
+            illustration:
+              response.sceneIllustration?.mapId === mapId &&
+              response.sceneIllustration.slot === `map:${mapId}:background` &&
+              artPreviewUrl(response.sceneIllustration.url)
+                ? response.sceneIllustration
+                : null,
+          });
       } catch {
         // Withdrawal, takedown or lost campaign authorization must not retain stale visible art.
-        if (active) setArt([]);
+        if (active) setResult({ campaignId, mapId, art: [], illustration: null });
       } finally {
         pending = false;
       }
@@ -45,5 +63,7 @@ export function useCampaignArt(campaignId: string, mapId: string) {
       clearInterval(timer);
     };
   }, [campaignId, mapId]);
-  return art;
+  return result.mapId === mapId && result.campaignId === campaignId
+    ? result
+    : { campaignId, mapId, art: [], illustration: null };
 }
