@@ -22,6 +22,15 @@ export class ImageGenerationController {
   @Post('studio-locations/bind') async bindLocation(@Req() req: Request, @Body() body: unknown) {
     return this.images.bindStudioLocation((await this.auth.require(req)).id, body);
   }
+  @Get('hero-portraits') async heroPortraits(@Req() req: Request) {
+    return this.images.heroPortraits((await this.auth.require(req)).id);
+  }
+  @Get('hero-portraits/:revisionId/asset') async heroPortraitAsset(
+    @Req() req: Request,
+    @Param('revisionId') revisionId: string,
+  ) {
+    return this.images.heroPortraitAsset((await this.auth.require(req)).id, revisionId);
+  }
   @Post('quotes') async quote(@Req() req: Request, @Body() body: unknown) {
     return this.images.quote((await this.auth.require(req)).id, body);
   }

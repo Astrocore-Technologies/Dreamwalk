@@ -270,10 +270,17 @@ await test(
           );
           const narrativeOnly = await author.request('/studio/adventures', storyInput('public'));
           await author.request(`/studio/adventures/${narrativeOnly.id}/submit`, {});
-          assert.deepEqual(
-            await author.request(`/admin/adventures/${narrativeOnly.id}/playable-review`),
-            { versionId: null, sourceRevision: null, compiled: null },
+          const sourceReview = await author.request(
+            `/admin/adventures/${narrativeOnly.id}/playable-review`,
           );
+          assert.ok(sourceReview.versionId);
+          assert.equal(sourceReview.compiled, null);
+          assert.equal(sourceReview.preparationRequired, true);
+          assert.deepEqual(
+            sourceReview.sourceSummary.locations.map((l) => l.id),
+            ['courtyard'],
+          );
+          assert.ok(!JSON.stringify(sourceReview).includes('npcDefinitions'));
 
           const review = await author.request(
             `/admin/adventures/${publicStory.id}/playable-review`,

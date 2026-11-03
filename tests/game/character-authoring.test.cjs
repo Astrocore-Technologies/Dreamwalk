@@ -263,6 +263,10 @@ test('real freeze binds current complete author profile and lore into a new chec
       return { rows: rows.map((n) => ({ id: n.id })), rowCount: rows.length };
     if (sql.startsWith('SELECT id,data FROM npcs'))
       return { rows: structuredClone(rows), rowCount: rows.length };
+    if (sql.startsWith("SELECT package->'source'->'content'->'npcIds'"))
+      return {
+        rows: versions.length ? [{ ids: versions.at(-1).payload.source.content.npcIds }] : [],
+      };
     if (sql.startsWith('SELECT id FROM game_playable_versions'))
       return { rows: versions.filter((v) => v.checksum === p[3]).map((v) => ({ id: v.id })) };
     if (sql.startsWith('SELECT count(*)')) return { rows: [{ n: versions.length }] };

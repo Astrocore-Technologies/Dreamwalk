@@ -25,8 +25,7 @@ import { NarrativePreferences } from './narrative-preferences';
 import { GameCanvas } from './game-canvas';
 import { TurnControls } from './turn-controls';
 import { useTurnText } from './turn-messages';
-import { playerControlsAvailable, projectionTurnFence } from './turn-ui';
-import { LiveTestPanel } from '../live-test/live-test-panel';
+import { playerControlsAvailable } from './turn-ui';
 import { UnifiedStory, type StoryRecipient } from './unified-story';
 import { useAdvancedPlayLabel } from './play-messages';
 import { SponsorBudget } from './sponsor-budget';
@@ -213,8 +212,6 @@ function CampaignLobby() {
         </div>
       )}
       <p className={styles.footnote}>
-        {t('Прототип работает бесплатно на тестовых решениях NPC.')}
-        <br />
         {t('Это временные игровые изображения. Целевой стиль — рисованный 2D.')}
       </p>
     </div>
@@ -564,6 +561,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           onBusyChange={setStoryBusy}
           disabled={controlsDisabled}
           partyDisabled={!connected || game.busy}
+          worldGenerationAllowed={members.data?.ownerId === user?.id}
         />
       </div>
       <div className={styles.roomGrid}>
@@ -751,11 +749,6 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             command={game.command}
             disabled={controlsDisabled}
           />
-          <LiveTestPanel
-            campaignId={campaignId}
-            turnFence={projectionTurnFence(p)}
-            worldPhase={p.turn?.phase === 'world'}
-          />
           <details data-testid="game-advanced">
             <summary>{advancedPlayLabel}</summary>
             <SponsorBudget
@@ -788,8 +781,6 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             </section>
           </details>
           <p className={styles.footnote}>
-            {t('Прототип работает бесплатно на тестовых решениях NPC.')}
-            <br />
             {t('Это временные игровые изображения. Целевой стиль — рисованный 2D.')}
           </p>
         </aside>

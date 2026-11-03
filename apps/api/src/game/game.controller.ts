@@ -45,6 +45,42 @@ export class GameController {
   ) {
     return this.game.storyQuote(req, id, body);
   }
+  @Get('campaigns/:id/world-generation') worldGenerationStatus(
+    @Req() req: Request,
+    @Param('id') id: string,
+  ) {
+    return this.game.worldGenerationStatus(req, id);
+  }
+  @Post('campaigns/:id/world-generation/quote') worldGenerationQuote(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.worldGenerationQuote(req, id, body);
+  }
+  @Post('campaigns/:id/world-generation/consent') worldGenerationConsent(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.worldGenerationConsent(req, id, body);
+  }
+  @Post('campaigns/:id/turns/:turnId/replies/quote') storyReplyQuote(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('turnId') turnId: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.storyReplyQuote(req, id, turnId, body);
+  }
+  @Post('campaigns/:id/turns/:turnId/replies/consent') storyReplyConsent(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('turnId') turnId: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.storyReplyConsent(req, id, turnId, body);
+  }
   @Post('campaigns/:id/turns') storySubmit(
     @Req() req: Request,
     @Param('id') id: string,

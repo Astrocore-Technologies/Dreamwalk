@@ -1,0 +1,76 @@
+'use client';
+import { useCallback, useEffect, useRef, useState } from 'react';
+import { api, errorMessage } from '@/lib/client';
+import { ErrorBox } from '../ui';
+import { StoryReplyConfirmation } from './story-reply-confirmation';
+import { useStoryText } from './story-messages';
+
+/** Only separate, unquoted world work appears here; composer-covered replies are excluded by server. */
+export function WorldGenerationConfirmation({
+  campaignId,
+  scope,
+  disabled,
+}: {
+  campaignId: string;
+  scope: string;
+  disabled: boolean;
+}) {
+  const h = useStoryText();
+  const [status, setStatus] = useState<{
+    available: boolean;
+    pending: boolean;
+    unknown?: boolean;
+  } | null>(null);
+  const [error, setError] = useState('');
+  const epoch = useRef(0);
+  const polling = useRef(false);
+  const path = `/game/campaigns/${campaignId}/world-generation`;
+  const refresh = useCallback(async () => {
+    if (polling.current) return;
+    polling.current = true;
+    const stamp = epoch.current;
+    try {
+      const result = await api<{ available: boolean; pending: boolean; unknown?: boolean }>(path);
+      if (stamp === epoch.current) {
+        setStatus(result);
+        setError('');
+      }
+    } catch (err) {
+      if (stamp === epoch.current) {
+        // Keep an uncertain consent mounted; a failed status read must not erase
+        // its immutable retry operation or offer a fresh paid operation.
+        setError(errorMessage(err));
+      }
+    } finally {
+      polling.current = false;
+    }
+  }, [path]);
+  useEffect(() => {
+    epoch.current++;
+    setStatus(null);
+    void refresh();
+    const timer = setInterval(() => void refresh(), 2000);
+    return () => {
+      epoch.current++;
+      clearInterval(timer);
+    };
+  }, [refresh, scope]);
+  return (
+    <div data-testid="world-generation-confirmation">
+      <ErrorBox message={error} />
+      {status?.pending ? (
+        <p role="status">{h(status.unknown ? 'unknown' : 'worldPending')}</p>
+      ) : status?.available ? (
+        <StoryReplyConfirmation
+          campaignId={campaignId}
+          turnId="world"
+          endpoint={path}
+          worldBatch
+          scope={scope}
+          disabled={disabled}
+          onChanged={refresh}
+        />
+      ) : null}
+    </div>
+  );
+}

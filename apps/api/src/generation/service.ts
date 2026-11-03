@@ -1370,7 +1370,7 @@ export class GenerationAuthority {
       const turn = await this.campaign(c, campaignId, userId);
       const rows = (
         await c.query(
-          "SELECT r.id,r.npc_id,r.purpose,r.context,r.result_code,p.state AS permit_state FROM game_npc_decision_requests r LEFT JOIN live_test_text_permits p ON p.request_id=r.id WHERE r.campaign_id=$1 AND r.status IN ('queued','scheduled') ORDER BY CASE WHEN r.context ? 'turnOrder' THEN (r.context->>'turnOrder')::bigint ELSE 9223372036854775807 END,r.created_at,r.id LIMIT 16",
+          "SELECT r.id,r.npc_id,r.purpose,r.context,r.result_code,p.state AS permit_state,EXISTS(SELECT 1 FROM game_story_turns t WHERE t.id::text=r.context->>'storyTurnId' AND t.campaign_id=r.campaign_id AND t.context->'quotedReplies' @> jsonb_build_array(jsonb_build_object('request',jsonb_build_object('id',r.id::text)))) AS composer_bound FROM game_npc_decision_requests r LEFT JOIN live_test_text_permits p ON p.request_id=r.id WHERE r.campaign_id=$1 AND r.status IN ('queued','scheduled') ORDER BY CASE WHEN r.context ? 'turnOrder' THEN (r.context->>'turnOrder')::bigint ELSE 9223372036854775807 END,r.created_at,r.id LIMIT 16",
           [campaignId],
         )
       ).rows;
@@ -1402,6 +1402,7 @@ export class GenerationAuthority {
           }
           return {
             id: r.id,
+            composerBound: r.composer_bound === true,
             subjectId: r.npc_id,
             purpose: r.purpose,
             errorCode: estimateError ?? r.result_code ?? null,
@@ -1472,6 +1473,19 @@ export class GenerationAuthority {
         fail(413, 'CONTEXT_BUDGET_EXCEEDED', 'CONTEXT_BUDGET_EXCEEDED');
       if (!r || !['speech', 'plan', 'story_turn', 'narrative'].includes(r.purpose))
         fail(409, 'LIVE_REQUEST_UNAVAILABLE', 'LIVE_REQUEST_UNAVAILABLE');
+      if (
+        this.release &&
+        (
+          await c.query(
+            `SELECT 1 FROM game_story_turns t WHERE t.id::text=$2 AND t.campaign_id=$3
+          AND t.context->'quotedReplies' @> jsonb_build_array(jsonb_build_object('request',jsonb_build_object('id',$1::text)))
+         UNION ALL SELECT 1 FROM game_world_generation_batches b WHERE b.campaign_id=$3 AND b.state='accepted'
+          AND b.entries @> jsonb_build_array(jsonb_build_object('requestId',$1::text)) LIMIT 1`,
+            [requestId, r.context.storyTurnId ?? null, campaignId],
+          )
+        ).rowCount
+      )
+        fail(409, 'GENERATION_COMPOSER_CONSENT_REQUIRED', 'GENERATION_COMPOSER_CONSENT_REQUIRED');
       if (
         r.status === 'scheduled' &&
         !(

@@ -112,7 +112,6 @@ export function LocationImageDialog({
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
-    [reviewed, setReviewed] = useState(false),
     [mapId, setMapId] = useState(''),
     [libraryOpen, setLibraryOpen] = useState(false),
     [refreshVersion, setRefreshVersion] = useState(0),
@@ -139,7 +138,6 @@ export function LocationImageDialog({
     setPrepared(null);
     setSelected(null);
     setBound(null);
-    setReviewed(false);
     pending.current = null;
     void (async () => {
       await flush.current();
@@ -178,7 +176,6 @@ export function LocationImageDialog({
   }, [adventureId, locationId, refreshVersion]);
   async function choose(revision: ArtRevision) {
     setSelected(revision);
-    setReviewed(false);
     setError('');
     setNotice('');
   }
@@ -194,7 +191,7 @@ export function LocationImageDialog({
     }
   }
   async function bind() {
-    if (!prepared || !selected?.canReuse || !reviewed || locked.current) return;
+    if (!prepared || !selected?.canReuse || locked.current) return;
     locked.current = true;
     setBusy(true);
     setError('');
@@ -211,7 +208,6 @@ export function LocationImageDialog({
             fresh.playable.artRevision !== prepared.playable.artRevision))
       ) {
         setPrepared(fresh);
-        setReviewed(false);
         setError(m('stale'));
         return;
       }
@@ -237,7 +233,6 @@ export function LocationImageDialog({
       pending.current = null;
       if (stamp === epoch.current) {
         setBound(selected);
-        setReviewed(false);
         setNotice(m('saved'));
         setPrepared(await prepare());
         onSaved(!!attachmentMapId);
@@ -245,7 +240,6 @@ export function LocationImageDialog({
     } catch (e) {
       if (stamp === epoch.current) {
         setError(e instanceof ApiError && e.code === 'STALE_STATE' ? m('stale') : errorMessage(e));
-        setReviewed(false);
       }
     } finally {
       locked.current = false;
@@ -342,7 +336,6 @@ export function LocationImageDialog({
                     disabled={busy || playableDirty}
                     onChange={(e) => {
                       setMapId(e.target.value);
-                      setReviewed(false);
                     }}
                   >
                     <option value="">{m('illustration')}</option>
@@ -355,19 +348,11 @@ export function LocationImageDialog({
                 </Field>
                 {!prepared.playable.maps.length && <p>{m('noMap')}</p>}
                 {playableDirty && <p>{m('dirtyMap')}</p>}
-                <label className={styles.check}>
-                  <input
-                    type="checkbox"
-                    checked={reviewed}
-                    disabled={busy || !selected.canReuse}
-                    onChange={(e) => setReviewed(e.target.checked)}
-                  />
-                  {m('review')}
-                </label>
+                <p>{m('review')}</p>
                 <Button
                   type="button"
                   busy={busy}
-                  disabled={!reviewed || !selected.canReuse}
+                  disabled={!selected.canReuse}
                   onClick={() => void bind()}
                 >
                   {m('bind')}

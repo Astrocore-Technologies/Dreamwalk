@@ -656,7 +656,7 @@ export class VisualAuthoringService {
   private async own(c: PoolClient, owner: string, id: string, expected?: number) {
     const p = (
       await c.query<Project>(
-        'SELECT * FROM visual_authoring_projects WHERE id=$1 AND owner_id=$2 FOR UPDATE',
+        "SELECT * FROM visual_authoring_projects WHERE id=$1 AND owner_id=$2 AND project_purpose='authoring' FOR UPDATE",
         [z.uuid().parse(id), owner],
       )
     ).rows[0];
@@ -940,7 +940,7 @@ export class VisualAuthoringService {
   async list(owner: string) {
     return (
       await this.db.query<Project>(
-        'SELECT * FROM visual_authoring_projects WHERE owner_id=$1 ORDER BY created_at DESC LIMIT 100',
+        "SELECT * FROM visual_authoring_projects WHERE owner_id=$1 AND project_purpose='authoring' ORDER BY created_at DESC LIMIT 100",
         [owner],
       )
     ).map((p) => this.view(p));

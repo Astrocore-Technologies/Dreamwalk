@@ -17,7 +17,7 @@ import {
   UsersRound,
 } from 'lucide-react';
 import { selectAdventureText, selectNpcText, type Adventure } from '@dreamwalk/contracts';
-import { api, assetUrl, coverUrl, errorMessage, useClient, useResource } from '@/lib/client';
+import { assetUrl, coverUrl, errorMessage, useClient, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, Empty, ErrorBox, Loading } from '@/components/ui';
 import type { CampaignSummary } from '@/components/game/use-game';
@@ -170,16 +170,12 @@ export function HomePage() {
     setLaunchError('');
     let navigating = false;
     try {
-      const result = await api<{ campaignId: string }>('/game/campaigns', {
-        method: 'POST',
-        body: JSON.stringify({
-          playableVersionId: startVersion,
-          turnBased: true,
-          ...heroSelection.body,
-        }),
-      });
+      // All new starts use the same free-reuse / quoted preparation confirmation.
       if (launchGate.current.accepts(lease)) {
-        router.push(`/game/${result.campaignId}`);
+        router.push(
+          storyReturnPath(active.slug, heroSelection.heroId) ??
+            `/adventures/${encodeURIComponent(active.slug)}`,
+        );
         navigating = true;
       }
     } catch (error) {

@@ -33,7 +33,40 @@ export const storyMessages = {
   ],
   send: ['Отправить', 'Send', 'Надіслати'],
   confirm: ['Подтвердить ход', 'Confirm turn', 'Підтвердити хід'],
-  dismiss: ['Изменить', 'Edit', 'Змінити'],
+  dismiss: ['Отмена', 'Cancel', 'Скасувати'],
+  estimatedCost: ['Примерно {amount} Искр', 'About {amount} Sparks', 'Приблизно {amount} Іскор'],
+  freeTurn: ['Искры не списываются', 'No Sparks charge', 'Іскри не списуються'],
+  worldEstimate: [
+    'Мир готовит следующий ход. Подтверди стоимость дополнительных ответов.',
+    'The world is preparing its next turn. Review the cost of additional responses.',
+    'Світ готує наступний хід. Підтвердь вартість додаткових відповідей.',
+  ],
+  estimateWorld: ['Узнать стоимость', 'Estimate cost', 'Дізнатися вартість'],
+  worldPending: [
+    'Мир обдумывает ход…',
+    'The world is considering its turn…',
+    'Світ обмірковує хід…',
+  ],
+  replyEstimateChanged: [
+    'Ситуация изменилась. Обнови стоимость ответа — сообщение уже отправлено, повторно отправлять его не нужно.',
+    'The situation changed. Refresh the reply estimate — your message is already sent and will not be sent again.',
+    'Ситуація змінилася. Онови вартість відповіді — повідомлення вже надіслано, повторювати його не потрібно.',
+  ],
+  refreshEstimate: [
+    'Обновить стоимость ответа',
+    'Refresh reply estimate',
+    'Оновити вартість відповіді',
+  ],
+  providerEstimateOnly: [
+    'Оценка расходов провайдера в Искрах, без списания из кошелька.',
+    'Provider cost expressed in Sparks, without a wallet charge.',
+    'Оцінка витрат провайдера в Іскрах, без списання з гаманця.',
+  ],
+  estimatedHold: [
+    'Резерв: {amount} Искр. Спишем фактический расход, остаток вернём после сверки.',
+    'Hold: {amount} Sparks. We charge actual usage and release the remainder after reconciliation.',
+    'Резерв: {amount} Іскор. Спишемо фактичну витрату, решту повернемо після звірки.',
+  ],
   requestReserve: [
     'Резерв запроса: {amount} USD. Это плановая сумма; фактический счёт может отличаться.',
     'Request reserve: USD {amount}. This is a planning amount; the actual invoice may differ.',

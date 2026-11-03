@@ -327,8 +327,8 @@ test('Studio Locations visibly shows the real-image control, model and plain blo
   await page.setViewportSize({ width: 1440, height: 1000 });
   const mock = await setup(page);
   const control = page.locator(`[data-location-art="${mock.locationId}"]`);
-  await expect(control.getByRole('button', { name: 'Generate image', exact: true })).toBeVisible();
-  await expect(control.getByRole('button', { name: 'Generate image', exact: true })).toBeDisabled();
+  await expect(control.getByRole('button', { name: 'Estimate cost', exact: true })).toBeVisible();
+  await expect(control.getByRole('button', { name: 'Estimate cost', exact: true })).toBeDisabled();
   await expect(control).toContainText(mock.config.requestProfile.model);
   await expect(control).toContainText(
     'Generation is unavailable until a limit is authorized. An administrator can review the safeguards.',
@@ -377,35 +377,16 @@ test('synthetic canonical location image requires quote consent and separate fre
   await expect(generation.getByLabel('Artwork description', { exact: true })).toHaveValue(
     /Updated saved skylight/,
   );
-  await generation.getByLabel('License or terms name', { exact: true }).fill('Private test output');
-  await generation
-    .getByLabel('I confirm rights to this request and the selected owned references.', {
-      exact: true,
-    })
-    .check();
-  await generation
-    .getByRole('button', { name: 'Check library and prepare quote', exact: true })
-    .click();
-  const run = generation.getByRole('button', { name: 'Run one test', exact: true });
-  await expect(run).toBeDisabled();
+  await generation.getByRole('button', { name: 'Estimate cost', exact: true }).click();
+  const run = generation.getByRole('button', { name: 'Confirm and generate', exact: true });
+  await expect(run).toBeEnabled();
   expect(mock.calls.jobs).toBe(0);
-  await generation
-    .getByLabel('I confirm one test run at this quote. Regeneration is never automatic.', {
-      exact: true,
-    })
-    .check();
   await run.click();
   const selected = dialog.getByTestId('location-image-selection');
   await expect(selected).toBeVisible({ timeout: 15000 });
   const bind = selected.getByRole('button', { name: 'Save image for location', exact: true });
-  await expect(bind).toBeDisabled();
+  await expect(bind).toBeEnabled();
   expect(mock.calls.bind).toBe(0);
-  await selected
-    .getByLabel(
-      'I reviewed this image against the saved location description and want to use this revision.',
-      { exact: true },
-    )
-    .check();
   await bind.click();
   await expect(dialog.getByRole('heading', { name: 'Saved image', exact: true })).toBeVisible();
   expect(mock.calls.jobs).toBe(1);
@@ -434,12 +415,6 @@ test('a permitted library image can be stored and recovered for a location witho
     selected.getByRole('combobox', { name: 'Image attachment', exact: true }),
   ).toHaveValue('');
   await expect(selected).toContainText('There is no linked saved map yet.');
-  await selected
-    .getByLabel(
-      'I reviewed this image against the saved location description and want to use this revision.',
-      { exact: true },
-    )
-    .check();
   await selected.getByRole('button', { name: 'Save image for location', exact: true }).click();
   await expect(dialog.getByRole('heading', { name: 'Saved image', exact: true })).toBeVisible();
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
@@ -549,13 +524,7 @@ test('ordinary author invalid source edits block image work; explicit illustrati
   await expect(attachment).toBeEnabled();
   await attachment.selectOption('');
   const save = selected.getByRole('button', { name: 'Save image for location', exact: true });
-  await expect(save).toBeDisabled();
-  await selected
-    .getByLabel(
-      'I reviewed this image against the saved location description and want to use this revision.',
-      { exact: true },
-    )
-    .check();
+  await expect(save).toBeEnabled();
   await save.click();
   await expect(
     dialog.getByText('The image was saved for this location.', { exact: true }),

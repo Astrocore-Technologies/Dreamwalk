@@ -206,6 +206,32 @@ await test(
             operationId: op(),
             heroId: hero.id,
           });
+          const editedPortrait = await owner.request(
+            `/heroes/${hero.id}`,
+            { portraitAssetId: null },
+            'PATCH',
+          );
+          assert.equal(
+            editedPortrait.portraitAssetId,
+            null,
+            'explicit portrait edit must not be overwritten by the sprite package',
+          );
+          assert.equal(
+            editedPortrait.characterPackageVersionId,
+            pack.id,
+            'changing portrait does not discard the in-world sprite',
+          );
+          const notesOnly = await owner.request(
+            `/heroes/${hero.id}`,
+            { notes: 'PRIVATE_HERO_CANARY_UPDATED' },
+            'PATCH',
+          );
+          assert.equal(
+            notesOnly.portraitAssetId,
+            null,
+            'notes-only edits preserve the independent portrait',
+          );
+          assert.equal(notesOnly.characterPackageVersionId, pack.id);
           const { campaignId } = await owner.request('/game/campaigns', {
             template: 'observatory-v1',
             heroId: hero.id,

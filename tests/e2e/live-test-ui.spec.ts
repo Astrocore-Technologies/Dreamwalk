@@ -274,7 +274,7 @@ async function create(page: Page) {
   await page.getByRole('button', { name: 'Save external generation project', exact: true }).click();
   await expect(page.getByTestId('external-generation')).toBeVisible();
 }
-test('synthetic external stages require separate image consent and human review; mount never dispatches', async ({
+test('synthetic external stages require one image confirmation and explicit save; mount never dispatches', async ({
   page,
 }) => {
   await account(page);
@@ -301,22 +301,20 @@ test('synthetic external stages require separate image consent and human review;
   const approve = page.getByRole('button', { name: 'Approve this concept / plan', exact: true });
   await expect(approve).toBeDisabled();
   const concept = page.locator('[data-generation-role="concept"]');
-  await concept.getByRole('button', { name: 'Estimate this image', exact: true }).click();
+  await concept.getByRole('button', { name: 'Estimate cost', exact: true }).click();
   await expect(
     concept.getByText('Upper estimate in Sparks: 10.00 Sparks', { exact: true }),
   ).toBeVisible();
-  const dispatch = concept.getByRole('button', { name: 'Dispatch one request', exact: true });
-  await expect(dispatch).toBeDisabled();
+  const dispatch = concept.getByRole('button', { name: 'Confirm and generate', exact: true });
+  await expect(dispatch).toBeEnabled();
   expect(mock.calls.dispatch).toBe(0);
-  await concept.getByLabel(/I have rights to the specified references/).check();
   await dispatch.click();
   await expect(approve).toBeEnabled();
   expect(mock.calls.dispatch).toBe(1);
   await approve.click();
   const complete = page.getByRole('button', { name: 'Save reviewed package', exact: true });
-  await expect(complete).toBeDisabled();
+  await expect(complete).toBeEnabled();
   expect(mock.calls.dispatch).toBe(1);
-  await page.getByLabel(/I reviewed the face, outfit, transparency/).check();
   await complete.click();
   await expect.poll(() => mock.calls.complete).toBe(1);
   expect(mock.completeBody?.visualReview).toBe(true);
@@ -331,20 +329,17 @@ test('synthetic unknown image charge remains visible and cannot trigger regenera
   await page.goto('/studio/visuals');
   await create(page);
   const concept = page.locator('[data-generation-role="concept"]');
-  await concept.getByRole('button', { name: 'Estimate this image', exact: true }).click();
-  await concept.getByLabel(/I have rights to the specified references/).check();
-  await concept.getByRole('button', { name: 'Dispatch one request', exact: true }).click();
+  await concept.getByRole('button', { name: 'Estimate cost', exact: true }).click();
+  await concept.getByRole('button', { name: 'Confirm and generate', exact: true }).click();
   await expect(concept.getByText('PROVIDER_HTTP_403', { exact: true })).toBeVisible();
   await expect(
-    concept.getByRole('button', { name: 'Dispatch one request', exact: true }),
+    concept.getByRole('button', { name: 'Confirm and generate', exact: true }),
   ).toHaveCount(0);
   await page.reload();
   await page.getByRole('button', { name: 'Continue', exact: true }).click();
   await expect(concept.getByText('PROVIDER_HTTP_403', { exact: true })).toBeVisible();
   await page.getByRole('button', { name: 'Refresh stages', exact: true }).click();
-  await expect(
-    concept.getByRole('button', { name: 'Estimate this image', exact: true }),
-  ).toHaveCount(0);
+  await expect(concept.getByRole('button', { name: 'Estimate cost', exact: true })).toHaveCount(0);
   expect(mock.calls.dispatch).toBe(1);
   expect(mock.calls.unexpected).toBe(0);
 });
@@ -356,7 +351,7 @@ test('synthetic planning estimate is never shown as a free hard cap and cannot d
   await page.goto('/studio/visuals');
   await create(page);
   const concept = page.locator('[data-generation-role="concept"]');
-  await concept.getByRole('button', { name: 'Estimate this image', exact: true }).click();
+  await concept.getByRole('button', { name: 'Estimate cost', exact: true }).click();
   await expect(
     concept.getByText('Estimated Sparks equivalent: 4.59 Sparks', { exact: true }),
   ).toBeVisible();
@@ -367,16 +362,16 @@ test('synthetic planning estimate is never shown as a free hard cap and cannot d
   await expect(concept.locator('[data-sparks-equivalent-only]')).toContainText(
     'not wallet charges or wallet holds',
   );
-  await expect(concept.getByLabel(/I have rights to the specified references/)).toBeDisabled();
+  await expect(concept.getByLabel(/I have rights to the specified references/)).toHaveCount(0);
   await expect(
-    concept.getByRole('button', { name: 'Dispatch one request', exact: true }),
+    concept.getByRole('button', { name: 'Confirm and generate', exact: true }),
   ).toBeDisabled();
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
   await concept.screenshot({ path: test.info().outputPath('synthetic-estimate-blocked.png') });
   expect(mock.calls.dispatch).toBe(0);
   expect(mock.calls.unexpected).toBe(0);
 });
-test('synthetic world requests require individual consent and stale phase fences disable approval', async ({
+test('gameplay hides world-request diagnostics without granting background consent', async ({
   page,
 }) => {
   await account(page);
@@ -450,34 +445,18 @@ test('synthetic world requests require individual consent and stale phase fences
     throw new Error(`Unexpected synthetic test route ${path}`);
   });
   await page.goto(`/game/${id}`);
-  const panel = page.getByTestId('live-test-panel');
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
-  await expect(panel).toBeVisible();
+  await expect(page.getByTestId('live-test-panel')).toHaveCount(0);
+  await expect(page.getByTestId('release-generation-panel')).toHaveCount(0);
+  await expect(page.getByRole('button', { name: 'Check world requests', exact: true })).toHaveCount(
+    0,
+  );
   await expect.poll(() => isolatedGameSockets).toBeGreaterThan(0);
-  await panel.getByRole('button', { name: 'Check world requests', exact: true }).click();
-  const first = panel.locator(`[data-live-request="${requests[0].id}"]`),
-    second = panel.locator(`[data-live-request="${requests[1].id}"]`);
-  await expect(first).toBeVisible();
   expect(approvals).toBe(0);
-  await first
-    .getByLabel('I approve only this request up to the displayed amount.', { exact: true })
-    .check();
-  await first.getByRole('button', { name: 'Approve this request', exact: true }).click();
-  await expect(first.getByText('Authorized', { exact: true })).toBeVisible();
-  await expect(second.getByRole('checkbox')).not.toBeChecked();
-  expect(approvals).toBe(1);
   envelope.projection.turn.phaseEpoch++;
   await page.reload();
-  await panel.getByRole('button', { name: 'Check world requests', exact: true }).click();
-  await expect(
-    panel.getByText('The turn changed. Refresh requests first.', { exact: true }),
-  ).toBeVisible();
-  await expect(
-    panel
-      .locator(`[data-live-request="${requests[1].id}"]`)
-      .getByRole('button', { name: 'Approve this request', exact: true }),
-  ).toBeDisabled();
-  expect(approvals).toBe(1);
+  await expect(page.getByTestId('live-test-panel')).toHaveCount(0);
+  expect(approvals).toBe(0);
 });
 
 test('admin catalog hides generation controls without enabling provider calls', async ({

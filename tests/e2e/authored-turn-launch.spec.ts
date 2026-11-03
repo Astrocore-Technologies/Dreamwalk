@@ -39,8 +39,11 @@ for (const entry of ['home', 'detail'] as const) {
         (request) =>
           request.method() === 'POST' && request.url().endsWith('/api/v1/game/campaigns'),
       );
-      if (entry === 'home') await page.getByTestId('home-start-adventure').click();
-      else await page.getByRole('button', { name: 'Начать прохождение', exact: true }).click();
+      if (entry === 'home') {
+        await page.getByTestId('home-start-adventure').click();
+        await expect(page).toHaveURL(/\/adventures\/old-observatory/);
+      }
+      await page.getByRole('button', { name: 'Начать прохождение', exact: true }).click();
       expect((await created).postDataJSON()).toMatchObject({ turnBased: true, heroId: hero });
       await expect(page).toHaveURL(/\/game\/[a-f0-9-]+$/);
       await expect(page.locator('[data-turn-phase=player]')).toBeVisible();

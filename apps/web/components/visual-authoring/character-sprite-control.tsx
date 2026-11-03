@@ -25,9 +25,9 @@ const messages = {
     'Дозволити окремі дозволи на використання результату іншими авторами',
   ],
   review: [
-    'Я посмотрел изображение: внешность и полный рост подходят',
-    'I reviewed the image: identity and full body are suitable',
-    'Я переглянув зображення: зовнішність і повний зріст підходять',
+    'Проверь внешность и полный рост перед утверждением образа',
+    'Review identity and full body before approving this appearance',
+    'Перевір зовнішність і повний зріст перед затвердженням образу',
   ],
   approve: ['Утвердить образ', 'Approve appearance', 'Затвердити образ'],
   equip: ['Сохранить и привязать спрайт', 'Save and bind sprite', 'Зберегти та прив’язати спрайт'],
@@ -55,8 +55,7 @@ export function CharacterSpriteControl({
     text = (k: keyof typeof messages) => messages[k][i];
   const [appearance, setAppearance] = useState(''),
     [photo, setPhoto] = useState(false),
-    [share, setShare] = useState(false),
-    [review, setReview] = useState(false);
+    [share, setShare] = useState(false);
   const [project, setProject] = useState<GenerationProject | null>(null),
     [generation, setGeneration] = useState<GenerationState | null>(null),
     [session, setSession] = useState<LiveTestStatus | null>(null),
@@ -113,7 +112,6 @@ export function CharacterSpriteControl({
         })) as GenerationProject;
         if (epoch === stamp.current) {
           setProject(p);
-          setReview(false);
           setSaved(false);
         }
       } else if (project && kind === 'approve') {
@@ -187,20 +185,17 @@ export function CharacterSpriteControl({
             onStateChange={keepGeneration}
             onBusyChange={keepBusy}
           />
-          <label>
-            <input type="checkbox" checked={review} onChange={(e) => setReview(e.target.checked)} />
-            {text('review')}
-          </label>
+          <p>{text('review')}</p>
           {project.status === 'concept' ? (
             <Button
               busy={busy}
-              disabled={!review || !admittedConcept(generation) || generating}
+              disabled={!admittedConcept(generation) || generating}
               onClick={() => void act('approve')}
             >
               {text('approve')}
             </Button>
           ) : (
-            <Button busy={busy} disabled={!review || generating} onClick={() => void act('equip')}>
+            <Button busy={busy} disabled={generating} onClick={() => void act('equip')}>
               {text('equip')}
             </Button>
           )}

@@ -91,7 +91,13 @@ await test('localized controlled and custom tags preserve originals and moderati
     await author.call(
       'POST',
       `/admin/adventures/${story.id}/moderate`,
-      { decision: 'approve', reason: 'Approve controlled custom tags' },
+      {
+        decision: 'approve',
+        reason: 'Approve controlled custom tags',
+        reviewedPlayableVersionId: (
+          await author.call('GET', `/admin/adventures/${story.id}/playable-review`)
+        ).versionId,
+      },
       201,
     );
     const approved = await anonymous.call('GET', `/adventures/${story.slug}`);

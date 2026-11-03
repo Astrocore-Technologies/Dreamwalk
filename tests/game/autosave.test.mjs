@@ -179,7 +179,7 @@ test('invalid edits made during an active save are retained and block the queued
   saver.dispose();
 });
 
-test('Studio lifecycle and builder actions flush the shared CAS writer before using saved state', async () => {
+test('Studio lifecycle and publication actions flush the shared CAS writer before using saved state', async () => {
   const { readFile } = await import('node:fs/promises');
   const source = await readFile(
     new URL('../../apps/web/components/studio.tsx', import.meta.url),
@@ -209,10 +209,7 @@ test('Studio lifecycle and builder actions flush the shared CAS writer before us
   assert.ok(publish.indexOf('if (!saved) return;') < publish.indexOf('/submit'));
   assert.doesNotMatch(publish, /JSON.stringify\(draft\)|\.\.\.draft/);
   assert.match(source, /JSON.stringify\(\{ \.\.\.value, expectedEditRevision: revision \}\)/);
-  assert.match(
-    source,
-    /<StoryPlayableBuilder\b[^>]*beforePrepare=\{autosave.flush\}[^>]*onApplied=\{refreshArtModeration\}/,
-  );
+  assert.doesNotMatch(source, /<StoryPlayableBuilder\b/);
   assert.match(source, /<PrivateRelease\b[^>]*beforePublish=\{autosave.flush\}/);
   assert.match(source, /resource.data !== acknowledged.current/);
   assert.match(source, /enabled: !isNew && hydration > 0/);

@@ -299,8 +299,9 @@ test(
         npcEditor.locator('.row > strong').filter({ hasText: /^Копия для этой истории$/ }),
       ).toBeVisible();
       await page.getByRole('button', { name: /Локации$/ }).click();
-      await page.getByRole('button', { name: 'Подготовить план', exact: true }).click();
-      await expect(page.getByText('Исходные данные готовы', { exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Подготовить план', exact: true })).toHaveCount(
+        0,
+      );
       // No quote or provider dispatch. Install only a validated deterministic playable fixture
       // in this disposable database, preserving real author location/NPC source IDs.
       const story = await owner.request(`/studio/adventures/${storyId}`);

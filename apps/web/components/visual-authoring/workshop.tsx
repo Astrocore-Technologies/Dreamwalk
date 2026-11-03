@@ -101,8 +101,7 @@ export function VisualWorkshop() {
   const live = useLiveTestStatus();
   const liveStatus = live.status;
   const [generationState, setGenerationState] = useState<GenerationState | null>(null);
-  const [generationBusy, setGenerationBusy] = useState(false),
-    [visualReview, setVisualReview] = useState(false);
+  const [generationBusy, setGenerationBusy] = useState(false);
 
   const m = useVisualText(),
     params = useSearchParams();
@@ -203,12 +202,6 @@ export function VisualWorkshop() {
     generationState?.projectRevision === project?.revision
       ? generationState
       : null;
-  const reviewKey = JSON.stringify(
-    generation?.items.map((item) => [item.role, item.revisionId, item.status, item.validation]),
-  );
-  useEffect(() => {
-    setVisualReview(false);
-  }, [reviewKey]);
   useEffect(() => {
     if (
       (liveStatus?.mode === 'owner' || liveStatus?.mode === 'release') &&
@@ -222,7 +215,6 @@ export function VisualWorkshop() {
     setGenerationMode(p.provider ?? 'fixture');
     setSpatialMode(p.planProvenance === 'deterministic-editable-template' ? 'manual' : 'ai');
     setGenerationState(null);
-    setVisualReview(false);
     playback.current.forEach(clearTimeout);
     setProject(p);
     setPack(null);
@@ -696,21 +688,11 @@ export function VisualWorkshop() {
               {project.status === 'approved' && (
                 <>
                   <p>{m('approved')}</p>
-                  {external && (
-                    <label className={styles.check}>
-                      <input
-                        type="checkbox"
-                        checked={visualReview}
-                        disabled={!generation?.readyForReview || working}
-                        onChange={(e) => setVisualReview(e.target.checked)}
-                      />
-                      {g(project.kind === 'character' ? 'reviewCharacter' : 'reviewLocation')}
-                    </label>
-                  )}
+                  {external && <p>{g('review')}</p>}
                   <Button
                     type="button"
                     busy={working}
-                    disabled={external && (!generation?.readyForReview || !visualReview)}
+                    disabled={external && !generation?.readyForReview}
                     onClick={() =>
                       void run<Package>(
                         `/visual-authoring/projects/${project.id}/complete`,
