@@ -9,7 +9,17 @@ import { readStoryReturn, withStoryReturn, storyAfterAuth, authFormKey } from '.
 import { StoryReturnLink } from './story-return-link';
 import { useLaunchGate } from './game/use-launch-gate';
 import { useState, useEffect, type FormEvent } from 'react';
-import { ArrowRight, Fingerprint, Laptop, ShieldCheck, UserRound } from 'lucide-react';
+import {
+  ArrowRight,
+  Fingerprint,
+  Laptop,
+  ShieldCheck,
+  UserRound,
+  Mail,
+  LockKeyhole,
+  Eye,
+  EyeOff,
+} from 'lucide-react';
 import {
   api,
   useClient,
@@ -71,6 +81,7 @@ function AuthForm({
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
     [result, setResult] = useState('');
+  const [passwordVisible, setPasswordVisible] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const lease = authGate.begin();
@@ -124,7 +135,7 @@ function AuthForm({
     }
   }
   return (
-    <div className="auth-layout">
+    <div className="auth-layout" data-auth-mode={reset ? 'reset' : signup ? 'signup' : 'signin'}>
       <div className="auth-art">
         <div className="eyebrow">{tr('ПЕРВАЯ СТРАНИЦА ТВОЕЙ ИСТОРИИ')}</div>
         <h1>
@@ -191,39 +202,64 @@ function AuthForm({
               </Field>
             </>
           )}
-          <Field
-            label={localAlias ? localText.identifier : 'Email'}
-            hint={localAlias ? localText.hint : undefined}
-          >
-            <Input
-              name="email"
-              type={localAlias ? 'text' : 'email'}
-              autoComplete={localAlias ? 'username' : 'email'}
-              required
-              maxLength={254}
-              placeholder={localAlias ? 'admin' : 'you@example.com'}
-            />
-          </Field>
-          {!reset && (
-            <Field
-              label={tr('Пароль')}
-              hint={
-                signup
-                  ? tr('Не менее 10 символов. Не используй пароль от других сервисов.')
-                  : undefined
-              }
-            >
+          <div className="field auth-field">
+            <label className="auth-field-label" htmlFor="auth-email">
+              {localAlias ? localText.identifier : 'Email'}
+            </label>
+            <div className="auth-input-wrap">
+              <Mail aria-hidden="true" size={28} />
               <Input
-                aria-label={tr('Пароль')}
-                name="password"
-                type="password"
-                autoComplete={signup ? 'new-password' : 'current-password'}
+                id="auth-email"
+                name="email"
+                type={localAlias ? 'text' : 'email'}
+                autoComplete={localAlias ? 'username' : 'email'}
                 required
-                minLength={signup ? 10 : 1}
-                maxLength={128}
-                placeholder="••••••••••"
+                maxLength={254}
+                placeholder={localAlias ? localText.identifier : 'Email'}
+                aria-describedby={localAlias ? 'auth-local-hint' : undefined}
               />
-            </Field>
+            </div>
+            {localAlias && <small id="auth-local-hint">{localText.hint}</small>}
+          </div>
+          {!reset && (
+            <div className="field auth-field">
+              <label className="auth-field-label" htmlFor="auth-password">
+                {tr('Пароль')}
+              </label>
+              <div className="auth-input-wrap auth-password-wrap">
+                <LockKeyhole aria-hidden="true" size={28} />
+                <Input
+                  id="auth-password"
+                  name="password"
+                  type={passwordVisible ? 'text' : 'password'}
+                  autoComplete={signup ? 'new-password' : 'current-password'}
+                  required
+                  minLength={signup ? 10 : 1}
+                  maxLength={128}
+                  placeholder={tr('Пароль')}
+                  aria-describedby={signup ? 'auth-password-hint' : undefined}
+                />
+                <button
+                  type="button"
+                  className="auth-password-toggle"
+                  aria-label={passwordVisible ? tr('Скрыть пароль') : tr('Показать пароль')}
+                  aria-pressed={passwordVisible}
+                  aria-controls="auth-password"
+                  onClick={() => setPasswordVisible((visible) => !visible)}
+                >
+                  {passwordVisible ? (
+                    <EyeOff size={26} aria-hidden="true" />
+                  ) : (
+                    <Eye size={26} aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+              {signup && (
+                <small id="auth-password-hint">
+                  {tr('Не менее 10 символов. Не используй пароль от других сервисов.')}
+                </small>
+              )}
+            </div>
           )}
           <ErrorBox message={error} />
           {result && (
@@ -233,7 +269,6 @@ function AuthForm({
           )}
           <Button busy={busy}>
             {reset ? tr('Проверить восстановление') : signup ? tr('Создать аккаунт') : tr('Войти')}
-            <ArrowRight size={17} />
           </Button>
         </form>
         {!reset && !signup && (
@@ -242,10 +277,12 @@ function AuthForm({
           </Link>
         )}
         <div className="auth-switch">
-          {signup ? tr('Уже есть аккаунт?') : tr('Впервые здесь?')}{' '}
-          <Link href={withStoryReturn(signup ? '/auth/sign-in' : '/auth/sign-up', returnTo)}>
-            {signup ? tr('Войти') : tr('Создать аккаунт')}
-          </Link>
+          <span>
+            {signup ? tr('Уже есть аккаунт?') : tr('Впервые здесь?')}{' '}
+            <Link href={withStoryReturn(signup ? '/auth/sign-in' : '/auth/sign-up', returnTo)}>
+              {signup ? tr('Войти') : tr('Создать аккаунт')}
+            </Link>
+          </span>
         </div>
         <StoryReturnLink intent={returnTo} />
         <p className="legal-note">

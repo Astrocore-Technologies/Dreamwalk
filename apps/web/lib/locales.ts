@@ -12,6 +12,8 @@ export const intlLocales: Record<Locale, string> = { uk: 'uk-UA', en: 'en-GB', r
 const messages: Record<string, Record<Locale, string>> = {
   ...gameMessages,
   ...directorMessages,
+  'Показать пароль': { ru: 'Показать пароль', en: 'Show password', uk: 'Показати пароль' },
+  'Скрыть пароль': { ru: 'Скрыть пароль', en: 'Hide password', uk: 'Приховати пароль' },
   'Анализ изображений карт пока не настроен. Администратору нужно проверить модель и стоимость.': {
     ru: 'Анализ изображений карт пока не настроен. Администратору нужно проверить модель и стоимость.',
     en: 'Map image analysis is not configured yet. An administrator needs to review the model and pricing.',

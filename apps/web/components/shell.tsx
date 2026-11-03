@@ -1,4 +1,5 @@
 'use client';
+import { AuthMark } from './auth-mark';
 import { DreamsBalance, useDreamsText } from './dreams-wallet';
 import { SparksBalance } from './sparks-balance';
 import { useT } from '@/lib/i18n';
@@ -160,7 +161,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           )}
           {inAuth ? (
             <Link href="/" className="auth-brand">
-              <MoonStar size={30} aria-hidden="true" />
+              <AuthMark />
               Dreamwalk
             </Link>
           ) : inGame ? (
