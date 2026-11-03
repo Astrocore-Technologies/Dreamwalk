@@ -45,6 +45,7 @@ import {
   type ReleaseGenerationConfig,
 } from './config';
 import { ReleaseAdmission, releaseScope } from './release';
+import { reviewReleasePolicy, adoptReleasePolicy } from './release-policy';
 import { aggregateGenerationExposure } from './aggregate-exposure';
 import { fenceGenerationAdmission } from './scope-fence';
 export const GENERATION_SCOPE_ID = LIVE_TEXT.scopeId;
@@ -1376,11 +1377,16 @@ export class GenerationAuthority {
         )
       ).rows;
       const active = this.release
-        ? {
+        ? ((
+            await c.query(
+              "SELECT policy_revision,policy_hash,config_hash FROM live_test_sessions WHERE owner_id=$1 AND mode='release'",
+              [userId],
+            )
+          ).rows[0] ?? {
             policy_revision: 1,
             policy_hash: this.release.config.configFingerprint,
             config_hash: this.release.config.configFingerprint,
-          }
+          })
         : this.ownerConfig
           ? (
               await c.query(
@@ -2150,6 +2156,16 @@ export class GenerationAuthority {
     )[0];
     return row ? revisionReceipt(row) : { operationId, status: 'not_found' as const };
   }
+  async reviewReleasePolicy(adminId: string, actorId: string) {
+    if (!this.release)
+      fail(409, 'GENERATION_RELEASE_MODE_REQUIRED', 'GENERATION_RELEASE_MODE_REQUIRED');
+    return reviewReleasePolicy(this.db, this.release!, adminId, actorId);
+  }
+  async adoptReleasePolicy(adminId: string, actorId: string, input: unknown) {
+    if (!this.release)
+      fail(409, 'GENERATION_RELEASE_MODE_REQUIRED', 'GENERATION_RELEASE_MODE_REQUIRED');
+    return adoptReleasePolicy(this.db, this.release!, adminId, actorId, input);
+  }
   async amendPolicy(userId: string, input: unknown) {
     if (this.release) fail(403, 'OPERATOR_ONLY', 'OPERATOR_ONLY');
     await this.owner(userId);
@@ -2332,10 +2348,10 @@ export class GenerationAuthority {
           ),
         ),
         priorHeldReservations: 0,
-        policyRevision: 1,
-        policyHash: cfg.configFingerprint,
+        policyRevision: Number(row?.policy_revision ?? 1),
+        policyHash: row?.policy_hash ?? cfg.configFingerprint,
         configFingerprint: cfg.configFingerprint,
-        activeConfigFingerprint: cfg.configFingerprint,
+        activeConfigFingerprint: row?.config_hash ?? cfg.configFingerprint,
         text: { ...cfg.text, costEvidence: 'operator_estimate', reasoningEffort: 'none' },
       };
     });

@@ -445,3 +445,65 @@ test('map focus boundary retains internal menu/inventory focus and stops only on
       assert.equal(stops, disabled || planning ? 0 : 3);
     }
 });
+
+test('generation admission errors explain recovery in every locale', async () => {
+  const text = await readFile(new URL('../../apps/web/lib/client.tsx', import.meta.url), 'utf8');
+  const source = ts.createSourceFile(
+    'client.tsx',
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  const required = new Set([
+    'GENERATION_POLICY_CHANGED',
+    'GENERATION_PRICING_EXPIRED',
+    'STORY_PLANNER_UNAVAILABLE',
+  ]);
+  const walk = (node) => {
+    if (ts.isPropertyAssignment(node) && required.has(node.name.getText(source))) {
+      assert.ok(ts.isStringLiteral(node.initializer));
+      for (const locale of supportedLocales) {
+        const message = dictionaries[locale][node.initializer.text];
+        assert.ok(message, `${locale}: ${node.name.getText(source)}`);
+        assert.doesNotMatch(message, /Попробуйте ещё раз/);
+      }
+      required.delete(node.name.getText(source));
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(source);
+  assert.equal(required.size, 0);
+});
+
+test('admin policy review copy has translations and stays outside gameplay', async () => {
+  const text = await readFile(
+    new URL('../../apps/web/components/studio/release-policy-review.tsx', import.meta.url),
+    'utf8',
+  );
+  const source = ts.createSourceFile(
+    'release-policy-review.tsx',
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  const walk = (node) => {
+    if (ts.isStringLiteral(node) && /[А-Яа-яЁё]/u.test(node.text)) {
+      for (const locale of supportedLocales)
+        assert.ok(dictionaries[locale][node.text], `${locale}: ${node.text}`);
+    }
+    ts.forEachChild(node, walk);
+  };
+  walk(source);
+  const admin = await readFile(
+    new URL('../../apps/web/components/admin.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(admin, /policyTarget &&/);
+  const game = await readFile(
+    new URL('../../apps/web/components/game/adventure-launch.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.doesNotMatch(game, /ReleasePolicyReview|release-policy/);
+});
