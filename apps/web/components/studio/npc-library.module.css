@@ -1,0 +1,511 @@
+.library,
+.editor {
+  min-width: 0;
+}
+.libraryHero {
+  display: flex;
+  align-items: center;
+  min-height: 266px;
+  margin: -16px -16px 0;
+  padding: 34px 22px;
+  border-radius: 18px 18px 0 0;
+  overflow: hidden;
+  background:
+    linear-gradient(90deg, #171020b3, #1710201a 72%),
+    url('/images/npc-library-observatory.webp') center / cover;
+  color: #fff9f2;
+}
+.heroCopy {
+  width: min(630px, 60%);
+  text-shadow: 0 2px 14px #140b1f;
+}
+.heroCopy h1 {
+  margin: 0 0 14px;
+  font-size: clamp(28px, 3.3vw, 46px);
+  line-height: 1.15;
+  letter-spacing: -0.035em;
+}
+.heroCopy p {
+  margin: 0;
+  color: #e5d5f0;
+  font-size: clamp(14px, 1.35vw, 18px);
+  line-height: 1.55;
+  max-width: 560px;
+}
+.libraryToolbar {
+  display: flex;
+  gap: 20px;
+  align-items: center;
+  justify-content: space-between;
+  margin: 16px 0 26px;
+}
+.libraryToolbar :global(.tabs) {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 4px;
+  padding: 5px;
+  margin: 0;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+}
+.libraryToolbar :global(.tabs a) {
+  flex: 1;
+  text-align: center;
+  min-height: 44px;
+  padding: 10px 20px;
+  font-size: 14px;
+  border: 1px solid transparent;
+  border-radius: 10px;
+}
+.libraryToolbar :global(.tabs a.active) {
+  color: #241b2f;
+  background: linear-gradient(120deg, #f1d184, #dcac5e);
+  border-color: #efd195;
+  box-shadow: none;
+}
+.libraryToolbar > :global(.button) {
+  min-height: 48px;
+  flex-shrink: 0;
+}
+.cards {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.card {
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  overflow: hidden;
+  background: linear-gradient(135deg, var(--surface-soft), var(--surface));
+  transition:
+    border-color 180ms,
+    transform 180ms;
+}
+.card:hover {
+  border-color: var(--accent);
+  transform: translateY(-2px);
+}
+.cardPortrait {
+  position: relative;
+  aspect-ratio: 1.43;
+  background: var(--bg);
+  overflow: hidden;
+}
+.cardPortrait > img {
+  width: 100%;
+  height: 100%;
+  display: block;
+  object-fit: cover;
+  object-position: center 28%;
+}
+.cardBadge {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+}
+.cardBadge :global(.badge) {
+  background: #281b36ed;
+  color: #faf3ff;
+  border: 1px solid #d8b879;
+}
+.cardBody {
+  padding: 18px 20px 20px;
+  display: flex;
+  flex: 1;
+  flex-direction: column;
+  gap: 10px;
+}
+.cardBody h2 {
+  font-size: clamp(19px, 1.55vw, 25px);
+  line-height: 1.3;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.cardRole {
+  display: flex;
+  align-items: flex-start;
+  gap: 8px;
+  margin: 0;
+  color: var(--muted);
+  font-size: 15px;
+  overflow-wrap: anywhere;
+}
+.cardRole svg {
+  flex-shrink: 0;
+  margin-top: 3px;
+}
+.cardDescription {
+  color: var(--text);
+  font-size: 14px;
+  line-height: 1.6;
+  margin: 0 0 12px;
+  display: -webkit-box;
+  -webkit-line-clamp: 3;
+  -webkit-box-orient: vertical;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+}
+.cardEdit {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 46px;
+  margin-top: auto;
+  border: 1px solid var(--accent);
+  border-radius: 12px;
+  color: var(--accent);
+  font-size: 16px;
+  font-weight: 700;
+}
+.portraitPlaceholder {
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  width: 100%;
+  height: 100%;
+  gap: 18px;
+  padding: 20px;
+  color: var(--muted);
+  text-align: center;
+  background:
+    radial-gradient(ellipse at 50% 35%, var(--surface-hover), transparent 75%), var(--surface);
+}
+.empty :global(.empty) {
+  min-height: 295px;
+  background: color-mix(in srgb, var(--surface) 90%, transparent);
+}
+.editor > :global(.button) {
+  padding-left: 0;
+  margin-bottom: 5px;
+}
+.editorHeader {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 18px;
+  margin-bottom: 22px;
+}
+.editorHeader h1 {
+  margin: 0;
+  font-size: clamp(24px, 2.7vw, 36px);
+  line-height: 1.25;
+  letter-spacing: -0.03em;
+  overflow-wrap: anywhere;
+}
+.editorHeader h1 span {
+  font-size: 0.68em;
+  color: var(--muted);
+  font-weight: 500;
+}
+.editorHeader :global([data-autosave-status]) {
+  padding: 8px 14px;
+  border-radius: 20px;
+  max-width: 360px;
+  font-size: 12px;
+  margin: 0;
+}
+.editorHeader :global([data-autosave-status='saved']) {
+  white-space: nowrap;
+}
+.editorFields {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.identity {
+  display: grid;
+  grid-template-columns: minmax(260px, 0.85fr) minmax(0, 1.2fr);
+  gap: 22px;
+  align-items: stretch;
+}
+.portraitPanel {
+  display: flex;
+  flex-direction: column;
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  overflow: hidden;
+  background: var(--surface);
+  min-width: 0;
+}
+.editorPortrait {
+  min-height: 330px;
+  position: relative;
+  flex: 1;
+}
+.editorPortrait > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: contain;
+  background: var(--bg);
+}
+.editorPortrait .portraitPlaceholder {
+  position: absolute;
+  inset: 0;
+}
+.portraitActions {
+  padding: 14px;
+  text-align: center;
+  background: var(--surface-soft);
+}
+.portraitActions :global(.upload-button) {
+  justify-content: center;
+  border-color: var(--accent);
+  color: var(--accent);
+}
+.portraitActions small {
+  display: block;
+  margin-top: 5px;
+}
+.portraitActions > :global(.button) {
+  font-size: 12px;
+  min-height: 36px;
+  margin-top: 4px;
+}
+.identityFields {
+  display: grid;
+  align-content: start;
+  gap: 12px;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  background: linear-gradient(135deg, var(--surface-soft), var(--surface));
+}
+.identityFields :global(.field) {
+  display: grid;
+  grid-template-columns: 112px minmax(0, 1fr);
+  align-items: start;
+  column-gap: 14px;
+  row-gap: 4px;
+}
+.identityFields :global(.field) > label {
+  padding-top: 9px;
+  font-size: 14px;
+}
+.identityFields :global(.field) > small {
+  grid-column: 2;
+}
+.identityFields :global(.input) {
+  font-size: 14px;
+  min-height: 40px;
+  padding: 8px 12px;
+  background: color-mix(in srgb, var(--bg) 65%, transparent);
+}
+.identityFields textarea {
+  line-height: 1.5;
+}
+.details {
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  background: linear-gradient(135deg, var(--surface-soft), var(--surface));
+  margin-top: 22px;
+  padding: 16px 22px 22px;
+}
+.sectionTabs {
+  display: flex;
+  gap: 8px;
+  padding-bottom: 12px;
+  margin-bottom: 18px;
+  border-bottom: 1px solid var(--line);
+  flex-wrap: wrap;
+}
+.sectionTabs :global(.button) {
+  min-height: 44px;
+  font-size: 15px;
+  padding: 9px 20px;
+}
+.sectionTabs :global([aria-pressed='true']) {
+  color: #241b2f;
+  background: linear-gradient(120deg, #f1d184, #dcac5e);
+  border-color: #efd195;
+}
+.detailsColumns {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  gap: 28px;
+}
+.details h2 {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  font-size: 20px;
+  margin: 0 0 12px;
+}
+.details :global(.input) {
+  font-size: 14px;
+}
+.details textarea {
+  min-height: 142px;
+}
+.secrets {
+  padding-left: 28px;
+  border-left: 1px solid var(--line);
+  min-width: 0;
+}
+.secrets h2 svg {
+  color: var(--accent);
+}
+.privacyLabel {
+  display: flex;
+  align-items: center;
+  gap: 7px;
+  color: var(--muted);
+  margin: 0 0 15px;
+  font-size: 12px;
+}
+.privacyNote {
+  display: flex;
+  align-items: flex-start;
+  gap: 9px;
+  margin: 16px 2px;
+  font-size: 12px;
+  color: var(--muted);
+}
+.privacyNote svg {
+  flex-shrink: 0;
+  margin-top: 2px;
+}
+.formActions {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  justify-content: flex-end;
+  gap: 10px;
+  padding: 14px 0;
+}
+.formActions > span {
+  margin-right: auto;
+}
+.artwork {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+  margin-top: 16px;
+  padding: 14px 20px;
+}
+.artwork summary {
+  cursor: pointer;
+  color: var(--accent);
+  font-weight: 700;
+  min-height: 32px;
+}
+.artwork summary svg {
+  display: inline;
+  vertical-align: middle;
+  margin: 0 7px;
+}
+.artwork[open] summary {
+  margin-bottom: 14px;
+}
+@media (max-width: 1100px) {
+  .cards {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .libraryToolbar {
+    align-items: stretch;
+    gap: 12px;
+    flex-wrap: wrap;
+  }
+  .identity {
+    grid-template-columns: minmax(220px, 0.8fr) minmax(0, 1fr);
+    gap: 16px;
+  }
+  .identityFields :global(.field) {
+    grid-template-columns: 1fr;
+  }
+  .identityFields :global(.field) > small {
+    grid-column: 1;
+  }
+  .identityFields :global(.field) > label {
+    padding-top: 0;
+  }
+}
+@media (max-width: 700px) {
+  .libraryHero {
+    min-height: 260px;
+    margin: -10px -10px 0;
+    padding: 25px 18px;
+    align-items: flex-end;
+    background-position: 66% center;
+    background-image:
+      linear-gradient(0deg, #171020f5, #171020b3 50%, #1710201a),
+      url('/images/npc-library-observatory.webp');
+  }
+  .heroCopy {
+    width: 100%;
+  }
+  .heroCopy h1 {
+    font-size: 30px;
+  }
+  .libraryToolbar > :global(.button),
+  .libraryToolbar :global(.tabs) {
+    width: 100%;
+  }
+  .libraryToolbar :global(.tabs a) {
+    padding: 9px;
+    font-size: 12px;
+  }
+  .cards,
+  .identity,
+  .detailsColumns {
+    grid-template-columns: 1fr;
+  }
+  .editorHeader {
+    flex-direction: column;
+    align-items: flex-start;
+    gap: 10px;
+  }
+  .editorHeader h1 span {
+    display: block;
+    margin-top: 4px;
+  }
+  .editorHeader :global([data-autosave-status]) {
+    max-width: 100%;
+  }
+  .editorPortrait {
+    height: 360px;
+    flex: none;
+  }
+  .identityFields,
+  .details {
+    padding: 16px;
+  }
+  .sectionTabs {
+    gap: 5px;
+  }
+  .sectionTabs :global(.button) {
+    flex: 1;
+    padding: 9px;
+    font-size: 13px;
+  }
+  .sectionTabs svg {
+    width: 16px;
+  }
+  .secrets {
+    padding: 20px 0 0;
+    border-left: 0;
+    border-top: 1px solid var(--line);
+  }
+  .formActions > span {
+    flex-basis: 100%;
+  }
+  .formActions > :global(.button) {
+    flex: 1;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .card {
+    transition: none;
+  }
+  .card:hover {
+    transform: none;
+  }
+}
