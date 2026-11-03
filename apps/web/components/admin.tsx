@@ -1,4 +1,5 @@
 'use client';
+import { AdminDirector } from './studio/admin-director';
 import { PlayableReview } from './studio/playable-review';
 import { formatSparkSubunits, selectAdventureText, selectNpcText } from '@dreamwalk/contracts';
 import { readSparksWallet, type SparksWallet } from '@/lib/sparks-wallet';
@@ -83,6 +84,7 @@ const actionLabels: Record<string, string> = {
   'runtime.create': 'Runtime-конфигурация создана',
   'runtime.update': 'Runtime-конфигурация обновлена',
   'report.resolve': 'Жалоба рассмотрена',
+  'director_style.update': 'Стиль ведущего обновлён',
   'taxonomy.update': 'Справочник обновлён',
   'user.role': 'Роль пользователя изменена',
   'wallet.adjust': 'Баланс скорректирован',
@@ -936,6 +938,7 @@ function AdminModels() {
   }
   return (
     <>
+      <AdminDirector />
       <div className={styles.sectionHeading}>
         <Layers size={22} />
         <h2>{t('Поведенческие профили')}</h2>

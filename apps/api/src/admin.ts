@@ -1,3 +1,8 @@
+import {
+  DEFAULT_DIRECTOR_STYLE,
+  directorStyleUpdateSchema,
+} from '@dreamwalk/contracts/dist/director-style';
+import { DIRECTOR_STYLE_KEY, readDirectorStyle } from './ai/director-style';
 import { SPARK_RATE_VERSION } from '@dreamwalk/contracts';
 import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
@@ -31,6 +36,41 @@ export class AdminController {
     private npcAi: NpcAiService,
     @Inject(AssetReuseService) private art: AssetReuseService,
   ) {}
+  @Get('admin/director-style')
+  async directorStyle(@Req() req: Request) {
+    await this.auth.admin(req);
+    return readDirectorStyle(this.db);
+  }
+  @Patch('admin/director-style')
+  async editDirectorStyle(@Body() body: unknown, @Req() req: Request) {
+    const user = await this.auth.admin(req);
+    const { expectedRevision, ...style } = directorStyleUpdateSchema.parse(body);
+    return this.db.tx(async (c) => {
+      await c.query(
+        'INSERT INTO platform_settings(key,value) VALUES($1,$2) ON CONFLICT(key) DO NOTHING',
+        [DIRECTOR_STYLE_KEY, JSON.stringify(DEFAULT_DIRECTOR_STYLE)],
+      );
+      const previous = (
+        await c.query('SELECT value FROM platform_settings WHERE key=$1 FOR UPDATE', [
+          DIRECTOR_STYLE_KEY,
+        ])
+      ).rows[0].value;
+      if (previous.revision !== expectedRevision)
+        fail(409, 'DIRECTOR_STYLE_STALE', 'DIRECTOR_STYLE_STALE');
+      const next = { ...style, revision: expectedRevision + 1 };
+      await c.query('UPDATE platform_settings SET value=$2,updated_at=now() WHERE key=$1', [
+        DIRECTOR_STYLE_KEY,
+        JSON.stringify(next),
+      ]);
+      await c.query('INSERT INTO audit(actor_id,action,target_id,details) VALUES($1,$2,$3,$4)', [
+        user.id,
+        'director_style.update',
+        DIRECTOR_STYLE_KEY,
+        JSON.stringify({ previous, next }),
+      ]);
+      return next;
+    });
+  }
   @Get('admin/npc-ai/metrics')
   async npcAiMetrics(@Req() req: Request) {
     await this.auth.admin(req);

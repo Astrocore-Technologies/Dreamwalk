@@ -555,6 +555,8 @@ export class StoryTurnRuntime {
               mockProposal: createMockStoryTurnProposal(world, a.actorId, worldInput, turnId),
             },
             'story_turn',
+            undefined,
+            c,
           );
           const request: NpcDecisionRequest = {
             id: turnId,
@@ -776,6 +778,7 @@ export class StoryTurnRuntime {
           },
           'story_turn',
           input.targetNpcId,
+          c,
         );
         if (
           stored.budgetExceeded ||
@@ -991,6 +994,8 @@ export class StoryTurnRuntime {
                 ),
               },
               'story_turn',
+              undefined,
+              c,
             );
           } else fail(409, 'LIVE_REQUEST_UNAVAILABLE', 'LIVE_REQUEST_UNAVAILABLE');
           const quote = await this.ai.quote(

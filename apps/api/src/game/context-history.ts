@@ -1,3 +1,5 @@
+import type { PoolClient } from 'pg';
+import { withDirectorStyle } from '../ai/director-style';
 import type { GameState } from '@dreamwalk/contracts';
 import { buildNpcPublicSpeechContext } from '@dreamwalk/game-core';
 import type { Db } from '../db';
@@ -15,7 +17,16 @@ export async function extendContextHistory<T extends object>(
   context: T,
   purpose: AiPurpose,
   npcId?: string,
+  transaction?: PoolClient,
 ): Promise<T & { budgetExceeded?: boolean }> {
+  // Quoting may already hold a pool connection. Do not reserve a second one for settings.
+  const settingsDb = transaction
+    ? {
+        query: async (sql: string, values?: unknown[]) =>
+          (await transaction.query(sql, values)).rows,
+      }
+    : db;
+  context = await withDirectorStyle(settingsDb, context, purpose);
   const budget = ai.contextWindow();
   if (!budget) return context;
   const value = context as T & Record<string, unknown>;

@@ -217,9 +217,11 @@ test('director retrieval grows beyond hot turns, filters shared audience and exc
   );
   assert.equal(c.history.length, 160);
   assert.ok(Buffer.byteLength(JSON.stringify(c)) > 64000);
-  assert.match(queries[0].sql, /f.channel='say'/);
-  assert.match(queries[0].sql, /audience_ids @>/);
-  assert.deepEqual(queries[0].args[1], ['player', 'friend']);
+  const sharedHistory = queries.find((query) => query.sql.includes('game_story_feed'));
+  assert.match(sharedHistory.sql, /f.channel='say'/);
+  assert.match(sharedHistory.sql, /audience_ids @>/);
+  assert.deepEqual(sharedHistory.args[1], ['player', 'friend']);
+  assert.equal(c.directorStyle.style, 'natural');
   assert.equal(
     queries.some((q) => q.sql.includes('game_party_chat')),
     false,
