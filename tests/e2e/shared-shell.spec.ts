@@ -177,3 +177,28 @@ test('admin navigation, actual avatar, logout and isolated auth/game shells', as
   await expect(page.locator('.wallet-chip')).toHaveCount(0);
   await expect(page.locator('#main-sidebar a[href="/admin"]')).toHaveCount(0);
 });
+
+test('desktop heading utilities support semantic page roots', async ({ page }) => {
+  await fixture(page, true);
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  for (const tag of ['section', 'article']) {
+    await page.goto('/explore');
+    await expect(page.locator('.catalog-heading')).toBeVisible();
+    // CSS contract for sibling page roots, without changing product rendering.
+    await page.locator('.discovery-catalog').evaluate((element, tag) => {
+      const semantic = document.createElement(tag);
+      for (const attribute of element.attributes)
+        semantic.setAttribute(attribute.name, attribute.value);
+      semantic.append(...element.childNodes);
+      element.replaceWith(semantic);
+    }, tag);
+    const heading = page.locator('.catalog-heading');
+    const controls = page.locator('.topbar');
+    expect((await heading.boundingBox())!.y).toBeLessThan(50);
+    expect((await controls.boundingBox())!.y).toBeLessThan(50);
+    await expect(heading).toHaveCSS('padding-right', '500px');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+  }
+});

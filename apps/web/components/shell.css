@@ -159,7 +159,7 @@
 @media (min-width: 1400px) {
   .app-shell:not(.game-shell):not(.auth-shell)
     .workspace:has(
-      :is(.main-content > [data-locale], .main-content > [data-locale] > div)
+      :is(.main-content > [data-locale], .main-content > [data-locale] > :is(div, section, article))
         > :is(.page-heading, .catalog-heading, header:first-child)
         h1
     ) {
@@ -167,7 +167,7 @@
   }
   .app-shell:not(.game-shell):not(.auth-shell)
     .workspace:has(
-      :is(.main-content > [data-locale], .main-content > [data-locale] > div)
+      :is(.main-content > [data-locale], .main-content > [data-locale] > :is(div, section, article))
         > :is(.page-heading, .catalog-heading, header:first-child)
         h1
     )
@@ -182,7 +182,7 @@
     padding-top: 24px;
   }
   .app-shell:not(.game-shell):not(.auth-shell)
-    :is(.main-content > [data-locale], .main-content > [data-locale] > div)
+    :is(.main-content > [data-locale], .main-content > [data-locale] > :is(div, section, article))
     > :is(.page-heading, .catalog-heading, header:first-child):has(h1) {
     padding-right: 500px;
     min-height: 66px;

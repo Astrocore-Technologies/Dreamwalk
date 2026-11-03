@@ -57,6 +57,14 @@ test('flat canvas and larger rail are scoped away from auth/gameplay', async () 
   assert.match(css, /:focus-within/);
   assert.match(css, /@media \(max-width: 900px\)/);
   assert.match(css, /padding-right: 500px/);
-  assert.match(css, /\.main-content > \[data-locale\] > div/);
+  assert.match(css, /\.main-content > \[data-locale\] > :is\(div, section, article\)/);
   assert.match(css, /\.topbar \.login-link\s*\{\s*display: inline-flex/);
+});
+
+test('desktop utility band recognizes div, section and article page wrappers', async () => {
+  const css = await readFile(
+    new URL('../../apps/web/components/shell.css', import.meta.url),
+    'utf8',
+  );
+  assert.match(css, /> :is\(div, section, article\)/);
 });
