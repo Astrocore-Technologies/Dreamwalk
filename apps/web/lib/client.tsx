@@ -94,6 +94,11 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   return data as T;
 }
 export function useResource<T>(path: string | null) {
+  const { locale } = useT();
+  const readLocale =
+    path && /^\/(adventures(?:[/?]|$)|creators\/|library(?:[?]|$)|game\/campaigns\/)/.test(path)
+      ? locale
+      : null;
   const [data, setData] = useState<T | null>(null),
     [error, setError] = useState(''),
     [loading, setLoading] = useState(!!path),
@@ -119,7 +124,7 @@ export function useResource<T>(path: string | null) {
     return () => {
       active = false;
     };
-  }, [path, version]);
+  }, [path, version, readLocale]);
   const reload = useCallback(() => setVersion((v) => v + 1), []);
   return { data, error, loading, reload, setData };
 }

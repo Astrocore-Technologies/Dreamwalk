@@ -52,7 +52,13 @@ async function selectLocale(page: Page, locale: Locale) {
   await expect(page.locator('html')).toHaveAttribute('lang', locale);
 }
 
-async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
+async function setup(
+  page: Page,
+  locale: Locale,
+  loseFirstSubmission = false,
+  beforeQuoteReply?: () => Promise<void>,
+  beforeSubmissionReply?: () => Promise<void>,
+) {
   test.setTimeout(180_000);
   const handle = `locale_ui_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
   const registered = await page.request.post('/api/v1/auth/register', {
@@ -136,6 +142,7 @@ async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
       expect(input.turnFence).toEqual(turnFence);
       expect(input.expectedCanonRevision).toBe(initialFeed.canonRevision);
       quotes.push({ input, language: request.headers()['accept-language'] });
+      await beforeQuoteReply?.();
       return route.fulfill({
         json: {
           status: 'quoted',
@@ -163,6 +170,7 @@ async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
       expect(input.turnFence).toEqual(turnFence);
       expect(input.expectedCanonRevision).toBe(initialFeed.canonRevision);
       submissions.push({ input, language: request.headers()['accept-language'] });
+      await beforeSubmissionReply?.();
       if (loseFirstSubmission && submissions.length === 1) return route.abort('failed');
       const receipt: StoryTurnReceipt = {
         id: input.turnId,
@@ -246,5 +254,44 @@ test('an uncertain submission retry keeps its original operation and language ac
   expect(submissions[1].input).toEqual(submissions[0].input);
   expect(submissions[1].input.replyLocale).toBe('uk');
   expect(submissions.map((request) => request.language)).toEqual(['en', 'ru']);
+  noPaidRoutes();
+});
+
+test('language changes during pending quote and submit preserve their result and release busy controls', async ({
+  page,
+}) => {
+  let releaseQuote: (() => void) | undefined;
+  let releaseSubmit: (() => void) | undefined;
+  const { story, composer, quotes, submissions, noPaidRoutes } = await setup(
+    page,
+    'uk',
+    false,
+    () =>
+      new Promise<void>((resolve) => {
+        releaseQuote = resolve;
+      }),
+    () =>
+      new Promise<void>((resolve) => {
+        releaseSubmit = resolve;
+      }),
+  );
+  await composer('uk').fill('A pending locale-safe post');
+  await story.getByRole('button', { name: copy.uk.send, exact: true }).click();
+  await expect.poll(() => Boolean(releaseQuote)).toBe(true);
+  await selectLocale(page, 'en');
+  releaseQuote?.();
+  await expect(story.getByTestId('story-quote')).toBeVisible();
+  await expect(story.getByTestId('story-reply-language')).toContainText(copy.uk.name);
+  await story.getByRole('button', { name: copy.en.confirm, exact: true }).click();
+  await expect.poll(() => Boolean(releaseSubmit)).toBe(true);
+  await selectLocale(page, 'ru');
+  releaseSubmit?.();
+  await expect(composer('ru')).toBeEnabled();
+  await expect(composer('ru')).toHaveValue('');
+  expect(quotes).toHaveLength(1);
+  expect(submissions).toHaveLength(1);
+  expect(submissions[0].input).toMatchObject(quotes[0].input);
+  expect(submissions[0].input.replyLocale).toBe('uk');
+  expect(submissions[0].language).toBe('en');
   noPaidRoutes();
 });

@@ -1030,3 +1030,12 @@ checks therefore remain for CI. No paid model call or production mutation was us
 - Removed the passive illustration component and its explanation block. The existing map toolbar has a compact Actions button for keyboard access to all visible targets. No new warning banner, confirmation, paid generation, migration or configuration change.
 - This is a playable fallback, not image analysis: positions come from the existing shared game state and are not evidence of raster terrain understanding. KAN-5 retains real spatial grounding; KAN-14 tracks this visible regression.
 - Added coverage for backdrop isolation and withdrawal plus desktop/mobile/reload, visible player/NPC and movement/menu browser cases in UK/EN/RU. Exact browser execution must be verified in CI because local Chromium fails at sandbox socket creation; the escalation environment also fails before launch.
+### KAN-11: automatic translation preparation (2026-11-03)
+
+Prepared revision-aware, per-viewer cached localization for readable story metadata
+and already-visible game prose/labels, including selected-language HTTP and socket
+refresh, source preservation, strict output validation and deletion integration.
+Synthetic-only tests cover deduplication, stale translations, permission boundaries
+and language-switch races. See `automatic-translation.md` for scope and checks.
+Production dispatch remains disconnected pending the owner's payer, spend and
+content-sharing decision. This is not a claim of live automatic translation.
