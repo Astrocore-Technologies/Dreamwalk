@@ -101,6 +101,18 @@ test('four players retain the legacy realtime Observatory ending with owned hero
         .click();
       await expect(guest).toHaveURL(new RegExp(`/game/${id}$`));
       await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
+      // Each guest reads their hero/party while the next guest joins. This is
+      // normal user scrolling, not renderer manipulation: avoid three idle
+      // full-height WebGL scenes competing with the owner's active scene.
+      // The privacy and renderer-suspension assertions below remain unchanged.
+      await guest.setViewportSize({ width: 1440, height: 600 });
+      await guest
+        .getByTestId('campaign-hero')
+        .evaluate((element) => element.scrollIntoView({ block: 'start', behavior: 'instant' }));
+      await expect(guest.locator('[data-renderer-active]')).toHaveAttribute(
+        'data-renderer-active',
+        'false',
+      );
     }
     // Independent clients inspect only their own local disclosure state. Keep each
     // page's full assertion/open/close order, without serializing unrelated clients.
