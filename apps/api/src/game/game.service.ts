@@ -204,6 +204,7 @@ export class GameService implements OnModuleDestroy {
   // COMMIT visibility precedes the continuation that publishes its in-memory checkpoint.
   private publications = new Map<string, Promise<void>>();
   private pending = new Map<string, number>();
+  private scheduledAdvances = new Set<string>();
   private listeners = new Set<(campaignId: string) => void>();
   private npcJobs = new Set<string>();
   private npcTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -261,10 +262,16 @@ export class GameService implements OnModuleDestroy {
     });
     this.timer = setInterval(() => {
       for (const id of this.live.keys()) {
-        if ((this.pending.get(id) ?? 0) > 0) continue;
-        void this.serial(id, () => this.advance(id)).catch(() => {
-          /* Database failure freezes durable mutation; next tick retries. */
-        });
+        // Polling and heartbeats can keep the request queue nonempty indefinitely.
+        // Join that same FIFO rather than requiring an idle gap, but never queue
+        // more than one world step per campaign or catch up wall-clock ticks.
+        if (this.scheduledAdvances.has(id)) continue;
+        this.scheduledAdvances.add(id);
+        void this.serial(id, () => this.advance(id))
+          .catch(() => {
+            /* Database failure freezes durable mutation; next tick retries. */
+          })
+          .finally(() => this.scheduledAdvances.delete(id));
       }
     }, 50);
     this.timer.unref();
