@@ -57,4 +57,5 @@ test('flat canvas and larger rail are scoped away from auth/gameplay', async () 
   assert.match(css, /:focus-within/);
   assert.match(css, /@media \(max-width: 900px\)/);
   assert.match(css, /padding-right: 500px/);
+  assert.match(css, /\.main-content > \[data-locale\] > div/);
 });

@@ -149,11 +149,11 @@ test('interface locale switches and survives account login', async ({ page }) =>
         response.request().method() === 'PATCH' &&
         response.ok(),
     ),
-    page.locator('header').getByRole('combobox').selectOption('en'),
+    page.locator('.locale-select').selectOption('en'),
   ]);
   await expect(page.getByRole('heading', { name: 'Make yourself at home' })).toBeVisible();
   await page.reload();
-  await expect(page.locator('header').getByRole('combobox')).toHaveValue('en');
+  await expect(page.locator('.locale-select')).toHaveValue('en');
   await expect(page.getByRole('button', { name: 'Save preferences' })).toBeEnabled();
   await Promise.all([
     page.waitForResponse(
@@ -162,7 +162,7 @@ test('interface locale switches and survives account login', async ({ page }) =>
         response.request().method() === 'PATCH' &&
         response.ok(),
     ),
-    page.locator('header').getByRole('combobox').selectOption('uk'),
+    page.locator('.locale-select').selectOption('uk'),
   ]);
   await expect(page.getByRole('heading', { name: 'Налаштувати під себе' })).toBeVisible();
   await page.getByRole('button', { name: 'Вийти', exact: true }).click();
@@ -171,7 +171,7 @@ test('interface locale switches and survives account login', async ({ page }) =>
   await page.getByLabel('Пароль').fill(credentials.password);
   await page.getByRole('button', { name: 'Увійти', exact: true }).click();
   await expect(page).toHaveURL(/\/home$/);
-  await expect(page.locator('header').getByRole('combobox')).toHaveValue('uk');
+  await expect(page.locator('.locale-select')).toHaveValue('uk');
   await expect(page.locator('html')).toHaveAttribute('lang', 'uk');
 });
 

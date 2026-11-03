@@ -159,13 +159,17 @@
 @media (min-width: 1400px) {
   .app-shell:not(.game-shell):not(.auth-shell)
     .workspace:has(
-      .main-content > div > :is(.page-heading, .catalog-heading, header:first-child) h1
+      :is(.main-content > [data-locale], .main-content > [data-locale] > div)
+        > :is(.page-heading, .catalog-heading, header:first-child)
+        h1
     ) {
     position: relative;
   }
   .app-shell:not(.game-shell):not(.auth-shell)
     .workspace:has(
-      .main-content > div > :is(.page-heading, .catalog-heading, header:first-child) h1
+      :is(.main-content > [data-locale], .main-content > [data-locale] > div)
+        > :is(.page-heading, .catalog-heading, header:first-child)
+        h1
     )
     > .topbar {
     position: absolute;
@@ -178,8 +182,7 @@
     padding-top: 24px;
   }
   .app-shell:not(.game-shell):not(.auth-shell)
-    .main-content
-    > div
+    :is(.main-content > [data-locale], .main-content > [data-locale] > div)
     > :is(.page-heading, .catalog-heading, header:first-child):has(h1) {
     padding-right: 500px;
     min-height: 66px;
