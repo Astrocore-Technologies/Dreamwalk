@@ -1,5 +1,6 @@
 'use client';
 import { imageFramingEvidenceMatches, type ImageFraming } from '@dreamwalk/contracts';
+import { ImageConfirmation } from './image-confirmation';
 import { ImageFramingNotice } from '../visual-authoring/image-framing-notice';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, errorMessage, useResource, useClient } from '@/lib/client';
@@ -139,6 +140,7 @@ function GeneratedRevision({
 }
 export function ImageGeneration({
   adventureId,
+  heroPortrait,
   liveTestSessionId,
   authorization,
   preparedRequest,
@@ -148,7 +150,8 @@ export function ImageGeneration({
   onSelected,
   onAdmitted,
 }: {
-  adventureId: string;
+  adventureId?: string;
+  heroPortrait?: { draftId: string; prompt: string; title: string };
   liveTestSessionId?: string;
   authorization?: LiveTestStatus | null;
   preparedRequest?: PreparedStudioLocationRequest;
@@ -173,18 +176,15 @@ export function ImageGeneration({
   const modeChosen = useRef(false);
   const library = useResource<ArtRevision[]>('/asset-library');
   const [mode, setMode] = useState<'mock' | 'external'>(externalOnly ? 'external' : 'mock');
-  const [prompt, setPrompt] = useState(''),
-    [title, setTitle] = useState(''),
+  const [prompt, setPrompt] = useState(heroPortrait?.prompt ?? ''),
+    [title, setTitle] = useState(heroPortrait?.title ?? ''),
     [background, setBackground] = useState<'opaque' | 'transparent'>(
       spec.kind === 'sprite' || spec.kind === 'object' ? 'transparent' : 'opaque',
     ),
-    [license, setLicense] = useState(''),
+    [license, setLicense] = useState('Generated artwork; reuse requires owner permission'),
     [attribution, setAttribution] = useState(''),
     [allowReuse, setAllowReuse] = useState(false),
-    [attested, setAttested] = useState(false),
     [references, setReferences] = useState<string[]>([]),
-    [consent, setConsent] = useState(false),
-    [estimateRiskConsent, setEstimateRiskConsent] = useState(false),
     [dispatchUncertain, setDispatchUncertain] = useState(false),
     [quote, setQuote] = useState<Quote | null>(null),
     [matches, setMatches] = useState<ArtRevision[]>([]),
@@ -193,6 +193,7 @@ export function ImageGeneration({
     [jobsError, setJobsError] = useState(''),
     [jobs, setJobs] = useState<Job[]>([]),
     [now, setNow] = useState(Date.now());
+  const actionLock = useRef(false);
   const epoch = useRef(0),
     seen = useRef(new Set<string>()),
     quotedFingerprint = useRef<string | null>(null),
@@ -209,8 +210,9 @@ export function ImageGeneration({
     ['top-down', 'portrait', 'unrestricted'].includes(spec.camera);
   const request = {
     adventureId,
+    ...(heroPortrait ? { heroPortraitContext: { draftId: heroPortrait.draftId } } : {}),
     prompt: prompt.trim(),
-    title: title.trim(),
+    title: title.trim() || prompt.trim().slice(0, 120),
     kind: spec.kind,
     camera: spec.camera,
     tags: spec.tags,
@@ -221,7 +223,7 @@ export function ImageGeneration({
       basis: 'generated' as const,
       licenseLabel: license.trim(),
       attribution: attribution.trim(),
-      allowAuthorReuse: allowReuse,
+      allowAuthorReuse: heroPortrait ? false : allowReuse,
       attested: true as const,
     },
     mode: externalOnly ? ('external' as const) : mode,
@@ -246,7 +248,6 @@ export function ImageGeneration({
   const fingerprint = JSON.stringify({
     owner: user?.id,
     request,
-    attested,
     externalDispatchAllowed: dispatchAllowed,
     authorizationMode: grant?.mode,
     policyRevision: grant?.policyRevision,
@@ -280,8 +281,6 @@ export function ImageGeneration({
     setQuote(null);
     quotedFingerprint.current = null;
     setMatches([]);
-    setConsent(false);
-    setEstimateRiskConsent(false);
     operation.current = null;
     setBusy(false);
   }, [fingerprint]);
@@ -305,7 +304,9 @@ export function ImageGeneration({
       pending = true;
       try {
         const result = await api<{ jobs: Job[] }>(
-          `/image-generation/jobs?adventureId=${adventureId}`,
+          heroPortrait
+            ? '/image-generation/hero-portraits'
+            : `/image-generation/jobs?adventureId=${adventureId}`,
         );
         if (active) {
           const scopedJobs = preparedRequest
@@ -342,29 +343,27 @@ export function ImageGeneration({
   }, [
     user?.id,
     adventureId,
+    heroPortrait?.draftId,
     preparedRequest?.studioLocationContext.locationId,
     preparedRequest?.studioLocationContext.sourceHash,
   ]);
   const valid =
     supported &&
     !!prompt.trim() &&
-    !!title.trim() &&
     !!license.trim() &&
-    attested &&
     references.length <= referenceLimit &&
     (mode === 'mock'
       ? config.data?.mockAvailable
       : config.data?.externalEnabled &&
         imageQuoteAuthorizationAvailable(grant, authorizationId, now));
-  async function prepare(declineReuse = false) {
+  async function prepare(declineReuse = true) {
     if ((!dispatchAllowed || dispatchUncertain) && request.mode === 'external') return;
-    if (!valid || busy) return;
+    if (!valid || busy || actionLock.current) return;
+    actionLock.current = true;
     const generation = ++epoch.current;
     setBusy(true);
     setError('');
     setQuote(null);
-    setConsent(false);
-    setEstimateRiskConsent(false);
     operation.current = null;
     try {
       const result = await api<QuoteResponse>('/image-generation/quotes', {
@@ -392,15 +391,18 @@ export function ImageGeneration({
     } catch (err) {
       if (generation === epoch.current) setError(errorMessage(err));
     } finally {
+      actionLock.current = false;
       if (generation === epoch.current) setBusy(false);
     }
   }
-  async function run() {
+  async function run(confirmedQuoteId: string) {
     if ((!dispatchAllowed || dispatchUncertain) && request.mode === 'external') return;
     if (
+      actionLock.current ||
+      confirmedQuoteId !== quote?.id ||
       quotedFingerprint.current !== fingerprint ||
       quote?.mode !== mode ||
-      (quote.upperMicros === null && (!estimatedQuote || !estimateRiskConsent))
+      (quote.upperMicros === null && !estimatedQuote)
     )
       return;
     if (
@@ -408,12 +410,12 @@ export function ImageGeneration({
       !quoteBudgetAvailable ||
       !quote ||
       !imageFramingEvidenceMatches(preparedRequest ?? {}, quote) ||
-      !consent ||
       busy ||
       !Number.isFinite(Date.parse(quote.expiresAt)) ||
       Date.parse(quote.expiresAt) <= Date.now()
     )
       return;
+    actionLock.current = true;
     const generation = epoch.current;
     if (operation.current?.quoteId !== quote.id)
       operation.current = { quoteId: quote.id, id: crypto.randomUUID() };
@@ -432,7 +434,6 @@ export function ImageGeneration({
       if (generation === epoch.current) {
         setJobs((current) => [job, ...current.filter((value) => value.id !== job.id)]);
         setQuote(null);
-        setConsent(false);
         operation.current = null;
       }
     } catch (err) {
@@ -441,6 +442,7 @@ export function ImageGeneration({
         if (!(err instanceof ApiError) || !err.status) setDispatchUncertain(true);
       }
     } finally {
+      actionLock.current = false;
       if (generation === epoch.current) setBusy(false);
     }
   }
@@ -537,14 +539,6 @@ export function ImageGeneration({
             (mode === 'mock' ? !config.data?.mockAvailable : !config.data?.externalEnabled)
           }
         >
-          <Field label={a('name')}>
-            <Input
-              value={title}
-              readOnly={!!preparedRequest}
-              maxLength={120}
-              onChange={(event) => setTitle(event.target.value)}
-            />
-          </Field>
           <Field label={g('prompt')}>
             <Textarea
               aria-label={g('prompt')}
@@ -554,84 +548,88 @@ export function ImageGeneration({
               onChange={(event) => setPrompt(event.target.value)}
             />
           </Field>
-          <p>
-            {a(spec.kind)} · {a(spec.camera)}
-          </p>
-          <Field label={g('background')}>
-            <Select
-              aria-label={g('background')}
-              value={background}
-              disabled={spec.kind === 'sprite' || spec.kind === 'object'}
-              onChange={(event) => setBackground(event.target.value as 'opaque' | 'transparent')}
-            >
-              <option value="opaque">{g('opaque')}</option>
-              <option value="transparent">{g('transparent')}</option>
-            </Select>
-          </Field>
-          <Field label={a('license')}>
-            <Input
-              value={license}
-              maxLength={120}
-              onChange={(event) => setLicense(event.target.value)}
-            />
-          </Field>
-          <Field label={a('attribution')}>
-            <Input
-              value={attribution}
-              maxLength={240}
-              onChange={(event) => setAttribution(event.target.value)}
-            />
-          </Field>
-          <label>
-            <input
-              type="checkbox"
-              checked={allowReuse}
-              onChange={(event) => setAllowReuse(event.target.checked)}
-            />
-            {a('allowReuse')}
-          </label>
-          {!preparedRequest && (
-            <fieldset>
-              <legend>
-                {g(
-                  referenceLimit === 0 && mode === 'external'
-                    ? 'referencesUnavailable'
-                    : 'references',
-                )}
-              </legend>
-              <p>{g('derivative')}</p>
-              {library.data
-                ?.filter((revision) => revision.owned)
-                .map((revision) => (
-                  <label key={revision.id}>
-                    <input
-                      type="checkbox"
-                      checked={references.includes(revision.id)}
-                      disabled={
-                        !references.includes(revision.id) && references.length >= referenceLimit
-                      }
-                      onChange={(event) => {
-                        setReferences((current) =>
-                          event.target.checked
-                            ? [...current, revision.id]
-                            : current.filter((id) => id !== revision.id),
-                        );
-                        setAttested(false);
-                      }}
-                    />
-                    {revision.metadata.title} · {a('revision')} {revision.revision}
-                  </label>
-                ))}
-            </fieldset>
-          )}
-          <label>
-            <input
-              type="checkbox"
-              checked={attested}
-              onChange={(event) => setAttested(event.target.checked)}
-            />
-            {g('rights')}
-          </label>
+          <details>
+            <summary>{g('advanced')}</summary>
+            <Field label={a('name')}>
+              <Input
+                value={title}
+                readOnly={!!preparedRequest}
+                maxLength={120}
+                onChange={(event) => setTitle(event.target.value)}
+              />
+            </Field>
+            <p>
+              {a(spec.kind)} · {a(spec.camera)}
+            </p>
+            <Field label={g('background')}>
+              <Select
+                aria-label={g('background')}
+                value={background}
+                disabled={spec.kind === 'sprite' || spec.kind === 'object'}
+                onChange={(event) => setBackground(event.target.value as 'opaque' | 'transparent')}
+              >
+                <option value="opaque">{g('opaque')}</option>
+                <option value="transparent">{g('transparent')}</option>
+              </Select>
+            </Field>
+            <Field label={a('license')}>
+              <Input
+                value={license}
+                maxLength={120}
+                onChange={(event) => setLicense(event.target.value)}
+              />
+            </Field>
+            <Field label={a('attribution')}>
+              <Input
+                value={attribution}
+                maxLength={240}
+                onChange={(event) => setAttribution(event.target.value)}
+              />
+            </Field>
+            <label>
+              <input
+                type="checkbox"
+                disabled={!!heroPortrait}
+                checked={allowReuse}
+                onChange={(event) => setAllowReuse(event.target.checked)}
+              />
+              {a('allowReuse')}
+            </label>
+            {!preparedRequest && (
+              <fieldset>
+                <legend>
+                  {g(
+                    referenceLimit === 0 && mode === 'external'
+                      ? 'referencesUnavailable'
+                      : 'references',
+                  )}
+                </legend>
+                <p>{g('derivative')}</p>
+                {library.data
+                  ?.filter((revision) => revision.owned)
+                  .map((revision) => (
+                    <label key={revision.id}>
+                      <input
+                        type="checkbox"
+                        checked={references.includes(revision.id)}
+                        disabled={
+                          !references.includes(revision.id) && references.length >= referenceLimit
+                        }
+                        onChange={(event) => {
+                          setReferences((current) =>
+                            event.target.checked
+                              ? [...current, revision.id]
+                              : current.filter((id) => id !== revision.id),
+                          );
+                        }}
+                      />
+                      {revision.metadata.title} · {a('revision')} {revision.revision}
+                    </label>
+                  ))}
+              </fieldset>
+            )}
+          </details>
+          <small>{g('quoteRights')}</small>
           <Button type="submit" disabled={!valid || !dispatchAllowed || dispatchUncertain}>
             {g('quote')}
           </Button>
@@ -644,7 +642,11 @@ export function ImageGeneration({
             <div key={revision.id}>
               <p>{revision.metadata.title}</p>
               {onSelected && (
-                <Button type="button" disabled={busy} onClick={() => onSelected(revision)}>
+                <Button
+                  type="button"
+                  disabled={busy || (!!heroPortrait && !revision.owned)}
+                  onClick={() => onSelected(revision)}
+                >
                   {a('use')}
                 </Button>
               )}
@@ -691,42 +693,19 @@ export function ImageGeneration({
             Date.parse(quote.expiresAt) <= now ? (
             <p>{g('expires')}</p>
           ) : (
-            <>
-              {estimatedQuote && (
-                <label>
-                  <input
-                    type="checkbox"
-                    checked={estimateRiskConsent}
-                    disabled={busy || dispatchUncertain || !dispatchAllowed}
-                    onChange={(event) => setEstimateRiskConsent(event.target.checked)}
-                  />
-                  {g('estimateRiskConsent')}
-                </label>
-              )}
-              <label>
-                <input
-                  type="checkbox"
-                  disabled={busy || dispatchUncertain || !dispatchAllowed}
-                  checked={consent}
-                  onChange={(event) => setConsent(event.target.checked)}
-                />
-                {g(ownerMode ? 'externalConsent' : 'consent')}
-              </label>
-              <Button
-                type="button"
-                busy={busy}
-                disabled={
-                  !consent ||
-                  !quoteBudgetAvailable ||
-                  !dispatchAllowed ||
-                  dispatchUncertain ||
-                  (estimatedQuote && !estimateRiskConsent)
-                }
-                onClick={() => void run()}
-              >
-                {g(ownerMode ? 'runExternal' : 'run')}
-              </Button>
-            </>
+            <ImageConfirmation
+              estimated={estimatedQuote}
+              external={quote.mode === 'external'}
+              busy={busy}
+              disabled={!quoteBudgetAvailable || !dispatchAllowed || dispatchUncertain}
+              onConfirm={() => void run(quote.id)}
+              onCancel={() => {
+                epoch.current++;
+                setQuote(null);
+                quotedFingerprint.current = null;
+                operation.current = null;
+              }}
+            />
           )}
         </div>
       )}

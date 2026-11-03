@@ -3,6 +3,8 @@ import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError, useClient } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { useSparkCosts, SparkQuotePrice, SparkQuoteNotice, SparkReceiptCost } from './sparks-cost';
+import { ImageConfirmation } from '../assets/image-confirmation';
+import { useImageText } from '../assets/image-messages';
 import { Button, ErrorBox } from '../ui';
 import { RequestReserve } from '../live-test/request-reserve';
 import { artPreviewUrl } from '../assets/types';
@@ -33,20 +35,19 @@ export function ExternalGeneration({
   onBusyChange: (value: boolean) => void;
 }) {
   const g = useGenerationText(),
+    imageText = useImageText(),
     { s, amount: money } = useSparkCosts(),
     { locale } = useT(),
     { user } = useClient();
   const [state, setState] = useState<GenerationState | null>(null),
     [error, setError] = useState(''),
     [busy, setBusy] = useState(false);
-  const [consents, setConsents] = useState<Record<string, boolean>>({}),
-    [riskConsents, setRiskConsents] = useState<Record<string, boolean>>({}),
-    [semantics, setSemantics] = useState<Record<string, boolean>>({}),
-    [decline, setDecline] = useState<Record<string, boolean>>({});
+  const [dismissed, setDismissed] = useState<Record<string, boolean>>({});
   const [uncertain, setUncertain] = useState<string[]>([]),
     [now, setNow] = useState(Date.now());
   const epoch = useRef(0),
     inFlight = useRef(false),
+    cancelledQuotes = useRef(new Set<string>()),
     operations = useRef(new Map<string, string>());
   const refresh = useCallback(async () => {
     const stamp = ++epoch.current;
@@ -57,10 +58,9 @@ export function ExternalGeneration({
       if (stamp === epoch.current) {
         setState({ ...next, projectRevision: project.revision });
         setError('');
-        setConsents({});
-        setRiskConsents({});
-        setSemantics({});
         setUncertain([]);
+        setDismissed({});
+        cancelledQuotes.current.clear();
       }
     } catch (e) {
       if (stamp === epoch.current) setError(e instanceof ApiError ? e.code : 'NETWORK_ERROR');
@@ -79,10 +79,6 @@ export function ExternalGeneration({
     const timer = setInterval(() => setNow(Date.now()), 1000);
     return () => clearInterval(timer);
   }, []);
-  useEffect(() => {
-    setConsents({});
-    setRiskConsents({});
-  }, [session?.sessionId, session?.state, session?.policyRevision, session?.policyHash]);
   async function mutate(path: string, body: object, role: string) {
     if (disabled || inFlight.current) return;
     inFlight.current = true;
@@ -99,8 +95,6 @@ export function ExternalGeneration({
       });
       if (stamp === epoch.current) {
         if (path.endsWith('/quote')) operations.current.delete(key);
-        setConsents({});
-        setRiskConsents({});
         await refresh();
       }
     } catch (e) {
@@ -267,20 +261,11 @@ export function ExternalGeneration({
                     <strong>{match.metadata.title}</strong>
                     {match.owned && match.canReuse && (
                       <>
-                        <label className={styles.check}>
-                          <input
-                            type="checkbox"
-                            checked={!!semantics[match.id]}
-                            onChange={(e) =>
-                              setSemantics((v) => ({ ...v, [match.id]: e.target.checked }))
-                            }
-                          />
-                          {g('semantic')}
-                        </label>
+                        <p>{g('semantic')}</p>
                         <Button
                           type="button"
                           variant="secondary"
-                          disabled={disabled || busy || !semantics[match.id]}
+                          disabled={disabled || busy}
                           onClick={() =>
                             void mutate(
                               `/visual-authoring/projects/${project.id}/generation/reuse`,
@@ -300,46 +285,38 @@ export function ExternalGeneration({
                     )}
                   </div>
                 ))}
-                <label className={styles.check}>
-                  <input
-                    type="checkbox"
-                    checked={!!decline[role]}
-                    onChange={(e) => setDecline((v) => ({ ...v, [role]: e.target.checked }))}
-                  />
-                  {g('declineReuse')}
-                </label>
               </div>
             )}
             {!immutable && (
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={
-                  disabled ||
-                  busy ||
-                  !allowed ||
-                  referenceRequired ||
-                  uncertain.includes(role) ||
-                  (matches.length > 0 && !decline[role])
-                }
-                onClick={() =>
-                  void mutate(
-                    `/visual-authoring/projects/${project.id}/generation/quote`,
-                    {
-                      expectedRevision: project.revision,
+              <>
+                <small>{imageText('quoteRights')}</small>
+                <Button
+                  type="button"
+                  variant="secondary"
+                  disabled={
+                    disabled || busy || !allowed || referenceRequired || uncertain.includes(role)
+                  }
+                  onClick={() =>
+                    void mutate(
+                      `/visual-authoring/projects/${project.id}/generation/quote`,
+                      {
+                        expectedRevision: project.revision,
+                        role,
+                        declineReuse: true,
+                        liveTestSessionId:
+                          session?.mode === 'release'
+                            ? undefined
+                            : (session?.sessionId ?? undefined),
+                      },
                       role,
-                      ...(decline[role] ? { declineReuse: true } : {}),
-                      liveTestSessionId:
-                        session?.mode === 'release' ? undefined : (session?.sessionId ?? undefined),
-                    },
-                    role,
-                  )
-                }
-              >
-                {g('quote')}
-              </Button>
+                    )
+                  }
+                >
+                  {imageText('quote')}
+                </Button>
+              </>
             )}
-            {quote && !immutable && (
+            {quote && !immutable && !dismissed[quoteKey] && (
               <div className={styles.quote}>
                 {quote.sparks && <SparkQuotePrice quote={quote} />}
                 <SparkQuoteNotice quote={quote} />
@@ -368,52 +345,38 @@ export function ExternalGeneration({
                   {g('expires')}: {new Date(quote.expiresAt).toLocaleString(locale)}
                 </small>
                 {expired && <p>{g('expired')}</p>}
-                {estimatedQuote && (
-                  <label className={styles.check}>
-                    <input
-                      type="checkbox"
-                      checked={!!riskConsents[quoteKey]}
-                      disabled={disabled || busy || !allowed || expired || uncertain.includes(role)}
-                      onChange={(e) =>
-                        setRiskConsents((v) => ({ ...v, [quoteKey]: e.target.checked }))
-                      }
-                    />
-                    {g('estimateRiskConsent')}
-                  </label>
-                )}
-                <label className={styles.check}>
-                  <input
-                    type="checkbox"
-                    checked={!!consents[quoteKey]}
-                    disabled={
-                      disabled ||
-                      busy ||
-                      !allowed ||
-                      referenceRequired ||
-                      !dispatchableCost ||
-                      expired ||
-                      quote.mode !== 'external'
-                    }
-                    onChange={(e) => setConsents((v) => ({ ...v, [quoteKey]: e.target.checked }))}
-                  />
-                  {g(estimatedQuote ? 'estimateRequestConsent' : 'consent')}
-                </label>
-                <Button
-                  type="button"
+                <ImageConfirmation
+                  estimated={estimatedQuote}
                   busy={busy}
                   disabled={
                     disabled ||
                     !allowed ||
                     referenceRequired ||
                     !dispatchableCost ||
-                    !consents[quoteKey] ||
-                    (estimatedQuote && !riskConsents[quoteKey]) ||
                     expired ||
                     quote.mode !== 'external' ||
                     uncertain.includes(role) ||
                     (reserve ?? Infinity) > generationRemaining(session, 'image')
                   }
-                  onClick={() =>
+                  onCancel={() => {
+                    cancelledQuotes.current.add(quoteKey);
+                    setDismissed((current) => ({ ...current, [quoteKey]: true }));
+                  }}
+                  onConfirm={() => {
+                    if (
+                      disabled ||
+                      inFlight.current ||
+                      cancelledQuotes.current.has(quoteKey) ||
+                      Date.parse(quote.expiresAt) <= Date.now() ||
+                      !allowed ||
+                      referenceRequired ||
+                      !dispatchableCost ||
+                      expired ||
+                      quote.mode !== 'external' ||
+                      uncertain.includes(role) ||
+                      (reserve ?? Infinity) > generationRemaining(session, 'image')
+                    )
+                      return;
                     void mutate(
                       `/visual-authoring/projects/${project.id}/generation/dispatch`,
                       {
@@ -424,11 +387,9 @@ export function ExternalGeneration({
                         ...(estimatedQuote ? { estimateRiskConsent: true } : {}),
                       },
                       role,
-                    )
-                  }
-                >
-                  {g('dispatch')}
-                </Button>
+                    );
+                  }}
+                />
               </div>
             )}
           </article>

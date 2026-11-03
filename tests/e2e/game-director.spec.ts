@@ -193,7 +193,7 @@ test('two realtime players coauthor committed evolving scenes, travel and retain
       .getByLabel('Подтверждаю права на запрос и выбранные собственные референсы.', { exact: true })
       .check();
     await generation
-      .getByRole('button', { name: 'Проверить библиотеку и подготовить цену', exact: true })
+      .getByRole('button', { name: 'Узнать стоимость', exact: true })
       .click();
     await expect(generation.getByTestId('grounded-image-quote')).toBeVisible();
     await generation
