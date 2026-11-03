@@ -1,3 +1,4 @@
+import { localeSchema } from '@dreamwalk/contracts';
 import type { Server } from 'node:http';
 import type { Request } from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
@@ -7,7 +8,16 @@ import { ingressAllowed } from '../ingress';
 import { GameService } from './game.service';
 
 /** Every outbound projection rechecks session and membership. No global event payload is broadcast. */
-export function attachGameSockets(server: Server, game: GameService) {
+export function attachGameSockets(
+  server: Server,
+  game: GameService,
+  localize: (
+    req: Request,
+    id: string,
+    snapshot: Awaited<ReturnType<GameService['snapshot']>>,
+  ) => Promise<Awaited<ReturnType<GameService['snapshot']>>> = async (_req, _id, snapshot) =>
+    snapshot,
+) {
   const wss = new WebSocketServer({ noServer: true, maxPayload: 8192, perMessageDeflate: false });
   game.onShutdown(() => {
     for (const client of wss.clients) client.terminate();
@@ -17,6 +27,10 @@ export function attachGameSockets(server: Server, game: GameService) {
     const url = new URL(req.url ?? '/', 'http://localhost');
     if (url.pathname !== '/api/v1/game/socket') return;
     const id = url.searchParams.get('campaignId') ?? '';
+    // Browser WebSocket constructors cannot set Accept-Language. This validated
+    // output preference never changes identity, access or authoritative state.
+    const locale = localeSchema.safeParse(url.searchParams.get('locale'));
+    if (locale.success) req.headers['accept-language'] = locale.data;
     if (
       req.headers.origin !== config.WEB_ORIGIN ||
       !ingressAllowed(
@@ -56,7 +70,11 @@ export function attachGameSockets(server: Server, game: GameService) {
             if (busy || closed) return;
             busy = true;
             try {
-              const snap = await game.snapshot(req as Request, id, false),
+              const snap = await localize(
+                  req as Request,
+                  id,
+                  await game.snapshot(req as Request, id, false),
+                ),
                 serialized = JSON.stringify(snap.projection);
               if (snap.connectionEpoch !== access.connectionEpoch) {
                 ws.close(4001, 'Control superseded');

@@ -1,3 +1,6 @@
+import { resolveReplyLocale } from './game/reply-locale';
+import { CachedTranslations, PostgresTranslationCache } from './translation/service';
+import { TranslationInterceptor } from './translation/interceptor';
 import {
   activateRegisteredReleaseDeployment,
   releaseDeploymentId,
@@ -98,6 +101,12 @@ class Health {
     StoryNpcService,
     PrivateReleaseService,
     Db,
+    TranslationInterceptor,
+    {
+      provide: CachedTranslations,
+      inject: [Db],
+      useFactory: (db: Db) => new CachedTranslations(new PostgresTranslationCache(db)),
+    },
     {
       provide: GenerationAuthority,
       inject: [Db],
@@ -172,6 +181,7 @@ async function bootstrap() {
   });
   app.use(json({ limit: '256kb' }));
   app.useGlobalFilters(new Errors());
+  app.useGlobalInterceptors(app.get(TranslationInterceptor));
   const windows = new Map<
     string,
     {
@@ -229,7 +239,17 @@ async function bootstrap() {
     next();
   });
   app.enableShutdownHooks();
-  attachGameSockets(app.getHttpServer(), app.get(GameService));
+  attachGameSockets(app.getHttpServer(), app.get(GameService), async (req, id, snapshot) => {
+    const viewer = await app.get(Auth).require(req);
+    return app
+      .get(CachedTranslations)
+      .localize(
+        `/game/campaigns/${id}/snapshot`,
+        snapshot,
+        resolveReplyLocale(req, undefined, viewer.settings.language),
+        viewer.id,
+      );
+  });
   await app.listen(config.API_PORT, config.API_HOST);
   const generation = readGenerationConfig(process.env);
   if (generation.mode === 'release') {
