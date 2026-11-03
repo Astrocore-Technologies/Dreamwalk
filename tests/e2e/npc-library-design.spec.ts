@@ -207,7 +207,9 @@ for (const variant of [
     await waitForArt(page);
     await page.screenshot({ path: info.outputPath('npc-editor-populated.png'), fullPage: true });
     await editor.getByRole('button', { name: text.biography, exact: true }).click();
-    await expect(editor.getByLabel(text.biography, { exact: true })).toHaveValue(npc.biography);
+    await expect(editor.getByRole('textbox', { name: text.biography, exact: true })).toHaveValue(
+      npc.biography,
+    );
     await editor.getByRole('button', { name: text.speech, exact: true }).click();
     await expect(editor.getByLabel(text.greeting)).toHaveValue(npc.greeting);
     await editor.getByRole('button', { name: text.character, exact: true }).click();
