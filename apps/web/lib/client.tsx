@@ -6,6 +6,12 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import type { User, Adventure } from '@dreamwalk/contracts';
 export type { User, Adventure, Hero, Asset, Settings } from '@dreamwalk/contracts';
 const errorKeys: Record<string, string> = {
+  GENERATION_POLICY_CHANGED:
+    'Настройки генерации изменились. Администратору нужно подтвердить их обновление для аккаунта.',
+  GENERATION_PRICING_EXPIRED:
+    'Оценка стоимости временно недоступна: администратору нужно обновить тарифы генерации.',
+  STORY_PLANNER_UNAVAILABLE:
+    'Подготовка истории временно недоступна. Администратору нужно проверить настройки генерации.',
   STORY_MAP_INTENT_MISMATCH:
     'План не соответствует заданным размерам или пропорциям локации и не применён. Проверь описание и форму, затем при необходимости подготовь новый план.',
   IMAGE_SIZE_POLICY_REVIEW_REQUIRED:

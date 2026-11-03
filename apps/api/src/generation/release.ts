@@ -137,7 +137,7 @@ export class ReleaseAdmission {
         : {}),
       generationAuthorizationId: authorizationId,
       generationConfigFingerprint: this.config.configFingerprint,
-      generationPolicyRevision: 1,
+      generationPolicyRevision: Number((await this.active(c, authorizationId)).revision),
       generationPolicyHash: this.config.configFingerprint,
       releaseAggregateCapMicros: this.config.aggregateCapMicros,
     };
@@ -167,7 +167,7 @@ export class ReleaseAdmission {
     )
       fail(409, 'GENERATION_POLICY_CHANGED', 'GENERATION_POLICY_CHANGED');
     return {
-      revision: 1,
+      revision: Number(row.policy_revision),
       hash: this.config.configFingerprint,
       configFingerprint: this.config.configFingerprint,
     };

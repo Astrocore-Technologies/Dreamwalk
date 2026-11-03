@@ -34,6 +34,19 @@ export class GenerationController {
   @Post('policy/revisions') async amendPolicy(@Req() req: Request, @Body() body: unknown) {
     return this.live.amendPolicy((await this.auth.require(req)).id, body);
   }
+  @Get('release-policy/:actorId') async reviewReleasePolicy(
+    @Req() req: Request,
+    @Param('actorId') actorId: string,
+  ) {
+    return this.live.reviewReleasePolicy((await this.auth.admin(req)).id, actorId);
+  }
+  @Post('release-policy/:actorId/revisions') async adoptReleasePolicy(
+    @Req() req: Request,
+    @Param('actorId') actorId: string,
+    @Body() body: unknown,
+  ) {
+    return this.live.adoptReleasePolicy((await this.auth.admin(req)).id, actorId, body);
+  }
   @Post('claim') async claim(@Req() req: Request, @Body() body: unknown) {
     const userId = (await this.auth.require(req)).id;
     await this.live.claim(userId, body);

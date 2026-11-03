@@ -85,6 +85,7 @@ try {
     'integration-story-cover.test.mjs',
     'integration-release-budget.test.mjs',
     'integration-release-authority.test.mjs',
+    'integration-release-policy.test.mjs',
     'integration-release-npc.test.mjs',
     'release-cache-accounting.test.mjs',
     'release-unlimited-budget.test.mjs',
@@ -113,6 +114,7 @@ try {
   // Release fixtures also deliberately seed enormous historical spend or pending holds.
   // Give each financial-policy scenario its own database rather than editing its ledger.
   for (const isolatedFile of [
+    'integration-release-policy.test.mjs',
     'integration-release-npc.test.mjs',
     'release-cache-accounting.test.mjs',
     'release-unlimited-budget.test.mjs',
