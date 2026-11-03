@@ -1,5 +1,6 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { defaultDirectorCatalog } from '../../packages/contracts/src/director-style';
 import { exposeDiscoveryFixtures } from './support/discovery-fixtures';
 
 for (const outcome of ['ready', 'failed', 'stale', 'queued', 'unknown'] as const)
@@ -24,6 +25,9 @@ for (const outcome of ['ready', 'failed', 'stale', 'queued', 'unknown'] as const
       expect(hero.ok()).toBeTruthy();
       const heroId = (await hero.json()).id;
       await exposeDiscoveryFixtures(page);
+      await page.route('**/api/v1/game/directors', (route) =>
+        route.fulfill({ json: defaultDirectorCatalog() }),
+      );
       const details = await page.request.get('/api/v1/adventures/old-observatory?view=published');
       expect(details.ok()).toBeTruthy();
       const version = (await details.json()).playableVersionId;
@@ -45,6 +49,7 @@ for (const outcome of ['ready', 'failed', 'stale', 'queued', 'unknown'] as const
           path = new URL(req.url()).pathname;
         const state = {
           id: preparationId,
+          directorProfileId: 'coauthor',
           status: ready ? 'ready' : 'prepared',
           reused: false,
           campaignId: restoredCampaign ? campaignId : null,
@@ -98,6 +103,7 @@ for (const outcome of ['ready', 'failed', 'stale', 'queued', 'unknown'] as const
           preparePosts++;
           const body = req.postDataJSON();
           expect(body.heroId).toBe(heroId);
+          expect(body.directorProfileId).toBe('coauthor');
           if (preparedOperation) expect(body.operationId).toBe(preparedOperation);
           preparedOperation = body.operationId;
         }
@@ -106,7 +112,10 @@ for (const outcome of ['ready', 'failed', 'stale', 'queued', 'unknown'] as const
       await page.route('**/api/v1/game/campaigns', async (route) => {
         if (route.request().method() !== 'POST') return route.continue();
         starts++;
-        expect(route.request().postDataJSON().startPreparationId).toBe(preparationId);
+        expect(route.request().postDataJSON()).toMatchObject({
+          startPreparationId: preparationId,
+          directorProfileId: 'coauthor',
+        });
         return route.fulfill({ json: { campaignId } });
       });
       // Exercise the reload window before auth and the saved hero have resolved.
@@ -158,12 +167,9 @@ for (const outcome of ['ready', 'failed', 'stale', 'queued', 'unknown'] as const
         const postsBeforeReload = preparePosts;
         await page.reload();
         await expect(
-          page
-            .getByRole('status')
-            .filter({
-              hasText:
-                outcome === 'queued' ? 'Подготовка игры' : 'Результат запроса пока неизвестен',
-            }),
+          page.getByRole('status').filter({
+            hasText: outcome === 'queued' ? 'Подготовка игры' : 'Результат запроса пока неизвестен',
+          }),
         ).toBeVisible();
         expect(preparePosts).toBe(postsBeforeReload);
         expect(dispatches).toBe(1);

@@ -4,6 +4,19 @@ import { GameService } from './game.service';
 @Controller('api/v1/game')
 export class GameController {
   constructor(@Inject(GameService) private game: GameService) {}
+  @Get('directors') directors() {
+    return this.game.directors();
+  }
+  @Get('campaigns/:id/director') director(@Req() req: Request, @Param('id') id: string) {
+    return this.game.director(req, id);
+  }
+  @Post('campaigns/:id/director') selectDirector(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.director(req, id, body);
+  }
   @Get('campaigns/:id/intent-proposals') intents(@Req() req: Request, @Param('id') id: string) {
     return this.game.intents(req, id);
   }
