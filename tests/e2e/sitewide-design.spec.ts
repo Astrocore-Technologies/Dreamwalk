@@ -176,14 +176,42 @@ test('author, player and account surfaces retain controls in both themes; gamepl
   await page.goto(`/game/${campaignId}`);
   await expect(page.locator('.game-shell')).toBeVisible();
   await expect(page.locator('canvas')).toBeVisible();
+  const metadata = page
+    .getByTestId('game-room')
+    .locator('details')
+    .filter({ has: page.getByTestId('game-position') });
+  await metadata.locator('summary').click();
   await expect(page.getByTestId('game-position')).toBeVisible();
+  await metadata.locator('summary').click();
   await expect(page.locator('[data-turn-phase]')).toBeVisible();
   await expect(page.getByTestId('unified-story')).toBeVisible();
   await expect(page.locator('#main-sidebar')).toHaveCount(0);
   await expect(page.locator('.bottom-nav')).toHaveCount(0);
   await expect(page.getByTestId('campaign-objectives')).toHaveCount(0);
-  await expect(page.locator('.game-return')).toBeVisible();
+  await expect(page.locator('#game-toolbar [data-game-toolbar] .game-return')).toBeVisible();
   await noOverflow(page);
+  const surface = page.getByTestId('game-play-surface');
+  const scene = page.locator('canvas').first();
+  const story = page.getByTestId('unified-story');
+  const toolbar = page.locator('.topbar');
+  await expect(page.locator('#game-toolbar h1')).toBeVisible();
+  const toolbarBox = (await toolbar.boundingBox())!;
+  const surfaceBox = (await surface.boundingBox())!;
+  expect(toolbarBox.height).toBeLessThan(100);
+  expect(surfaceBox.y).toBeLessThan(135);
+  const sceneBox = (await scene.boundingBox())!;
+  const storyBox = (await story.boundingBox())!;
+  expect(Math.abs(sceneBox.y - storyBox.y)).toBeLessThan(4);
+  expect(Math.abs(sceneBox.height - storyBox.height)).toBeLessThan(6);
+  expect(sceneBox.width / (sceneBox.width + storyBox.width)).toBeGreaterThan(0.58);
+  for (const theme of ['light', 'dark']) {
+    if ((await page.locator('html').getAttribute('data-theme')) !== theme)
+      await page.locator('.theme-button').click();
+    await info.attach(`game-room-${theme}`, {
+      body: await page.screenshot(),
+      contentType: 'image/png',
+    });
+  }
   await info.attach('game-desktop-synthetic', {
     body: await page.screenshot({ fullPage: true }),
     contentType: 'image/png',
