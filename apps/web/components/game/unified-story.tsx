@@ -55,6 +55,7 @@ const actionLabels = {
   pick_up: 'Подобрать',
   give: 'Передать',
   transition: 'Перейти',
+  approach: 'Перейти',
   wait: 'Ждать',
 } as const;
 export function UnifiedStory({
@@ -398,6 +399,7 @@ export function UnifiedStory({
       <ul>
         {actions.map((entry, index) => {
           const target =
+            entry.targetLabel ||
             projection.entities.find((entity) => entity.id === entry.action.targetId)?.label ||
             projection.map.exits.find((exit) => exit.id === entry.action.targetId)?.label;
           const item = projection.inventory.find(
@@ -526,7 +528,7 @@ export function UnifiedStory({
                   disabled={busy || pending}
                   onClick={onClearRecipient}
                 >
-                  ×
+                  {h('director')}
                 </button>
               )}
               <button

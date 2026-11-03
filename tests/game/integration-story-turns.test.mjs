@@ -40,7 +40,7 @@ await test(
         outsider = await client().registerLegacyFixture();
       const source = await owner.request('/adventures/old-observatory?view=published');
       const ids = [];
-      for (let i = 0; i < 15; i++) {
+      for (let i = 0; i < 16; i++) {
         const { campaignId } = await owner.request('/game/campaigns', {
           turnBased: false,
           playableVersionId: source.playableVersionId,
@@ -183,6 +183,71 @@ await test(
         return { ...q, proposalHash: r.proposal_hash };
       }
       await t.test(
+        'director persists a fresh professor and attributed reply with one charge and replay',
+        async () => {
+          const id = ids[15];
+          const live = await prepare(id);
+          const beforeCalls = calls;
+          const q = await queued(
+            id,
+            await quoted(
+              id,
+              input(id, 'Professor, Mira said she knows nothing about the pass.', {
+                targetNpcId: undefined,
+              }),
+            ),
+          );
+          const proposal = structuredClone(q.p.request.context.mockProposal);
+          const context = q.p.request.context;
+          const spawn = context.director.availableConnections.find(
+            (p) =>
+              Math.abs(p.x - live.state.entities[actor].x) +
+                Math.abs(p.y - live.state.entities[actor].y) ===
+              1,
+          );
+          assert.ok(spawn);
+          proposal.narrative.newScene = null;
+          Object.assign(proposal.narrative.newNpc, {
+            name: 'Professor Orin',
+            roleLabel: 'Professor',
+            placement: 'current',
+            spawn,
+            knownEntityIds: [],
+          });
+          proposal.narrative.narration = 'The professor looks up from his notes.';
+          proposal.steps = [
+            {
+              segmentIndex: 0,
+              action: null,
+              replyNpcId: 'new_npc',
+              replyContextHash: null,
+              reply: { text: 'Mira said that? What did you ask her?' },
+            },
+          ];
+          assert.equal((await complete(id, q, proposal)).status, 'committed');
+          const npcId = `support-${q.id}`;
+          assert.equal(game.live.get(id).state.entities[npcId].label, 'Professor Orin');
+          const entries = (await feed(id)).entries.filter((e) => e.turnId === q.id);
+          assert.equal(
+            entries.filter((e) => e.kind === 'npc_reply' && e.authorId === npcId).length,
+            1,
+          );
+          assert.ok(
+            game.live
+              .get(id)
+              .state.npcBrains[npcId].living.observations.some(
+                (o) => o.kind === 'said' && o.actorId === actor,
+              ),
+          );
+          assert.equal((await controller.storySubmit(req, id, q.submit)).status, 'committed');
+          assert.equal(calls, beforeCalls + 1);
+          assert.equal(
+            (await feed(id)).entries.filter((e) => e.turnId === q.id).length,
+            entries.length,
+          );
+        },
+      );
+      await t.test(
         'selected request languages persist through quote, changed confirmation headers and provider jobs',
         async () => {
           const id = ids[14];
@@ -298,13 +363,13 @@ await test(
         },
       );
       await t.test(
-        'unsupported walking and private world extension clarify before creating a job',
+        'malformed roleplay and private world extension clarify before creating a job',
         async () => {
           const id = ids[2];
           await prepare(id);
           const before = calls;
           for (const [body, code] of [
-            [input(id, '*walk to keeper* Hello'), 'WALK_FIRST'],
+            [input(id, '*unclosed roleplay'), 'INVALID_MARKUP'],
             [
               input(id, 'Create a room', { channel: 'whisper', targetNpcId: undefined }),
               'PRIVATE_STORY_EXTENSION',

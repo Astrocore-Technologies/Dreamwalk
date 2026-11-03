@@ -43,3 +43,41 @@ which case the existing source-tombstone policy applies. Accepted mechanical pro
 can remain without their quoted speech. This intentionally sacrifices some shared
 narrative memory for privacy rather than claiming that pseudonymization erases prose.
 Exports include only the requesting player's own narrative submissions/results.
+
+## Same-turn supporting-character interaction
+
+A shared director turn can now introduce a persistent supporting NPC and let that
+character answer the player's speech in the same proposal. The `new_npc` reference
+is local to that proposal and resolves only to its admitted `narrative.newNpc` entity.
+The character is created through the existing spawn, identity, visibility and canon
+validators. The reply enters the ordinary NPC utterance/observation pipeline, so a
+report such as “Mira said she knows nothing about the pass” is remembered as the
+player's statement, not an authored or independently verified fact. Invalid
+placement, unavailable speaker or failed interaction rolls back the entire proposal.
+No extra model dispatch or image generation is involved.
+
+Existing speakers require their own `sceneSpeakers` context and matching
+`replyContextHash`; their reply may not use narrator-only canon as personal knowledge.
+A newborn uses its proposed public identity, current perceptions and the current
+attributed statement only. It inherits no other character's private memory. These
+contracts validate provenance and state, not the truth or literary quality of every
+sentence of free generated text; that still requires a separately authorized live
+model evaluation.
+
+For real-time campaigns, an explicit player attempt may propose `approach` to a
+visible NPC or `new_npc`. This is a same-map scene cut, limited to eight strictly
+walkable cells, respecting footprints and encounter areas. It does not tick or move
+other actors. It remains in the existing interpretation-confirmation flow. Cross-map
+travel and companion movement are not implied by this action.
+
+In turn-based campaigns unresolved emotes remain unverified player roleplay. The
+world-phase director can materialize an adjacent character and answer, but cannot
+spend or bypass a player's movement budget. Mixed posts preserve actual dialogue as speech and stage directions as attempt
+segments, also separately attributed in `untrustedRoleplay`. Descriptive attempts
+have a null action and no mechanical success outcome. World-phase director
+proposals cannot contain mechanical actions.
+If no valid nearby position exists, the engine must not claim completed contact.
+Arbitrary travel, remote summoning and automatic companion arrival remain unsupported
+by this bridge. The composer explicitly labels the shared destination as the director;
+whisper/selected-character mode does not silently broaden its audience or create a
+public scene. Administrative director personas are separate from these permissions.

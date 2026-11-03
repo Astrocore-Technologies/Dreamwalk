@@ -77,7 +77,7 @@ test('legacy realtime composer keeps audience, order and scene input coherent', 
     const npc = before.entities.find((e: { id: string }) => e.id === 'keeper');
     await tileClick(owner, npc.x, npc.y);
     await expect(
-      story.getByRole('button', { name: 'Убрать собеседника', exact: true }),
+      story.getByRole('button', { name: 'Обратиться к ведущему', exact: true }),
     ).toBeVisible();
     const after = await state(owner, id);
     expect(after.entities.find((e: { id: string }) => e.id === after.actorId)).toMatchObject({
