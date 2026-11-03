@@ -908,6 +908,7 @@ export interface NpcMemoryFact {
   tick: number;
 }
 export interface NpcBrain {
+  planSource?: { actorId: string; sourceObservationId: string };
   living?: LivingNpcMemory;
   waitingForPath?: boolean;
   planMapId?: string;

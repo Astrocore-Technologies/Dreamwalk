@@ -45,17 +45,22 @@ export function TurnControls({
                   : activeName || text('player')}
           </h2>
         </div>
-        {turn.phase === 'player' && (
-          <Button
-            type="button"
-            disabled={!connected || !turn.ownTurn || busy || turn.pendingResolution}
-            busy={busy}
-            onClick={onEnd}
-          >
-            {text('end')}
-          </Button>
-        )}
+        <Button
+          type="button"
+          disabled={
+            turn.phase !== 'player' || !connected || !turn.ownTurn || busy || turn.pendingResolution
+          }
+          busy={busy}
+          onClick={onEnd}
+        >
+          {text('end')}
+        </Button>
       </header>
+      {turn.phase === 'world' && (
+        <p className={styles.turnHint} role="status">
+          {text('worldWaiting')}
+        </p>
+      )}
       <details className={styles.turnDetails}>
         <summary>{text('label')}</summary>
         <dl className={styles.turnResources}>

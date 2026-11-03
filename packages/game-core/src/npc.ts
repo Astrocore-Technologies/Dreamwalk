@@ -128,6 +128,7 @@ export function acceptNpcPlan(state: GameState, id: string, input: unknown): Gam
   const s = structuredClone(revised),
     b = s.npcBrains![id];
   b.plan = structuredClone(p.actions);
+  delete b.planSource;
   b.cursor = 0;
   b.waitingForPath = false;
   b.planMapId = npc.mapId;
