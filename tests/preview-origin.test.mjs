@@ -83,6 +83,54 @@ test('socket preview admission preserves canonical upstream, session and fixed d
   assert.throws(() => socketRelayTarget(req, env));
 });
 
+test('socket relay preserves only supported output locales on canonical and preview origins', () => {
+  const campaignId = '12345678-1234-1234-1234-123456789012';
+  for (const origin of [
+    env.WEB_ORIGIN,
+    `https://${env.VERCEL_URL}`,
+    `https://${env.VERCEL_BRANCH_URL}`,
+  ]) {
+    for (const locale of ['uk', 'en', 'ru']) {
+      const req = new Request(
+        `${origin}/api/v1/game/socket?campaignId=${campaignId}&locale=${locale}&url=https://evil.test&token=ignored`,
+        { headers: { origin, cookie: `dreamwalk_session=${'b'.repeat(64)}` } },
+      );
+      const target = socketRelayTarget(req, env);
+      assert.equal(
+        target.url,
+        `wss://api.example.test/api/v1/game/socket?campaignId=${campaignId}&locale=${locale}`,
+      );
+      assert.deepEqual(Object.keys(target.headers).sort(), [
+        'cookie',
+        'origin',
+        'x-dreamwalk-ingress',
+      ]);
+      assert.equal(target.headers.origin, env.WEB_ORIGIN);
+      req.headers.set('origin', 'https://evil.test');
+      assert.throws(() => socketRelayTarget(req, env));
+      req.headers.set('origin', origin);
+      req.headers.delete('cookie');
+      assert.throws(() => socketRelayTarget(req, env));
+    }
+  }
+});
+
+test('missing or unsupported socket locale keeps the existing account-language fallback', () => {
+  const campaignId = '12345678-1234-1234-1234-123456789012';
+  const origin = `https://${env.VERCEL_URL}`;
+  for (const locale of [undefined, '', 'fr', 'RU', 'en-US', 'ru\r\nx-test: unsafe']) {
+    const url = new URL(`${origin}/api/v1/game/socket?campaignId=${campaignId}`);
+    if (locale !== undefined) url.searchParams.set('locale', locale);
+    const target = socketRelayTarget(
+      new Request(url, {
+        headers: { origin, cookie: `dreamwalk_session=${'b'.repeat(64)}` },
+      }),
+      env,
+    );
+    assert.equal(target.url, `wss://api.example.test/api/v1/game/socket?campaignId=${campaignId}`);
+  }
+});
+
 test('platform production origin wins over stale manual origin and fails closed when malformed', () => {
   const platform = {
     ...env,
