@@ -87,9 +87,16 @@ async function world({
   const service = Object.create(GameService.prototype);
   service.db = db;
   service.reconcileIntents = async () => {};
+  // These requests exercise legacy manual authorization, not composer-bound
+  // release quotes or world-generation batches.
+  service.story = {
+    requireLegacyReplyConsent: async () => false,
+    quotedReply: async () => null,
+  };
   service.ai = {
     // No optional extended-history provider is configured in this consent/liability fixture.
     contextWindow: () => undefined,
+    releaseGeneration: () => false,
     manualLive: () => true,
     manualRequestAuthorized: async () => false,
     rejectManualUnqueuedRequest: (c, id, code) => manual.rejectUndispatchedRequest(c, id, code),

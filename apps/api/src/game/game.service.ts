@@ -1,3 +1,4 @@
+import { WorldGenerationBatch } from './world-generation-batch';
 import { NarrativeCorrections } from './narrative-corrections';
 import { npcPublicReplySchema } from '@dreamwalk/contracts';
 import { StoryTurnRuntime } from './story-turn-runtime';
@@ -197,6 +198,7 @@ function canonical(value: unknown): unknown {
 export class GameService implements OnModuleDestroy {
   private live = new Map<string, Live>();
   private story: StoryTurnRuntime;
+  private worldGeneration: WorldGenerationBatch;
   private corrections: NarrativeCorrections<Live>;
   private queues = new Map<string, Promise<unknown>>();
   // COMMIT visibility precedes the continuation that publishes its in-memory checkpoint.
@@ -239,6 +241,7 @@ export class GameService implements OnModuleDestroy {
           preflight,
         ),
     });
+    this.worldGeneration = new WorldGenerationBatch(this.db, this.ai);
     this.story = new StoryTurnRuntime(this.db, this.ai, {
       serial: <T>(id: string, work: () => Promise<T>) => this.serial(id, work),
       access: (req, id) => this.access(req, id),
@@ -247,6 +250,7 @@ export class GameService implements OnModuleDestroy {
       persist: (id, live, state, kind, extra, preflight) =>
         this.persist(id, live as Live, state, kind, undefined, extra, undefined, preflight),
       dispatch: (id) => this.dispatchAi(id),
+      deferredSpeechContext: (state, request) => this.deferredSpeechContext(state, request),
       prepareTurnSpeech: (state, actorId, npcId, speech, requestId, userId, identity) =>
         this.prepareTurnSpeech(state, actorId, npcId, speech, requestId, userId, identity),
     });
@@ -400,6 +404,35 @@ export class GameService implements OnModuleDestroy {
   }
   storyQuote(req: Request, id: string, body: unknown) {
     return this.story.quote(req, id, body);
+  }
+  worldGenerationStatus(req: Request, id: string) {
+    return this.serial(id, async () => {
+      const a = await this.access(req, id),
+        live = await this.load(id);
+      return this.worldGeneration.status(a.user.id, id, live.state);
+    });
+  }
+  worldGenerationQuote(req: Request, id: string, body: unknown) {
+    return this.serial(id, async () => {
+      const a = await this.access(req, id),
+        live = await this.load(id);
+      return this.worldGeneration.quote(a.user.id, id, live.state, body);
+    });
+  }
+  worldGenerationConsent(req: Request, id: string, body: unknown) {
+    return this.serial(id, async () => {
+      const a = await this.access(req, id),
+        live = await this.load(id);
+      const receipt = await this.worldGeneration.consent(a.user.id, id, live.state, body);
+      live.decisionsPending = true;
+      return receipt;
+    });
+  }
+  storyReplyQuote(req: Request, id: string, turnId: string, body: unknown) {
+    return this.story.replyQuote(req, id, turnId, body);
+  }
+  storyReplyConsent(req: Request, id: string, turnId: string, body: unknown) {
+    return this.story.replyConsent(req, id, turnId, body);
   }
   storySubmit(req: Request, id: string, body: unknown) {
     return this.story.submit(req, id, body);
@@ -1668,6 +1701,39 @@ export class GameService implements OnModuleDestroy {
         );
         continue;
       }
+      if (
+        r.result_code === 'GENERATION_QUOTE_STALE' ||
+        (await this.story.requireLegacyReplyConsent(id, r))
+      )
+        continue;
+      const storyReply = await this.story.quotedReply(id, r);
+      const worldReply =
+        !storyReply && this.ai.releaseGeneration()
+          ? await this.worldGeneration.quotedWorldRequest(id, r)
+          : null;
+      const quotedReply = storyReply || worldReply;
+      if (worldReply && (r.purpose === 'plan' || r.purpose === 'summary')) {
+        const current = await this.decisionContext(id, live.state, String(r.npc_id), r.purpose);
+        if (current.contextHash !== r.context.contextHash) {
+          await this.worldGeneration.invalidate(id, r.id);
+          // An unpaid stale batch never authorizes a new body. Prepare a fresh
+          // candidate for a new visible quote, retaining the original paid evidence.
+          await this.db.query(
+            "UPDATE game_npc_decision_requests SET context=$2 WHERE id=$1 AND status='queued' AND job_id IS NULL",
+            [
+              r.id,
+              JSON.stringify({
+                ...current,
+                mockProposal:
+                  r.purpose === 'plan'
+                    ? createMockNpcPlan(live.state, String(r.npc_id))
+                    : r.context.mockProposal,
+              }),
+            ],
+          );
+          continue;
+        }
+      }
       if (live.state.turnController && r.purpose === 'speech' && r.context.deferredSpeechId) {
         try {
           const current = this.speechContext(
@@ -1681,19 +1747,40 @@ export class GameService implements OnModuleDestroy {
             r.context.deferredSpeechId,
             r.context.replyLocale,
           );
-          const context = reuseFrozenContext(
-            r.context,
-            {
-              ...current,
-              storyTurnId: r.context.storyTurnId,
-              segmentIndex: r.context.segmentIndex,
-              knowledgeRevision: r.context.knowledgeRevision,
-              deferredSpeechId: r.context.deferredSpeechId,
-              turnOrder: r.context.turnOrder,
-              mockProposal: createMockNpcPublicResponse(current),
-            },
-            Boolean(this.ai.contextWindow()),
-          );
+          if (
+            quotedReply &&
+            (current.contextHash !== r.context.contextHash ||
+              !matchesTurnFence(live.state, r.context.turnFence))
+          ) {
+            if (worldReply) await this.worldGeneration.invalidate(id, r.id);
+            else
+              await this.db.query(
+                "UPDATE game_npc_decision_requests SET result_code='GENERATION_QUOTE_STALE' WHERE id=$1 AND status='queued'",
+                [r.id],
+              );
+            continue;
+          }
+          const context = quotedReply
+            ? r.context
+            : reuseFrozenContext(
+                r.context,
+                {
+                  ...current,
+                  storyTurnId: r.context.storyTurnId,
+                  segmentIndex: r.context.segmentIndex,
+                  knowledgeRevision: r.context.knowledgeRevision,
+                  deferredSpeechId: r.context.deferredSpeechId,
+                  turnOrder: r.context.turnOrder,
+                  ...(r.context.untrustedRoleplay
+                    ? {
+                        untrustedRoleplay: r.context.untrustedRoleplay,
+                        roleplayPolicy: r.context.roleplayPolicy,
+                      }
+                    : {}),
+                  mockProposal: createMockNpcPublicResponse(current),
+                },
+                Boolean(this.ai.contextWindow()),
+              );
           if (context !== r.context) {
             await this.db.query(
               "UPDATE game_npc_decision_requests SET context=$2 WHERE id=$1 AND status='queued'",
@@ -1742,7 +1829,7 @@ export class GameService implements OnModuleDestroy {
         });
       }
       // A real/manual request never becomes a fixture response when authorization or provider work fails.
-      if (this.ai.manualLive() && r.purpose !== 'story_turn') {
+      if (this.ai.manualLive() && r.purpose !== 'story_turn' && !quotedReply) {
         if (r.context.budgetExceeded && this.ai.contextWindow() && r.context.textContextCandidate)
           continue;
         if (r.context.budgetExceeded) {
@@ -1923,6 +2010,14 @@ export class GameService implements OnModuleDestroy {
           sponsorId,
           requestKey: `runtime:${r.cause_key}`,
           runtimeRequestId: r.id,
+          ...(quotedReply
+            ? {
+                quoteId: quotedReply.quote.id,
+                consent: true,
+                requesterUserId: String(r.requester_user_id),
+                expectedRuntimeContextDigest: digest(r.context),
+              }
+            : {}),
         });
         await this.db.query(
           "UPDATE game_npc_decision_requests SET status='scheduled',job_id=$2 WHERE id=$1 AND status='queued'",
@@ -1933,6 +2028,15 @@ export class GameService implements OnModuleDestroy {
       } catch (error) {
         const message = error instanceof Error ? error.message : '';
         if (message.includes('RATE_LIMITED') || message.includes('NPC_AI_BUSY')) continue;
+        if (quotedReply) {
+          if (worldReply) await this.worldGeneration.invalidate(id, r.id);
+          else
+            await this.db.query(
+              "UPDATE game_npc_decision_requests SET result_code='GENERATION_QUOTE_STALE' WHERE id=$1 AND status='queued'",
+              [r.id],
+            );
+          continue;
+        }
         if (this.ai.manualLive()) {
           const code = /^[A-Z0-9_]{1,80}$/.test(message) ? message : 'MANUAL_QUEUE_UNAVAILABLE';
           await this.failUnqueuedManualRequest(String(r.id), code);
@@ -2947,6 +3051,32 @@ export class GameService implements OnModuleDestroy {
     }
   }
   /** One admitted addressed message, kept distinct until the NPC/world phase. */
+  private deferredSpeechContext(state: GameState, request: NpcDecisionRequest) {
+    const r = request.context;
+    const current = this.speechContext(
+      state,
+      request.npcId,
+      String(r.recipientId),
+      r.channel as 'say' | 'whisper',
+      undefined,
+      r.topicId as string | undefined,
+      r.replyToObservationId as string | undefined,
+      r.deferredSpeechId as string | undefined,
+      r.replyLocale as Locale | undefined,
+    );
+    return {
+      ...current,
+      storyTurnId: r.storyTurnId,
+      segmentIndex: r.segmentIndex,
+      knowledgeRevision: r.knowledgeRevision,
+      deferredSpeechId: r.deferredSpeechId,
+      turnOrder: r.turnOrder,
+      ...(r.untrustedRoleplay
+        ? { untrustedRoleplay: r.untrustedRoleplay, roleplayPolicy: r.roleplayPolicy }
+        : {}),
+      mockProposal: createMockNpcPublicResponse(current),
+    };
+  }
   private prepareTurnSpeech(
     state: GameState,
     actorId: string,

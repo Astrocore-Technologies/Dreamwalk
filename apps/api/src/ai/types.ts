@@ -30,6 +30,8 @@ export interface QueueDecision {
   requestKey?: string;
   sponsorId?: string;
   runtimeRequestId?: string;
+  /** Server-side immutable deferred quote binding, rechecked under the request row lock. */
+  expectedRuntimeContextDigest?: string;
 }
 export type AiJobStatus =
   | 'queued'

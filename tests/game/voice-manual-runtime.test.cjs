@@ -44,6 +44,12 @@ async function scenario({
   };
   const service = Object.create(GameService.prototype);
   service.reconcileIntents = async () => {};
+  // These requests exercise legacy manual authorization, not composer-bound
+  // release quotes or world-generation batches.
+  service.story = {
+    requireLegacyReplyConsent: async () => false,
+    quotedReply: async () => null,
+  };
   service.db = {
     query: async (sql, params = []) => {
       if (sql.startsWith('SELECT * FROM game_npc_decision_requests')) return [request];
@@ -56,6 +62,7 @@ async function scenario({
     // This fixture exercises the original bounded request/consent path, not
     // optional extended-history packing from a configured context-window provider.
     contextWindow: () => undefined,
+    releaseGeneration: () => false,
     manualLive: () => manual,
     manualRequestAuthorized: async () => authorized,
     activeSponsor: async () => undefined,
