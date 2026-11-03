@@ -9,7 +9,17 @@ import { readStoryReturn, withStoryReturn, storyAfterAuth, authFormKey } from '.
 import { StoryReturnLink } from './story-return-link';
 import { useLaunchGate } from './game/use-launch-gate';
 import { useState, useEffect, type FormEvent } from 'react';
-import { ArrowRight, Fingerprint, Laptop, ShieldCheck, UserRound } from 'lucide-react';
+import {
+  ArrowRight,
+  Fingerprint,
+  Laptop,
+  ShieldCheck,
+  UserRound,
+  SlidersHorizontal,
+  LockKeyhole,
+  Download,
+  Trash2,
+} from 'lucide-react';
 import {
   api,
   useClient,
@@ -390,21 +400,24 @@ export function AccountPage({ path }: { path: string }) {
   const { t: tr } = useT();
   const tab = path.split('/')[2] || 'profile';
   return (
-    <>
+    <div className="account-design">
       <PageHeading
         eyebrow={tr('ТВОЁ ПРОСТРАНСТВО')}
         title={tr('Настроить под себя')}
         description={tr('Имя, привычки и границы. Здесь всё по-твоему.')}
       />
       <Tabs
-        items={[
-          ['profile', tr('Профиль')],
-          ['settings', tr('Предпочтения')],
-          ['privacy', tr('Приватность')],
-          ['sessions', tr('Безопасность')],
-        ].map(([key, label]) => ({
+        items={(
+          [
+            ['profile', tr('Профиль'), UserRound],
+            ['settings', tr('Предпочтения'), SlidersHorizontal],
+            ['privacy', tr('Приватность'), ShieldCheck],
+            ['sessions', tr('Безопасность'), LockKeyhole],
+          ] as const
+        ).map(([key, label, Icon]) => ({
           href: `/account/${key}`,
           label,
+          icon: <Icon size={24} aria-hidden="true" />,
           active: tab === key,
         }))}
       />
@@ -415,7 +428,7 @@ export function AccountPage({ path }: { path: string }) {
       ) : (
         <SettingsForm key={tab} privacy={tab === 'privacy'} />
       )}
-    </>
+    </div>
   );
 }
 function ProfileForm() {
@@ -489,8 +502,14 @@ function ProfileForm() {
           </div>
         </form>
       </Panel>
-      <Panel className="quiet-panel">
-        <UserRound size={28} />
+      <Panel className="quiet-panel account-profile-story">
+        <img
+          className="account-story-art"
+          src="/images/account-castle.webp"
+          alt=""
+          width={1672}
+          height={941}
+        />
         <h3>{tr('Это ты. А герой — отдельная история.')}</h3>
         <p>
           {tr(
@@ -528,7 +547,11 @@ function SettingsForm({ privacy }: { privacy: boolean }) {
   }
   return (
     <>
-      <Panel className="form-panel">
+      <Panel
+        className={
+          privacy ? 'form-panel account-privacy-panel' : 'form-panel account-preferences-panel'
+        }
+      >
         <form
           method="post"
           className="stack"
@@ -664,12 +687,25 @@ function SettingsForm({ privacy }: { privacy: boolean }) {
             <Button busy={busy}>{tr('Сохранить настройки')}</Button>
           </div>
         </form>
+        {privacy && (
+          <img
+            className="account-privacy-art"
+            src="/images/account-observatory.webp"
+            alt=""
+            width={1536}
+            height={1024}
+          />
+        )}
       </Panel>
       {privacy && (
-        <Panel className="form-panel">
+        <Panel className="form-panel account-data-panel">
           <h2>{tr('Управление данными')}</h2>
-          <AccountExports />
-          <div className="row">
+          <div className="account-data-row">
+            <Download aria-hidden="true" size={30} />
+            <AccountExports />
+          </div>
+          <div className="row account-delete-row">
+            <Trash2 aria-hidden="true" size={30} />
             <Button variant="danger" onClick={() => setDeleting(true)}>
               {tr('Удалить аккаунт')}
             </Button>
@@ -750,7 +786,7 @@ function SecurityForm() {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   return (
-    <div className="account-layout">
+    <div className="account-layout account-security-layout">
       <EmailVerification />
       <Panel>
         <h2>
@@ -816,7 +852,7 @@ function SecurityForm() {
               <Laptop size={24} />
               <div>
                 <strong>{s.current ? tr('Это устройство') : tr('Браузер')}</strong>
-                <small title={s.userAgent}>{s.userAgent.slice(0, 65)}</small>
+                <small title={s.userAgent}>{sessionDeviceLabel(s.userAgent)}</small>
                 <small>
                   {tr('Последняя активность: {date}', {
                     date: date(s.lastSeenAt),
@@ -847,4 +883,28 @@ function SecurityForm() {
       </Panel>
     </div>
   );
+}
+
+function sessionDeviceLabel(agent: string) {
+  const browser = /Edg\/|EdgiOS\/|EdgA\//.test(agent)
+    ? 'Edge'
+    : /Firefox\/|FxiOS\//.test(agent)
+      ? 'Firefox'
+      : /Chrome\/|CriOS\//.test(agent)
+        ? 'Chrome'
+        : /Safari\//.test(agent)
+          ? 'Safari'
+          : agent.slice(0, 65);
+  const platform = /Android/.test(agent)
+    ? 'Android'
+    : /iPhone|iPad/.test(agent)
+      ? 'iOS'
+      : /Windows/.test(agent)
+        ? 'Windows'
+        : /Macintosh/.test(agent)
+          ? 'macOS'
+          : /Linux/.test(agent)
+            ? 'Linux'
+            : '';
+  return platform ? `${browser} · ${platform}` : browser;
 }

@@ -119,7 +119,7 @@ export function AdminPage({ path }: { path: string }) {
       />
     );
   return (
-    <>
+    <div className="admin-design">
       <PageHeading
         eyebrow={t('DREAMWALK / УПРАВЛЕНИЕ')}
         title={t('Панель администратора')}
@@ -149,7 +149,7 @@ export function AdminPage({ path }: { path: string }) {
       ) : (
         <AdminOverview />
       )}
-    </>
+    </div>
   );
 }
 function AdminOverview() {
@@ -207,7 +207,8 @@ function AdminOverview() {
         )
       )}
       <div className={styles.overviewGrid}>
-        <Panel>
+        <Panel className="admin-overview-art">
+          <img src="/images/admin-library.webp" alt="" width={1672} height={941} />
           <div className={styles.sectionHeading}>
             <Shield size={22} />
             <h2>{t('Безопасная публикация')}</h2>
@@ -217,12 +218,13 @@ function AdminOverview() {
               'Черновики не попадают в каталог автоматически. Проверяйте мир, предупреждения и персонажей перед одобрением. Отклонение сопровождается понятной автору причиной.',
             )}
           </p>
-          <Link className="text-link" href="/admin/adventures">
+          <Link className="button" href="/admin/adventures">
             {t('Открыть очередь')}
             <ArrowRight size={16} />
           </Link>
         </Panel>
-        <Panel>
+        <Panel className="admin-overview-art">
+          <img src="/images/admin-explorer.webp" alt="" width={1672} height={941} />
           <div className={styles.sectionHeading}>
             <Layers size={22} />
             <h2>{t('Стиль не равен модели')}</h2>
@@ -230,7 +232,7 @@ function AdminOverview() {
           <p className="muted">
             {liveText(live.status?.mode === 'owner' ? 'ownerProfiles' : 'adminProfiles')}
           </p>
-          <Link className="text-link" href="/admin/models">
+          <Link className="button" href="/admin/models">
             {t('Каталог профилей')}
             <ArrowRight size={16} />
           </Link>

@@ -177,12 +177,22 @@ export function Badge({ children, tone = '' }: { children: ReactNode; tone?: str
 export function Panel({ children, className = '' }: { children: ReactNode; className?: string }) {
   return <section className={`panel ${className}`}>{children}</section>;
 }
-export function Tabs({ items }: { items: { href: string; label: string; active?: boolean }[] }) {
+export function Tabs({
+  items,
+}: {
+  items: { href: string; label: string; active?: boolean; icon?: ReactNode }[];
+}) {
   const { t: tr } = useT();
   return (
     <nav className="tabs" aria-label={tr('Разделы страницы')}>
       {items.map((item) => (
-        <Link key={item.href} href={item.href} className={item.active ? 'active' : ''}>
+        <Link
+          key={item.href}
+          href={item.href}
+          className={item.active ? 'active' : ''}
+          aria-current={item.active ? 'page' : undefined}
+        >
+          {item.icon}
           {item.label}
         </Link>
       ))}
