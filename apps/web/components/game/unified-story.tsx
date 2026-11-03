@@ -83,7 +83,7 @@ export function UnifiedStory({
   const turnCopy = useRef(turnText);
   turnCopy.current = turnText;
   const h = useStoryText(),
-    { t } = useT(),
+    { t, locale } = useT(),
     hintId = useId();
   const [channel, setChannel] = useState<'say' | 'whisper'>('say');
   const [text, setText] = useState(''),
@@ -102,6 +102,7 @@ export function UnifiedStory({
   const feedElement = useRef<HTMLDivElement>(null),
     nearBottom = useRef(true);
   const epoch = useRef(0),
+    feedEpoch = useRef(0),
     polling = useRef(false),
     actionLock = useRef(false);
   const submitted = useRef<Prepared | null>(null),
@@ -131,10 +132,13 @@ export function UnifiedStory({
   const refresh = useCallback(async () => {
     if (polling.current) return;
     polling.current = true;
-    const current = epoch.current;
+    const current = feedEpoch.current;
+    const responseLocale = getLocale();
     try {
-      const result = await api<StoryTurnFeed>(`${path}/feed`);
-      if (current !== epoch.current) return;
+      const result = await api<StoryTurnFeed>(`${path}/feed`, {
+        headers: { 'Accept-Language': responseLocale },
+      });
+      if (current !== feedEpoch.current || responseLocale !== getLocale()) return;
       setFeed(result);
       const sent = submitted.current;
       const receipt =
@@ -158,7 +162,7 @@ export function UnifiedStory({
         }
       }
     } catch (err) {
-      if (current === epoch.current) {
+      if (current === feedEpoch.current && responseLocale === getLocale()) {
         setError(errorMessage(err));
         if (err instanceof ApiError && (err.status === 403 || err.status === 404)) {
           setFeed(null);
@@ -170,17 +174,25 @@ export function UnifiedStory({
     } finally {
       polling.current = false;
     }
-    // Copy is evaluated on response; requests are scoped by campaign, not by locale.
+    // Keep submissions pinned to their original quote; only the read feed follows the current locale.
   }, [path]);
+  // Locale changes invalidate reads, not the original language/operation of
+  // in-flight quotes, submissions, or their uncertain-response recovery.
   useEffect(() => {
     epoch.current++;
+    return () => {
+      epoch.current++;
+    };
+  }, [path]);
+  useEffect(() => {
+    feedEpoch.current++;
     void refresh();
     const timer = setInterval(() => void refresh(), 2000);
     return () => {
-      epoch.current++;
+      feedEpoch.current++;
       clearInterval(timer);
     };
-  }, [refresh]);
+  }, [refresh, locale]);
   useEffect(() => {
     if (
       prepared &&
