@@ -646,6 +646,85 @@ export class AssetReuseService {
       checksum: hash(bindings),
     };
   }
+  /** Freeze source art before geometry exists; no provider call and no change to author bindings. */
+  async prepareLaunchManifestTx(
+    c: PoolClient,
+    adventureId: string,
+    userId: string,
+    locationIds: string[],
+    npcIds: string[],
+    additionalBindings: AssetBinding[] = [],
+    aliases: Record<string, string | null> = {},
+  ) {
+    await this.storyOwner(c, userId, adventureId, true);
+    await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+      `art-story:${adventureId}`,
+    ]);
+    const draft = (
+      await c.query('SELECT * FROM art_story_asset_drafts WHERE adventure_id=$1 FOR SHARE', [
+        adventureId,
+      ])
+    ).rows[0];
+    const selected: AssetBinding[] = [];
+    const remapped = ((draft?.bindings ?? []) as AssetBinding[]).flatMap((binding) => {
+      const slot = Object.hasOwn(aliases, binding.slot) ? aliases[binding.slot] : binding.slot;
+      return slot === null ? [] : [{ ...binding, slot }];
+    });
+    for (const binding of [...remapped, ...additionalBindings]) {
+      const old = selected.find((b) => b.slot === binding.slot);
+      if (old && old.revisionId !== binding.revisionId)
+        fail(409, 'CHARACTER_BINDING_CONFLICT', 'CHARACTER_BINDING_CONFLICT');
+      if (!old) selected.push(binding);
+    }
+    const pins = [];
+    for (const binding of selected) {
+      const slot = parseArtSlot(binding.slot);
+      const { row, grantId } = await this.reusable(c, userId, binding.revisionId, true);
+      const kind =
+        slot?.scope === 'map' && slot.variant === 'background' && locationIds.includes(slot.id)
+          ? 'background'
+          : slot?.scope === 'entity' &&
+              ['sprite', 'portrait'].includes(slot.variant) &&
+              npcIds.includes(slot.id)
+            ? slot.variant
+            : null;
+      const camera = kind === 'portrait' ? 'portrait' : 'top-down';
+      if (
+        !kind ||
+        row.metadata.kind !== kind ||
+        row.metadata.style !== 'drawn2D' ||
+        ![camera, 'unrestricted'].includes(String(row.metadata.camera))
+      )
+        fail(400, 'INVALID_ART_BINDING', 'INVALID_ART_BINDING');
+      pins.push({
+        ...binding,
+        grantId,
+        rights: row.metadata.rights,
+        sha256: row.sha256,
+        mime: row.mime,
+        width: row.width,
+        height: row.height,
+      });
+    }
+    pins.sort((a, b) => a.slot.localeCompare(b.slot));
+    const bindings = frozenArtBindingsSchema.parse(
+      pins.map(({ slot, revisionId, sha256, mime, width, height }) => ({
+        slot,
+        revisionId,
+        sha256,
+        mime,
+        width,
+        height,
+      })),
+    );
+    return {
+      adventureId,
+      draftRevision: draft?.revision ?? 0,
+      pins,
+      bindings,
+      checksum: hash(bindings),
+    };
+  }
   async pinPrepared(
     c: PoolClient,
     playableVersionId: string,
@@ -662,7 +741,8 @@ export class AssetReuseService {
     if (
       !version ||
       version.adventure_id !== prepared.adventureId ||
-      hash(version.package.compiled.artBindings ?? []) !== prepared.checksum
+      hash(version.package.compiled?.artBindings ?? version.package.sourceArtBindings ?? []) !==
+        prepared.checksum
     )
       fail(409, 'MANIFEST_CONFLICT', 'MANIFEST_CONFLICT');
     const prior = (
@@ -754,7 +834,9 @@ export class AssetReuseService {
       await c.query('SELECT package FROM game_playable_versions WHERE id=$1', [versionId])
     ).rows[0];
     if (!version) fail(409, 'ART_UNAVAILABLE', 'ART_UNAVAILABLE');
-    const bindings = frozenArtBindingsSchema.parse(version.package.compiled.artBindings ?? []);
+    const bindings = frozenArtBindingsSchema.parse(
+      version.package.compiled?.artBindings ?? version.package.sourceArtBindings ?? [],
+    );
     for (const binding of bindings) {
       const owner = (
         await c.query(

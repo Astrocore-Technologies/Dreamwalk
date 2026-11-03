@@ -12,7 +12,10 @@ test('hero choice travels through every campaign launch and membership acceptanc
   ]) {
     const text = await source(file);
     assert.match(text, /HeroSelection/);
-    assert.match(text, /heroSelection\.body/);
+    if (file === 'home/home-page.tsx') {
+      assert.match(text, /storyReturnPath\(active\.slug, heroSelection\.heroId\)/);
+      assert.doesNotMatch(text, /api\('\/game\/campaigns'/);
+    } else assert.match(text, /heroSelection\.body/);
     assert.match(text, /heroSelection\.ready/);
     assert.match(text, /\.accepts\(lease\)/);
   }

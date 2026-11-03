@@ -1,12 +1,7 @@
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import {
-  adventureSchema,
-  authoredGameDraftSchema,
-  safeNpcMetadata,
-  readerStoryContent,
-} from '@dreamwalk/contracts';
+import { adventureSchema, safeNpcMetadata, readerStoryContent } from '@dreamwalk/contracts';
 import { Db } from '../db';
 import { PlayableService } from '../game/playable.service';
 import { fail } from '../errors';
@@ -15,7 +10,7 @@ const inputSchema = z
   .object({
     operationId: z.uuid(),
     expectedEditRevision: z.number().int().positive(),
-    expectedGameRevision: z.number().int().positive(),
+    expectedGameRevision: z.number().int().nonnegative(),
     expectedArtRevision: z.number().int().nonnegative(),
   })
   .strict();
@@ -59,26 +54,6 @@ export class PrivateReleaseService {
       const data = adventureSchema.parse(story.data);
       if (!data.title.trim() || !data.content.locations.length)
         fail(400, 'NOT_PLAYABLE', 'NOT_PLAYABLE');
-      const gameRow = (
-        await c.query('SELECT draft FROM adventure_game_drafts WHERE adventure_id=$1 FOR SHARE', [
-          adventureId,
-        ])
-      ).rows[0];
-      if (!gameRow) fail(409, 'NOT_PLAYABLE', 'NOT_PLAYABLE');
-      const game = authoredGameDraftSchema.parse(gameRow.draft);
-      const sameIds = (a: string[], b: string[]) =>
-        JSON.stringify([...new Set(a)].sort()) === JSON.stringify([...new Set(b)].sort());
-      if (
-        !sameIds(
-          game.maps.flatMap((m) => (m.sourceLocationId ? [m.sourceLocationId] : [])),
-          data.content.locations.map((l) => l.id),
-        ) ||
-        !sameIds(
-          game.npcs.flatMap((n) => (n.sourceNpcId ? [n.sourceNpcId] : [])),
-          data.content.npcIds,
-        )
-      )
-        fail(409, 'STORY_SOURCE_MISMATCH', 'Rebuild the playable plan from the current story.');
       const playableVersionId = await this.playable.freeze(
         c,
         story,

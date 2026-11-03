@@ -1,3 +1,4 @@
+import { compileStoryPlan, type StoryPlanSource } from './story-plan';
 import { ownedCharacterPackage } from '../visual-authoring/character-package';
 import { Inject, Injectable } from '@nestjs/common';
 import type { Request } from 'express';
@@ -113,6 +114,8 @@ export class PlayableService {
     )[0];
     if (!row) fail(404, 'NOT_FOUND', 'NOT_FOUND');
     if (hash(row.package) !== row.checksum) fail(503, 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED');
+    if (!row.package.compiled)
+      fail(409, 'START_PREPARATION_REQUIRED', 'START_PREPARATION_REQUIRED');
     return {
       ...this.simulateNpc(row.package.compiled as PlayablePackage, input),
       versionId: row.id,
@@ -267,12 +270,41 @@ export class PlayableService {
       )
     ).rows[0];
     if (!row) {
-      if (expectedRevision !== undefined) fail(409, 'NOT_PLAYABLE', 'NOT_PLAYABLE');
-      return null;
+      if (expectedRevision !== undefined && expectedRevision !== 0)
+        fail(409, 'STALE_STATE', 'STALE_STATE');
+      return this.freezeLaunchSource(c, story, audience, expectedArtRevision);
     }
     if (expectedRevision !== undefined && expectedRevision !== Number(row.revision))
       fail(409, 'STALE_STATE', 'STALE_STATE');
     const draft = authoredGameDraftSchema.parse(row.draft);
+    const currentContent = contentSchema.parse((story.data as Record<string, unknown>).content);
+    const sameIds = (a: string[], b: string[]) =>
+      JSON.stringify([...new Set(a)].sort()) === JSON.stringify([...new Set(b)].sort());
+    const linkedLocations = draft.maps.flatMap((m) =>
+      m.sourceLocationId ? [m.sourceLocationId] : [],
+    );
+    const linkedNpcs = draft.npcs.flatMap((n) => (n.sourceNpcId ? [n.sourceNpcId] : []));
+    // Standalone legacy maps were authored independently of the narrative wizard.
+    // Do not replace their reviewed mechanics/objectives merely because no source links exist.
+    const previousNpcIds =
+      (
+        await c.query(
+          "SELECT package->'source'->'content'->'npcIds' AS ids FROM game_playable_versions WHERE adventure_id=$1 ORDER BY created_at DESC LIMIT 1",
+          [story.id],
+        )
+      ).rows[0]?.ids ?? [];
+    const changedLinkedLocations =
+      linkedLocations.length > 0 &&
+      !sameIds(
+        linkedLocations,
+        currentContent.locations.map((l) => l.id),
+      );
+    const changedLinkedNpcs =
+      linkedLocations.length > 0 &&
+      (currentContent.npcIds.length > 0 || previousNpcIds.length > 0) &&
+      !sameIds(linkedNpcs, currentContent.npcIds);
+    if (changedLinkedLocations || changedLinkedNpcs)
+      return this.freezeLaunchSource(c, story, audience, expectedArtRevision, draft);
     await this.validateNpcReferences(c, String(story.owner_id), draft, String(story.id));
     this.validateLocations(story, draft);
     const ids = draft.npcs.flatMap((n) => (n.sourceNpcId ? [n.sourceNpcId] : []));
@@ -403,6 +435,190 @@ export class PlayableService {
     await this.art.pinPrepared(c, versionId, preparedArt);
     return versionId;
   }
+  private async freezeLaunchSource(
+    c: PoolClient,
+    story: Record<string, unknown>,
+    audience: 'private' | 'review',
+    expectedArtRevision?: number,
+    priorDraft?: z.infer<typeof authoredGameDraftSchema>,
+  ) {
+    const narrative = story.data as Record<string, unknown>;
+    const content = contentSchema.parse(narrative.content);
+    if (
+      !content.locations.length ||
+      new Set(content.locations.map((l) => l.id)).size !== content.locations.length ||
+      new Set(content.npcIds).size !== content.npcIds.length ||
+      content.locations.length > 4 ||
+      content.npcIds.length > 8 ||
+      !validateStoryLoreReferences(content)
+    )
+      fail(400, 'STORY_PLAN_CAPACITY', 'STORY_PLAN_CAPACITY');
+    const npcDefinitions = content.npcIds.length
+      ? (
+          await c.query(
+            'SELECT id,data FROM npcs WHERE owner_id=$1 AND id=ANY($2::uuid[]) AND (story_id IS NULL OR story_id=$3) ORDER BY id FOR SHARE',
+            [story.owner_id, content.npcIds, story.id],
+          )
+        ).rows
+      : [];
+    if (npcDefinitions.length !== new Set(content.npcIds).size) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+    const additionalBindings: { slot: string; revisionId: string }[] = [];
+    const animations: Record<string, unknown> = {};
+    for (const n of npcDefinitions) {
+      const data = npcSchema.parse(n.data);
+      if (data.characterPackageVersionId) {
+        const { manifest } = await ownedCharacterPackage(
+          c,
+          String(story.owner_id),
+          data.characterPackageVersionId,
+        );
+        if (manifest.animation) animations[n.id] = manifest.animation;
+        for (const part of manifest.parts.filter((p) =>
+          ['sheet', 'sprite', 'portrait'].includes(p.role),
+        ))
+          additionalBindings.push({
+            slot: `entity:${n.id}:${part.role === 'portrait' ? 'portrait' : 'sprite'}`,
+            revisionId: part.revisionId,
+          });
+      }
+    }
+    const images = (
+      await c.query(
+        'SELECT location_id,revision_id FROM studio_location_images WHERE adventure_id=$1 AND owner_id=$2 ORDER BY location_id',
+        [story.id, story.owner_id],
+      )
+    ).rows;
+    for (const image of images) {
+      if (!content.locations.some((l) => l.id === image.location_id)) continue;
+      additionalBindings.push({
+        slot: `map:${image.location_id}:background`,
+        revisionId: image.revision_id,
+      });
+    }
+    const aliases: Record<string, string | null> = {};
+    for (const map of priorDraft?.maps ?? []) {
+      if (map.sourceLocationId)
+        aliases[`map:${map.id}:background`] = content.locations.some(
+          (l) => l.id === map.sourceLocationId,
+        )
+          ? `map:${map.sourceLocationId}:background`
+          : null;
+    }
+    for (const npc of priorDraft?.npcs ?? []) {
+      if (npc.sourceNpcId)
+        for (const variant of ['sprite', 'portrait'])
+          aliases[`entity:${npc.id}:${variant}`] = content.npcIds.includes(npc.sourceNpcId)
+            ? `entity:${npc.sourceNpcId}:${variant}`
+            : null;
+    }
+    const preparedArt = await this.art.prepareLaunchManifestTx(
+      c,
+      String(story.id),
+      String(story.owner_id),
+      content.locations.map((l) => l.id),
+      content.npcIds,
+      additionalBindings,
+      aliases,
+    );
+    if (
+      expectedArtRevision !== undefined &&
+      Number(preparedArt.draftRevision) !== expectedArtRevision
+    )
+      fail(409, 'STALE_ART_REVISION', 'STALE_ART_REVISION');
+    const plannerSource: StoryPlanSource = {
+      priorDraft,
+      title: String(story.title),
+      synopsis: String(story.synopsis ?? ''),
+      content,
+      npcs: npcDefinitions.map((n) => ({
+        id: n.id,
+        name: n.data.name,
+        role: n.data.role ?? '',
+        description: n.data.description ?? '',
+        appearance: n.data.appearance ?? '',
+        characterProfile: n.data.characterProfile ?? null,
+      })),
+    };
+    const payload = {
+      schemaVersion: 2,
+      kind: 'launch-source',
+      compiled: null,
+      plannerSource,
+      npcDefinitions,
+      animations,
+      sourceArtBindings: preparedArt.bindings,
+      source: {
+        title: story.title,
+        sourceLanguage: narrative.sourceLanguage,
+        sourceRevision: narrative.sourceRevision,
+        content,
+      },
+      narrativePremise: {
+        title: String(story.title),
+        summary: String(story.synopsis ?? ''),
+        world: content.world ?? '',
+        genre: String(story.genre ?? ''),
+        rules: content.rules ?? '',
+        boundaries: content.boundaries ?? [],
+        openingScene: content.scenes.find((x) => x.id === content.startSceneId)?.description ?? '',
+      },
+    };
+    const checksum = hash(payload),
+      revision = Number(story.edit_revision);
+    const previous = (
+      await c.query(
+        "SELECT id FROM game_playable_versions WHERE adventure_id=$1 AND source_revision=$2 AND audience=$3 AND checksum=$4 AND (audience='private' OR NOT EXISTS(SELECT 1 FROM game_playable_approvals ap WHERE ap.playable_version_id=game_playable_versions.id)) ORDER BY created_at DESC LIMIT 1",
+        [story.id, revision, audience, checksum],
+      )
+    ).rows[0];
+    const versionId = previous?.id ?? randomUUID();
+    if (!previous) {
+      const count = (
+        await c.query(
+          'SELECT count(*)::int AS n FROM game_playable_versions WHERE adventure_id=$1',
+          [story.id],
+        )
+      ).rows[0];
+      if (count.n >= 100) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+      await c.query(
+        'INSERT INTO game_playable_versions(id,adventure_id,source_revision,audience,package,checksum) VALUES($1,$2,$3,$4,$5,$6)',
+        [versionId, story.id, revision, audience, JSON.stringify(payload), checksum],
+      );
+    }
+    await this.art.pinPrepared(c, versionId, preparedArt);
+    return String(versionId);
+  }
+
+  compileLaunchPlan(
+    sourcePackage: {
+      plannerSource: StoryPlanSource;
+      sourceArtBindings?: PlayablePackage['artBindings'];
+      narrativePremise?: PlayablePackage['narrativePremise'];
+      animations?: Record<string, unknown>;
+      npcDefinitions?: { id: string; data: Record<string, unknown> }[];
+    },
+    proposal: unknown,
+  ) {
+    const checked = compileStoryPlan(sourcePackage.plannerSource, proposal);
+    checked.playable.artBindings = sourcePackage.sourceArtBindings ?? [];
+    checked.playable.narrativePremise = sourcePackage.narrativePremise;
+    for (const npc of sourcePackage.npcDefinitions ?? []) {
+      const memory = checked.playable.npcBrains[npc.id]?.living;
+      if (memory && (!npc.data.characterProfile || memory.personality.biography === undefined))
+        memory.personality.biography = [npc.data.personality, npc.data.biography]
+          .filter(Boolean)
+          .join('\n')
+          .slice(0, 2000);
+    }
+    for (const [id, animation] of Object.entries(sourcePackage.animations ?? {})) {
+      if (!checked.playable.entities[id])
+        fail(409, 'STORY_SOURCE_MISMATCH', 'STORY_SOURCE_MISMATCH');
+      checked.playable.entities[id].characterAnimation = animation as NonNullable<
+        PlayablePackage['entities'][string]['characterAnimation']
+      >;
+    }
+    return checked.playable;
+  }
   async compilePrivate(req: Request, id: string, body: unknown) {
     const { expectedRevision, expectedArtRevision } = z
         .object({
@@ -491,6 +707,32 @@ export class PlayableService {
       return { versionId: null, sourceRevision: null, compiled: null };
     if (!row.id) fail(503, 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED');
     if (hash(row.package) !== row.checksum) fail(503, 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED');
+    if (!row.package.compiled)
+      return {
+        versionId: row.id,
+        sourceRevision: row.source_revision,
+        compiled: null,
+        preparationRequired: true,
+        sourceArtBindings: row.package.sourceArtBindings ?? [],
+        sourceSummary: {
+          title: row.package.plannerSource.title,
+          locations: row.package.plannerSource.content.locations.map(
+            (l: { id: string; name: string; description: string }) => ({
+              id: l.id,
+              name: l.name,
+              description: l.description,
+            }),
+          ),
+          npcs: row.package.plannerSource.npcs.map(
+            (n: { id: string; name: string; role: string; description: string }) => ({
+              id: n.id,
+              name: n.name,
+              role: n.role,
+              description: n.description,
+            }),
+          ),
+        },
+      };
     const p = row.package.compiled as PlayablePackage;
     return {
       versionId: row.id,
@@ -538,13 +780,7 @@ export class PlayableService {
       },
     };
   }
-  async resolveForStart(
-    c: PoolClient,
-    userId: string,
-    versionId: string,
-    actorId: string,
-    seed: number,
-  ) {
+  async sourceForStart(c: PoolClient, userId: string, versionId: string) {
     const row = (
       await c.query(
         'SELECT v.*,a.owner_id,a.visibility,a.status,a.published_snapshot,a.private_release_id,EXISTS(SELECT 1 FROM adventure_private_releases pr WHERE pr.playable_version_id=v.id AND pr.id=a.private_release_id) AS privately_released FROM game_playable_versions v JOIN adventures a ON a.id=v.adventure_id JOIN users u ON u.id=a.owner_id WHERE v.id=$1 AND u.deleted_at IS NULL FOR SHARE OF a',
@@ -579,7 +815,21 @@ export class PlayableService {
         fail(403, 'FORBIDDEN', 'FORBIDDEN');
     }
     if (hash(row.package) !== row.checksum) fail(503, 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED');
-    const state = createStateFromPlayable(row.package.compiled, [actorId], seed);
+    await this.art.assertPinsAvailable(c, versionId);
+    return row;
+  }
+  async resolveForStart(
+    c: PoolClient,
+    userId: string,
+    versionId: string,
+    actorId: string,
+    seed: number,
+    prepared?: PlayablePackage,
+  ) {
+    const row = await this.sourceForStart(c, userId, versionId);
+    const compiled = row.package.compiled ?? prepared;
+    if (!compiled) fail(409, 'START_PREPARATION_REQUIRED', 'START_PREPARATION_REQUIRED');
+    const state = createStateFromPlayable(compiled, [actorId], seed);
     state.narrativeSource = { versionId: row.id, checksum: row.checksum };
     if (!state.narrativePremise) {
       const published = (
@@ -589,7 +839,7 @@ export class PlayableService {
         )
       ).rows[0]?.snapshot;
       state.narrativePremise = {
-        title: String(row.package.source?.title ?? row.package.compiled.title ?? ''),
+        title: String(row.package.source?.title ?? compiled.title ?? ''),
         summary: String(published?.synopsis ?? ''),
         world: String(row.package.source?.content?.world ?? ''),
         genre: String(published?.genre ?? ''),

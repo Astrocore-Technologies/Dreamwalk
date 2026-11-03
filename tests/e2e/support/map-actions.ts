@@ -77,7 +77,13 @@ export async function legacyRealtimeLaunch(page: Page) {
   await page.route('**/api/v1/game/campaigns', async (route) => {
     if (route.request().method() !== 'POST') return route.continue();
     await route.continue({
-      postData: JSON.stringify({ ...route.request().postDataJSON(), turnBased: false }),
+      // This helper explicitly exercises the pre-preparation realtime API contract.
+      // The published seed is already compiled; never alter paid-start authorization.
+      postData: JSON.stringify({
+        ...route.request().postDataJSON(),
+        startPreparationId: undefined,
+        turnBased: false,
+      }),
     });
   });
 }

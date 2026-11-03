@@ -33,6 +33,13 @@ type ReviewEntity = {
   ownerId?: string;
 };
 type ReviewResponse = {
+  preparationRequired?: boolean;
+  sourceArtBindings?: { slot: string; revisionId: string }[];
+  sourceSummary?: {
+    title: string;
+    locations: { id: string; name: string; description: string }[];
+    npcs: { id: string; name: string; role: string; description: string }[];
+  };
   versionId: string | null;
   sourceRevision: number | null;
   compiled: null | {
@@ -70,7 +77,7 @@ export function PlayableReview({
   const { t } = useT();
   const review = useResource<ReviewResponse>(`/admin/adventures/${adventureId}/playable-review`);
   const [artReady, setArtReady] = useState(false);
-  const needsArt = !!review.data?.compiled?.artBindings?.length;
+  const needsArt = !!(review.data?.compiled?.artBindings ?? review.data?.sourceArtBindings)?.length;
   const [mapId, setMapId] = useState(''),
     [checkedVersion, setCheckedVersion] = useState<string | null>(null);
   const checked = !!review.data?.versionId && review.data.versionId === checkedVersion;
@@ -82,12 +89,54 @@ export function PlayableReview({
       !!review.data &&
         !review.loading &&
         !review.error &&
-        (!review.data.compiled || (checked && (!needsArt || artReady))),
+        ((!review.data.compiled && !review.data.preparationRequired) ||
+          (checked && (!needsArt || artReady))),
       review.data?.versionId || null,
     );
   }, [review.data, review.loading, review.error, checked, onReviewed, needsArt, artReady]);
   if (review.loading) return <Loading />;
   if (review.error) return <ErrorBox message={review.error} retry={review.reload} />;
+  if (review.data?.preparationRequired && review.data.versionId)
+    return (
+      <section className={styles.editor}>
+        <h3>{t('Исходная версия для подготовки при старте')}</h3>
+        <p>
+          {t(
+            'План будет подготовлен за искры игрока после подтверждения. Сейчас проверяются зафиксированные локации, NPC и сохранённые изображения.',
+          )}
+        </p>
+        <h4>{review.data.sourceSummary?.title}</h4>
+        {review.data.sourceSummary?.locations.map((l) => (
+          <article key={l.id}>
+            <h4>{l.name}</h4>
+            <p>{l.description}</p>
+          </article>
+        ))}
+        {review.data.sourceSummary?.npcs.map((n) => (
+          <article key={n.id}>
+            <h4>{n.name}</h4>
+            <p>{n.role}</p>
+            <p>{n.description}</p>
+          </article>
+        ))}
+        {needsArt && (
+          <PinnedArtReview
+            key={review.data.versionId}
+            versionId={review.data.versionId}
+            onReady={setArtReady}
+          />
+        )}
+        <label>
+          <input
+            type="checkbox"
+            checked={checked}
+            disabled={needsArt && !artReady}
+            onChange={(e) => setCheckedVersion(e.target.checked ? review.data!.versionId : null)}
+          />
+          {t('Исходная версия и изображения проверены')}
+        </label>
+      </section>
+    );
   if (!review.data?.compiled)
     return (
       <p className="muted">

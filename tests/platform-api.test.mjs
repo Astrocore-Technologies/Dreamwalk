@@ -367,7 +367,13 @@ await test('platform persistence, ownership, moderation and accounting', async (
         adventure = await admin.request(
           'POST',
           `/admin/adventures/${adventure.id}/moderate`,
-          { decision: 'approve', reason: 'Проверено в локальном QA' },
+          {
+            decision: 'approve',
+            reason: 'Проверено в локальном QA',
+            reviewedPlayableVersionId: (
+              await admin.request('GET', `/admin/adventures/${adventure.id}/playable-review`)
+            ).versionId,
+          },
           201,
         );
         assert.equal(adventure.status, 'published');

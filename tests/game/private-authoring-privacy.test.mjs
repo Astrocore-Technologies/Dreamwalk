@@ -100,7 +100,11 @@ test('notification reads replace historic invitation payload with current frozen
 });
 
 test('new private starts bind to current release while existing saves require an actual historical release and invitation', () => {
-  const start = method(playable, 'resolveForStart');
+  assert.match(
+    compact(method(playable, 'resolveForStart')),
+    /this\.sourceForStart\(c, userId, versionId\)/,
+  );
+  const start = method(playable, 'sourceForStart');
   const query = oneSql(start, 'AS privately_released');
   assert.ok(query.includes('pr.playable_version_id=v.id AND pr.id=a.private_release_id'));
   assert.match(compact(start), /!row\.private_release_id/);

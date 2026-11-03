@@ -295,7 +295,7 @@ export class GameService implements OnModuleDestroy {
     const cached = this.live.get(id);
     if (cached) return cached;
     const rows = await this.db.query(
-      `SELECT c.*,s.checksum,s.state AS snapshot_state,v.package->'compiled'->>'title' AS game_title,v.source_revision,v.package AS source_package,v.checksum AS source_checksum FROM game_campaigns c JOIN game_snapshots s ON s.campaign_id=c.id LEFT JOIN game_playable_versions v ON v.id=c.source_version_id WHERE c.id=$1 AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL) AND ${sourceLiveSql()}`,
+      `SELECT c.*,s.checksum,s.state AS snapshot_state,COALESCE(v.package->'compiled'->>'title',v.package->'source'->>'title') AS game_title,v.source_revision,v.package AS source_package,v.checksum AS source_checksum FROM game_campaigns c JOIN game_snapshots s ON s.campaign_id=c.id LEFT JOIN game_playable_versions v ON v.id=c.source_version_id WHERE c.id=$1 AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL) AND ${sourceLiveSql()}`,
       [id],
     );
     const row = rows[0];
@@ -2124,7 +2124,7 @@ export class GameService implements OnModuleDestroy {
     return {
       campaigns: (
         await this.db.query(
-          `SELECT c.id,c.owner_id,c.playable_version,c.status,m.status AS membership,c.source_version_id,v.source_revision,v.package->'compiled'->>'title' AS title FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id LEFT JOIN game_playable_versions v ON v.id=c.source_version_id WHERE m.user_id=$1 AND m.status IN ('accepted','pending') AND ${sourceAccessSql('$1')} ORDER BY c.created_at DESC LIMIT 100`,
+          `SELECT c.id,c.owner_id,c.playable_version,c.status,m.status AS membership,c.source_version_id,v.source_revision,COALESCE(v.package->'compiled'->>'title',v.package->'source'->>'title') AS title FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id LEFT JOIN game_playable_versions v ON v.id=c.source_version_id WHERE m.user_id=$1 AND m.status IN ('accepted','pending') AND ${sourceAccessSql('$1')} ORDER BY c.created_at DESC LIMIT 100`,
           [u.id],
         )
       ).map((r) => ({
@@ -2168,6 +2168,7 @@ export class GameService implements OnModuleDestroy {
         z
           .object({
             playableVersionId: z.uuid(),
+            startPreparationId: z.uuid().optional(),
             heroId: z.uuid().optional(),
             turnBased: z.boolean().optional(),
           })
@@ -2175,21 +2176,58 @@ export class GameService implements OnModuleDestroy {
       ])
       .parse(body);
     const u = await this.auth.require(req);
-    const id = randomUUID(),
-      actorId = `player-${u.id}`,
+    let id = randomUUID();
+    const actorId = `player-${u.id}`,
       seed = randomInt(1, 2147483647);
     await this.db.tx(async (c) => {
       const count = await c.query('SELECT id FROM users WHERE id=$1 FOR UPDATE', [u.id]);
       if (!count.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+      const sourceVersion = 'playableVersionId' in input ? input.playableVersionId : null;
+      const preparation =
+        'startPreparationId' in input && input.startPreparationId
+          ? (
+              await c.query(
+                'SELECT * FROM game_start_preparations WHERE id=$1 AND actor_id=$2 FOR UPDATE',
+                [input.startPreparationId, u.id],
+              )
+            ).rows[0]
+          : null;
+      if ('startPreparationId' in input && input.startPreparationId && !preparation)
+        fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      if (preparation) {
+        if (
+          preparation.source_version_id !== sourceVersion ||
+          preparation.hero_id !== (input.heroId ?? null) ||
+          input.turnBased === false
+        )
+          fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+        const source = await this.playable.sourceForStart(c, u.id, sourceVersion!);
+        if (source.checksum !== preparation.source_checksum)
+          fail(409, 'START_SOURCE_CHANGED', 'START_SOURCE_CHANGED');
+        if (preparation.campaign_id) {
+          id = preparation.campaign_id;
+          return;
+        }
+        if (preparation.status !== 'ready')
+          fail(409, 'START_PREPARATION_REQUIRED', 'START_PREPARATION_REQUIRED');
+      }
       const campaigns = await c.query(
         'SELECT count(*)::int AS n FROM game_campaigns WHERE owner_id=$1',
         [u.id],
       );
       if (campaigns.rows[0].n >= 20) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
       const selectedHero = await readOwnedHero(c, u.id, input.heroId);
-      const sourceVersion = 'playableVersionId' in input ? input.playableVersionId : null;
+      if (preparation && digest(selectedHero) !== digest(preparation.hero_snapshot))
+        fail(409, 'START_SOURCE_CHANGED', 'START_SOURCE_CHANGED');
       const state = sourceVersion
-        ? await this.playable.resolveForStart(c, u.id, sourceVersion, actorId, seed)
+        ? await this.playable.resolveForStart(
+            c,
+            u.id,
+            sourceVersion,
+            actorId,
+            seed,
+            preparation?.compiled,
+          )
         : createObservatoryState([actorId], seed);
       // Authored launches default to sequential turns, including older clients omitting the flag.
       // Explicit false remains a compatibility path for historical clients/fixtures only.
@@ -2217,6 +2255,11 @@ export class GameService implements OnModuleDestroy {
         [id, u.id, actorId],
       );
       await pinHero(c, id, u.id, input.heroId, selectedHero);
+      if (preparation)
+        await c.query(
+          "UPDATE game_start_preparations SET status='started',campaign_id=$2 WHERE id=$1",
+          [preparation.id, id],
+        );
       await c.query(
         'INSERT INTO game_snapshots(campaign_id,sequence,checksum,state) VALUES($1,0,$2,$3)',
         [id, digest(state), JSON.stringify(state)],
