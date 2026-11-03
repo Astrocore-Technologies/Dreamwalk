@@ -14,7 +14,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
   const { t } = useT();
   const heroSelection = useHeroSelection();
   const router = useRouter();
-  const { user } = useClient();
+  const { user, loading: authLoading } = useClient();
   const privateAccess =
     adventure.visibility === 'private' && ['owner', 'invited'].includes(adventure.access || '');
   const versions = useResource<{
@@ -45,6 +45,9 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
   const [quote, setQuote] = useState<Quote | null>(null);
   const [confirm, setConfirm] = useState(false);
   const [dispatchUncertain, setDispatchUncertain] = useState(false);
+  const [restoredKey, setRestoredKey] = useState('');
+  const [busy, setBusy] = useState(false),
+    [error, setError] = useState('');
   const storageKey = `dreamwalk-start:${user?.id}:${versionId}:${heroSelection.heroId}`;
   useEffect(() => {
     setPreparation(null);
@@ -52,11 +55,19 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
     setConfirm(false);
     setDispatchUncertain(sessionStorage.getItem(storageKey + ':dispatch-pending') === 'yes');
     setError('');
+    if (!sessionStorage.getItem(storageKey + ':prepare')) setRestoredKey(storageKey);
   }, [storageKey]);
   useEffect(() => {
-    if (user && versionId && heroSelection.ready && sessionStorage.getItem(storageKey + ':prepare'))
+    if (
+      user &&
+      versionId &&
+      heroSelection.ready &&
+      !busy &&
+      restoredKey !== storageKey &&
+      sessionStorage.getItem(storageKey + ':prepare')
+    )
       void launch('restore');
-  }, [storageKey, heroSelection.ready]);
+  }, [storageKey, heroSelection.ready, busy, restoredKey]);
   function operation(suffix: string) {
     const key = storageKey + ':' + suffix;
     let id = sessionStorage.getItem(key);
@@ -66,8 +77,6 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
     }
     return id;
   }
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
   async function launch(
     action: 'prepare' | 'confirm' | 'refresh' | 'restart' | 'restore' = 'prepare',
   ) {
@@ -159,6 +168,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
     } catch (err) {
       if (gate.accepts(lease)) setError(errorMessage(err));
     } finally {
+      if (action === 'restore' && gate.accepts(lease)) setRestoredKey(storageKey);
       if (!navigating && gate.finish(lease)) setBusy(false);
     }
   }
@@ -194,6 +204,8 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
         <Button
           type="button"
           disabled={
+            authLoading ||
+            (!!user && restoredKey !== storageKey) ||
             !versionId ||
             versions.loading ||
             !heroSelection.ready ||

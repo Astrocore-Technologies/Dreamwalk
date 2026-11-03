@@ -97,6 +97,15 @@ for (const outcome of ['ready', 'failed'] as const)
         expect(route.request().postDataJSON().startPreparationId).toBe(preparationId);
         return route.fulfill({ json: { campaignId } });
       });
+      // Exercise the reload window before auth and the saved hero have resolved.
+      await page.route('**/api/v1/auth/me', async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        await route.continue();
+      });
+      await page.route('**/api/v1/heroes', async (route) => {
+        await new Promise((resolve) => setTimeout(resolve, 300));
+        await route.continue();
+      });
       const path = '/adventures/old-observatory?heroId=' + heroId;
       await page.goto(path);
       expect(dispatches).toBe(0);

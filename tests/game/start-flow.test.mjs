@@ -22,6 +22,7 @@ async function harness(
   transport,
   saved = new Map(),
   selection = { heroId: '', ready: true, body: {} },
+  client = { user: { id: 'u' }, loading: false },
 ) {
   const source = await readFile(
     new URL('../../apps/web/components/game/adventure-launch.tsx', import.meta.url),
@@ -79,7 +80,7 @@ async function harness(
     '@/lib/client': {
       api: transport,
       errorMessage: (e) => e.message,
-      useClient: () => ({ user: { id: 'u' } }),
+      useClient: () => client,
       useResource: () => ({ loading: false }),
     },
     '@/lib/i18n': { useT: () => ({ t: (s) => s }) },
@@ -313,4 +314,73 @@ test('restore waits for saved hero loading then resumes without new dispatch', a
   await h.flush();
   assert.deepEqual(calls, ['/game/start-preparations', '/game/start-preparations/prep']);
   assert.ok(h.nodes().some((n) => String(n.props.children).startsWith('Подготовка не удалась.')));
+});
+test('primary action stays disabled throughout auth and existing-operation restoration', async () => {
+  const client = { user: null, loading: true },
+    selection = { heroId: '', ready: true, body: {} };
+  let release;
+  const saved = new Map([['dreamwalk-start:u:v::prepare', 'op']]);
+  const h = await harness(
+    async (path) => {
+      if (path === '/game/start-preparations')
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      return prepared;
+    },
+    saved,
+    selection,
+    client,
+  );
+  h.render();
+  await h.flush();
+  assert.equal(h.nodes().find((n) => n.type === 'button').props.disabled, true);
+  client.user = { id: 'u' };
+  client.loading = false;
+  h.render();
+  assert.equal(h.nodes().find((n) => n.type === 'button').props.disabled, true);
+  await h.flush();
+  assert.equal(h.nodes().find((n) => n.type === 'button').props.disabled, true);
+  release(prepared);
+  await h.flush();
+  assert.equal(h.nodes().find((n) => n.type === 'button').props.disabled, false);
+  assert.equal(h.paths.length, 0);
+});
+test('new hero restoration resumes after an old selection request finishes', async () => {
+  const selection = { heroId: 'a', ready: true, body: { heroId: 'a' } },
+    calls = [];
+  const saved = new Map([
+    ['dreamwalk-start:u:v:a:prepare', 'op-a'],
+    ['dreamwalk-start:u:v:b:prepare', 'op-b'],
+  ]);
+  let release;
+  const h = await harness(
+    async (path, options = {}) => {
+      if (path === '/game/start-preparations') {
+        const hero = JSON.parse(options.body).heroId;
+        calls.push(hero);
+        if (hero === 'a')
+          return new Promise((resolve) => {
+            release = resolve;
+          });
+      }
+      return prepared;
+    },
+    saved,
+    selection,
+  );
+  h.render();
+  await h.flush();
+  assert.deepEqual(calls, ['a']);
+  selection.heroId = 'b';
+  selection.body = { heroId: 'b' };
+  h.render();
+  await h.flush();
+  assert.equal(h.nodes().find((n) => n.type === 'button').props.disabled, true);
+  release(prepared);
+  await h.flush();
+  await h.flush();
+  assert.deepEqual(calls, ['a', 'b']);
+  assert.equal(h.nodes().find((n) => n.type === 'button').props.disabled, false);
+  assert.deepEqual(h.paths, []);
 });
