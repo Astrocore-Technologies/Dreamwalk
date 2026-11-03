@@ -92,13 +92,19 @@ test('author: NPC and complete adventure draft survive reload and submit confirm
   await page
     .getByRole('combobox', { name: 'Стартовая сцена', exact: true })
     .selectOption({ label: 'Прибытие' });
-  await page.getByRole('button', { name: /Просмотр$/ }).click();
+  await page
+    .getByRole('navigation', { name: 'Шаги создания приключения', exact: true })
+    .getByRole('button', { name: 'Просмотр', exact: true })
+    .click();
   // Narrative-only, not-yet-created drafts cannot launch a playable campaign.
   await expect(
     page.getByText(/История без карты остаётся литературным черновиком\./),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Подготовить план', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: /Публикация$/ }).click();
+  await page
+    .getByRole('navigation', { name: 'Шаги создания приключения', exact: true })
+    .getByRole('button', { name: 'Публикация', exact: true })
+    .click();
   await page
     .getByRole('combobox', { name: 'Режим публикации', exact: true })
     .selectOption('public');
@@ -110,7 +116,10 @@ test('author: NPC and complete adventure draft survive reload and submit confirm
   await page.getByRole('button', { name: 'Сохранить и отправить' }).click();
   await expect(page).toHaveURL(/\/studio\/adventures\/[a-f0-9-]+$/);
   await page.reload();
-  await page.getByRole('button', { name: /Публикация$/ }).click();
+  await page
+    .getByRole('navigation', { name: 'Шаги создания приключения', exact: true })
+    .getByRole('button', { name: 'Публикация', exact: true })
+    .click();
   await expect(page.getByRole('button', { name: 'Ожидает проверки' })).toBeDisabled();
 });
 
@@ -191,7 +200,10 @@ test('explicit private playable release invitation accepts and revokes without p
     await ownerPage
       .getByLabel('Синопсис')
       .fill('Этот мир доступен только лично приглашённым участникам.');
-    await ownerPage.getByRole('button', { name: /Публикация$/ }).click();
+    await ownerPage
+      .getByRole('navigation', { name: 'Шаги создания приключения', exact: true })
+      .getByRole('button', { name: 'Публикация', exact: true })
+      .click();
     await expect(
       ownerPage.getByRole('combobox', { name: 'Режим публикации', exact: true }),
     ).toHaveValue('private');
@@ -200,7 +212,10 @@ test('explicit private playable release invitation accepts and revokes without p
     const storyId = new URL(ownerPage.url()).pathname.split('/').at(-1)!;
     await savePrivateFixture(ownerPage, storyId, createAuthoredDraft('courtyard'));
     await ownerPage.reload();
-    await ownerPage.getByRole('button', { name: /Публикация$/ }).click();
+    await ownerPage
+      .getByRole('navigation', { name: 'Шаги создания приключения', exact: true })
+      .getByRole('button', { name: 'Публикация', exact: true })
+      .click();
     await ownerPage
       .getByLabel('Опубликовать эту готовую версию приватно, без общего каталога', { exact: true })
       .check();
