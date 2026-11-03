@@ -34,8 +34,10 @@ test('normal narrative shows committed shared results only and uses explicit con
     new URL('../../apps/web/components/game/game-page.tsx', import.meta.url),
     'utf8',
   );
-  assert.ok(page.indexOf('<UnifiedStory') < page.indexOf('<details data-testid="game-advanced">'));
-  assert.match(page, /<details data-testid="game-advanced">/);
+  assert.match(page, /<UnifiedStory/);
+  assert.doesNotMatch(page, /game-advanced|<SponsorBudget|<LivingAiPanel/);
+  const room = page.slice(page.indexOf('function CampaignRoom'));
+  assert.doesNotMatch(room, /Это временные игровые изображения/);
 });
 
 test('scene artwork uses authoritative CAS reuse and separate explicit grounded mock consent', async () => {

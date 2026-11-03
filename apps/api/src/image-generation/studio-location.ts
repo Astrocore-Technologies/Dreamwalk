@@ -3,7 +3,11 @@ import { createHash } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
 import { compilePlayableDraft, validateArtBindingSlot } from '@dreamwalk/game-core';
-import { authoredGameDraftSchema, deriveMapImageFraming } from '@dreamwalk/contracts';
+import {
+  authoredGameDraftSchema,
+  defaultImageStylePrompt,
+  deriveMapImageFraming,
+} from '@dreamwalk/contracts';
 import { AssetReuseService } from '../assets/reuse.service';
 import { fail } from '../errors';
 import type { GenerationRequest } from './contracts';
@@ -85,6 +89,8 @@ export async function prepareStudioLocationTx(
       ...(imageFraming ? { imageFraming } : {}),
     });
   const instruction =
+    defaultImageStylePrompt('battlemap') +
+    ' ' +
     (imageFraming
       ? `Use a ${imageFraming.width}x${imageFraming.height} canvas for the authoritative ${imageFraming.mapWidth}:${imageFraming.mapHeight} map aspect. Preserve the full illustration with contain framing; never crop or stretch. `
       : '') +

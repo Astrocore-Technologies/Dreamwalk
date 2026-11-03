@@ -27,9 +27,6 @@ import { TurnControls } from './turn-controls';
 import { useTurnText } from './turn-messages';
 import { playerControlsAvailable } from './turn-ui';
 import { UnifiedStory, type StoryRecipient } from './unified-story';
-import { useAdvancedPlayLabel } from './play-messages';
-import { SponsorBudget } from './sponsor-budget';
-import { LivingAiPanel } from './living-ai-panel';
 import { LivingNotices } from './living-notices';
 import { useGame, type CampaignSummary } from './use-game';
 import styles from './game.module.css';
@@ -65,21 +62,6 @@ const errorKeys: Record<string, string> = {
   RATE_LIMITED: 'Слишком много запросов. Подожди немного и повтори.',
   SOURCE_ACCESS_REQUIRED:
     'У игрока нет доступа к исходной приватной истории. Сначала пригласи его в историю.',
-};
-const eventKeys: Record<string, string> = {
-  'item.placed': 'Предмет поставлен',
-  'item.given': 'Предмет передан',
-  'item.consumed': 'Предмет съеден',
-  'action.pick_up': 'Предмет передан',
-  'action.give': 'Предмет передан',
-  'action.open': 'Дверь открыта',
-  'action.close': 'Дверь закрыта',
-  'action.unlock': 'Дверь отперта',
-  'actor.transitioned': 'Локация изменена',
-  'encounter.completed': 'Раунд завершён',
-  'round.resolved': 'Раунд завершён',
-  'action.inspect': 'Осмотр завершён',
-  'action.rejected': 'Действие отклонено',
 };
 function entityKey(entity: Pick<GameEntity, 'id' | 'kind'>, actorId: string) {
   if (entity.id === actorId) return 'Твой герой';
@@ -221,7 +203,6 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
   const turnText = useTurnText();
   const [inspectedNpcId, setInspectedNpcId] = useState<string | null>(null);
   const [storyBusy, setStoryBusy] = useState(false);
-  const advancedPlayLabel = useAdvancedPlayLabel();
   const [recipient, setRecipient] = useState<StoryRecipient>(null);
   useEffect(() => setRecipient(null), [campaignId]);
   const { t, locale } = useT();
@@ -749,40 +730,6 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             command={game.command}
             disabled={controlsDisabled}
           />
-          <details data-testid="game-advanced">
-            <summary>{advancedPlayLabel}</summary>
-            <SponsorBudget
-              campaignId={campaignId}
-              owner={members.data?.ownerId === user?.id}
-              disabled={!connected}
-            />
-            <LivingAiPanel
-              campaignId={campaignId}
-              projection={p}
-              disabled={!connected || game.busy}
-            />
-            <section>
-              <h2>{t('Журнал событий')}</h2>
-              <ol className={styles.journal} aria-live="polite" aria-relevant="additions">
-                {game.events.length ? (
-                  game.events.map((event) => (
-                    <li key={event.id}>
-                      {t(
-                        event.code
-                          ? errorKeys[event.code] || 'Действие отклонено'
-                          : eventKeys[event.kind] || 'Действие подтверждено',
-                      )}
-                    </li>
-                  ))
-                ) : (
-                  <li className={styles.muted}>{t('Новых событий пока нет')}</li>
-                )}
-              </ol>
-            </section>
-          </details>
-          <p className={styles.footnote}>
-            {t('Это временные игровые изображения. Целевой стиль — рисованный 2D.')}
-          </p>
         </aside>
       </div>
     </div>

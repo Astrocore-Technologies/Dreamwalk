@@ -35,7 +35,8 @@ export function SparksBalance({ ownerId }: { ownerId: string }) {
   const text = sparksBalanceMessages[locale];
   const amount = wallet.data ? formatSparkSubunits(wallet.data.availableSubunits, locale) : null;
   return (
-    <small
+    <strong
+      className="sparks-balance"
       data-testid="sparks-balance"
       title={
         amount !== null ? text.available : wallet.unavailable ? text.unavailable : text.loading
@@ -50,6 +51,6 @@ export function SparksBalance({ ownerId }: { ownerId: string }) {
       aria-live="polite"
     >
       {amount ?? (wallet.unavailable ? '—' : '…')}
-    </small>
+    </strong>
   );
 }
