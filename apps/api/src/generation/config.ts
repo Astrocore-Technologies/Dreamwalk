@@ -71,6 +71,33 @@ const textSchema = z
       })
       .strict()
       .optional(),
+    runtimeVision: z
+      .union([
+        z.literal(false),
+        z
+          .object({
+            model,
+            inputTokensPerImage: z.number().int().min(1).max(1048576),
+            maxImages: z.literal(1),
+            detail: z.literal('high'),
+            billing: z.literal('text_input_rate'),
+            maxPricedInputTokens: z.number().int().min(1).max(1050000),
+            pricing: pricingSchema,
+          })
+          .strict(),
+        z
+          .object({
+            model,
+            counting: z.literal('operational_exact'),
+            maxImages: z.literal(1),
+            detail: z.literal('high'),
+            billing: z.literal('text_input_rate'),
+            maxPricedInputTokens: z.number().int().min(1).max(1050000),
+            pricing: pricingSchema,
+          })
+          .strict(),
+      ])
+      .optional(),
     maxInputBytes: z.number().int().min(1024).max(TEXT_CONTEXT_TRANSPORT_BYTES).optional(),
     inputMicrosPerMillion: positiveMicros,
     outputMicrosPerMillion: positiveMicros,
@@ -90,6 +117,14 @@ const textSchema = z
     (v) =>
       !v.storyVision ||
       (!!v.estimation && v.contextBudgetTokens !== undefined && v.storyVision.model === v.model),
+  )
+  .refine(
+    (v) =>
+      !v.runtimeVision ||
+      (!!v.estimation &&
+        v.contextBudgetTokens !== undefined &&
+        v.runtimeVision.model === v.model &&
+        v.runtimeVision.maxImages === 1),
   )
   // Purpose overrides are explicit operator policy and require per-request quoting.
   .refine((value) => value.storyPlanMaxOutputTokens === undefined || !!value.estimation)
@@ -417,6 +452,33 @@ export function readGenerationConfig(
   }
   if (!value || typeof value !== 'object' || Array.isArray(value))
     invalid('GENERATION_CONFIG_INVALID');
+  // The owner enabled gameplay vision. Only this documented image-capable model
+  // gets the allowance-free default; other models need an explicit reviewed policy.
+  // Existing tariffs/dates remain authoritative, and an explicit false opts out.
+  const text = value.text as Record<string, unknown> | undefined;
+  if (
+    text &&
+    text.model === 'gpt-6-luna' &&
+    text.contextBudgetTokens !== undefined &&
+    text.estimation &&
+    !('runtimeVision' in text)
+  ) {
+    value = {
+      ...value,
+      text: {
+        ...text,
+        runtimeVision: {
+          model: 'gpt-6-luna',
+          counting: 'operational_exact',
+          maxImages: 1,
+          detail: 'high',
+          billing: 'text_input_rate',
+          maxPricedInputTokens: 272000,
+          pricing: text.pricing,
+        },
+      },
+    };
+  }
   if (value.allowance === 'unlimited') {
     const { allowance: _allowance, ...rest } = value;
     void _allowance;

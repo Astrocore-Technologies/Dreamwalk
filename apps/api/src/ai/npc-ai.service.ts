@@ -1,3 +1,14 @@
+import {
+  extendRuntimeMap,
+  runtimeMapStillCurrent,
+  runtimeMapSourceStillCurrent,
+} from '../game/runtime-map-context';
+import {
+  RuntimeMapCountRequired,
+  runtimeMapAdmissionStateHash,
+  withRuntimeMapPreflight,
+} from './runtime-map-preflight';
+import type { GameState } from '@dreamwalk/contracts';
 import { quoteFunding, optionalFunding } from '../generation/currency-funding';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import { textUsageCostMicros } from '../generation/text-pricing';
@@ -112,6 +123,38 @@ function publicRequestMeta(value: unknown) {
 export class NpcAiEngine {
   readonly policy: AiPolicy;
   private inFlight = new Set<string>();
+  private runtimeStateReader?: (campaignId: string) => GameState | undefined;
+  private runtimeRevisionReader?: (campaignId: string) => number | undefined;
+  attachRuntimeStateReader(
+    reader: (campaignId: string) => GameState | undefined,
+    revisionReader?: (campaignId: string) => number | undefined,
+  ) {
+    this.runtimeStateReader = reader;
+    this.runtimeRevisionReader = revisionReader;
+  }
+  async withRuntimeMap<T extends object>(
+    campaignId: string,
+    state: GameState,
+    actorId: string,
+    context: T,
+    purpose: import('./types').AiPurpose,
+    npcId?: string,
+    transaction?: PoolClient,
+  ): Promise<T> {
+    return this.provider.runtimeVisionEnabled?.()
+      ? extendRuntimeMap(
+          transaction
+            ? { query: async (sql, values) => (await transaction.query(sql, values)).rows }
+            : this.db,
+          campaignId,
+          state,
+          actorId,
+          context,
+          purpose,
+          npcId,
+        )
+      : context;
+  }
   constructor(
     protected db: Db,
     readonly provider: NpcProvider = new MockNpcProvider(),
@@ -289,9 +332,45 @@ export class NpcAiEngine {
       this.policy.providerUpperMicros === 0
     );
   }
-  private requestPlan(scope: AiScope, context: DecisionContext) {
-    const snapshot =
-      this.provider.prepareTextRequest?.(scope.purpose ?? 'plan', context)?.snapshot ?? null;
+  private async requestPlan(
+    scope: AiScope,
+    context: DecisionContext,
+    c: PoolClient,
+    pinned?: TextReserveSnapshot,
+  ) {
+    let snapshot: TextReserveSnapshot | null;
+    try {
+      snapshot =
+        this.provider.prepareTextRequest?.(scope.purpose ?? 'plan', context, pinned)?.snapshot ??
+        null;
+    } catch (error) {
+      if (!(error instanceof RuntimeMapCountRequired)) throw error;
+      const row = (
+        await c.query(
+          "SELECT input_tokens,created_at FROM runtime_map_token_counts WHERE actor_id=$1 AND campaign_id=$2 AND provider_version=$3 AND body_sha256=$4 AND status='succeeded' AND created_at>clock_timestamp()-interval '10 minutes' ORDER BY created_at DESC LIMIT 1",
+          [scope.requesterUserId, scope.campaignId, error.providerVersion, error.bodySha256],
+        )
+      ).rows[0];
+      if (row) {
+        error.accept(Number(row.input_tokens), new Date(row.created_at).getTime() + 600000);
+        snapshot =
+          this.provider.prepareTextRequest?.(scope.purpose ?? 'plan', context, pinned)?.snapshot ??
+          null;
+      } else {
+        error.scope = scope;
+        error.context = context;
+        const state = this.runtimeStateReader?.(scope.campaignId);
+        error.stateHash = digest(state ?? context.contextHash);
+        error.admissionStateHash = runtimeMapAdmissionStateHash(state, context.contextHash);
+        error.durableRevision =
+          this.runtimeRevisionReader?.(scope.campaignId) ??
+          Number(
+            (await c.query('SELECT revision FROM game_campaigns WHERE id=$1', [scope.campaignId]))
+              .rows[0]?.revision,
+          );
+        throw error;
+      }
+    }
     const reserveMicros = snapshot?.reserveMicros ?? this.policy.providerUpperMicros;
     if (
       !Number.isSafeInteger(reserveMicros) ||
@@ -300,6 +379,123 @@ export class NpcAiEngine {
     )
       fail(409, 'PROVIDER_BUDGET_EXCEEDED', 'PROVIDER_BUDGET_EXCEEDED');
     return { snapshot, reserveMicros };
+  }
+  /** Only explicit gameplay quote POSTs call this wrapper. Retries rebuild local
+   * state after rollback; network preflight never owns a game/SQL lock. */
+  withRuntimeVisionQuote<T>(work: () => Promise<T>) {
+    return withRuntimeMapPreflight(work, async (request) => {
+      const scope = request.scope!;
+      const context = request.context!;
+      if (!scope.requesterUserId || this.policy.killSwitch || !this.policy.externalApproved)
+        fail(403, 'PROVIDER_DISABLED', 'PROVIDER_DISABLED');
+      const admitted = await this.db.tx(async (c) => {
+        // Take all waits before the final access/source check. Erasure locks the
+        // campaign before scrubbing receipts, so it cannot miss a late insert.
+        await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+          `runtime-map-count:${scope.requesterUserId}`,
+        ]);
+        const campaign = (
+          await c.query('SELECT id,revision FROM game_campaigns WHERE id=$1 FOR SHARE', [
+            scope.campaignId,
+          ])
+        ).rows[0];
+        await c.query(
+          'SELECT a.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1 FOR SHARE OF a',
+          [scope.campaignId],
+        );
+        await c.query(
+          'SELECT user_id FROM game_members WHERE campaign_id=$1 ORDER BY user_id FOR SHARE',
+          [scope.campaignId],
+        );
+        await c.query(
+          'SELECT i.id FROM adventure_invitations i JOIN game_playable_versions v ON v.adventure_id=i.adventure_id JOIN game_campaigns gc ON gc.source_version_id=v.id WHERE gc.id=$1 ORDER BY i.id FOR SHARE OF i',
+          [scope.campaignId],
+        );
+        await this.authorize(c, { ...scope, origin: 'user' });
+        // Erasure/admin writes can update the durable state without touching the
+        // hot cache. Never send a context captured before that committed revision.
+        const hotRevision = this.runtimeRevisionReader?.(scope.campaignId);
+        if (!campaign || Number(campaign.revision) !== (hotRevision ?? request.durableRevision))
+          fail(409, 'RUNTIME_MAP_QUOTE_CHANGED', 'RUNTIME_MAP_QUOTE_CHANGED');
+        const state = this.runtimeStateReader?.(scope.campaignId);
+        if (runtimeMapAdmissionStateHash(state, context.contextHash) !== request.admissionStateHash)
+          fail(409, 'RUNTIME_MAP_QUOTE_CHANGED', 'RUNTIME_MAP_QUOTE_CHANGED');
+        if (
+          state &&
+          !(await runtimeMapSourceStillCurrent(
+            async (sql, values) => (await c.query(sql, values)).rows,
+            scope.campaignId,
+            state,
+            context,
+          ))
+        )
+          fail(409, 'MAP_IMAGE_SOURCE_CHANGED', 'MAP_IMAGE_SOURCE_CHANGED');
+        const old = (
+          await c.query(
+            "SELECT * FROM runtime_map_token_counts WHERE actor_id=$1 AND campaign_id=$2 AND provider_version=$3 AND body_sha256=$4 AND (status IN ('dispatched','unknown') OR (status='succeeded' AND created_at>clock_timestamp()-interval '10 minutes')) ORDER BY CASE WHEN status='succeeded' THEN 1 ELSE 0 END,created_at DESC LIMIT 1",
+            [scope.requesterUserId, scope.campaignId, request.providerVersion, request.bodySha256],
+          )
+        ).rows[0];
+        if (old?.status === 'succeeded')
+          return {
+            tokens: Number(old.input_tokens),
+            expiresAt: new Date(old.created_at).getTime() + 600000,
+          };
+        if (old) fail(409, 'RUNTIME_MAP_COUNT_UNRESOLVED', 'RUNTIME_MAP_COUNT_UNRESOLVED');
+        const recent = (
+          await c.query(
+            "SELECT count(*)::int AS n FROM runtime_map_token_counts WHERE actor_id=$1 AND created_at>clock_timestamp()-interval '1 minute'",
+            [scope.requesterUserId],
+          )
+        ).rows[0];
+        if (recent.n >= 60) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+        const id = randomUUID();
+        await c.query(
+          "INSERT INTO runtime_map_token_counts(id,actor_id,campaign_id,body_sha256,model,provider_version,status) VALUES($1,$2,$3,$4,$5,$6,'dispatched')",
+          [
+            id,
+            scope.requesterUserId,
+            scope.campaignId,
+            request.bodySha256,
+            request.model,
+            request.providerVersion,
+          ],
+        );
+        return { id };
+      });
+      if ('tokens' in admitted) {
+        request.accept(admitted.tokens!, admitted.expiresAt);
+        return;
+      }
+      try {
+        const tokens = await request.count(admitted.id!);
+        const saved = await this.db.query(
+          "UPDATE runtime_map_token_counts SET status='succeeded',input_tokens=$2,completed_at=clock_timestamp() WHERE id=$1 AND status='dispatched' RETURNING id,created_at",
+          [admitted.id, tokens],
+        );
+        if (!saved.length) fail(409, 'RUNTIME_MAP_QUOTE_CHANGED', 'RUNTIME_MAP_QUOTE_CHANGED');
+        request.accept(tokens, new Date(saved[0].created_at).getTime() + 600000);
+      } catch (error) {
+        await this.db.query(
+          "UPDATE runtime_map_token_counts SET status='unknown',result_code=$2,completed_at=clock_timestamp() WHERE id=$1 AND status='dispatched'",
+          [admitted.id, error instanceof ProviderFailure ? error.code : 'RUNTIME_MAP_COUNT_FAILED'],
+        );
+        throw error;
+      }
+    }).catch((error: unknown) => {
+      if (error instanceof ProviderFailure)
+        fail(503, 'RUNTIME_MAP_COUNT_UNAVAILABLE', 'RUNTIME_MAP_COUNT_UNAVAILABLE');
+      if (error instanceof Error && error.message === 'RUNTIME_MAP_QUOTE_CHANGED')
+        fail(409, 'RUNTIME_MAP_QUOTE_CHANGED', 'RUNTIME_MAP_QUOTE_CHANGED');
+      if (
+        error instanceof Error &&
+        ['RUNTIME_MAP_PRICING_RANGE_EXCEEDED', 'TEXT_CONTEXT_WINDOW_EXCEEDED'].includes(
+          error.message,
+        )
+      )
+        fail(413, 'RUNTIME_MAP_CONTEXT_TOO_LARGE', 'RUNTIME_MAP_CONTEXT_TOO_LARGE');
+      throw error;
+    });
   }
   async quote(
     scope: AiScope,
@@ -310,7 +506,6 @@ export class NpcAiEngine {
     const context = validateDecisionContext(input, this.policy.maxContextBytes);
     if (!this.contextFits(scope.purpose, context))
       fail(413, 'TEXT_CONTEXT_WINDOW_EXCEEDED', 'TEXT_CONTEXT_WINDOW_EXCEEDED');
-    const requestPlan = this.requestPlan(scope, context);
     const run = async (c: PoolClient) => {
       await this.authorize(c, { ...scope, origin: 'user', requesterUserId });
       await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
@@ -323,6 +518,7 @@ export class NpcAiEngine {
         )
       ).rows[0];
       if (recent.count >= 60) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+
       const id = randomUUID(),
         expires = new Date(Date.now() + this.policy.quoteMs);
       if (this.provider instanceof ReleaseGenerationProvider) {
@@ -331,6 +527,11 @@ export class NpcAiEngine {
         if (!(await sparksEnabled(c, requesterUserId)))
           fail(409, 'SPARK_WALLET_NOT_ENABLED', 'SPARK_WALLET_NOT_ENABLED');
       }
+      const requestPlan = await this.requestPlan(
+        { ...scope, origin: 'user', requesterUserId },
+        context,
+        c,
+      );
       const sparkMode =
         !(this.provider instanceof ManualLiveProvider) &&
         !this.isFreeBuiltInSimulation() &&
@@ -397,6 +598,7 @@ export class NpcAiEngine {
               providerEnforcesQuotedCap: false,
             }
           : {}),
+        ...(context.runtimeMapImage ? { runtimeMapImages: 1 } : {}),
         provider: this.provider.id,
         external: this.provider.external,
         policyVersion: this.policy.version,
@@ -407,6 +609,15 @@ export class NpcAiEngine {
   private async turnAuthorized(c: PoolClient, campaignId: string, context: DecisionContext) {
     const row = (await c.query('SELECT state FROM game_campaigns WHERE id=$1', [campaignId]))
       .rows[0];
+    if (
+      !(await runtimeMapStillCurrent(
+        async (sql, values) => (await c.query(sql, values)).rows,
+        campaignId,
+        this.runtimeStateReader?.(campaignId) ?? row?.state,
+        context,
+      ))
+    )
+      return false;
     // Contexts are server-built. Bind presentation to the explicit recipient, never
     // an arbitrary audience member. Check before cache lookup and again at dispatch.
     const actorId =
@@ -598,7 +809,36 @@ export class NpcAiEngine {
         fail(503, 'PROVIDER_DISABLED', 'PROVIDER_DISABLED');
       if (!this.contextFits(scope.purpose, context))
         fail(413, 'TEXT_CONTEXT_WINDOW_EXCEEDED', 'TEXT_CONTEXT_WINDOW_EXCEEDED');
-      const requestPlan = this.requestPlan(scope, context);
+      // Accepted quotes/permits outlive the short-lived quote cache. Read their
+      // server-owned snapshot before preparation, never recount during consent.
+      const acceptedQuote = input.quoteId
+        ? (await c.query('SELECT * FROM npc_ai_quotes WHERE id=$1 FOR UPDATE', [input.quoteId]))
+            .rows[0]
+        : null;
+      if (
+        input.quoteId &&
+        (!input.consent ||
+          !acceptedQuote ||
+          acceptedQuote.user_id !== scope.requesterUserId ||
+          acceptedQuote.campaign_id !== scope.campaignId ||
+          acceptedQuote.npc_id !== scope.npcId ||
+          acceptedQuote.context_hash !== context.contextHash ||
+          acceptedQuote.purpose !== (scope.purpose ?? 'plan') ||
+          acceptedQuote.provider_id !== this.provider.id ||
+          acceptedQuote.provider_version !== this.provider.version ||
+          acceptedQuote.policy_version !== this.policy.version ||
+          new Date(acceptedQuote.expires_at).getTime() <= Date.now())
+      )
+        fail(409, 'QUOTE_EXPIRED', 'QUOTE_EXPIRED');
+      const pinned = acceptedQuote?.request_snapshot ?? releasePermit?.requestSnapshot ?? undefined;
+      const requestPlan = await this.requestPlan(
+        { ...scope, requesterUserId: scope.requesterUserId ?? releasePermit?.payerId },
+        context,
+        c,
+        pinned,
+      );
+      if (releasePermit && digest(releasePermit.requestSnapshot) !== digest(requestPlan.snapshot))
+        fail(409, 'GENERATION_TEXT_RESERVE_STALE', 'GENERATION_TEXT_RESERVE_STALE');
       const count = Number(
         (
           await c.query(
@@ -637,9 +877,7 @@ export class NpcAiEngine {
       ) {
         if (!input.consent || !input.quoteId || !scope.requesterUserId)
           fail(403, 'CONSENT_REQUIRED', 'CONSENT_REQUIRED');
-        const q = (
-          await c.query('SELECT * FROM npc_ai_quotes WHERE id=$1 FOR UPDATE', [input.quoteId])
-        ).rows[0];
+        const q = acceptedQuote;
         if (
           !q ||
           q.user_id !== scope.requesterUserId ||

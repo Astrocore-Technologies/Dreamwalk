@@ -13,7 +13,7 @@ async function register(page: Page) {
   await page.goto('/auth/sign-up');
   await page.getByLabel('Логин').fill(credentials.handle);
   await page.getByLabel('Email', { exact: true }).fill(credentials.email);
-  await page.getByLabel('Пароль').fill(credentials.password);
+  await page.getByLabel('Пароль', { exact: true }).fill(credentials.password);
   await page.getByRole('button', { name: 'Создать аккаунт', exact: true }).click();
   await expect(page).toHaveURL(/\/onboarding$/);
   await page.getByRole('button', { name: 'Открыть Dreamwalk' }).click();
@@ -168,7 +168,7 @@ test('interface locale switches and survives account login', async ({ page }) =>
   await page.getByRole('button', { name: 'Вийти', exact: true }).click();
   await page.goto('/auth/sign-in');
   await page.getByLabel('Email', { exact: true }).fill(credentials.email);
-  await page.getByLabel('Пароль').fill(credentials.password);
+  await page.getByLabel('Пароль', { exact: true }).fill(credentials.password);
   await page.getByRole('button', { name: 'Увійти', exact: true }).click();
   await expect(page).toHaveURL(/\/home$/);
   await expect(page.locator('header').getByRole('combobox')).toHaveValue('uk');
