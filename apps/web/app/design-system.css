@@ -754,8 +754,7 @@ td {
 }
 .game-shell .top-actions .wallet-chip,
 .game-shell .top-actions .profile-chip,
-.game-shell .top-actions a[href='/notifications'],
-.game-shell .top-actions .logout {
+.game-shell .top-actions a[href='/notifications'] {
   display: none;
 }
 .game-shell .main-content {

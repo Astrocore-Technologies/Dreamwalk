@@ -278,3 +278,18 @@
     height: max(600px, 85dvh);
   }
 }
+
+.composerInput {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) 46px;
+  gap: 8px;
+  align-items: end;
+}
+.composerInput:has(textarea:only-child) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.sendButton {
+  min-width: 44px;
+  min-height: 44px;
+  padding: 10px;
+}

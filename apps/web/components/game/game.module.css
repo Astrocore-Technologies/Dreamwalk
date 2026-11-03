@@ -909,9 +909,6 @@
   border-radius: 14px;
 }
 @media (max-width: 1100px) {
-  :global(.game-shell) .connection[data-connected='true'] {
-    display: none;
-  }
   :global(.game-shell) .turnPanel header > div {
     font-size: 11px;
   }

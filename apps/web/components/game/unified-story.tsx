@@ -1,4 +1,5 @@
 'use client';
+import { Send } from 'lucide-react';
 import { SparkReceiptCost } from '../visual-authoring/sparks-cost';
 import { StoryCost } from './story-cost';
 import { StoryReplyConfirmation } from './story-reply-confirmation';
@@ -550,20 +551,34 @@ export function UnifiedStory({
                 {h('chooseWhisper')}
               </p>
             )}
-            <Textarea
-              aria-label={h('composer')}
-              aria-describedby={hintId}
-              value={text}
-              maxLength={1000}
-              rows={3}
-              placeholder={h('placeholder')}
-              disabled={disabled || busy || pending || uncertain}
-              onChange={(event) => {
-                setText(event.target.value);
-                setPrepared(null);
-                setNotice('');
-              }}
-            />
+            <div className={styles.composerInput}>
+              <Textarea
+                aria-label={h('composer')}
+                aria-describedby={hintId}
+                value={text}
+                maxLength={1000}
+                rows={2}
+                placeholder={h('placeholder')}
+                disabled={disabled || busy || pending || uncertain}
+                onChange={(event) => {
+                  setText(event.target.value);
+                  setPrepared(null);
+                  setNotice('');
+                }}
+              />
+              {!prepared && !pending && !uncertain && (
+                <Button
+                  type="submit"
+                  className={styles.sendButton}
+                  aria-label={h('send')}
+                  title={h('send')}
+                  busy={busy}
+                  disabled={disabled || busy || !available || !targetValid || !text.trim()}
+                >
+                  <Send size={20} aria-hidden="true" />
+                </Button>
+              )}
+            </div>
             <p id={hintId} className={styles.hint}>
               {h('hint')}
             </p>
@@ -683,15 +698,6 @@ export function UnifiedStory({
                   </Button>
                 </div>
               </div>
-            )}
-            {!prepared && !pending && !uncertain && (
-              <Button
-                type="submit"
-                busy={busy}
-                disabled={disabled || busy || !available || !targetValid || !text.trim()}
-              >
-                {h('send')}
-              </Button>
             )}
             {(pending || uncertain) && (
               <Button type="button" variant="secondary" onClick={() => void refresh()}>
