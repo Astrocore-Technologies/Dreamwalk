@@ -95,7 +95,9 @@ for (const role of ['admin', 'user'] as const) {
     });
     await page.goto('/admin/users');
     if (role === 'user') {
-      await expect(page.getByRole('heading', { name: 'Administrators only' })).toBeVisible();
+      await expect(
+        page.getByRole('heading', { name: 'This section is for the team' }),
+      ).toBeVisible();
       expect(reads).toBe(0);
       expect(adopted).toBe(0);
     } else {
@@ -104,7 +106,12 @@ for (const role of ['admin', 'user'] as const) {
       await expect(
         dialog.getByText(/The previous profile and platform spending limit were not saved/),
       ).toBeVisible();
-      await expect(dialog.getByText(/Story plan tokens.*8192/)).toBeVisible();
+      await expect(
+        dialog.getByText(
+          'Text: synthetic-text · Regular response tokens: 2048 · Story plan tokens: 8192',
+          { exact: true },
+        ),
+      ).toBeVisible();
       await expect(dialog.getByText(/New platform spending limit USD/)).toBeVisible();
       expect(adopted).toBe(0);
       await dialog.getByRole('button', { name: 'Approve new profile', exact: true }).click();
