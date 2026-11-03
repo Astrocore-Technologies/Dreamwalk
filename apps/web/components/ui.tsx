@@ -190,10 +190,12 @@ export function Tabs({ items }: { items: { href: string; label: string; active?:
   );
 }
 export function Modal({
+  className = '',
   title,
   children,
   onClose,
 }: {
+  className?: string;
   title: string;
   children: ReactNode;
   onClose: () => void;
@@ -209,7 +211,7 @@ export function Modal({
     <dialog
       aria-label={title}
       ref={ref}
-      className="dialog"
+      className={`dialog ${className}`}
       onCancel={(e) => {
         e.preventDefault();
         onClose();

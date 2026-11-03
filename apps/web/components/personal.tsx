@@ -12,7 +12,19 @@ import { useT } from '@/lib/i18n';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useState } from 'react';
-import { ArrowUpRight, Bell, Feather, Plus, Sparkles, UserRound } from 'lucide-react';
+import styles from './heroes.module.css';
+import {
+  ArrowUpRight,
+  Bell,
+  Feather,
+  ImageIcon,
+  Pencil,
+  Play,
+  Plus,
+  Sparkles,
+  UserRound,
+  X,
+} from 'lucide-react';
 import {
   api,
   useResource,
@@ -295,7 +307,10 @@ export function HeroesPage() {
   const visualText = useVisualText();
   const returnTo = readStoryReturn(useSearchParams());
   const heroText = useHeroText();
-  const { t: tr } = useT();
+  const { t: tr, locale } = useT();
+  const appearanceLabel =
+    locale === 'ru' ? 'Образ героя' : locale === 'uk' ? 'Образ героя' : 'Hero appearance';
+  const [traitsText, setTraitsText] = useState('');
   const { toast } = useClient();
   const resource = useResource<Hero[]>('/heroes');
   const [editing, setEditing] = useState<Partial<Hero> | null>(null),
@@ -303,17 +318,14 @@ export function HeroesPage() {
     [busy, setBusy] = useState(false),
     [remove, setRemove] = useState<Hero | null>(null);
   return (
-    <>
+    <section className={styles.page}>
       <PageHeading
-        eyebrow={tr('ТВОИ ДРУГИЕ Я')}
         title={tr('Мои герои')}
-        description={tr(
-          'Храбрец, мечтатель или тот, кто всегда задаёт неудобные вопросы. Кем будешь ты?',
-        )}
         action={
           <Button
             onClick={() => {
               setError('');
+              setTraitsText('');
               setEditing({ name: '', backstory: '', notes: '', traits: [] });
             }}
           >
@@ -322,16 +334,20 @@ export function HeroesPage() {
           </Button>
         }
       />
-      <ButtonLink href="/studio/visuals">{visualText('title')}</ButtonLink>
+      <div className={styles.workshop}>
+        <ButtonLink href="/studio/visuals" variant="ghost">
+          {visualText('title')}
+        </ButtonLink>
+      </div>
       <StoryReturnLink intent={returnTo} />
       <ErrorBox message={resource.error} retry={resource.reload} />
       {resource.loading ? (
         <Loading />
       ) : resource.data?.length ? (
-        <div className="hero-grid">
+        <div className={`hero-grid ${styles.grid}`}>
           {resource.data.map((hero) => (
-            <Panel key={hero.id} className="hero-card">
-              <div className="hero-portrait">
+            <Panel key={hero.id} className={`hero-card ${styles.card}`}>
+              <div className={`hero-portrait ${styles.portrait}`}>
                 {hero.portraitAssetId ? (
                   <img src={assetUrl(hero.portraitAssetId)} alt={hero.name} />
                 ) : (
@@ -339,35 +355,52 @@ export function HeroesPage() {
                 )}
                 <span className="portrait-star">✧</span>
               </div>
-              <h2>{hero.name}</h2>
-              <ButtonLink
-                href={
-                  storyWithHero(returnTo, hero.id) || `/game?heroId=${encodeURIComponent(hero.id)}`
-                }
-              >
-                {heroText('play')}
-              </ButtonLink>
-              <CharacterSpriteControl
-                target={{ kind: 'hero', id: hero.id }}
-                onSaved={resource.reload}
-              />
-              <p>{hero.backstory || tr('История этого героя ещё не рассказана.')}</p>
-              <div className="filter-chips">
-                {hero.traits.map((t) => (
-                  <Badge key={t}>{t}</Badge>
-                ))}
-              </div>
-              <div className="row">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setError('');
-                    setEditing(hero);
-                  }}
-                >
-                  {tr('Редактировать')}
-                </Button>
-                <Button variant="ghost" onClick={() => setRemove(hero)}>
+              <div className={styles.cardBody}>
+                <h2>{hero.name}</h2>
+                <div className={`filter-chips ${styles.traits}`}>
+                  {hero.traits.map((trait, index) => (
+                    <Badge key={`${trait}-${index}`}>
+                      <Sparkles size={15} aria-hidden="true" />
+                      {trait}
+                    </Badge>
+                  ))}
+                </div>
+                <p className={styles.backstory}>
+                  {hero.backstory || tr('История этого героя ещё не рассказана.')}
+                </p>
+                <details className={styles.appearance}>
+                  <summary>
+                    <ImageIcon size={18} aria-hidden="true" />
+                    {appearanceLabel}
+                  </summary>
+                  <CharacterSpriteControl
+                    target={{ kind: 'hero', id: hero.id }}
+                    onSaved={resource.reload}
+                  />
+                </details>
+                <div className={styles.cardActions}>
+                  <ButtonLink
+                    href={
+                      storyWithHero(returnTo, hero.id) ||
+                      `/game?heroId=${encodeURIComponent(hero.id)}`
+                    }
+                  >
+                    <Play size={17} aria-hidden="true" />
+                    {heroText('play')}
+                  </ButtonLink>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setError('');
+                      setTraitsText(hero.traits.join(', '));
+                      setEditing(hero);
+                    }}
+                  >
+                    <Pencil size={17} aria-hidden="true" />
+                    {tr('Редактировать')}
+                  </Button>
+                </div>
+                <Button variant="ghost" className={styles.remove} onClick={() => setRemove(hero)}>
                   {tr('Удалить')}
                 </Button>
               </div>
@@ -381,7 +414,13 @@ export function HeroesPage() {
             'Герой — твоя персона внутри приключения. Дай ему имя, характер и маленькую тайну.',
           )}
           action={
-            <Button onClick={() => setEditing({ name: '', backstory: '', notes: '', traits: [] })}>
+            <Button
+              onClick={() => {
+                setError('');
+                setTraitsText('');
+                setEditing({ name: '', backstory: '', notes: '', traits: [] });
+              }}
+            >
               <Plus size={17} />
               {tr('Создать первого героя')}
             </Button>
@@ -394,97 +433,137 @@ export function HeroesPage() {
       </div>
       {editing && (
         <Modal
+          className={styles.editor}
           title={editing.id ? tr('История твоего героя') : tr('Новый герой')}
           onClose={() => setEditing(null)}
         >
-          <form
-            id="hero-editor"
-            method="post"
-            className="stack"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setBusy(true);
-              setError('');
-              const { id, ...fields } = editing;
-              try {
-                await api(id ? `/heroes/${id}` : '/heroes', {
-                  method: id ? 'PATCH' : 'POST',
-                  body: JSON.stringify({
-                    name: fields.name,
-                    backstory: fields.backstory || '',
-                    notes: fields.notes || '',
-                    traits: fields.traits || [],
-                    portraitAssetId: fields.portraitAssetId || null,
-                  }),
-                });
-                setEditing(null);
-                resource.reload();
-                toast(tr('Герой сохранён'));
-              } catch (e) {
-                setError(errorMessage(e));
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            <Field label={tr('Имя героя')}>
-              <Input
-                required
-                minLength={2}
-                maxLength={80}
-                value={editing.name || ''}
-                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-              />
-            </Field>
-            <UploadField
-              label={tr('Загрузить портрет')}
-              onUploaded={(a) => setEditing({ ...editing, portraitAssetId: a.id })}
-            />
-            {editing.portraitAssetId && (
-              <img
-                className="upload-preview"
-                src={assetUrl(editing.portraitAssetId)}
-                alt={tr('Портрет героя')}
-              />
-            )}
-            <Field label={tr('Предыстория')}>
-              <Textarea
-                maxLength={6000}
-                value={editing.backstory || ''}
-                onChange={(e) => setEditing({ ...editing, backstory: e.target.value })}
-                placeholder={tr('Откуда герой пришёл? Что оставил позади?')}
-              />
-            </Field>
-            <Field label={tr('Черты характера')} hint={tr('Через запятую, до 12 черт')}>
-              <Input
-                value={editing.traits?.join(', ') || ''}
-                onChange={(e) =>
-                  setEditing({
-                    ...editing,
-                    traits: e.target.value.split(',').map((s) => s.trim()),
-                  })
+          <div className={styles.editorScroll}>
+            <form
+              id="hero-editor"
+              method="post"
+              className={styles.editorForm}
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setBusy(true);
+                setError('');
+                const { id, ...fields } = editing;
+                try {
+                  await api(id ? `/heroes/${id}` : '/heroes', {
+                    method: id ? 'PATCH' : 'POST',
+                    body: JSON.stringify({
+                      name: fields.name,
+                      backstory: fields.backstory || '',
+                      notes: fields.notes || '',
+                      traits: fields.traits || [],
+                      portraitAssetId: fields.portraitAssetId || null,
+                    }),
+                  });
+                  setEditing(null);
+                  resource.reload();
+                  toast(tr('Герой сохранён'));
+                } catch (e) {
+                  setError(errorMessage(e));
+                } finally {
+                  setBusy(false);
                 }
-                placeholder={tr('Любопытный, упрямый, добрый')}
-              />
-            </Field>
-            <Field label={tr('Личные заметки')}>
-              <Textarea
-                value={editing.notes || ''}
-                maxLength={6000}
-                onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
-              />
-            </Field>
-            <ErrorBox message={error} />
-          </form>
-          <HeroPortraitControl
-            name={editing.name || ''}
-            backstory={editing.backstory || ''}
-            traits={editing.traits || []}
-            onSelected={(assetId) =>
-              setEditing((current) => (current ? { ...current, portraitAssetId: assetId } : null))
-            }
-          />
-          <div className="form-actions">
+              }}
+            >
+              <div className={styles.portraitColumn}>
+                <div className={styles.editorPortrait}>
+                  {editing.portraitAssetId ? (
+                    <img
+                      className="upload-preview"
+                      src={assetUrl(editing.portraitAssetId)}
+                      alt={tr('Портрет героя')}
+                    />
+                  ) : (
+                    <UserRound size={100} aria-hidden="true" />
+                  )}
+                </div>
+                <UploadField
+                  label={tr('Загрузить портрет')}
+                  onUploaded={(asset) =>
+                    setEditing((current) =>
+                      current ? { ...current, portraitAssetId: asset.id } : null,
+                    )
+                  }
+                />
+              </div>
+              <div className={styles.fields}>
+                <Field label={tr('Имя героя')}>
+                  <Input
+                    required
+                    minLength={2}
+                    maxLength={80}
+                    value={editing.name || ''}
+                    onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                  />
+                </Field>
+                <Field label={tr('Предыстория')}>
+                  <Textarea
+                    maxLength={6000}
+                    value={editing.backstory || ''}
+                    onChange={(e) => setEditing({ ...editing, backstory: e.target.value })}
+                    placeholder={tr('Откуда герой пришёл? Что оставил позади?')}
+                  />
+                </Field>
+                <div className={styles.traitEditor}>
+                  <Field label={tr('Черты характера')} hint={tr('Через запятую, до 12 черт')}>
+                    <Input
+                      value={traitsText}
+                      onChange={(e) => {
+                        setTraitsText(e.target.value);
+                        setEditing({
+                          ...editing,
+                          traits: e.target.value
+                            .split(',')
+                            .map((trait) => trait.trim())
+                            .filter(Boolean),
+                        });
+                      }}
+                      placeholder={tr('Любопытный, упрямый, добрый')}
+                    />
+                  </Field>
+                  <div className={styles.traits}>
+                    {editing.traits?.map((trait, index) => (
+                      <button
+                        type="button"
+                        key={`${trait}-${index}`}
+                        className={styles.traitChip}
+                        aria-label={`${tr('Удалить')}: ${trait}`}
+                        onClick={() => {
+                          const traits = editing.traits!.filter((_, at) => at !== index);
+                          setEditing({ ...editing, traits });
+                          setTraitsText(traits.join(', '));
+                        }}
+                      >
+                        <Sparkles size={14} aria-hidden="true" />
+                        {trait}
+                        <X size={14} aria-hidden="true" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <Field label={tr('Личные заметки')}>
+                  <Textarea
+                    value={editing.notes || ''}
+                    maxLength={6000}
+                    onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
+                  />
+                </Field>
+                <ErrorBox message={error} />
+              </div>
+            </form>
+            <HeroPortraitControl
+              name={editing.name || ''}
+              backstory={editing.backstory || ''}
+              traits={editing.traits || []}
+              onSelected={(assetId) =>
+                setEditing((current) => (current ? { ...current, portraitAssetId: assetId } : null))
+              }
+            />
+          </div>
+          <div className={`form-actions ${styles.editorActions}`}>
             <Button type="button" variant="secondary" onClick={() => setEditing(null)}>
               {tr('Отмена')}
             </Button>
@@ -529,7 +608,7 @@ export function HeroesPage() {
           </div>
         </Modal>
       )}
-    </>
+    </section>
   );
 }
 export function WalletPage() {
