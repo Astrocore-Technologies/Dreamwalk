@@ -1,3 +1,4 @@
+import { prepareStoryMapImages } from './story-map-images';
 import { compileStoryPlan, type StoryPlanSource } from './story-plan';
 import { ownedCharacterPackage } from '../visual-authoring/character-package';
 import { Inject, Injectable } from '@nestjs/common';
@@ -529,7 +530,17 @@ export class PlayableService {
       Number(preparedArt.draftRevision) !== expectedArtRevision
     )
       fail(409, 'STALE_ART_REVISION', 'STALE_ART_REVISION');
+    const mapImages = await prepareStoryMapImages(
+      c,
+      this.art,
+      String(story.owner_id),
+      preparedArt.bindings.flatMap((b) => {
+        const l = content.locations.find((l) => b.slot === `map:${l.id}:background`);
+        return l ? [{ location_id: l.id, revision_id: b.revisionId }] : [];
+      }),
+    );
     const plannerSource: StoryPlanSource = {
+      ...(mapImages.length ? { mapImages } : {}),
       priorDraft,
       title: String(story.title),
       synopsis: String(story.synopsis ?? ''),
@@ -820,6 +831,27 @@ export class PlayableService {
     }
     if (hash(row.package) !== row.checksum) fail(503, 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED');
     await this.art.assertPinsAvailable(c, versionId);
+    // Upgrade old uncompiled immutable sources in memory only; existing live/compiled maps stay untouched.
+    if (
+      row.package.kind === 'launch-source' &&
+      !row.package.compiled &&
+      !row.package.plannerSource.mapImages
+    ) {
+      const source = row.package.plannerSource as StoryPlanSource;
+      const bindings = (row.package.sourceArtBindings ?? []) as {
+        slot: string;
+        revisionId: string;
+      }[];
+      const images = bindings.flatMap((b) => {
+        const l = source.content.locations.find((l) => b.slot === `map:${l.id}:background`);
+        return l ? [{ location_id: l.id, revision_id: b.revisionId }] : [];
+      });
+      if (images.length) {
+        const mapImages = await prepareStoryMapImages(c, this.art, String(row.owner_id), images);
+        const upgraded = { ...row.package, plannerSource: { ...source, mapImages } };
+        return { ...row, package: upgraded, checksum: hash(upgraded) };
+      }
+    }
     return row;
   }
   async resolveForStart(

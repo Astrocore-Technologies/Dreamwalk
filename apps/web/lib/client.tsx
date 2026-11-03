@@ -6,6 +6,23 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import type { User, Adventure } from '@dreamwalk/contracts';
 export type { User, Adventure, Hero, Asset, Settings } from '@dreamwalk/contracts';
 const errorKeys: Record<string, string> = {
+  MAP_VISION_POLICY_REQUIRED:
+    'Анализ изображений карт пока не настроен. Администратору нужно проверить модель и стоимость.',
+  MAP_IMAGE_UNAVAILABLE: 'Сохранённое изображение карты недоступно. Подготовка остановлена.',
+  MAP_IMAGE_UNCERTAIN:
+    'Не удалось уверенно определить безопасный старт на изображении карты. План не применён.',
+  MAP_IMAGE_UNSAFE_SPAWN:
+    'Не удалось уверенно определить безопасный старт на изображении карты. План не применён.',
+  MAP_IMAGE_UNSAFE_NPC:
+    'Не удалось уверенно определить безопасный старт на изображении карты. План не применён.',
+  MAP_IMAGE_DISCONNECTED_SPAWN:
+    'Не удалось уверенно определить безопасный старт на изображении карты. План не применён.',
+  MAP_IMAGE_UNSAFE_PASSAGE:
+    'Не удалось уверенно определить безопасный старт на изображении карты. План не применён.',
+  MAP_IMAGE_SOURCE_MISMATCH: 'План не соответствует сохранённому изображению карты и не применён.',
+  MAP_IMAGE_DUPLICATE_GEOMETRY:
+    'План не соответствует сохранённому изображению карты и не применён.',
+
   GENERATION_POLICY_CHANGED:
     'Настройки генерации изменились. Администратору нужно подтвердить их обновление для аккаунта.',
   GENERATION_PRICING_EXPIRED:

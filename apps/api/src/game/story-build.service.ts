@@ -1,3 +1,4 @@
+import { prepareStoryMapImages } from './story-map-images';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
@@ -82,7 +83,38 @@ export class StoryBuildService {
       artRevision: art?.revision ?? 0,
       images,
     });
+    const priorDraft = game?.draft ? authoredGameDraftSchema.parse(game.draft) : null;
+    const bindings = [
+      ...new Map(
+        ((art?.bindings ?? []) as { slot: string; revisionId: string }[]).map((binding) => {
+          const oldMap = priorDraft?.maps.find((m) => binding.slot === `map:${m.id}:background`);
+          const slot =
+            oldMap?.sourceLocationId &&
+            content.locations.some((l) => l.id === oldMap.sourceLocationId)
+              ? `map:${oldMap.sourceLocationId}:background`
+              : binding.slot;
+          return [slot, { ...binding, slot }] as const;
+        }),
+      ).values(),
+    ];
+    const effectiveImages = new Map<string, string>();
+    for (const binding of bindings) {
+      const location = content.locations.find((l) => binding.slot === `map:${l.id}:background`);
+      if (location) effectiveImages.set(location.id, binding.revisionId);
+    }
+    for (const image of images)
+      if (content.locations.some((l) => l.id === image.location_id))
+        effectiveImages.set(image.location_id, image.revision_id);
+    const mapImages = await prepareStoryMapImages(
+      c,
+      this.art,
+      owner,
+      [...effectiveImages]
+        .sort(([a], [b]) => a.localeCompare(b))
+        .map(([location_id, revision_id]) => ({ location_id, revision_id })),
+    );
     const source: StoryPlanSource = {
+      ...(mapImages.length ? { mapImages } : {}),
       title: story.data.title ?? story.title,
       synopsis: story.data.synopsis ?? story.synopsis ?? '',
       content,
@@ -98,13 +130,13 @@ export class StoryBuildService {
             ? { characterProfile: npcCharacterProfileSchema.parse(n.data.characterProfile) }
             : {}),
       })),
-      priorDraft: game?.draft ? authoredGameDraftSchema.parse(game.draft) : null,
+      priorDraft,
     };
     return {
       hash,
       source,
       images,
-      bindings: art?.bindings ?? [],
+      bindings,
       gameRevision: Number(game?.revision ?? 0),
       artRevision: Number(art?.revision ?? 0),
     };
@@ -171,6 +203,7 @@ export class StoryBuildService {
         b.sourceHash !== r.source_hash ||
         b.readsetHash !== digest(r.source_snapshot.source) ||
         current.hash !== r.source_hash ||
+        this.imageIdentity(current.source) !== this.imageIdentity(r.source_snapshot.source) ||
         // Older immutable preparations omitted synopsis despite hashing the full story.
         // Never quote the new prompt with silently incomplete source: reprepare instead.
         (r.source_snapshot.source.synopsis === undefined && !!current.source.synopsis)
@@ -178,10 +211,14 @@ export class StoryBuildService {
         fail(409, 'STORY_CONTEXT_STALE', 'STORY_CONTEXT_STALE');
     };
   }
+  private imageIdentity(source: StoryPlanSource) {
+    return digest((source.mapImages ?? []).map(({ dataUrl: _dataUrl, ...image }) => image));
+  }
   private sameAuthorSource(a: StoryPlanSource, b: StoryPlanSource) {
     return (
+      this.imageIdentity(a) === this.imageIdentity(b) &&
       digest({ title: a.title, synopsis: a.synopsis ?? '', content: a.content, npcs: a.npcs }) ===
-      digest({ title: b.title, synopsis: b.synopsis ?? '', content: b.content, npcs: b.npcs })
+        digest({ title: b.title, synopsis: b.synopsis ?? '', content: b.content, npcs: b.npcs })
     );
   }
   async latest(owner: string, adventureId: string) {

@@ -1,4 +1,5 @@
 'use client';
+import { MapImageNotice } from './map-image-notice';
 import { storyReturnPath, withStoryReturn } from '../story-return';
 import { HeroSelection, useHeroSelection } from './hero-selection';
 import { useLaunchGate } from './use-launch-gate';
@@ -37,6 +38,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
     : adventure.playableVersionId;
   const gate = useLaunchGate(`${user?.id}:${adventure.id}:${versionId}:${heroSelection.heroId}`);
   type Quote = {
+    imageInputCount?: number;
     id: string;
     expiresAt: string;
     sparks?: { reserveSubunits: string; rateVersion?: string };
@@ -207,6 +209,13 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
     <>
       <HeroSelection selection={heroSelection} disabled={busy || state !== 'estimate'} compact />
       {status && <p role="status">{t(status)}</p>}
+      {Boolean(preparation?.jobs?.[0]?.error_code?.startsWith('MAP_IMAGE_')) && (
+        <p>
+          {t(
+            'Не удалось уверенно определить безопасный старт на изображении карты. План не применён.',
+          )}
+        </p>
+      )}
       {!confirm && (
         <Button
           type="button"
@@ -245,6 +254,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
             if (!busy) setConfirm(false);
           }}
         >
+          <MapImageNotice count={quote.imageInputCount} />
           <p>
             {t('Оценка в искрах')}:{' '}
             {estimatedSubunits === null ? '—' : formatSparkSubunits(estimatedSubunits)}

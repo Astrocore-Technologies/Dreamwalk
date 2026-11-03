@@ -1,3 +1,5 @@
+import { observedVisible } from './observation-visibility';
+import { spatialContext } from './spatial-context';
 import { characterAppraisal, characterPerformance, updateCharacterRelationship } from './character';
 import { materializeNpcItems, npcItemContext } from './world-items';
 import type { NpcItemIntent } from '@dreamwalk/contracts';
@@ -142,7 +144,7 @@ export function canNpcHear(
 }
 function audience(state: GameState, npc: GameEntity): string[] {
   return Object.values(state.entities)
-    .filter((e) => e.kind === 'player' && visible(state, e, npc))
+    .filter((e) => e.kind === 'player' && observedVisible(state, e, npc))
     .map((e) => e.id)
     .sort();
 }
@@ -397,8 +399,8 @@ export function recordLivingNpcEvents(
         for (const candidate of candidates) {
           if (candidate.id === npcId) continue;
           const afterActor = after.entities[candidate.id];
-          const saw = visible(before, npc, candidate),
-            sees = !!afterNpc && !!afterActor && visible(after, afterNpc, afterActor);
+          const saw = observedVisible(before, npc, candidate),
+            sees = !!afterNpc && !!afterActor && observedVisible(after, afterNpc, afterActor);
           if (saw === sees) continue;
           const kind = sees ? 'actor_seen' : 'actor_departed',
             known = sees ? afterActor : candidate;
@@ -482,8 +484,8 @@ export function recordLivingNpcEvents(
         kind === 'addressed' ||
         kind === 'helped' ||
         ((kind === 'harmed' || kind === 'pushed') && e.targetId === npcId);
-      const seesActor = attentive && visible(before, npc, actor),
-        seesTarget = target && attentive && visible(before, npc, target);
+      const seesActor = attentive && observedVisible(before, npc, actor),
+        seesTarget = target && attentive && observedVisible(before, npc, target);
       const direct =
         e.actorId === npcId ||
         ((kind === 'addressed' || kind === 'helped' || kind === 'harmed' || kind === 'pushed') &&
@@ -686,7 +688,8 @@ export function applyNpcSpeech(
       mapId: speaker.mapId,
       channel: 'report',
       confidence: 'reported',
-      actorId: claim?.actorId ?? (visible(s, s.entities[id], speaker) ? speakerId : undefined),
+      actorId:
+        claim?.actorId ?? (observedVisible(s, s.entities[id], speaker) ? speakerId : undefined),
       targetId: claim?.targetId,
       sourceNpcId: undefined,
       addressedNpcId: npcId,
@@ -704,7 +707,9 @@ export function applyNpcSpeech(
         : Object.values(s.entities)
             .filter((e) => ['player', 'npc'].includes(e.kind) && canNpcHear(s, e, speaker))
             .map((e) => e.id);
-    const known = listeners.filter((id) => id === speakerId || visible(s, s.entities[id], speaker));
+    const known = listeners.filter(
+      (id) => id === speakerId || observedVisible(s, s.entities[id], speaker),
+    );
     (s.npcUtterances ??= []).push({
       id: `utterance-${hash(root)}`,
       speakerId,
@@ -729,7 +734,7 @@ export function applyNpcSpeech(
         mapId: npc.mapId,
         audienceIds: replyListeners,
         speakerKnownToIds: replyListeners.filter(
-          (id) => id === npcId || visible(s, s.entities[id], npc),
+          (id) => id === npcId || observedVisible(s, s.entities[id], npc),
         ),
       });
     s.npcUtterances = s.npcUtterances.slice(-128);
@@ -1019,7 +1024,10 @@ export function stepLivingNpcs(
             }
           }
         const target = observation.targetId ? s.entities[observation.targetId] : undefined,
-          point = target && !target.ownerId && visible(s, npc, target) ? target : observation.point;
+          point =
+            target && !target.ownerId && observedVisible(s, npc, target)
+              ? target
+              : observation.point;
         const actions: GameAction[] = [];
         if (
           point &&
@@ -1163,6 +1171,7 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
     )
     .slice(0, 16);
   const context = {
+    ...(spatialContext(state, npcId) ? { spatialContext: spatialContext(state, npcId) } : {}),
     npcId,
     ...(npc.supportingNpc
       ? {
@@ -1211,7 +1220,7 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
     summary:
       m.summary && validateNpcSummary(state, npcId, m.summary) ? clone(m.summary) : undefined,
     visibleEntities: Object.values(state.entities)
-      .filter((e) => e.id === npcId || visible(state, npc, e))
+      .filter((e) => e.id === npcId || observedVisible(state, npc, e))
       .map((e) => ({
         id: e.id,
         kind: e.kind,
@@ -1382,6 +1391,7 @@ export function buildNpcPublicSpeechContext(
   });
   return {
     ...npcItemContext(state, npcId),
+    ...(spatialContext(state, npcId) ? { spatialContext: spatialContext(state, npcId) } : {}),
     npcId,
     replyLocale: locale,
     audienceIds: audience,
@@ -1423,7 +1433,7 @@ export function projectGameEvents(
         e.actorId === viewerId ||
         (e.actorId &&
           state.entities[e.actorId] &&
-          visible(state, viewer, state.entities[e.actorId])),
+          observedVisible(state, viewer, state.entities[e.actorId])),
     )
     .map((e) => ({
       kind: e.kind,
@@ -1553,14 +1563,16 @@ export function commitNpcPublicUtterance(
     mapId: npc.mapId,
     sourceObservationIds: [...input.observationIds],
     audienceIds: listeners,
-    speakerKnownToIds: listeners.filter((id) => id === npcId || visible(s, s.entities[id], npc)),
+    speakerKnownToIds: listeners.filter(
+      (id) => id === npcId || observedVisible(s, s.entities[id], npc),
+    ),
   });
   s.npcUtterances = s.npcUtterances.slice(-128);
   if (input.text)
     for (const listenerId of listeners) {
       const memory = s.npcBrains?.[listenerId]?.living;
       if (!memory) continue;
-      const recognizes = listenerId === npcId || visible(s, s.entities[listenerId], npc);
+      const recognizes = listenerId === npcId || observedVisible(s, s.entities[listenerId], npc);
       remember(memory, {
         id: `${listenerId}:${id}`,
         eventId: id,
@@ -1610,7 +1622,7 @@ export function refreshLivingPerception(state: GameState): GameResult {
         y: last.y,
         revision: 0,
       };
-      if (!visible(s, npc, spot)) continue;
+      if (!observedVisible(s, npc, spot)) continue;
       const actual = s.entities[targetId];
       if (
         actual &&
@@ -1641,7 +1653,7 @@ export function refreshLivingPerception(state: GameState): GameResult {
       events.push({ kind: 'npc.absence_noticed', actorId: id, mapId: npc.mapId });
     }
     for (const e of Object.values(s.entities))
-      if (e.kind === 'item' && visible(s, npc, e)) {
+      if (e.kind === 'item' && observedVisible(s, npc, e)) {
         const old = remembered[e.id];
         if (!old || !old.present || old.mapId !== e.mapId || old.x !== e.x || old.y !== e.y) {
           remembered[e.id] = { mapId: e.mapId, x: e.x, y: e.y, present: true };

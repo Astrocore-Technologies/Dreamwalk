@@ -228,6 +228,7 @@ export interface GameEntity extends GamePoint {
 export interface GameMap {
   description?: string;
   composition?: SceneComposition;
+  spatialGrounding?: MapSpatialGrounding;
   sceneProfile?: 'observatory-interior-v1' | 'observatory-roof-v1';
   id: string;
   label?: string;
@@ -430,6 +431,49 @@ export const npcProposalSchema = z
   })
   .strict();
 export type NpcProposal = z.infer<typeof npcProposalSchema>;
+/** Image observations are advisory in RP play; they constrain initial placement, not free movement. */
+export const mapSpatialGroundingSchema = z
+  .object({
+    version: z.literal(1),
+    imageRevisionId: z.uuid(),
+    imageSha256: z.string().regex(/^[a-f0-9]{64}$/),
+    confidence: z.number().min(0).max(1),
+    rows: z.array(z.string().regex(/^[.D#~X?]{24}$/)).length(24),
+    doors: z
+      .array(
+        z
+          .object({
+            x: z.number().int().min(1).max(22),
+            y: z.number().int().min(1).max(22),
+            label: z.string().trim().min(1).max(100),
+            open: z.boolean(),
+          })
+          .strict(),
+      )
+      .max(16)
+      .optional(),
+    landmarks: z
+      .array(
+        z
+          .object({
+            label: z.string().trim().min(1).max(100),
+            kind: z.enum(['room', 'door', 'path', 'water', 'rock', 'furniture']),
+            x: z.number().int().min(0).max(23),
+            y: z.number().int().min(0).max(23),
+            width: z.number().int().min(1).max(24),
+            height: z.number().int().min(1).max(24),
+          })
+          .strict(),
+      )
+      .max(16),
+  })
+  .strict()
+  .superRefine((v, ctx) => {
+    for (const r of v.landmarks)
+      if (r.x + r.width > 24 || r.y + r.height > 24)
+        ctx.addIssue({ code: 'custom', message: 'Landmark outside map' });
+  });
+export type MapSpatialGrounding = z.infer<typeof mapSpatialGroundingSchema>;
 export const gameMapSchema = z
   .object({
     description: z.string().trim().max(6000).optional(),
@@ -437,6 +481,7 @@ export const gameMapSchema = z
     label: z.string().trim().min(1).max(120).optional(),
     labelTranslations: gameLabelTranslationsSchema.optional(),
     composition: sceneCompositionSchema.optional(),
+    spatialGrounding: mapSpatialGroundingSchema.optional(),
     sceneProfile: z.enum(['observatory-interior-v1', 'observatory-roof-v1']).optional(),
     width: z.number().int().min(1).max(64),
     height: z.number().int().min(1).max(64),
@@ -726,6 +771,7 @@ export const authoredGameDraftSchema = z
             label: authoredLabel,
             labelTranslations: gameLabelTranslationsSchema.optional(),
             composition: sceneCompositionSchema.optional(),
+            spatialGrounding: mapSpatialGroundingSchema.optional(),
             sceneProfile: z.enum(['observatory-interior-v1', 'observatory-roof-v1']).optional(),
             description: z.string().trim().max(6000).optional(),
             sourceLocationId: z.string().min(1).max(80).optional(),
