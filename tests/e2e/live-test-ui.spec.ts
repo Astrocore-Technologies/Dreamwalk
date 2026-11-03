@@ -454,9 +454,15 @@ test('gameplay hides world-request diagnostics without granting background conse
   await expect.poll(() => isolatedGameSockets).toBeGreaterThan(0);
   expect(approvals).toBe(0);
   envelope.projection.turn.phaseEpoch++;
+  const socketsBeforeReload = isolatedGameSockets;
   await page.reload();
+  // An absent panel is also true before hydration. Wait for the reloaded game
+  // transport before checking that it still does not request generation consent.
+  await expect.poll(() => isolatedGameSockets).toBeGreaterThan(socketsBeforeReload);
   await expect(page.getByTestId('live-test-panel')).toHaveCount(0);
   expect(approvals).toBe(0);
+  // Finish in-flight synthetic auth responses before Playwright disposes them.
+  await page.unrouteAll({ behavior: 'wait' });
 });
 
 test('admin catalog hides generation controls without enabling provider calls', async ({
