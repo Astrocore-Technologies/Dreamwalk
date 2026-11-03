@@ -146,6 +146,14 @@ export function purgeLivingNpcReferences(state, actorId, archivedRoots = [], arc
       return true;
     });
     let changed = memory.observations.length !== before || audienceChanged;
+    if (
+      brain.planSource &&
+      (brain.planSource.actorId === actorId ||
+        erasedObservationIds.has(brain.planSource.sourceObservationId))
+    ) {
+      delete brain.planSource;
+      changed = true;
+    }
     const companionship = memory.companionship;
     if (
       companionship &&

@@ -78,7 +78,12 @@ interface Port {
     state: GameState,
     actorId: string,
     npcId: string,
-    speech: { channel: 'say' | 'whisper'; text: string; replyLocale?: Locale },
+    speech: {
+      channel: 'say' | 'whisper';
+      text: string;
+      replyLocale?: Locale;
+      presentationKind?: 'attempt';
+    },
     requestId: string,
     userId: string,
     identity: { turnId: string; segmentIndex: number },
@@ -312,15 +317,12 @@ export class StoryTurnRuntime {
           audienceIds: input.channel === 'whisper' ? [actorId] : listeners(next),
         });
         if (!applied.error)
-          next =
-            action.kind === 'consume'
-              ? recordNpcEvents(
-                  next,
-                  applied.state,
-                  applied.events,
-                  `turn:${turnId}:${segment.index}`,
-                ).state
-              : applied.state;
+          next = recordNpcEvents(
+            next,
+            applied.state,
+            applied.events,
+            `turn:${turnId}:${segment.index}`,
+          ).state;
         entries.push({
           ordinal: entries.length,
           tick: next.tick,
@@ -379,6 +381,7 @@ export class StoryTurnRuntime {
         {
           channel: input.channel,
           text: untrustedRoleplay.map((entry) => entry.text).join('; '),
+          presentationKind: 'attempt',
           replyLocale: input.replyLocale,
         },
         requestId,

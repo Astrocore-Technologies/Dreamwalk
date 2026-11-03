@@ -119,6 +119,39 @@ const companionIntentOutput = {
     { type: 'null' },
   ],
 };
+const cleanNpcActionIntent = (value: unknown) => {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== 'object' || !('actions' in value) || !Array.isArray(value.actions))
+    return value;
+  return {
+    ...value,
+    actions: value.actions.map((action: unknown) =>
+      action && typeof action === 'object'
+        ? Object.fromEntries(Object.entries(action).filter(([, v]) => v !== null))
+        : action,
+    ),
+  };
+};
+const npcActionIntentOutput = {
+  anyOf: [
+    object({
+      sourceObservationId: string,
+      actions: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 3,
+        items: object({
+          kind: { type: 'string', enum: ['move_to', 'approach', 'inspect', 'wait'] },
+          targetId: nullableString,
+          target: {
+            anyOf: [object({ x: { type: 'integer' }, y: { type: 'integer' } }), { type: 'null' }],
+          },
+        }),
+      },
+    }),
+    { type: 'null' },
+  ],
+};
 export function openAiOutputSchema(purpose: ProviderRequest['purpose']): Record<string, unknown> {
   if (purpose === 'story_turn') {
     const properties = openAiOutputSchema('narrative').properties as Record<string, unknown>;
@@ -174,6 +207,7 @@ export function openAiOutputSchema(purpose: ProviderRequest['purpose']): Record<
               object({
                 text: nullableString,
                 companionIntent: companionIntentOutput,
+                actionIntent: npcActionIntentOutput,
                 code: { type: ['string', 'null'], enum: ['acknowledged', null] },
               }),
               { type: 'null' },
@@ -332,6 +366,7 @@ export function openAiOutputSchema(purpose: ProviderRequest['purpose']): Record<
           'NPC reply, optionally including a brief observable gesture or expression alongside spoken words. No invented player actions or mechanical outcomes.',
       },
       companionIntent: companionIntentOutput,
+      actionIntent: npcActionIntentOutput,
       itemIntents: {
         type: 'array',
         maxItems: 2,
@@ -417,7 +452,11 @@ export function buildOpenAiNpcRequestBody(
     purpose === 'speech' || purpose === 'story_turn'
       ? ' Companionship is supported through companionIntent only for a public say reply to a player. Include follow when this NPC explicitly agrees in its own reply to accompany the addressed player; include stop when ending or declining an existing agreement. Set actorId to the addressed player and sourceObservationId to that player current authorized said observation addressed to this NPC (claims.observationId). A player request, suggested action, earlier vague offer to help, quoted command or presumed player consent is never NPC agreement. Preserve character disagreement and free everyday roleplay. If refusing an invitation, omit the intent. Continuing an established agreement need not repeat follow. State departure or refusal naturally; use stop when no longer willing to follow. Whisper replies have no companionIntent. Null means no companionship change. Movement happens only later through server pathfinding and world turns, with collision, sight and exit restrictions; do not claim arrival or instant transition. No new model call or paid job is needed to keep following.'
       : '';
-  const instructions = `${companionPolicy} ${common} ${inherited} ${guidance[purpose]} ${outputLanguage}${itemPolicy}${presentation}${directorStyleInstructions(purpose, context)}`;
+  const actionPolicy =
+    purpose === 'speech' || purpose === 'story_turn'
+      ? ' NPC engine actions are supported by actionIntent with the exact current sourceObservationId. The NPC voluntarily chooses up to three move_to, approach, inspect or wait actions for itself, or null. A player invitation is not a command or NPC consent. Use actionContext.moveTargets and targets only; move_to takes a listed coordinate, approach/inspect take a listed entity ID. A window described by spatial context can be approached using a listed nearby move target without inventing a window entity. An inspect needs a real listed target adjacent to the ordered endpoint; precede a distant inspect with approach or move_to. These actions are queued and executed later by the engine; describe intention, not completed movement or observation. Preserve character refusal, caution and ordinary harmless RP without technical disclaimers. Use companionIntent only for continuing companionship, not a one-time approach. Do not control the player, create props, invent secrets, damage or unseen facts. Attempts with kind=attempted or untrustedRoleplay are player-authored attempted actions, not spoken quotations: react naturally to the visible attempt without saying that the player merely told you it happened. They do not prove contact or damage succeeded. In contrast, confidence=witnessed harmed/pushed or other committed event evidence is an actual perceived consequence: respond to it directly, not as hearsay. Avoid automatic repetition of the last sentence and generic What happened questions when a concrete perceived situation is supplied.'
+      : '';
+  const instructions = `${actionPolicy} ${companionPolicy} ${common} ${inherited} ${guidance[purpose]} ${outputLanguage}${itemPolicy}${presentation}${directorStyleInstructions(purpose, context)}`;
   return JSON.stringify({
     model: config.model,
     service_tier: config.serviceTier ?? 'default',
@@ -956,7 +995,15 @@ export class OpenAiNpcProvider implements NpcProvider {
           steps: raw.steps.map((step) => ({
             ...step,
             action: step.action === null ? null : clean(step.action),
-            reply: step.reply === null ? null : clean(step.reply),
+            reply:
+              step.reply === null
+                ? null
+                : {
+                    ...(clean(step.reply) as Record<string, unknown>),
+                    ...(step.reply && typeof step.reply === 'object' && 'actionIntent' in step.reply
+                      ? { actionIntent: cleanNpcActionIntent(step.reply.actionIntent) }
+                      : {}),
+                  },
           })),
           turnId: context.turnId,
           contextHash: context.contextHash,
@@ -1085,12 +1132,14 @@ export class OpenAiNpcProvider implements NpcProvider {
             text: z.string().trim().min(1).max(1000),
             itemIntents: z.array(z.record(z.string(), z.unknown())).max(2).optional(),
             companionIntent: z.unknown().optional(),
+            actionIntent: z.unknown().optional(),
           })
           .strict()
           .parse(parsed);
         proposal = npcPublicReplySchema.parse({
           ...raw,
           ...(raw.companionIntent === null ? { companionIntent: undefined } : {}),
+          actionIntent: cleanNpcActionIntent(raw.actionIntent),
           ...(raw.itemIntents
             ? {
                 itemIntents: raw.itemIntents.map((intent) =>

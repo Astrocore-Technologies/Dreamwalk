@@ -1,5 +1,7 @@
 import { observedVisible } from './observation-visibility';
 import { companionAction } from './companionship';
+import { npcActionContext, prepareNpcActionIntent } from './npc-actions';
+import { type NpcActionIntent } from '@dreamwalk/contracts';
 import { npcCompanionIntentSchema, type NpcCompanionIntent } from '@dreamwalk/contracts';
 import { spatialContext } from './spatial-context';
 import { characterAppraisal, characterPerformance, updateCharacterRelationship } from './character';
@@ -601,7 +603,7 @@ export function npcReplyObservation(
     o.depth !== 0 ||
     o.sourceNpcId ||
     o.channel !== 'report' ||
-    !['said', 'claim', 'addressed'].includes(o.kind) ||
+    !['said', 'claim', 'addressed', 'attempted'].includes(o.kind) ||
     !['public', 'participants'].includes(o.disclosure)
   )
     return undefined;
@@ -637,7 +639,11 @@ export function applyNpcSpeech(
   speakerId: string,
   npcId: string,
   input: unknown,
-  options: { suppressReply?: boolean; identity?: { turnId: string; segmentIndex: number } } = {},
+  options: {
+    suppressReply?: boolean;
+    identity?: { turnId: string; segmentIndex: number };
+    presentationKind?: 'attempt';
+  } = {},
 ): GameResult {
   const p = npcSpeechSchema.safeParse(input),
     speaker = state.entities[speakerId],
@@ -677,7 +683,13 @@ export function applyNpcSpeech(
     p.data.channel === 'whisper'
       ? [npcId]
       : Object.values(s.entities)
-          .filter((e) => e.kind === 'npc' && canNpcHear(state, e, speaker))
+          .filter(
+            (e) =>
+              e.kind === 'npc' &&
+              (options.presentationKind === 'attempt'
+                ? observedVisible(state, e, speaker)
+                : canNpcHear(state, e, speaker)),
+          )
           .map((e) => e.id);
   for (const id of recipients) {
     const m = s.npcBrains?.[id]?.living;
@@ -686,7 +698,14 @@ export function applyNpcSpeech(
       id: `${id}:${root}`,
       eventId: root,
       rootId: root,
-      kind: claim ? 'claim' : p.data.text ? 'said' : 'addressed',
+      kind:
+        options.presentationKind === 'attempt'
+          ? 'attempted'
+          : claim
+            ? 'claim'
+            : p.data.text
+              ? 'said'
+              : 'addressed',
       tick: s.tick,
       mapId: speaker.mapId,
       channel: 'report',
@@ -708,7 +727,13 @@ export function applyNpcSpeech(
       p.data.channel === 'whisper'
         ? [speakerId, npcId]
         : Object.values(s.entities)
-            .filter((e) => ['player', 'npc'].includes(e.kind) && canNpcHear(s, e, speaker))
+            .filter(
+              (e) =>
+                ['player', 'npc'].includes(e.kind) &&
+                (options.presentationKind === 'attempt'
+                  ? observedVisible(s, e, speaker)
+                  : canNpcHear(s, e, speaker)),
+            )
             .map((e) => e.id);
     const known = listeners.filter(
       (id) => id === speakerId || observedVisible(s, s.entities[id], speaker),
@@ -716,6 +741,7 @@ export function applyNpcSpeech(
     (s.npcUtterances ??= []).push({
       id: `utterance-${hash(root)}`,
       speakerId,
+      ...(options.presentationKind === 'attempt' ? { presentationKind: 'attempt' as const } : {}),
       tick: s.tick,
       text: p.data.text,
       mapId: speaker.mapId,
@@ -842,6 +868,7 @@ export function stepLivingNpcs(
   for (const npcId of Object.keys(state.npcBrains ?? {}).sort()) {
     const companion = companionAction(s, npcId);
     if (companion) {
+      if (s.turnController) continue;
       const npc = s.entities[npcId],
         brain = s.npcBrains![npcId];
       if (
@@ -1421,7 +1448,8 @@ export function buildNpcPublicSpeechContext(
         confidence: o.confidence,
         ...(o.actorId ? { actorId: o.actorId } : {}),
         ...(o.targetId ? { targetId: o.targetId } : {}),
-        ...(o.text ? { untrustedUtterance: o.text } : {}),
+        ...(o.text && o.kind !== 'attempted' ? { untrustedUtterance: o.text } : {}),
+        ...(o.text && o.kind === 'attempted' ? { untrustedAttempt: o.text } : {}),
         ...(o.kind === 'authored_fact' && o.definitionText
           ? { authoredFact: { title: o.title ?? '', text: o.definitionText } }
           : {}),
@@ -1430,6 +1458,7 @@ export function buildNpcPublicSpeechContext(
   });
   return {
     ...npcItemContext(state, npcId),
+    actionContext: npcActionContext(state, npcId, audience),
     ...(spatialContext(state, npcId) ? { spatialContext: spatialContext(state, npcId) } : {}),
     npcId,
     replyLocale: locale,
@@ -1521,6 +1550,7 @@ export function commitNpcPublicUtterance(
     text?: string;
     itemIntents?: NpcItemIntent[];
     companionIntent?: NpcCompanionIntent;
+    actionIntent?: NpcActionIntent;
     code?: 'acknowledged';
     channel: 'say' | 'whisper';
     recipientId: string;
@@ -1599,6 +1629,26 @@ export function commitNpcPublicUtterance(
   if (npcContextFingerprint(context) !== input.contextHash) return result(state, [], 'STALE_STATE');
   const id = `utterance-${hash(`${npcId}:${input.contextHash}:${input.code ?? input.text}`)}`;
   if (state.npcUtterances?.some((u) => u.id === id)) return result(state);
+  let actionPlan: GameAction[] | undefined;
+  if (input.actionIntent) {
+    const source = npcReplyObservation(
+      state,
+      recipient.id,
+      npcId,
+      input.actionIntent.sourceObservationId,
+    );
+    const replySource = deferred?.utteranceId ?? input.replyToObservationId;
+    if (
+      !input.text ||
+      !source ||
+      !['said', 'attempted'].includes(source.kind) ||
+      replySource !== source.id ||
+      !input.observationIds.includes(source.id)
+    )
+      return result(state, [], 'FORBIDDEN');
+    actionPlan = prepareNpcActionIntent(state, npcId, listeners, input.actionIntent);
+    if (!actionPlan) return result(state, [], 'INVALID_ACTION');
+  }
   if (input.companionIntent) {
     const parsed = npcCompanionIntentSchema.safeParse(input.companionIntent);
     if (!parsed.success || !input.text || input.channel !== 'say' || recipient.kind !== 'player')
@@ -1643,6 +1693,22 @@ export function commitNpcPublicUtterance(
     s.entities[npcId].path = [];
     s.entities[npcId].movementGeneration = (npc.movementGeneration ?? 0) + 1;
     memory.knowledgeRevision++;
+  }
+  if (actionPlan) {
+    const brain = s.npcBrains![npcId];
+    brain.planSource = {
+      actorId: recipient.id,
+      sourceObservationId: input.actionIntent!.sourceObservationId,
+    };
+    brain.plan = actionPlan;
+    brain.cursor = 0;
+    brain.waitingForPath = false;
+    brain.planMapId = npc.mapId;
+    brain.generation++;
+    brain.nextDecisionTick = s.tick;
+    s.entities[npcId].path = [];
+    s.entities[npcId].movementGeneration = (s.entities[npcId].movementGeneration ?? 0) + 1;
+    brain.movementGeneration = s.entities[npcId].movementGeneration;
   }
   (s.npcUtterances ??= []).push({
     id,
