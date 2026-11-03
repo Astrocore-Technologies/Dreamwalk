@@ -1,5 +1,4 @@
 'use client';
-import { ReleasePolicyReview } from './studio/release-policy-review';
 import { PlayableReview } from './studio/playable-review';
 import { formatSparkSubunits, selectAdventureText, selectNpcText } from '@dreamwalk/contracts';
 import { readSparksWallet, type SparksWallet } from '@/lib/sparks-wallet';
@@ -239,7 +238,6 @@ function AdminOverview() {
   );
 }
 function AdminUsers() {
-  const [policyTarget, setPolicyTarget] = useState<User | null>(null);
   const date = useDate();
   const { t } = useT();
   const { user, toast } = useClient(),
@@ -334,9 +332,6 @@ function AdminUsers() {
                     >
                       {u.id === user?.id ? t('Это вы') : t('Изменить роль')}
                     </Button>
-                    <Button variant="ghost" onClick={() => setPolicyTarget(u)}>
-                      {t('Настройки генерации')}
-                    </Button>
                   </td>
                 </tr>
               ))}
@@ -347,14 +342,6 @@ function AdminUsers() {
         !users.error && (
           <Empty title={t('Никого не найдено')} description={t('Попробуйте другой запрос.')} />
         )
-      )}
-      {policyTarget && (
-        <ReleasePolicyReview
-          key={policyTarget.id}
-          actorId={policyTarget.id}
-          name={policyTarget.name}
-          onClose={() => setPolicyTarget(null)}
-        />
       )}
       {target && (
         <Modal title={t('Изменить роль пользователя?')} onClose={() => setTarget(null)}>

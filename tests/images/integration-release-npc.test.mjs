@@ -6,6 +6,7 @@ import { createRequire } from 'node:module';
 import { db } from '../game/support-runtime.mjs';
 import { requestEstimateOwnerProfile } from './owner-config-fixture.mjs';
 const require = createRequire(import.meta.url);
+const { activateReleaseDeployment } = require('../images/release-deployment-fixture.cjs');
 const { GenerationAuthority } = require('../../apps/api/dist/generation/service.js');
 const { readGenerationConfig } = require('../../apps/api/dist/generation/config.js');
 const { canonical } = require('../../apps/api/dist/ai/context.js');
@@ -130,6 +131,126 @@ await test(
   async (t) => {
     try {
       assert.match(process.env.LOCAL_POSTGRES_CLUSTER ?? '', /^images-test-/);
+      await database.tx((c) => activateReleaseDeployment(c, config));
+      for (const change of ['activation', 'pricing_expired'])
+        await t.test(
+          'known old-profile count receipt settles before marking stale after ' + change,
+          async () => {
+            const raw = requestEstimateOwnerProfile();
+            raw.text.contextBudgetTokens = 100000;
+            raw.text.counting = {
+              kind: 'owner_reviewed_fixed',
+              microsPerRequest: 7,
+              pricing: { ...raw.text.pricing },
+            };
+            const countedConfig = structuredClone(
+              readGenerationConfig({
+                GENERATION_MODE: 'release',
+                GENERATION_CONFIG_JSON: JSON.stringify({ ...raw, aggregateCapMicros: 10000000 }),
+              }),
+            );
+            await database.tx((c) => activateReleaseDeployment(c, countedConfig));
+            const counting = new GenerationAuthority(database, countedConfig);
+            let started,
+              finish,
+              countCalls = 0;
+            const startedPromise = new Promise((r) => {
+              started = r;
+            });
+            const resultPromise = new Promise((r) => {
+              finish = r;
+            });
+            counting.configureTextCountAdapter({
+              version: 'synthetic-count',
+              countBody: (_purpose, context) => JSON.stringify(context),
+              count: async () => {
+                countCalls++;
+                started();
+                return resultPromise;
+              },
+            });
+            const who = await actor(),
+              id = randomUUID();
+            const fence = { roundId: 'count-profile-change', phaseEpoch: 1, rulesetVersion: 1 };
+            await db.query('UPDATE game_campaigns SET state=$2 WHERE id=$1', [
+              who.campaign,
+              JSON.stringify({
+                turnController: {
+                  phase: 'world',
+                  roundId: fence.roundId,
+                  phaseEpoch: 1,
+                  ruleset: { version: 1 },
+                },
+              }),
+            ]);
+            await db.query(
+              "INSERT INTO game_npc_decision_requests(id,campaign_id,npc_id,purpose,cause_key,requester_user_id,context,status) VALUES($1::uuid,$2,'npc','speech',$1::uuid::text,$3,$4,'queued')",
+              [
+                id,
+                who.campaign,
+                who.id,
+                JSON.stringify({
+                  turnFence: fence,
+                  history: [{ id: 'one', text: 'Synthetic count input' }],
+                }),
+              ],
+            );
+            await database.tx((c) => counting.authorizeText(c, who.id));
+            const pending = (await counting.pending(who.id, who.campaign)).requests.find(
+              (r) => r.id === id,
+            );
+            const work = counting.preflightCount(who.id, who.campaign, id, {
+              operationId: randomUUID(),
+              turnFence: fence,
+              policyRevision: pending.policyRevision,
+              policyHash: pending.policyHash,
+              candidateFingerprint: pending.counting.candidateFingerprint,
+              consent: true,
+            });
+            await Promise.race([
+              startedPromise,
+              work.then(() => assert.fail('Count completed before provider barrier')),
+            ]);
+            const old = (
+              await db.query('SELECT * FROM generation_text_counts WHERE request_id=$1', [id])
+            ).rows[0];
+            const quote = (
+              await db.query('SELECT * FROM spark_quotes WHERE id=$1', [old.spark_quote_id])
+            ).rows[0];
+            if (change === 'activation')
+              await database.tx((c) => activateReleaseDeployment(c, config));
+            else
+              counting.releaseConfig.text.pricing.validUntil = new Date(
+                Date.now() - 1000,
+              ).toISOString();
+            finish(100);
+            const result = await work;
+            assert.equal(result.status, 'stale');
+            assert.equal(result.actualMicros, 7);
+            assert.equal(result.inputTokens, 100);
+            assert.equal(countCalls, 1);
+            await database.tx((c) => activateReleaseDeployment(c, config));
+            assert.deepEqual(
+              (
+                await db.query(
+                  'SELECT status,actual_micros FROM generation_budget_reservations WHERE id=$1',
+                  [old.reservation_id],
+                )
+              ).rows[0],
+              { status: 'settled', actual_micros: '7' },
+            );
+            assert.deepEqual(
+              (await db.query('SELECT * FROM spark_quotes WHERE id=$1', [old.spark_quote_id]))
+                .rows[0],
+              quote,
+            );
+            assert.equal(
+              (await db.query('SELECT context FROM game_npc_decision_requests WHERE id=$1', [id]))
+                .rows[0].context.textCountEvidence,
+              undefined,
+            );
+          },
+        );
       await t.test(
         'ordinary authenticated quote runs with no runtime request or test claim and replays once',
         async () => {
@@ -426,6 +547,7 @@ await test(
             GENERATION_MODE: 'release',
             GENERATION_CONFIG_JSON: JSON.stringify({ ...profile, allowance: 'unlimited' }),
           });
+          await database.tx((c) => activateReleaseDeployment(c, unlimitedConfig));
           const unboundedAuthority = new GenerationAuthority(database, unlimitedConfig);
           const unboundedProvider = new ReleaseGenerationProvider(
             { ...inner, id: 'unlimited-npc-fixture' },
