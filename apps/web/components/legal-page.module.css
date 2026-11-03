@@ -68,6 +68,7 @@
   background: linear-gradient(90deg, #22152df7 0%, #22152de8 40%, #22152d55 100%);
 }
 .terms .intro p {
+  color: #fff9ff;
   max-width: 760px;
 }
 .terms .intro > svg {

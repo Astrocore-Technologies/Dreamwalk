@@ -39,3 +39,12 @@ The shared shell is outside this change. Do not call this pixel-perfect parity.
 When integrating Help/About PR75, update its content-policy assertion from the old
 `.static-prose` selector to `[data-legal-page="/terms"]`. Keeping that legacy CSS class
 would reapply the old maximum width and paragraph styles to the new layout.
+
+## First exact-head render review
+
+Initial head `0784cdd` passed all four legal browser checks on the first attempt
+and produced 24 captures. Full matrix inspection found a light-theme Terms hero
+contrast issue from inherited global paragraph color. The legal hero now explicitly
+sets its text color, and the browser matrix asserts that foreground in both themes.
+Final synchronized-head CI and screenshots must verify this correction. No local
+tests were run during or after main integration.

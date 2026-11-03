@@ -35,6 +35,11 @@ for (const locale of ['ru', 'uk', 'en'] as const) {
           await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
           await expect(root.locator('h1')).toHaveText(copy.title);
           await expect(root.locator('header > p')).toHaveText(closedTestDraftLabel[locale]);
+          if (route === '/terms')
+            await expect(root.locator('[data-legal-paragraph="0"] p')).toHaveCSS(
+              'color',
+              'rgb(255, 249, 255)',
+            );
           const paragraphs = root.locator('[data-legal-paragraph]');
           await expect(paragraphs).toHaveCount(copy.paragraphs.length);
           for (const [index, paragraph] of copy.paragraphs.entries())
