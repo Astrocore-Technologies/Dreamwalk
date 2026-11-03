@@ -399,6 +399,7 @@ await test(
               },
             );
             assert.equal(result.status, compatible ? 'committed' : 'stale');
+            if (!compatible) assert.equal(result.errorCode, 'AUTHORING_PROPOSAL_INVALID');
             assert.equal(sent, 1);
             assert.equal(validations, 1);
             assert.equal(commits, compatible ? 1 : 0);
@@ -411,6 +412,62 @@ await test(
               after.holds[0].captured_subunits,
               compatible ? providerMicrosToSparkSubunits('30') : null,
             );
+          }
+        },
+      );
+      await t.test(
+        'failed semantic apply keeps the known receipt and original hold without redispatch',
+        async () => {
+          await activate(original);
+          for (const [message, expected] of [
+            ['INVALID_MAP:synthetic private source details', 'STORY_MAP_INVALID'],
+            ['STORY_SOURCE_MISMATCH', 'STORY_SOURCE_MISMATCH'],
+            ['synthetic unexpected database detail', 'AUTHORING_APPLY_FAILED'],
+          ]) {
+            const who = await actor();
+            let sent = 0;
+            const runtime = new AuthoringTextEngine(
+              database,
+              initial,
+              {
+                ...provider,
+                generate: async () => {
+                  sent++;
+                  return {
+                    proposal: { synthetic: true },
+                    requestId: `apply-${who.id}`,
+                    usage: {
+                      inputTokens: 10,
+                      outputTokens: 10,
+                      costMicros: 30,
+                      costEvidence: 'reported',
+                    },
+                  };
+                },
+              },
+              definition,
+            );
+            const job = await enqueue(runtime, who, await quote(runtime, who));
+            const before = await financialSnapshot(who);
+            const result = await runtime.run(who.id, job.id, who.guard, async () => {
+              throw new Error(message);
+            });
+            assert.equal(result.status, 'stale');
+            assert.equal(result.errorCode, expected);
+            const after = await financialSnapshot(who);
+            assert.equal(after.reservations[0].status, 'settled');
+            assert.equal(after.reservations[0].actual_micros, '30');
+            assert.equal(after.jobs[0].provider_request_id, `apply-${who.id}`);
+            assert.equal(after.jobs[0].error_code, expected);
+            assert.equal(after.holds[0].status, 'pending');
+            assert.equal(after.holds[0].captured_subunits, null);
+            assert.equal(after.holds[0].reserved_subunits, before.holds[0].reserved_subunits);
+            assert.equal(after.jobs[0].proposal, null);
+            await runtime.run(who.id, job.id, who.guard, async () =>
+              assert.fail('No automatic replay'),
+            );
+            assert.equal(sent, 1);
+            assert.deepEqual(await financialSnapshot(who), after);
           }
         },
       );

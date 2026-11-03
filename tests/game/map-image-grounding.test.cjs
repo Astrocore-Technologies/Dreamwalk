@@ -733,3 +733,51 @@ test('stale preparation recovery is explicitly safe only when the server confirm
     (e) => e.getResponse().code === 'START_SOURCE_CHANGED',
   );
 });
+
+test('story planner schema rejects off-canvas spawn, obstacle and passage coordinates', () => {
+  for (const coordinate of [24, 30]) {
+    for (const kind of ['spawn', 'blocked', 'passage']) {
+      const { proposal } = fixture();
+      if (kind === 'spawn') proposal.rooms[0].spawns[0].x = coordinate;
+      if (kind === 'blocked') proposal.rooms[0].blocked = [{ x: 1, y: coordinate }];
+      if (kind === 'passage')
+        proposal.connections = [
+          { a: 'room', b: 'other', atA: { x: coordinate, y: 1 }, atB: { x: 1, y: 1 } },
+        ];
+      assert.throws(() => storyPlanDefinition.validateProposal(proposal));
+    }
+  }
+  const { proposal } = fixture();
+  proposal.rooms[0].blocked = [{ x: 23, y: 23 }];
+  assert.doesNotThrow(() => storyPlanDefinition.validateProposal(proposal));
+  assert.equal(
+    storyPlanDefinition.schema.properties.rooms.items.properties.spawns.items.properties.x.maximum,
+    23,
+  );
+});
+test('result diagnostics preserve bounded categories without leaking source or database details', () => {
+  const {
+    authoringResultFailureCode: classify,
+  } = require('../../apps/api/dist/live-test/authoring-result-failure');
+  for (const code of [
+    'STORY_SOURCE_MISMATCH',
+    'STORY_CONNECTION_INVALID',
+    'STORY_DISCONNECTED',
+    'MAP_IMAGE_UNSAFE_SPAWN',
+  ])
+    assert.equal(classify(new Error(code), 'apply'), code);
+  assert.equal(
+    classify(new Error('INVALID_MAP:private character and location details'), 'apply'),
+    'STORY_MAP_INVALID',
+  );
+  assert.equal(
+    classify(new Error('SQL private binding details'), 'apply'),
+    'AUTHORING_APPLY_FAILED',
+  );
+  assert.equal(classify(new Error('private source mismatch')), 'AUTHORING_STALE');
+  assert.equal(
+    classify(new Error('private schema detail'), 'validate'),
+    'AUTHORING_PROPOSAL_INVALID',
+  );
+  assert.equal(classify('STORY_SOURCE_MISMATCH', 'apply'), 'AUTHORING_APPLY_FAILED');
+});
