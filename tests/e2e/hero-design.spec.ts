@@ -109,7 +109,7 @@ for (const variant of [
     }
     const save = dialog.getByRole('button', { name: text.save, exact: true });
     await expect(save).toBeInViewport();
-    await page.screenshot({ path: testInfo.outputPath('hero-editor-fixture.png'), fullPage: true });
+    await page.screenshot({ path: testInfo.outputPath('hero-editor-fixture.png') });
     await dialog.getByRole('button', { name: `${text.remove}: Kind`, exact: true }).click();
     await expect(dialog.getByLabel(text.traits)).toHaveValue('Curious');
     await dialog.getByLabel(text.traits).fill('Curious, Brave, ');
@@ -146,7 +146,6 @@ for (const variant of [
     await expect(save).toBeInViewport();
     await page.screenshot({
       path: testInfo.outputPath('hero-editor-empty-fixture.png'),
-      fullPage: true,
     });
     await page.keyboard.press('Escape');
     expect(mutations).toHaveLength(1);

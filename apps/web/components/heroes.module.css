@@ -237,3 +237,24 @@
   font-size: 16px;
   border-radius: 12px;
 }
+/* Keep the gallery's selected quiet backdrop separate from the illustrated home shell. */
+:global(.app-shell[data-surface='my-characters']):has(.page)::before {
+  background-image: none;
+}
+:global(.app-shell[data-surface='my-characters']) :global(.main-content):has(.page) {
+  background: transparent;
+  padding-inline: 0;
+}
+.cardBody .traits {
+  margin: 0;
+}
+.cardBody .traits:empty {
+  display: none;
+}
+.page > :global(.page-heading) h1 {
+  font-size: clamp(32px, 3.4vw, 52px);
+}
+.workshop {
+  margin-top: 18px;
+  margin-bottom: 0;
+}

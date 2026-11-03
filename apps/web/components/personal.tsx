@@ -334,11 +334,6 @@ export function HeroesPage() {
           </Button>
         }
       />
-      <div className={styles.workshop}>
-        <ButtonLink href="/studio/visuals" variant="ghost">
-          {visualText('title')}
-        </ButtonLink>
-      </div>
       <StoryReturnLink intent={returnTo} />
       <ErrorBox message={resource.error} retry={resource.reload} />
       {resource.loading ? (
@@ -427,6 +422,11 @@ export function HeroesPage() {
           }
         />
       )}
+      <div className={styles.workshop}>
+        <ButtonLink href="/studio/visuals" variant="ghost">
+          {visualText('title')}
+        </ButtonLink>
+      </div>
       <div className="platform-note">
         <UserRound size={16} />
         {tr('Герои принадлежат игрокам. Персонажи мира (NPC) создаются отдельно в студии автора.')}

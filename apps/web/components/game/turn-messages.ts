@@ -1,6 +1,11 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const turnMessages = {
+  worldWaiting: [
+    'Мир разрешает ответы и действия. Если нужна генерация, проверьте её подтверждение под полем истории.',
+    'The world is resolving replies and actions. If generation needs confirmation, review it below the story input.',
+    'Світ завершує відповіді та дії. Якщо генерація потребує підтвердження, перевірте його під полем історії.',
+  ],
   localInput: ['Действия хода · бесплатно', 'Turn actions · free', 'Дії ходу · безкоштовно'],
   lobbyIntro: [
     'Пошаговая история: ходи по сцене, говори с несколькими NPC, затем передай ход миру. Сейчас используются бесплатные тестовые решения.',
@@ -62,7 +67,7 @@ export const turnMessages = {
     'The world does not advance on its own during your turn. Words are saved immediately; NPCs reply on their turns.',
     'На твоєму ході світ не рухається сам. Слова зберігаються одразу; NPC дадуть відповідь у свій хід.',
   ],
-  pending: ['Ожидают хода NPC', 'Waiting for NPC turns', 'Очікують ходу NPC'],
+  pending: ['Ожидаются реплики NPC', 'Pending NPC replies', 'Очікуються репліки NPC'],
   deferred: [
     'Сообщение сохранено. NPC ответит в свой ход; можешь обратиться к другому персонажу.',
     'Message saved. The NPC will reply on its turn; you can address another character now.',

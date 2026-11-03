@@ -86,7 +86,9 @@ export function ModeratorNpcPreview({
             {result.brain.living?.observations.map((observation) => (
               <li key={observation.id}>
                 {observation.title ||
-                  (observation.kind === 'harmed' || observation.kind === 'pushed'
+                  (observation.kind === 'harmed' ||
+                  observation.kind === 'pushed' ||
+                  observation.kind === 'attempted'
                     ? turnText('observedHarm')
                     : t(observationLabels[observation.kind]))}{' '}
                 · {t('Источник события')}: {observation.eventId}

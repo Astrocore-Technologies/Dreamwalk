@@ -76,12 +76,30 @@ export const npcCompanionIntentSchema = z
   })
   .strict();
 export type NpcCompanionIntent = z.infer<typeof npcCompanionIntentSchema>;
+export const npcActionIntentSchema = z
+  .object({
+    sourceObservationId: z.string().min(1).max(200),
+    actions: z
+      .array(
+        z.discriminatedUnion('kind', [
+          z.object({ kind: z.literal('move_to'), target: z.object(point).strict() }).strict(),
+          z.object({ kind: z.literal('approach'), targetId: id }).strict(),
+          z.object({ kind: z.literal('inspect'), targetId: id }).strict(),
+          z.object({ kind: z.literal('wait') }).strict(),
+        ]),
+      )
+      .min(1)
+      .max(3),
+  })
+  .strict();
+export type NpcActionIntent = z.infer<typeof npcActionIntentSchema>;
 export const npcPublicReplySchema = z.union([
   z
     .object({
       text: z.string().trim().min(1).max(1000),
       itemIntents: npcItemIntentsSchema.optional(),
       companionIntent: npcCompanionIntentSchema.optional(),
+      actionIntent: npcActionIntentSchema.optional(),
     })
     .strict(),
   z.object({ code: z.literal('acknowledged') }).strict(),
