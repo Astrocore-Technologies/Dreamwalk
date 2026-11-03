@@ -42,6 +42,9 @@ import {
 import { useLiveTestStatus } from './live-test/live-test-panel';
 import { useLiveText } from './live-test/messages';
 import styles from './studio/admin.module.css';
+import toolStyles from './studio/admin-tools.module.css';
+import { useToolDialog } from './studio/admin-tool-dialog';
+import { adminToolCopy } from './studio/admin-tool-copy';
 import { AdminTaxonomy } from './studio/admin-taxonomy';
 
 type Report = {
@@ -729,9 +732,11 @@ function AdminReports() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     { toast } = useClient();
+  const dialog = useToolDialog(!!target, () => setTarget(null));
   async function resolve(e: FormEvent) {
     e.preventDefault();
-    if (!target) return;
+    if (!target || dialog.pending.current) return;
+    dialog.pending.current = true;
     setBusy(true);
     setError('');
     try {
@@ -745,11 +750,12 @@ function AdminReports() {
     } catch (e) {
       setError(t(errorMessage(e)));
     } finally {
+      dialog.pending.current = false;
       setBusy(false);
     }
   }
   return (
-    <>
+    <section className={toolStyles.reports} data-admin-tool="reports">
       <div className={styles.sectionHeading}>
         <ClipboardList size={22} />
         <h2>{t('Жалобы пользователей')}</h2>
@@ -758,28 +764,34 @@ function AdminReports() {
       {reports.loading ? (
         <Loading />
       ) : reports.data?.length ? (
-        <div className={styles.modelList}>
+        <div className={toolStyles.reportList}>
           {reports.data.map((r) => (
-            <Panel key={r.id}>
-              <div className="row">
-                <Badge>{t(statusLabel[r.status] || r.status)}</Badge>
-                <small className="muted">{date(r.createdAt)}</small>
+            <Panel key={r.id} className={toolStyles.reportCard}>
+              <div className={toolStyles.reportBody}>
+                <div className="row">
+                  <Badge tone={r.status === 'resolved' ? 'green' : ''}>
+                    {t(statusLabel[r.status] || r.status)}
+                  </Badge>
+                  <small className="muted">{date(r.createdAt)}</small>
+                </div>
+                <p>{r.reason}</p>
+                <small className={styles.secondary}>
+                  {t('История: ')}
+                  {r.adventureId}
+                </small>
+                {r.resolution && (
+                  <p className="muted">
+                    {t('Решение: ')}
+                    {r.resolution}
+                  </p>
+                )}
               </div>
-              <p>{r.reason}</p>
-              <small className={styles.secondary}>
-                {t('История: ')}
-                {r.adventureId}
-              </small>
-              {r.resolution && (
-                <p className="muted">
-                  {t('Решение: ')}
-                  {r.resolution}
-                </p>
-              )}
               <Button
                 variant="secondary"
                 disabled={r.status !== 'open'}
-                onClick={() => {
+                onClick={(e) => {
+                  dialog.launcher.current = e.currentTarget;
+                  setStatus('resolved');
                   setTarget(r);
                   setError('');
                   setResolution('');
@@ -801,7 +813,7 @@ function AdminReports() {
         )
       )}
       {target && (
-        <Modal title={t('Решение по жалобе')} onClose={() => setTarget(null)}>
+        <Modal title={t('Решение по жалобе')} onClose={dialog.close}>
           <p>{target.reason}</p>
           <form method="post" className="stack" onSubmit={(e) => void resolve(e)}>
             <Field label={t('Результат')}>
@@ -826,7 +838,7 @@ function AdminReports() {
             </div>
             <ErrorBox message={error} />
             <div className="form-actions">
-              <Button variant="secondary" type="button" onClick={() => setTarget(null)}>
+              <Button variant="secondary" type="button" onClick={dialog.close} disabled={busy}>
                 {t('Отмена')}
               </Button>
               <Button type="submit" busy={busy}>
@@ -836,7 +848,7 @@ function AdminReports() {
           </form>
         </Modal>
       )}
-    </>
+    </section>
   );
 }
 
@@ -882,7 +894,9 @@ function AdminModels() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     { toast } = useClient();
+  const dialog = useToolDialog(!!kind, () => setKind(null));
   function openModel(item?: ModelProfile) {
+    dialog.capture();
     setKind('model');
     setEditId(item?.id || null);
     setModel(
@@ -899,6 +913,7 @@ function AdminModels() {
     setError('');
   }
   function openRuntime(item?: RuntimeProfile) {
+    dialog.capture();
     setKind('runtime');
     setEditId(item?.id || null);
     setRuntime(
@@ -920,6 +935,8 @@ function AdminModels() {
   }
   async function save(e: FormEvent) {
     e.preventDefault();
+    if (dialog.pending.current) return;
+    dialog.pending.current = true;
     setBusy(true);
     setError('');
     try {
@@ -934,110 +951,119 @@ function AdminModels() {
     } catch (e) {
       setError(t(errorMessage(e)));
     } finally {
+      dialog.pending.current = false;
       setBusy(false);
     }
   }
   return (
-    <>
-      <AdminDirector />
-      <div className={styles.sectionHeading}>
-        <Layers size={22} />
-        <h2>{t('Поведенческие профили')}</h2>
-        <Button variant="secondary" onClick={() => openModel()}>
-          <Plus size={16} />
-          {t('Новый профиль')}
-        </Button>
-      </div>
-      <p className="muted">
-        {t(
-          'Стиль подачи, а не личность NPC и не техническая модель. Каждое изменение создаёт новую версию профиля.',
-        )}
-      </p>
-      <ErrorBox message={models.error} retry={models.reload} />
-      {models.loading ? (
-        <Loading />
-      ) : (
-        <div className={styles.modelList}>
-          {models.data?.map((m) => (
-            <Panel key={m.id}>
-              <div className="row">
-                <div className={styles.profileIcon}>{m.key === 'cookie' ? '◉' : '◈'}</div>
-                <div>
-                  <h3>{m.name}</h3>
-                  <small className="muted">
-                    {m.key} {t(' · версия ')}
-                    {m.version}
-                  </small>
+    <section className={toolStyles.models} data-admin-tool="models">
+      <div className={toolStyles.toolPanel}>
+        <div className={styles.sectionHeading}>
+          <Layers size={22} />
+          <h2>{t('Поведенческие профили')}</h2>
+          <Button variant="secondary" onClick={() => openModel()}>
+            <Plus size={16} />
+            {t('Новый профиль')}
+          </Button>
+        </div>
+        <p className="muted">
+          {t(
+            'Стиль подачи, а не личность NPC и не техническая модель. Каждое изменение создаёт новую версию профиля.',
+          )}
+        </p>
+        <ErrorBox message={models.error} retry={models.reload} />
+        {models.loading ? (
+          <Loading />
+        ) : !models.error && !models.data?.length ? (
+          <p role="status">{adminToolCopy[locale].noProfiles}</p>
+        ) : (
+          <div className={toolStyles.profileGrid}>
+            {models.data?.map((m) => (
+              <Panel key={m.id}>
+                <div className="row">
+                  <div className={styles.profileIcon}>{m.key === 'cookie' ? '◉' : '◈'}</div>
+                  <div>
+                    <h3>{m.name}</h3>
+                    <small className="muted">
+                      {m.key} {t(' · версия ')}
+                      {m.version}
+                    </small>
+                  </div>
+                  <Badge tone={m.enabled ? 'green' : ''}>
+                    {m.enabled ? t('Доступен') : t('Отключён')}
+                  </Badge>
                 </div>
-                <Badge tone={m.enabled ? 'green' : ''}>
-                  {m.enabled ? t('Доступен') : t('Отключён')}
-                </Badge>
-              </div>
-              <p className="muted">{m.description}</p>
-              <Button variant="secondary" onClick={() => openModel(m)}>
-                <Settings2 size={15} />
-                {t('Настроить профиль')}
-              </Button>
-            </Panel>
-          ))}
-        </div>
-      )}
-      <div className={styles.sectionHeading}>
-        <Activity size={22} />
-        <h2>{t('Технические runtime-профили')}</h2>
-        <Button variant="secondary" onClick={() => openRuntime()}>
-          <Plus size={16} />
-          {t('Новая конфигурация')}
-        </Button>
-      </div>
-      <div className="notice">
-        {t(
-          'OpenAI и local можно подготовить как отключённые конфигурации. Внешние вызовы в текущем этапе запрещены. Endpoint выбирается только из серверного списка, API-ключи здесь не хранятся.',
+                <p className="muted">{m.description}</p>
+                <Button variant="secondary" onClick={() => openModel(m)}>
+                  <Settings2 size={15} />
+                  {t('Настроить профиль')}
+                </Button>
+              </Panel>
+            ))}
+          </div>
         )}
       </div>
-      <ErrorBox message={runtimes.error} retry={runtimes.reload} />
-      {runtimes.loading ? (
-        <Loading />
-      ) : (
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{t('Конфигурация')}</th>
-                <th>{t('Провайдер')}</th>
-                <th>{t('Лимиты токенов')}</th>
-                <th>{t('Статус')}</th>
-                <th>{t('Настройки')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runtimes.data?.map((r) => (
-                <tr key={r.id}>
-                  <td>
-                    <strong>{r.name}</strong>
-                    <small className={styles.secondary}>{r.model}</small>
-                  </td>
-                  <td>{r.provider}</td>
-                  <td>
-                    {r.maxInputTokens.toLocaleString(locale)} /{' '}
-                    {r.maxOutputTokens.toLocaleString(locale)}
-                  </td>
-                  <td>
-                    <Badge tone={r.enabled ? 'green' : ''}>
-                      {r.enabled ? t('Mock активен') : t('Отключён')}
-                    </Badge>
-                  </td>
-                  <td>
-                    <Button variant="ghost" onClick={() => openRuntime(r)}>
-                      {t('Изменить')}
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <div className={toolStyles.toolPanel}>
+        <div className={styles.sectionHeading}>
+          <Activity size={22} />
+          <h2>{t('Технические runtime-профили')}</h2>
+          <Button variant="secondary" onClick={() => openRuntime()}>
+            <Plus size={16} />
+            {t('Новая конфигурация')}
+          </Button>
         </div>
-      )}
+        <div className="notice">
+          {t(
+            'OpenAI и local можно подготовить как отключённые конфигурации. Внешние вызовы в текущем этапе запрещены. Endpoint выбирается только из серверного списка, API-ключи здесь не хранятся.',
+          )}
+        </div>
+        <ErrorBox message={runtimes.error} retry={runtimes.reload} />
+        {runtimes.loading ? (
+          <Loading />
+        ) : !runtimes.error && !runtimes.data?.length ? (
+          <p role="status">{adminToolCopy[locale].noRuntimes}</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>{t('Конфигурация')}</th>
+                  <th>{t('Провайдер')}</th>
+                  <th>{t('Лимиты токенов')}</th>
+                  <th>{t('Статус')}</th>
+                  <th>{t('Настройки')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runtimes.data?.map((r) => (
+                  <tr key={r.id}>
+                    <td>
+                      <strong>{r.name}</strong>
+                      <small className={styles.secondary}>{r.model}</small>
+                    </td>
+                    <td>{r.provider}</td>
+                    <td>
+                      {r.maxInputTokens.toLocaleString(locale)} /{' '}
+                      {r.maxOutputTokens.toLocaleString(locale)}
+                    </td>
+                    <td>
+                      <Badge tone={r.enabled ? 'green' : ''}>
+                        {r.enabled ? t('Mock активен') : t('Отключён')}
+                      </Badge>
+                    </td>
+                    <td>
+                      <Button variant="ghost" onClick={() => openRuntime(r)}>
+                        {t('Изменить')}
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      <AdminDirector />
       {kind && (
         <Modal
           title={
@@ -1049,7 +1075,7 @@ function AdminModels() {
                 ? t('Настройки runtime')
                 : t('Новый runtime')
           }
-          onClose={() => setKind(null)}
+          onClose={dialog.close}
         >
           <form method="post" className="stack" onSubmit={(e) => void save(e)}>
             {kind === 'model' ? (
@@ -1218,7 +1244,7 @@ function AdminModels() {
             )}
             <ErrorBox message={error} />
             <div className="form-actions">
-              <Button variant="secondary" type="button" onClick={() => setKind(null)}>
+              <Button variant="secondary" type="button" onClick={dialog.close} disabled={busy}>
                 {t('Отмена')}
               </Button>
               <Button type="submit" busy={busy}>
@@ -1228,7 +1254,7 @@ function AdminModels() {
           </form>
         </Modal>
       )}
-    </>
+    </section>
   );
 }
 
@@ -1244,7 +1270,10 @@ function AdminCredits() {
     [confirm, setConfirm] = useState(false),
     [result, setResult] = useState<SparksWallet | null>(null),
     { toast } = useClient();
+  const dialog = useToolDialog(confirm, () => setConfirm(false));
   async function grant() {
+    if (dialog.pending.current) return;
+    dialog.pending.current = true;
     setBusy(true);
     setError('');
     try {
@@ -1259,11 +1288,12 @@ function AdminCredits() {
     } catch (e) {
       setError(t(errorMessage(e)));
     } finally {
+      dialog.pending.current = false;
       setBusy(false);
     }
   }
   return (
-    <>
+    <section className={toolStyles.credits} data-admin-tool="credits">
       <div className={styles.sectionHeading}>
         <Coins size={22} />
         <h2>{t('Искры')}</h2>
@@ -1276,6 +1306,7 @@ function AdminCredits() {
             onSubmit={(e) => {
               e.preventDefault();
               setError('');
+              dialog.capture();
               setConfirm(true);
             }}
           >
@@ -1359,7 +1390,7 @@ function AdminCredits() {
         </Panel>
       </div>
       {confirm && (
-        <Modal title={t('Подтвердить операцию с искрами?')} onClose={() => setConfirm(false)}>
+        <Modal title={t('Подтвердить операцию с искрами?')} onClose={dialog.close}>
           <p>
             {users.data?.find((u) => u.id === userId)?.name}:{' '}
             <strong>
@@ -1370,7 +1401,7 @@ function AdminCredits() {
           <p>{reason}</p>
           <ErrorBox message={error} />
           <div className="form-actions">
-            <Button variant="secondary" onClick={() => setConfirm(false)} disabled={busy}>
+            <Button variant="secondary" onClick={dialog.close} disabled={busy}>
               {t('Отмена')}
             </Button>
             <Button busy={busy} onClick={() => void grant()}>
@@ -1379,19 +1410,19 @@ function AdminCredits() {
           </div>
         </Modal>
       )}
-    </>
+    </section>
   );
 }
 function AdminAudit() {
   const date = useDate();
-  const { t } = useT();
+  const { t, locale } = useT();
   const audit = useResource<AuditEntry[]>('/admin/audit'),
     [query, setQuery] = useState('');
   const rows = (audit.data || []).filter((a) =>
     `${a.action} ${a.actorId} ${a.targetId || ''}`.toLowerCase().includes(query.toLowerCase()),
   );
   return (
-    <>
+    <section className={toolStyles.audit} data-admin-tool="audit">
       <div className={styles.sectionHeading}>
         <Activity size={22} />
         <h2>{t('Журнал действий')}</h2>
@@ -1456,11 +1487,15 @@ function AdminAudit() {
       ) : (
         !audit.error && (
           <Empty
-            title={t('Журнал пока пуст')}
-            description={t('Административные изменения появятся здесь после сохранения.')}
+            title={query ? adminToolCopy[locale].noMatches : t('Журнал пока пуст')}
+            description={
+              query
+                ? adminToolCopy[locale].tryQuery
+                : t('Административные изменения появятся здесь после сохранения.')
+            }
           />
         )
       )}
-    </>
+    </section>
   );
 }
