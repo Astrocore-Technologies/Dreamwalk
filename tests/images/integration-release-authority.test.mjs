@@ -6,6 +6,9 @@ import { createRequire } from 'node:module';
 import { db } from '../game/support-runtime.mjs';
 import { ownerProfile, requestEstimateOwnerProfile } from './owner-config-fixture.mjs';
 const require = createRequire(import.meta.url);
+const {
+  activateReleaseDeployment,
+} = require('../images/release-deployment-fixture.cjs');
 const { Db } = require('../../apps/api/dist/db.js');
 const { readGenerationConfig } = require('../../apps/api/dist/generation/config.js');
 const { GenerationAuthority } = require('../../apps/api/dist/generation/service.js');
@@ -88,6 +91,7 @@ await test(
   async (t) => {
     try {
       assert.match(process.env.LOCAL_POSTGRES_CLUSTER ?? '', /^images-test-/);
+      await database.tx((c) => activateReleaseDeployment(c, configured));
       const a = await actor(),
         b = await actor(),
         disabled = await actor(false);
@@ -220,6 +224,7 @@ await test(
             GENERATION_MODE: 'release',
             GENERATION_CONFIG_JSON: JSON.stringify({ ...profile, aggregateCapMicros: 10000000 }),
           });
+          await database.tx((c) => activateReleaseDeployment(c, cfg));
           const auth = new GenerationAuthority(database, cfg);
           let dispatched = 0;
           const real = new BoundedAuthoringTextProvider(
@@ -307,6 +312,7 @@ await test(
       await t.test(
         'first release image quote needs no test claim and one durable image settles once',
         async () => {
+          await database.tx((c) => activateReleaseDeployment(c, configured));
           const c = await actor(),
             adventureId = randomUUID();
           await db.query(
@@ -358,6 +364,7 @@ await test(
           images.setLiveAuthorizer((client, user, id, input) =>
             authority.authorizeImage(client, user, id, input),
           );
+          images.setReleaseResultAuthorizer((...args) => authority.authorizeReleaseResult(...args));
           const request = {
             adventureId,
             prompt: 'Synthetic release location',
@@ -409,8 +416,144 @@ await test(
         },
       );
       await t.test(
+        'persisted successful image resumes after profile update at its original price',
+        async () => {
+          const who = await actor();
+          const {
+            ImageGenerationEngine,
+          } = require('../../apps/api/dist/image-generation/service.js');
+          const { AssetReuseService } = require('../../apps/api/dist/assets/reuse.service.js');
+          const {
+            createOwnerImageRuntime,
+          } = require('../../apps/api/dist/image-generation/config.js');
+          const sharp = require('sharp');
+          const nextProfile = { ...ownerProfile(), aggregateCapMicros: 10000000 };
+          nextProfile.image.model = 'synthetic-new-image';
+          nextProfile.image.size = '1024x1024';
+          nextProfile.image.estimatedTotalMicros = 60000;
+          const nextConfig = readGenerationConfig({
+            GENERATION_MODE: 'release',
+            GENERATION_CONFIG_JSON: JSON.stringify(nextProfile),
+          });
+          const nextAuthority = new GenerationAuthority(database, nextConfig);
+          const runtime = (cfg) =>
+            createOwnerImageRuntime(cfg, {
+              resolveApiKey: () => assert.fail('No real credentials'),
+              fetchImpl: () => assert.fail('No network'),
+            });
+          let providerCalls = 0;
+          const oldRuntime = runtime(configured),
+            newRuntime = runtime(nextConfig);
+          const oldImages = new ImageGenerationEngine(
+            database,
+            new AssetReuseService(database),
+            {
+              id: oldRuntime.provider.id,
+              generate: async () => {
+                providerCalls++;
+                return {
+                  bytes: await sharp({
+                    create: {
+                      width: 1536,
+                      height: 1024,
+                      channels: 4,
+                      background: { r: 1, g: 2, b: 3, alpha: 1 },
+                    },
+                  })
+                    .png()
+                    .toBuffer(),
+                  mime: 'image/png',
+                  actualMicros: 100,
+                  costVerifiedForSparks: true,
+                  requestId: 'synthetic-old-profile',
+                };
+              },
+            },
+            oldRuntime.policy,
+            oldRuntime.capabilities,
+          );
+          oldImages.setLiveAuthorizer((...args) => authority.authorizeImage(...args));
+          oldImages.setReleaseResultAuthorizer((...args) =>
+            authority.authorizeReleaseResult(...args),
+          );
+          const request = {
+            prompt: 'Synthetic portrait',
+            title: 'Synthetic portrait',
+            kind: 'background',
+            camera: 'top-down',
+            tags: [],
+            background: 'opaque',
+            referenceRevisionIds: [],
+            mode: 'external',
+            declineReuse: true,
+            rights: {
+              basis: 'generated',
+              licenseLabel: 'Synthetic',
+              attribution: '',
+              allowAuthorReuse: false,
+              attested: true,
+            },
+          };
+          // Use an ordinary owned adventure to keep the source fence independent of draft UI schemas.
+          request.adventureId = randomUUID();
+          await db.query(
+            "INSERT INTO adventures(id,owner_id,slug,title,genre,data) VALUES($1,$2,$3,'Synthetic','fantasy','{}')",
+            [request.adventureId, who.id, `resume-${request.adventureId}`],
+          );
+          const q = await oldImages.quote(who.id, request);
+          const job = await oldImages.enqueue(who.id, {
+            quoteId: q.quote.id,
+            operationId: randomUUID(),
+            consent: true,
+            estimateRiskConsent: true,
+          });
+          const originalQuote = (
+            await db.query(
+              'SELECT * FROM spark_quotes WHERE id=(SELECT spark_quote_id FROM image_generation_jobs WHERE id=$1)',
+              [job.id],
+            )
+          ).rows[0];
+          oldImages.admit = async () => {}; // Simulated process death after durable provider receipt.
+          await oldImages.workOnce();
+          assert.equal((await oldImages.get(who.id, job.id)).status, 'generated');
+          const restarted = new ImageGenerationEngine(
+            database,
+            new AssetReuseService(database),
+            {
+              id: newRuntime.provider.id,
+              generate: async () => assert.fail('No redispatch after restart'),
+            },
+            newRuntime.policy,
+            newRuntime.capabilities,
+          );
+          restarted.setLiveAuthorizer((...args) => nextAuthority.authorizeImage(...args));
+          restarted.setReleaseResultAuthorizer((...args) =>
+            nextAuthority.authorizeReleaseResult(...args),
+          );
+          await database.tx((c) => activateReleaseDeployment(c, nextConfig));
+          await restarted.quote(who.id, request);
+          assert.equal((await nextAuthority.status(who.id)).policyRevision, 2);
+          await restarted.workOnce();
+          assert.equal((await restarted.get(who.id, job.id)).status, 'admitted');
+          assert.equal(providerCalls, 1);
+          const settled = (
+            await db.query('SELECT status,captured_subunits FROM spark_holds WHERE id=$1', [
+              originalQuote.id,
+            ])
+          ).rows[0];
+          assert.equal(settled.status, 'settled');
+          assert.equal(settled.captured_subunits, '200');
+          assert.deepEqual(
+            (await db.query('SELECT * FROM spark_quotes WHERE id=$1', [originalQuote.id])).rows[0],
+            originalQuote,
+          );
+          assert.equal((await nextAuthority.status(who.id)).policyRevision, 2);
+        },
+      );
+      await t.test(
         'expired pricing blocks new dispatch, not historical job inspection or cancellation',
         async () => {
+          await database.tx((c) => activateReleaseDeployment(c, configured));
           const user = await actor();
           const q = await engine.quote(
             user.id,

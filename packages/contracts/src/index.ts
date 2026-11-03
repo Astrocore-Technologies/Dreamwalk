@@ -445,10 +445,3 @@ export * from './sparks';
 export * from './image-framing';
 
 export * from './image-style';
-
-export type {
-  ReleasePolicyProfile,
-  ReleasePolicyReview,
-  ReleasePolicyAdoption,
-  ReleasePolicyReceipt,
-} from './release-policy';

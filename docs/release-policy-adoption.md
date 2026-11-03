@@ -1,58 +1,81 @@
-# Reviewed release policy adoption
+# Automatic release profile updates
 
-Release accounts retain one authorization and one financial scope. A runtime configuration
-fingerprint change deliberately prevents new quotes/dispatch until an administrator reviews
-and adopts that exact candidate for the selected account. This is not financial reconciliation.
+The validated server configuration is the source of truth for new release generation quotes.
+Changing models, output envelopes or pricing no longer requires an administrator to approve
+that profile separately for every player. The former account-level review UI and endpoints
+have been removed. A configuration update does not start generation or charge a customer.
 
-## Administrator workflow
+## Admission and immutable history
 
-Open **Admin → Users**, find the affected account, and choose **Generation settings**.
-Review the current and proposed profile, including the expandable pricing and limit details.
-For a legacy account, the old profile and platform ceiling are explicitly unavailable;
-review the entire candidate rather than assuming that only a token limit changed.
-The new platform ceiling and retained customer holds are shown before confirmation.
-Choose **Approve new profile** only after reviewing those settings. This applies to that
-account only and is never offered on the player's launch screen.
+Release admission refreshes the existing account authorization under its authorization,
+financial scope, global admission fence and enabled wallet locks. It appends an immutable
+profile revision rather than rewriting historical quote, job, reservation or ledger evidence.
+A legacy revision without a saved profile remains unknown; it is not reconstructed from the
+new configuration. New quotes use the current validated profile and its revision.
 
-If acknowledgment is lost, use **Check status**, which only reads the preview. Do not infer
-success from a timeout or retry a paid operation. After successful adoption, the player can
-request a fresh estimate and separately confirm generation. Existing pending holds still
-need their own reconciliation decision.
+The ordinary account, wallet, pricing validity and financial admission checks still apply.
+This is not a way to enable a disabled wallet, restore a stopped account, expand account
+spending authorization, clear an unresolved provider outcome or create a fresh financial scope.
+No new aggregate spending limit is introduced. Existing unlimited configuration stays unlimited.
 
-## API
+## Price changes and customer consent
 
-- `GET /api/v1/generation/release-policy/:actorId`: administrator-only, read-only preview.
-  Returns persisted revision/hash, the runtime candidate and fingerprint, blockers, provider
-  liabilities, and retained Spark holds. A legacy profile without an immutable snapshot is
-  explicitly unavailable, not inferred from the new configuration.
-- `POST /api/v1/generation/release-policy/:actorId/revisions`: administrator-only.
-  Body: `operationId`, `expectedRevision`, `expectedHash`, `candidateFingerprint`, `consent:true`.
-  Exact operation replay returns its original receipt. Changed replay inputs conflict.
+A quote is tied to its immutable profile and price. If a server change makes an unexecuted
+quote stale, dispatch rejects it before admitting a new paid job. The client offers a fresh
+estimate and requires the customer's explicit confirmation again. It never treats the old
+confirmation as permission for a different quote or price.
 
-Adoption uses the existing release admission lock, authorization and scope locks, and global
-admission fence. It checks the candidate fingerprint and persisted revision/hash under locks.
-It rejects stopped/blocked/unapproved accounts, disabled wallets, stale pricing, changed
-per-account caps or allowance mode, active provider work, and unresolved provider outcomes.
-This endpoint does not expand per-account limits or create a replacement financial scope.
+For the story start flow, only explicit HTTP 409 policy, quote-expiration or inactive-deployment rejections clear the
+pending-dispatch marker. A lost response, network failure or unknown provider result retains
+that marker and exposes read-only status recovery, not an automatic paid retry.
 
-The runtime candidate includes the reviewed aggregate ceiling; the endpoint does not edit
-that global runtime setting. After a reviewed snapshot exists, a changed aggregate ceiling
-is rejected by this narrow adoption endpoint. A legacy authorization has no historical
-aggregate snapshot, so its old ceiling cannot be proven unchanged: the administrator must
-review the entire proposed runtime profile with that explicit limitation. Historical totals and retained exposure still constrain subsequent
-admission, as do available Spark funds.
+Already dispatched work and existing customer holds retain their original financial snapshots.
+A verified successful result may complete against its original admitted revision even after a
+profile update. Text results are revalidated against the current bounded proposal schema and
+source fence. Image results retain raster/source checks and verify the immutable quote using
+the recorded provider attempt rather than the new provider profile. Neither path dispatches
+again. Queued work that has not reached the provider remains subject to current dispatch fencing.
+Profile refresh itself does not capture, release, cancel or retry any hold or job. Historical
+pending holds continue to reserve their funds until their separate reconciliation completes.
 
-A historical failed job can have settled provider accounting while its customer Spark hold
-remains pending. Adoption may proceed only when that provider evidence is settled/released
-and no unresolved execution remains. The hold, wallet balances, quote snapshots, provider
-reservation, ledger and job evidence remain unchanged; the reserved funds remain unavailable.
-Orphaned/unsettled provider evidence blocks adoption. Reconciliation is a separate action.
+## Verification
 
-Only the session policy identity/revision changes. An immutable candidate snapshot and an
-administrator audit record are appended. Existing quote/job policy and request snapshots
-are never rewritten. Old quotes cannot dispatch under the new revision. New preparation
-requires a fresh exact quote and the player's explicit payment consent; adoption itself
-makes no provider request, reserves no funds, and does not retry a failed start.
+The focused release-policy PostgreSQL suite uses an isolated local database and synthetic
+providers. Browser fixtures intercept generation dispatch, including stale-price rejection;
+no test performs a real paid generation request.
 
-Local verification uses isolated PostgreSQL and injected synthetic providers only:
-`IMAGE_TEST_FILE=integration-release-policy.test.mjs node tests/images/run.mjs`.
+`IMAGE_TEST_FILE=integration-release-policy.test.mjs node tests/images/run.mjs`
+
+## Deployment ordering
+
+The existing Railway pre-deploy command, `npm run db:migrate:production`, applies migrations
+and registers an immutable ordered candidate tied to the Railway deployment ID. Registration
+never changes the active profile. After required API initialization and a successful listener
+bind, that runtime may activate only the latest candidate with its exact deployment ID and
+fingerprint. Health remains HTTP 503 until activation commits; an activation failure closes
+the application. A candidate that fails before startup activation leaves the old healthy
+profile active. An obsolete or superseded process cannot register or activate a new profile.
+
+`RAILWAY_DEPLOYMENT_ID` is required for release pre-deploy and runtime startup. Railway supplies
+it to both phases; it is an identity, not a sortable timestamp. Non-Railway deployment tooling
+must supply an equivalent unique UUID consistently through the two phases. API requests never
+activate profiles. Admission reads the latest successful activation under the global financial
+fence. A deliberate rollback must be a newly registered deployment, so even a prior fingerprint
+receives a new epoch. Repeating registration/activation for the same deployment is idempotent.
+After a post-readiness application failure, normal deployment restart can re-use that exact
+registered active deployment. Rollback uses the ordinary deployment pipeline, not per-account
+approval or changes to customer holds.
+
+Deployment-phase ordering currently relies on the verified Railway API service topology:
+one replica with the persistent `/data/assets` volume. Railway prevents multiple active
+deployments mounted to that service, including during healthchecked deployments. Read-only
+verification on 2026-11-03 found one running replica, one active deployment and no pending
+service changes. Before changing this topology, the deployment controller must provide an
+ordered activation step; do not register arbitrary profiles from replica startup or activate them from request traffic.
+
+Sources: [Railway volume caveats](https://docs.railway.com/volumes/reference) and
+[volume-backed healthchecks](https://docs.railway.com/deployments/healthchecks).
+
+A completed token-count request also keeps its original fixed-cost receipt when a profile
+changes or its pricing expires in flight. The count is marked stale and not applied to new
+context; its known provider cost is persisted, and pending customer reconciliation stays pending.

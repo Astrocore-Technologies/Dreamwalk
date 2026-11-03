@@ -6,6 +6,9 @@ import { createRequire } from 'node:module';
 import { db, startApi, stopApi, client } from './support-runtime.mjs';
 import { requestEstimateOwnerProfile } from '../images/owner-config-fixture.mjs';
 const require = createRequire(import.meta.url);
+const {
+  activateReleaseDeployment,
+} = require('../images/release-deployment-fixture.cjs');
 const { Db } = require('../../apps/api/dist/db.js');
 const { Auth } = require('../../apps/api/dist/auth.js');
 const { GameService } = require('../../apps/api/dist/game/game.service.js');
@@ -51,6 +54,7 @@ await test(
           aggregateCapMicros: 10000000,
         }),
       });
+      await database.tx((c) => activateReleaseDeployment(c, config));
       const authority = new GenerationAuthority(database, config);
       let calls = 0;
       const inner = {

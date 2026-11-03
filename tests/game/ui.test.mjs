@@ -463,6 +463,7 @@ test('generation admission errors explain recovery in every locale', async () =>
   );
   const required = new Set([
     'GENERATION_POLICY_CHANGED',
+    'GENERATION_RELEASE_PROFILE_NOT_ACTIVE',
     'GENERATION_PRICING_EXPIRED',
     'STORY_PLANNER_UNAVAILABLE',
   ]);
@@ -482,34 +483,12 @@ test('generation admission errors explain recovery in every locale', async () =>
   assert.equal(required.size, 0);
 });
 
-test('admin policy review copy has translations and stays outside gameplay', async () => {
-  const text = await readFile(
-    new URL('../../apps/web/components/studio/release-policy-review.tsx', import.meta.url),
-    'utf8',
-  );
-  const source = ts.createSourceFile(
-    'release-policy-review.tsx',
-    text,
-    ts.ScriptTarget.Latest,
-    true,
-    ts.ScriptKind.TSX,
-  );
-  const walk = (node) => {
-    if (ts.isStringLiteral(node) && /[А-Яа-яЁё]/u.test(node.text)) {
-      for (const locale of supportedLocales)
-        assert.ok(dictionaries[locale][node.text], `${locale}: ${node.text}`);
-    }
-    ts.forEachChild(node, walk);
-  };
-  walk(source);
-  const admin = await readFile(
-    new URL('../../apps/web/components/admin.tsx', import.meta.url),
-    'utf8',
-  );
-  assert.match(admin, /policyTarget &&/);
-  const game = await readFile(
-    new URL('../../apps/web/components/game/adventure-launch.tsx', import.meta.url),
-    'utf8',
-  );
-  assert.doesNotMatch(game, /ReleasePolicyReview|release-policy/);
+test('server profile updates do not expose manual account adoption controls', async () => {
+  for (const file of ['admin.tsx', 'game/adventure-launch.tsx']) {
+    const source = await readFile(
+      new URL('../../apps/web/components/' + file, import.meta.url),
+      'utf8',
+    );
+    assert.doesNotMatch(source, /ReleasePolicyReview|release-policy|policyTarget/);
+  }
 });

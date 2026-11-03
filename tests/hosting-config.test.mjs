@@ -36,3 +36,14 @@ test('Railway starts a single persistent API and migrates compiled code without 
   assert.deepEqual(config.deploy.preDeployCommand, ['npm run db:migrate:production']);
   assert.equal(config.deploy.healthcheckPath, '/api/v1/health');
 });
+test('release startup activates only after listen and health stays unready until commit', () => {
+  const main = readFileSync('apps/api/src/main.ts', 'utf8');
+  const migration = readFileSync('apps/api/src/migrate.ts', 'utf8');
+  assert.match(main, /if \(!releaseReadiness\.ready\)[\s\S]*?fail\(503/);
+  assert.ok(main.indexOf('await app.listen(') < main.indexOf('await releaseReadiness.activate('));
+  assert.match(main, /activateRegisteredReleaseDeployment\([\s\S]*?RAILWAY_DEPLOYMENT_ID/);
+  assert.match(main, /catch \(error\) \{\s*await app.close\(\);\s*throw error;/);
+  assert.doesNotMatch(main, /registerReleaseDeployment\(/);
+  assert.match(migration, /registerReleaseDeployment\(/);
+  assert.doesNotMatch(migration, /activateRegisteredReleaseDeployment\(/);
+});
