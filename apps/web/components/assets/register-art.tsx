@@ -21,8 +21,17 @@ export function RegisterArt({
   const dialog = useRef<HTMLDialogElement>(null);
   useEffect(() => {
     const element = dialog.current;
+    const returnFocus =
+      document.activeElement instanceof HTMLElement ? document.activeElement : null;
     element?.showModal();
-    return () => element?.close();
+    return () => {
+      const active = document.activeElement;
+      const restoreFocus = active === document.body || !!element?.contains(active);
+      element?.close();
+      // React can detach the dialog before passive cleanup. Native close() then
+      // cannot restore focus; do so only if no newer control has taken focus.
+      if (restoreFocus && returnFocus?.isConnected) returnFocus.focus({ preventScroll: true });
+    };
   }, []);
   const [upload, setUpload] = useState<Asset | null>(null),
     [title, setTitle] = useState(base?.metadata.title || ''),

@@ -39,6 +39,8 @@ async function mockLibrary(page: Page, initial: ArtRevision[]) {
   const writes: { path: string; body: Record<string, unknown> }[] = [];
   let failAdmission = false;
   let holdSearch = false;
+  let holdAdmission = false;
+  let releaseAdmission: (() => void) | undefined;
   let releaseSearch: (() => void) | undefined;
   const uploadId = randomUUID();
   const user = {
@@ -83,6 +85,10 @@ async function mockLibrary(page: Page, initial: ArtRevision[]) {
           json: { code: 'INTERNAL_ERROR', message: 'Synthetic retry required' },
         });
       }
+      if (holdAdmission)
+        await new Promise<void>((resolve) => {
+          releaseAdmission = resolve;
+        });
       const admitted = {
         ...fixture(body.metadata.title),
         metadata: body.metadata,
@@ -107,6 +113,13 @@ async function mockLibrary(page: Page, initial: ArtRevision[]) {
   await page.addInitScript(() => localStorage.setItem('dreamwalk-language', 'en'));
   return {
     writes,
+    holdNextAdmission: () => {
+      holdAdmission = true;
+    },
+    releaseAdmission: () => {
+      holdAdmission = false;
+      releaseAdmission?.();
+    },
     holdNextSearch: () => {
       holdSearch = true;
     },
@@ -264,8 +277,18 @@ test('art dialog cancels cleanly, previews upload and retains explicit rights on
   server.failNextAdmission();
   await dialog.getByRole('button', { name: 'Add to library', exact: true }).click();
   await expect(dialog.getByRole('alert')).toContainText('Synthetic retry required');
+  server.holdNextAdmission();
   await dialog.getByRole('button', { name: 'Add to library', exact: true }).click();
+  await expect
+    .poll(() => server.writes.filter((write) => write.path === '/asset-library/revisions').length)
+    .toBe(2);
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
+  await expect(dialog.getByRole('button', { name: 'Close', exact: true })).toBeDisabled();
+  server.releaseAdmission();
   await expect(dialog).toHaveCount(0);
+  await expect(add).toBeFocused();
   await expect(page.locator('[data-art-inspector]')).toContainText(
     'Synthetic newly registered art',
   );
@@ -293,6 +316,11 @@ test('art dialog cancels cleanly, previews upload and retains explicit rights on
   ).not.toBeChecked();
   await revisionDialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   await expect(revisionDialog).toHaveCount(0);
+  await expect(
+    page
+      .locator(`[data-art-revision="${art.id}"]`)
+      .getByRole('button', { name: 'Create new revision', exact: true }),
+  ).toBeFocused();
   expect(server.writes.filter((write) => write.path === '/asset-library/revisions')).toHaveLength(
     2,
   );
