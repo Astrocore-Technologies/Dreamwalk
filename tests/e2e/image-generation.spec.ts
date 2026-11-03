@@ -87,9 +87,13 @@ test('mock image API requires explicit quote consent and never auto-binds or reg
   expect(separate.quote.id).not.toBe(changed.quote.id);
   expect((await jobs()).jobs).toHaveLength(1);
   await page.goto('/studio/assets');
-  await expect(page.getByText(input.title, { exact: true })).toBeVisible();
+  await expect(
+    page.locator('[data-art-revision]').getByRole('heading', { name: input.title, exact: true }),
+  ).toBeVisible();
   await page.reload();
-  await expect(page.getByText(input.title, { exact: true })).toBeVisible();
+  await expect(
+    page.locator('[data-art-revision]').getByRole('heading', { name: input.title, exact: true }),
+  ).toBeVisible();
   expect((await jobs()).jobs).toHaveLength(1);
   expect(
     await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
