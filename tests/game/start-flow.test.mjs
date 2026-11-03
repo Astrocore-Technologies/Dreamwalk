@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { transformSync } from 'esbuild';
 import { startState } from '../../apps/web/components/game/start-state.ts';
+import { createUnpaidFixtureCampaign } from '../e2e/support/unpaid-fixture-campaign.ts';
 import { LaunchGate } from '../../apps/web/components/home/launch-gate.ts';
 const prepared = { id: 'prep', status: 'prepared', reused: false, campaignId: null, jobs: [] };
 test('terminal jobs never suggest a new paid attempt before settlement', () => {
@@ -383,4 +384,80 @@ test('new hero restoration resumes after an old selection request finishes', asy
   assert.deepEqual(calls, ['a', 'b']);
   assert.equal(h.nodes().find((n) => n.type === 'button').props.disabled, false);
   assert.deepEqual(h.paths, []);
+});
+
+test('unpaid browser fixture retries only an explicitly rejected rate-limit request once', async () => {
+  const calls = [],
+    waits = [];
+  const rejected = {
+    status: () => 429,
+    json: async () => ({ code: 'RATE_LIMITED', retryable: true }),
+  };
+  const accepted = { status: () => 201 };
+  const result = await createUnpaidFixtureCampaign(
+    {
+      post: async (path, body) => {
+        calls.push([path, body]);
+        return calls.length === 1 ? rejected : accepted;
+      },
+    },
+    async (ms) => {
+      waits.push(ms);
+    },
+  );
+  assert.equal(result, accepted);
+  assert.deepEqual(waits, [61000]);
+  assert.equal(calls.length, 2);
+  assert.deepEqual(calls[0], [
+    '/api/v1/game/campaigns',
+    { data: { template: 'observatory-v1', turnBased: true } },
+  ]);
+  let count = 0;
+  const stillLimited = await createUnpaidFixtureCampaign(
+    {
+      post: async () => {
+        count++;
+        return rejected;
+      },
+    },
+    async () => {},
+  );
+  assert.equal(stillLimited, rejected);
+  assert.equal(count, 2);
+});
+test('unpaid fixture never retries uncertain failures, server errors, or nonretryable limits', async () => {
+  for (const status of [201, 500, 503, 429]) {
+    let calls = 0;
+    const response = {
+      status: () => status,
+      json: async () => ({ code: 'RATE_LIMITED', retryable: false }),
+    };
+    assert.equal(
+      await createUnpaidFixtureCampaign(
+        {
+          post: async () => {
+            calls++;
+            return response;
+          },
+        },
+        async () => assert.fail('must not wait'),
+      ),
+      response,
+    );
+    assert.equal(calls, 1);
+  }
+  let calls = 0;
+  await assert.rejects(
+    createUnpaidFixtureCampaign(
+      {
+        post: async () => {
+          calls++;
+          throw Error('connection lost');
+        },
+      },
+      async () => assert.fail('must not wait'),
+    ),
+    /connection lost/,
+  );
+  assert.equal(calls, 1);
 });
