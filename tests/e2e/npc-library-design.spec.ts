@@ -211,9 +211,13 @@ for (const variant of [
       npc.biography,
     );
     await editor.getByRole('button', { name: text.speech, exact: true }).click();
-    await expect(editor.getByLabel(text.greeting)).toHaveValue(npc.greeting);
+    await expect(editor.getByRole('textbox', { name: text.greeting, exact: true })).toHaveValue(
+      npc.greeting,
+    );
     await editor.getByRole('button', { name: text.character, exact: true }).click();
-    await expect(editor.getByLabel(text.character, { exact: true })).toHaveValue(npc.personality);
+    await expect(editor.getByRole('textbox', { name: text.character, exact: true })).toHaveValue(
+      npc.personality,
+    );
     await editor.locator('summary').filter({ hasText: text.artwork }).click();
     await expect(editor.locator('details')).toHaveAttribute('open', '');
     expect(mutations).toEqual([]);
