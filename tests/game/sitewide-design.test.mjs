@@ -42,7 +42,8 @@ test('metrics render only real API values and likes do not reuse bookmarks', asy
 });
 test('game shell removes navigation without removing global language and theme controls', async () => {
   const shell = await read('components/shell.tsx');
-  assert.match(shell, /!inGame && \(/);
+  assert.match(shell, /!inGame && !inAuth && \(/);
+  assert.match(shell, /game-return/);
   assert.match(shell, /id="game-toolbar"/);
   assert.match(shell, /className="locale-select"/);
   assert.match(shell, /className="icon-button theme-button"/);
@@ -82,4 +83,17 @@ test('scenic label backplates preserve normal-text AA over black or white artwor
     ['#241b2f', '#f8f5f0'],
   ])
     for (const image of [0, 255]) assert.ok(contrast(foreground, mix(background, image)) >= 4.5);
+});
+
+test('public cards and auth retain real content in the art-first layout', async () => {
+  const css = await read('app/design-system.css');
+  const publicSource = await read('components/public.tsx');
+  const shell = await read('components/shell.tsx');
+  assert.match(css, /repeat\(auto-fit, minmax\(min\(100%, 270px\), 1fr\)\)/);
+  assert.match(publicSource, /className="card-art-title" title=\{text.title\}/);
+  assert.match(publicSource, /creator-banner/);
+  assert.match(publicSource, /data.creator.avatarAssetId/);
+  assert.match(shell, /const inAuth = path.startsWith\('\/auth\/'\)/);
+  assert.match(shell, /auth-brand/);
+  assert.match(css, /character-orb:not\(:has\(img\)\)/);
 });

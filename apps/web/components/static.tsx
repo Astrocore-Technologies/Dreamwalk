@@ -1,6 +1,6 @@
 'use client';
 import { ArrowUpRight, BookOpen, Feather, ShieldCheck, Sparkles } from 'lucide-react';
-import { ButtonLink, Empty, MoreLink, PageHeading, Panel } from './ui';
+import { ButtonLink, Empty, PageHeading, Panel } from './ui';
 import { useT } from '@/lib/i18n';
 import { closedTestLegalCopy, closedTestDraftLabel } from './closed-test-legal-copy';
 export function StaticPage({ path }: { path: string }) {
@@ -9,11 +9,24 @@ export function StaticPage({ path }: { path: string }) {
   if (legalPath === '/about' || legalPath === '/terms' || legalPath === '/privacy') {
     const page = closedTestLegalCopy[locale][legalPath];
     return (
-      <>
+      <div className={legalPath === '/about' ? 'about-page' : undefined}>
+        {legalPath === '/about' && <div className="about-banner" aria-hidden="true" />}
         <PageHeading eyebrow={closedTestDraftLabel[locale]} title={page.title} />
         <Panel className="static-prose">
           {page.paragraphs.map((paragraph, index) => (
-            <p key={index}>
+            <p
+              key={index}
+              className={
+                legalPath === '/about' && (index === 2 || index === 3) ? 'about-feature' : undefined
+              }
+            >
+              {legalPath === '/about' && (index === 2 || index === 3) && (
+                <img
+                  src={index === 2 ? '/images/observatory.webp' : '/images/forest.webp'}
+                  alt=""
+                  loading="lazy"
+                />
+              )}
               {paragraph
                 .split(/(\*\*.*?\*\*)/g)
                 .map((part, segment) =>
@@ -26,7 +39,7 @@ export function StaticPage({ path }: { path: string }) {
             </p>
           ))}
         </Panel>
-      </>
+      </div>
     );
   }
   if (path.startsWith('/play') || path.startsWith('/lobby'))
@@ -41,12 +54,14 @@ export function StaticPage({ path }: { path: string }) {
     );
   if (path === '/help' || path === '/support')
     return (
-      <>
-        <PageHeading
-          eyebrow={t('НЕ ОБЯЗАТЕЛЬНО РАЗБИРАТЬСЯ В ОДИНОЧКУ')}
-          title={t('Немного ориентиров')}
-          description={t('Всё, что нужно для первых шагов по Dreamwalk.')}
-        />
+      <div className="help-page">
+        <div className="help-banner">
+          <PageHeading
+            eyebrow={t('НЕ ОБЯЗАТЕЛЬНО РАЗБИРАТЬСЯ В ОДИНОЧКУ')}
+            title={t('Немного ориентиров')}
+            description={t('Всё, что нужно для первых шагов по Dreamwalk.')}
+          />
+        </div>
         <div className="help-grid">
           <Panel>
             <BookOpen size={25} />
@@ -56,7 +71,7 @@ export function StaticPage({ path }: { path: string }) {
                 'Открой каталог, выбери жанр и загляни в мир. Сохрани интересное приключение в библиотеку, чтобы не потерять.',
               )}
             </p>
-            <MoreLink href="/explore">{t('Открыть каталог')}</MoreLink>
+            <ButtonLink href="/explore">{t('Открыть каталог')}</ButtonLink>
           </Panel>
           <Panel>
             <Feather size={25} />
@@ -66,7 +81,7 @@ export function StaticPage({ path }: { path: string }) {
                 'В студии собери описание, локации, NPC и стартовую сцену. Частный мир доступен только тебе и приглашённым людям. Для публичного каталога отправь историю на модерацию.',
               )}
             </p>
-            <MoreLink href="/studio">{t('В студию автора')}</MoreLink>
+            <ButtonLink href="/studio">{t('В студию автора')}</ButtonLink>
           </Panel>
           <Panel>
             <Sparkles size={25} />
@@ -78,7 +93,7 @@ export function StaticPage({ path }: { path: string }) {
                   ? 'Генерація витрачає Іскри. Перед підтвердженням ти побачиш приблизну вартість і резерв; після виконання — фактичну витрату. Невикористаний резерв звільняється, а невідома витрата залишається на звірці.'
                   : 'Generation uses Sparks. Before confirming, you see the estimated cost and planned hold; afterward, the actual usage. Unused holds are released, while unknown costs remain pending reconciliation.'}
             </p>
-            <MoreLink href="/wallet">{t('Посмотреть кошелёк')}</MoreLink>
+            <ButtonLink href="/wallet">{t('Посмотреть кошелёк')}</ButtonLink>
           </Panel>
           <Panel>
             <ShieldCheck size={25} />
@@ -88,10 +103,10 @@ export function StaticPage({ path }: { path: string }) {
                 'На странице приключения есть действие «Сообщить о нарушении». Жалоба попадёт в очередь модерации. Внешняя служба поддержки пока не подключена.',
               )}
             </p>
-            <MoreLink href="/content-policy">{t('Правила сообщества')}</MoreLink>
+            <ButtonLink href="/content-policy">{t('Правила сообщества')}</ButtonLink>
           </Panel>
         </div>
-      </>
+      </div>
     );
   return (
     <Empty

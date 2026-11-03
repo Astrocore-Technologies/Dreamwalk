@@ -1174,3 +1174,60 @@
   padding: 4px 7px;
   margin-left: -7px;
 }
+
+/* Preserve real titles, but keep the start action above decorative cast previews. */
+.feature {
+  min-height: 460px;
+}
+.featureCopy {
+  width: min(72%, 740px);
+  padding: 30px 36px;
+}
+.featureTitle {
+  font-size: clamp(28px, 3vw, 42px);
+  line-height: 1.15;
+  margin: 10px 0;
+}
+.hook {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+}
+.cast {
+  order: 2;
+  margin-top: 16px;
+}
+.cast figure:has(.portrait > span) {
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  width: auto;
+  max-width: 170px;
+}
+.cast figure:has(.portrait > span) .portrait {
+  width: 28px;
+  height: 28px;
+  border: 0;
+  flex-shrink: 0;
+}
+.cast figure:has(.portrait > span) .portrait svg {
+  width: 22px;
+  height: 22px;
+}
+.cast figure:has(.portrait > span) figcaption {
+  font-size: 11px;
+  text-align: left;
+}
+@media (max-width: 700px) {
+  .feature {
+    min-height: 0;
+  }
+  .featureCopy {
+    width: 100%;
+    padding: 210px 24px 28px;
+  }
+  .featureTitle {
+    font-size: 30px;
+  }
+}
