@@ -6,7 +6,11 @@ import {
 import assert from 'node:assert/strict';
 import test from 'node:test';
 import { readFile } from 'node:fs/promises';
-import { authorizedArt, visibleSceneArt } from '../../apps/web/components/assets/art-visibility.ts';
+import {
+  authorizedArt,
+  visibleSceneArt,
+  canvasSceneArt,
+} from '../../apps/web/components/assets/art-visibility.ts';
 import { artCameraMatches, artPreviewUrl } from '../../apps/web/components/assets/types.ts';
 const id = '12345678-1234-1234-1234-123456789abc';
 const entry = (slot) => ({
@@ -72,7 +76,10 @@ test('late image responses are checked against current audience and abort genera
   );
   assert.match(source, /controller\.signal\.aborted/);
   assert.match(source, /artRequests\.get\(entry\.url\) !== controller/);
-  assert.match(source, /visibleSceneArt\(latest.current.projection, latest.current.art\)/);
+  assert.match(
+    source,
+    /canvasSceneArt\(\s*latest.current.projection,\s*latest.current.art,\s*latest.current.illustration/,
+  );
   assert.match(source, /texture.destroy\(true\)/);
   assert.match(source, /cache: 'no-store'/);
 });
@@ -223,60 +230,82 @@ test('inspection portraits require the current visible NPC and matching authoriz
   );
 });
 
-test('ungrounded location uses illustration with participant actions, never coordinate overlays', async () => {
-  const { transformSync } = await import('esbuild');
-  const source = await readFile(
-    new URL('../../apps/web/components/game/location-illustration.tsx', import.meta.url),
-    'utf8',
-  );
-  const code = transformSync(source, { loader: 'tsx', format: 'cjs', jsx: 'automatic' }).code;
-  const jsx = (type, props) => ({ type, props });
-  const module = { exports: {} };
-  new Function('require', 'module', 'exports', code)(
-    (name) =>
-      ({
-        'react/jsx-runtime': { jsx, jsxs: jsx },
-        react: { useState: (value) => [value, () => {}] },
-        'next/image': { __esModule: true, default: 'image' },
-        '../assets/types': { artPreviewUrl },
-        '@/lib/i18n': { useT: () => ({ locale: 'en' }) },
-        './map-actions': { MapActions: 'actions', InventoryPanel: 'inventory' },
-        './item-messages': { useItemText: () => String },
-        './game.module.css': { default: {} },
-      })[name],
-    module,
-    module.exports,
-  );
+test('saved illustration restores only the current backdrop without widening the normal art allowlist', () => {
+  const hero = { id: 'hero', kind: 'player', mapId: 'room', x: 2, y: 3 };
+  const npc = { id: 'npc', kind: 'npc', mapId: 'room', x: 4, y: 5 };
   const projection = {
-    map: { id: 'room', label: 'Tower', exits: [] },
-    entities: [
-      { id: 'hero', kind: 'player' },
-      { id: 'npc', kind: 'npc', label: 'Guide' },
-    ],
-    actorId: 'hero',
-    inventory: [],
+    map: { id: 'room', backgroundMode: 'schematic', blocked: [{ x: 1, y: 1 }] },
+    entities: [hero, npc],
+    artBindings: [],
   };
-  const illustration = { ...entry('map:room:background'), mapId: 'room', attribution: 'Artist' };
-  const walk = (node) =>
-    !node || typeof node !== 'object'
-      ? []
-      : [node, ...[node.props?.children].flat(Infinity).flatMap(walk)];
-  const render = (image) =>
-    walk(module.exports.LocationIllustration({ projection, illustration: image, disabled: false }));
-  const nodes = render(illustration);
-  assert.equal(nodes.filter((n) => n.type === 'image').length, 1);
-  assert.equal(nodes.find((n) => n.type === 'image').props.src, illustration.url);
-  assert.equal(nodes.find((n) => n.type === 'image').props.onClick, undefined);
-  assert.ok(nodes.some((n) => n.type === 'button' && n.props.children === 'Guide'));
+  const before = structuredClone(projection);
+  const illustration = { ...entry('map:room:background'), mapId: 'room' };
+  const privateSprite = entry('entity:hero:sprite');
+  assert.deepEqual(canvasSceneArt(projection, [privateSprite], illustration), [illustration]);
+  assert.deepEqual(visibleSceneArt(projection, [illustration, privateSprite]), []);
+  assert.deepEqual(
+    projection,
+    before,
+    'Rendering does not change positions, collision or grounding',
+  );
   for (const invalid of [
     null,
     { ...illustration, mapId: 'other' },
     { ...illustration, slot: 'map:other:background' },
+    { ...illustration, slot: 'entity:hero:sprite' },
+    { ...illustration, slot: 'map:room:layer:private' },
     { ...illustration, url: 'https://private.invalid/art' },
-  ]) {
-    assert.equal(render(invalid).filter((n) => n.type === 'image').length, 0);
-  }
-  assert.doesNotMatch(source, /GameCanvas|onMove|entity\.x|entity\.y|pixi|onPointer/);
+  ])
+    assert.deepEqual(canvasSceneArt(projection, [privateSprite], invalid), []);
+  assert.deepEqual(canvasSceneArt({ ...projection, map: { id: 'room' } }, [], illustration), []);
+  assert.deepEqual(
+    canvasSceneArt(
+      { ...projection, map: { ...projection.map, spatialGrounding: {} } },
+      [],
+      illustration,
+    ),
+    [],
+  );
+  assert.deepEqual(
+    canvasSceneArt(
+      { ...projection, map: { id: 'other', backgroundMode: 'schematic' } },
+      [],
+      illustration,
+    ),
+    [],
+  );
+  const authorized = { ...illustration, revisionId: 'new-revision' };
+  assert.deepEqual(
+    canvasSceneArt({ ...projection, artBindings: [authorized] }, [authorized], illustration),
+    [authorized],
+  );
+  assert.deepEqual(canvasSceneArt(projection, [], null), [], 'Withdrawal removes the backdrop');
+});
+
+test('all gameplay scenes keep the same interactive canvas with grid and state-driven tokens', async () => {
+  const page = await readFile(
+    new URL('../../apps/web/components/game/game-page.tsx', import.meta.url),
+    'utf8',
+  );
+  const canvas = await readFile(
+    new URL('../../apps/web/components/game/game-canvas.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.doesNotMatch(page, /LocationIllustration/);
+  assert.match(page, /<GameCanvas[\s\S]*illustration=\{sceneMedia.illustration\}/);
+  assert.match(canvas, /canvasSceneArt\(state.projection, state.art, state.illustration\)/);
+  assert.match(canvas, /for \(const entity of p.entities\)/);
+  assert.match(canvas, /state.onMove\(interaction.target\)/);
+  assert.match(canvas, /state.onSelectNpc\(drawnNpc\)/);
+  assert.match(canvas, /boundary, grid, objects/);
+  assert.match(canvas, /background.attribution/);
+  assert.match(canvas, /aria-label=\{itemText\('actions'\)\}/);
+  assert.match(canvas, /aria-haspopup="dialog"/);
+  assert.match(
+    canvas,
+    /projection.entities\s*\.filter\(\(entity\) => entity.id !== projection.actorId\)/,
+  );
+  assert.match(canvas, /projection.map.exits.map\(\(exit\) => `exit:\$\{exit.id\}`\)/);
 });
 
 test('campaign illustration hook clears on map/campaign change and ignores late prior responses', async () => {

@@ -89,3 +89,42 @@ test('new/imported maps cannot bypass fixed extent while old geometry stays edit
   assert.equal(fixedMapExtentsAllowed([{ id: 'new', width: 24, height: 24 }]), true);
   assert.equal(fixedMapExtentsAllowed([{ ...old, id: 'new' }], [old]), false);
 });
+
+test('both contrasting grid strokes contain every line in real Pixi geometry', async () => {
+  const { Graphics } = await import('pixi.js');
+  const source = readFileSync(
+    new URL('../../apps/web/components/game/game-canvas.tsx', import.meta.url),
+    'utf8',
+  );
+  // Exercise the renderer's actual draw block without needing a GPU/browser.
+  // Pixi consumes a path after stroke(), so a second stroke must rebuild it.
+  const start = source.indexOf('          grid.clear();');
+  const end = source.indexOf('          element.dataset.battlemapGrid', start);
+  assert.ok(start > 0 && end > start);
+  const draw = new Function('grid', 'p', 'BATTLEMAP_CELLS', 'tile', source.slice(start, end));
+  for (const dimensions of [
+    { width: 24, height: 24 },
+    { width: 12, height: 10 },
+  ]) {
+    const grid = new Graphics();
+    try {
+      draw(grid, { map: dimensions }, BATTLEMAP_CELLS, 48);
+      const strokes = grid.context.instructions;
+      assert.equal(strokes.length, 2);
+      assert.deepEqual(
+        strokes.map((stroke) => stroke.action),
+        ['stroke', 'stroke'],
+      );
+      assert.deepEqual(
+        strokes.map((stroke) => stroke.data.style.width),
+        [3, 1],
+      );
+      const paths = strokes.map((stroke) => stroke.data.path.instructions);
+      assert.equal(paths[0].filter((instruction) => instruction.action === 'lineTo').length, 50);
+      assert.deepEqual(paths[1], paths[0], 'The light stroke must not collapse to an empty path');
+      assert.deepEqual(paths[1].at(-1), { action: 'lineTo', data: [1152, 1152] });
+    } finally {
+      grid.destroy();
+    }
+  }
+});

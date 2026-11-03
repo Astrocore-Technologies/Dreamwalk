@@ -1002,9 +1002,9 @@ async function preflightFixture(
   const imageId = randomUUID();
   projection.turn = {
     ...projection.turn!,
-    phase: 'world',
-    activeActorId: null,
-    ownTurn: false,
+    phase: illustrated ? 'player' : 'world',
+    activeActorId: illustrated ? actor : null,
+    ownTurn: illustrated,
     phaseEpoch: 7,
   };
   const envelope = gameEnvelopeSchema.parse({
@@ -1036,15 +1036,32 @@ async function preflightFixture(
     },
   };
   const counts: Record<string, unknown>[] = [],
-    gets: string[] = [];
+    gets: string[] = [],
+    moves: { x: number; y: number }[] = [];
+  let illustrationAvailable = illustrated;
   await page.routeWebSocket(
     (url) => url.pathname === '/api/v1/game/socket',
-    (ws) => ws.close(),
+    (ws) => {
+      if (!illustrated) return ws.close();
+      ws.onMessage(() => ws.send(JSON.stringify(envelope)));
+    },
   );
   await page.route('**/api/v1/**', async (route) => {
     const path = new URL(route.request().url()).pathname,
       method = route.request().method();
     if (path.endsWith(`/game/campaigns/${id}/snapshot`)) return route.fulfill({ json: envelope });
+    if (illustrated && method === 'POST' && path.endsWith(`/game/campaigns/${id}/move`)) {
+      const body = route.request().postDataJSON();
+      expect(body.turnFence).toEqual(turnFence);
+      moves.push(body.target);
+      const player = envelope.projection.entities.find((entity) => entity.id === actor)!;
+      Object.assign(player, body.target);
+      envelope.projection.revision++;
+      envelope.projectionRevision = envelope.projection.revision;
+      return route.fulfill({
+        json: { ...envelope, status: 'committed', operationId: body.operationId, events: [] },
+      });
+    }
     if (path.endsWith(`/game/campaigns/${id}/members`))
       return route.fulfill({
         json: {
@@ -1056,7 +1073,7 @@ async function preflightFixture(
       return route.fulfill({
         json: {
           bindings: [],
-          sceneIllustration: illustrated
+          sceneIllustration: illustrationAvailable
             ? {
                 mapId: projection.map.id,
                 slot: `map:${projection.map.id}:background`,
@@ -1150,7 +1167,19 @@ async function preflightFixture(
   await expect(page.getByTestId('live-test-panel')).toHaveCount(0);
   const widget = page.getByTestId('text-count-preflight');
   await expect(widget).toHaveCount(0);
-  return { ...f, id, counts, gets, widget, r };
+  return {
+    ...f,
+    id,
+    counts,
+    gets,
+    widget,
+    r,
+    moves,
+    projection: envelope.projection,
+    withdrawIllustration: () => {
+      illustrationAvailable = false;
+    },
+  };
 }
 for (const locale of ['uk', 'en', 'ru'] as const)
   test(`gameplay hides manual token diagnostics and never starts background preflight (${locale})`, async ({
@@ -1184,35 +1213,107 @@ test('a known preflight price does not authorize counting or reconciliation in g
 });
 
 for (const locale of ['uk', 'en', 'ru'] as const)
-  test(`saved location illustration replaces ungrounded tiles without false token positions (${locale})`, async ({
+  test(`saved location art keeps the grid, player, NPC and interactions (${locale})`, async ({
     page,
   }) => {
     const f = await preflightFixture(page, locale, false, false, true);
-    const scene = page.locator('[data-location-illustration]');
+    const scene = page.locator('[data-battlemap-grid]');
     await expect(scene).toBeVisible();
-    await expect(scene.locator('img')).toBeVisible();
-    await expect
-      .poll(() =>
-        scene
-          .locator('img')
-          .evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0),
-      )
-      .toBe(true);
-    await expect(page.locator('[data-battlemap-grid]')).toHaveCount(0);
-    await expect(scene.getByRole('button').first()).toBeVisible();
-    await page.screenshot({
-      path: test.info().outputPath(`location-illustration-${locale}-desktop.png`),
+    await expect(scene.locator('canvas')).toBeVisible();
+    await expect(scene).toHaveAttribute('data-battlemap-grid', '24x24');
+    await expect(scene).toHaveAttribute('data-art-loaded', '1');
+    await expect(scene).toHaveAttribute('data-rendered-players', '1');
+    await expect(scene).toHaveAttribute(
+      'data-rendered-npcs',
+      String(f.projection.entities.filter((e) => e.kind === 'npc').length),
+    );
+    expect(f.projection.entities.some((e) => e.kind === 'npc')).toBe(true);
+    await expect(page.locator('[data-location-illustration]')).toHaveCount(0);
+    const actor = f.projection.entities.find((e) => e.id === f.projection.actorId)!;
+    await expect(scene).toHaveAttribute('data-rendered-actor-x', String(actor.x));
+    await expect(scene).toHaveAttribute('data-rendered-actor-y', String(actor.y));
+    const cellPoint = async (x: number, y: number) => {
+      await scene.scrollIntoViewIfNeeded();
+      return scene.evaluate(
+        (element, point) => {
+          const rect = element.getBoundingClientRect(),
+            data = (element as HTMLElement).dataset;
+          return {
+            x: rect.left + Number(data.cameraX) + (point.x + 0.5) * 48 * Number(data.cameraScale),
+            y: rect.top + Number(data.cameraY) + (point.y + 0.5) * 48 * Number(data.cameraScale),
+          };
+        },
+        { x, y },
+      );
+    };
+    const npc = f.projection.entities.find((e) => e.kind === 'npc')!;
+    const actionsLabel = { ru: 'Действия', en: 'Actions', uk: 'Дії' }[locale];
+    const actions = page.getByRole('button', { name: actionsLabel, exact: true });
+    await actions.focus();
+    await actions.press('Enter');
+    const menu = page.getByRole('dialog', { name: actionsLabel, exact: true });
+    for (const entity of f.projection.entities.filter((e) => e.id !== actor.id))
+      await expect(menu.locator(`[data-map-target="${entity.id}"]`)).toBeVisible();
+    expect(await menu.locator('section').count()).toBe(
+      f.projection.entities.length - 1 + f.projection.map.exits.length,
+    );
+    const npcActions = menu.locator(`[data-map-target="${npc.id}"]`);
+    const npcLabel = await npcActions.locator('strong').innerText();
+    const say = npcActions.getByRole('button', {
+      name: { ru: 'Сказать', en: 'Say', uk: 'Сказати' }[locale],
+      exact: true,
     });
+    await say.focus();
+    await say.press('Enter');
+    await expect(menu).toHaveCount(0);
+    await expect(actions).toBeFocused();
+    await expect(page.getByTestId('unified-story')).toContainText(
+      `${{ ru: 'Собеседник', en: 'Recipient', uk: 'Співрозмовник' }[locale]}: ${npcLabel}`,
+    );
+
+    const npcPoint = await cellPoint(npc.x, npc.y);
+    await page.mouse.click(npcPoint.x, npcPoint.y, { button: 'right' });
+    await expect(page.locator(`[data-map-target="${npc.id}"]`)).toBeVisible();
+    await menu.press('Escape');
+    await expect(menu).toHaveCount(0);
+    // A clear, real cell is chosen from the saved projection, not from image pixels.
+    const target = Array.from({ length: 24 * 24 }, (_, index) => ({
+      x: index % 24,
+      y: Math.floor(index / 24),
+    })).find(
+      (point) =>
+        point.x > 1 &&
+        point.y > 1 &&
+        !f.projection.map.blocked.some((b) => b.x === point.x && b.y === point.y) &&
+        !f.projection.entities.some(
+          (e) => Math.abs(e.x - point.x) < 2 && Math.abs(e.y - point.y) < 2,
+        ) &&
+        !f.projection.map.exits.some((e) => e.x === point.x && e.y === point.y),
+    )!;
+    const targetPoint = await cellPoint(target.x, target.y);
+    await page.mouse.click(targetPoint.x, targetPoint.y);
+    await expect.poll(() => f.moves).toEqual([target]);
+    await expect(scene).toHaveAttribute('data-rendered-actor-x', String(target.x));
+    await expect(scene).toHaveAttribute('data-rendered-actor-y', String(target.y));
+    await page.screenshot({ path: test.info().outputPath(`location-grid-${locale}-desktop.png`) });
     await page.setViewportSize({ width: 390, height: 844 });
-    await expect(scene.locator('img')).toBeVisible();
+    await expect(scene.locator('canvas')).toBeVisible();
+    await expect(scene).toHaveAttribute('data-battlemap-grid', '24x24');
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
-    await page.screenshot({
-      path: test.info().outputPath(`location-illustration-${locale}-mobile.png`),
-    });
+    await page.screenshot({ path: test.info().outputPath(`location-grid-${locale}-mobile.png`) });
     await page.reload();
-    await expect(scene.locator('img')).toBeVisible();
+    await expect(scene).toHaveAttribute('data-art-loaded', '1');
+    await expect(scene).toHaveAttribute('data-rendered-actor-x', String(target.x));
+    await expect(scene).toHaveAttribute(
+      'data-rendered-npcs',
+      String(f.projection.entities.filter((e) => e.kind === 'npc').length),
+    );
+    f.withdrawIllustration();
+    await expect(scene).toHaveAttribute('data-art-loaded', '0');
+    await expect(scene).toHaveAttribute('data-battlemap-grid', '24x24');
+    await expect(scene).toHaveAttribute('data-rendered-players', '1');
     expect(f.counts).toHaveLength(0);
     noPaidOrUnexpected(f);
   });

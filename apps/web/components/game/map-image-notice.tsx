@@ -12,10 +12,10 @@ export function MapImageNotice({
     return (
       <p data-schematic-map-notice>
         {locale === 'ru'
-          ? 'В игре будет показана сохранённая иллюстрация локации. Позиции персонажей с ней пока не сопоставлены, поэтому они не будут наложены на изображение. Историю можно продолжать через действия и общение; анализ изображения не входит в стоимость.'
+          ? 'Сохранённая карта будет показана с сеткой и персонажами. Анализ изображения не входит в эту оценку.'
           : locale === 'uk'
-            ? 'У грі буде показано збережену ілюстрацію локації. Позиції персонажів із нею поки не зіставлено, тому їх не буде накладено на зображення. Історію можна продовжувати через дії та спілкування; аналіз зображення не входить у вартість.'
-            : 'Play displays the saved location illustration. Character positions have not been matched to it, so characters will not be overlaid on the image. Continue the story through actions and conversation; image analysis is not included in the price.'}
+            ? 'Збережену мапу буде показано із сіткою та персонажами. Аналіз зображення не входить до цієї оцінки.'
+            : 'The saved map will be shown with its grid and characters. Image analysis is not included in this estimate.'}
       </p>
     );
   if (!count) return null;
