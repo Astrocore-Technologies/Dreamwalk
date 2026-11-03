@@ -4,6 +4,7 @@ import { HeroSelection, useHeroSelection } from './hero-selection';
 import { useLaunchGate } from './use-launch-gate';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
+import { startState, type StartPreparation } from './start-state';
 import { formatSparkSubunits } from '@dreamwalk/contracts';
 import type { Adventure } from '@dreamwalk/contracts';
 import { api, errorMessage, useClient, useResource } from '@/lib/client';
@@ -34,28 +35,28 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
       )?.id
     : adventure.playableVersionId;
   const gate = useLaunchGate(`${user?.id}:${adventure.id}:${versionId}:${heroSelection.heroId}`);
-  type Preparation = {
-    id: string;
-    status: string;
-    reused: boolean;
-    campaignId: string | null;
-    jobs?: { status: string; error_code?: string }[];
-  };
   type Quote = {
     id: string;
     expiresAt: string;
     sparks?: { reserveSubunits: string };
     estimatedTotalMicros?: number;
   };
-  const [preparation, setPreparation] = useState<Preparation | null>(null);
+  const [preparation, setPreparation] = useState<StartPreparation | null>(null);
   const [quote, setQuote] = useState<Quote | null>(null);
   const [confirm, setConfirm] = useState(false);
+  const [dispatchUncertain, setDispatchUncertain] = useState(false);
   const storageKey = `dreamwalk-start:${user?.id}:${versionId}:${heroSelection.heroId}`;
   useEffect(() => {
     setPreparation(null);
     setQuote(null);
     setConfirm(false);
+    setDispatchUncertain(sessionStorage.getItem(storageKey + ':dispatch-pending') === 'yes');
+    setError('');
   }, [storageKey]);
+  useEffect(() => {
+    if (user && versionId && heroSelection.ready && sessionStorage.getItem(storageKey + ':prepare'))
+      void launch('restore');
+  }, [storageKey, heroSelection.ready]);
   function operation(suffix: string) {
     const key = storageKey + ':' + suffix;
     let id = sessionStorage.getItem(key);
@@ -67,7 +68,9 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
   }
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
-  async function launch(action: 'prepare' | 'confirm' | 'refresh' | 'restart' = 'prepare') {
+  async function launch(
+    action: 'prepare' | 'confirm' | 'refresh' | 'restart' | 'restore' = 'prepare',
+  ) {
     if (!user) {
       router.push(
         withStoryReturn('/auth/sign-in', storyReturnPath(adventure.slug, heroSelection.heroId)),
@@ -82,12 +85,15 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
     setError('');
     try {
       let current = preparation;
+      if (action === 'refresh' && !current && sessionStorage.getItem(storageKey + ':prepare'))
+        action = 'restore';
+      if (action === 'restart' && startState(current, dispatchUncertain) !== 'failed') return;
       if (action === 'restart') {
         sessionStorage.removeItem(storageKey + ':prepare');
         action = 'prepare';
       }
-      if (action === 'prepare') {
-        current = await api<Preparation>('/game/start-preparations', {
+      if (action === 'prepare' || action === 'restore') {
+        current = await api<StartPreparation>('/game/start-preparations', {
           method: 'POST',
           body: JSON.stringify({
             operationId: operation('prepare'),
@@ -95,11 +101,19 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
             ...heroSelection.body,
           }),
         });
-        current = await api<Preparation>(`/game/start-preparations/${current.id}`);
+        current = await api<StartPreparation>(`/game/start-preparations/${current.id}`);
       } else if (action === 'refresh' && current) {
-        current = await api<Preparation>(`/game/start-preparations/${current.id}`);
+        current = await api<StartPreparation>(`/game/start-preparations/${current.id}`);
       } else if (action === 'confirm' && current && quote) {
-        current = await api<Preparation>(`/game/start-preparations/${current.id}/dispatch`, {
+        if (
+          startState(current, dispatchUncertain) !== 'estimate' ||
+          Date.parse(quote.expiresAt) <= Date.now()
+        )
+          return;
+        sessionStorage.setItem(storageKey + ':dispatch-pending', 'yes');
+        setDispatchUncertain(true);
+        setConfirm(false);
+        current = await api<StartPreparation>(`/game/start-preparations/${current.id}/dispatch`, {
           method: 'POST',
           body: JSON.stringify({
             operationId: operation('dispatch:' + quote.id),
@@ -110,6 +124,10 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
       }
       if (!gate.accepts(lease) || !current) return;
       setPreparation(current);
+      if (current.jobs?.length || current.status === 'ready' || current.campaignId) {
+        sessionStorage.removeItem(storageKey + ':dispatch-pending');
+        setDispatchUncertain(false);
+      }
       if (current.status === 'ready' || current.campaignId) {
         const result = current.campaignId
           ? { campaignId: current.campaignId }
@@ -126,7 +144,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
           router.push(`/game/${result.campaignId}`);
           navigating = true;
         }
-      } else if (action === 'prepare' && !current.jobs?.length) {
+      } else if (action === 'prepare' && !current.jobs?.length && !dispatchUncertain) {
         const next = await api<Quote>(`/game/start-preparations/${current.id}/quote`, {
           method: 'POST',
           body: JSON.stringify({ operationId: crypto.randomUUID() }),
@@ -144,45 +162,62 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
       if (!navigating && gate.finish(lease)) setBusy(false);
     }
   }
+  const state = startState(preparation, dispatchUncertain);
+  useEffect(() => {
+    if (busy || error || !['running', 'checking'].includes(state)) return;
+    const timer = setTimeout(() => void launch('refresh'), 2500);
+    return () => clearTimeout(timer);
+  }, [preparation, state, busy, error, storageKey]);
+  const status =
+    state === 'review'
+      ? 'Подготовка не удалась. Резерв искр ещё проверяется; повторный запуск недоступен.'
+      : state === 'unknown'
+        ? 'Результат запроса пока неизвестен. Повторный запуск недоступен, пока проверяется резерв.'
+        : state === 'failed'
+          ? 'Не удалось подготовить игру. Можно запросить новую оценку.'
+          : state === 'running'
+            ? 'Готовим игру. Она откроется автоматически.'
+            : state === 'checking'
+              ? 'Проверяем результат запроса. Повторной оплаты не будет.'
+              : '';
+  const primaryAction =
+    state === 'failed'
+      ? 'restart'
+      : ['review', 'unknown', 'running', 'checking', 'ready'].includes(state)
+        ? 'refresh'
+        : 'prepare';
   return (
     <>
-      <HeroSelection selection={heroSelection} disabled={busy} />
-      <Button
-        type="button"
-        disabled={!versionId || versions.loading || !heroSelection.ready}
-        busy={busy}
-        onClick={() => void launch('prepare')}
-      >
-        {t('Начать прохождение')}
-      </Button>
-      <small>
-        {t(
-          versionId
-            ? 'Прохождение закрепляется за проверенной игровой версией. Новые правки автора его не изменят.'
-            : 'У этой истории пока нет доступной игровой версии.',
-        )}
-      </small>
-      <p>
-        {t(
-          'Готовый план используется бесплатно. Если нужна подготовка, перед оплатой покажем стоимость в искрах. Возвращение в игру и присоединение не оплачиваются повторно.',
-        )}
-      </p>
-      {preparation && preparation.status === 'prepared' && !confirm && (
-        <div role="status">
-          <p>
-            {t('Подготовка ещё не завершена. Обновите состояние; повторного списания не будет.')}
-          </p>
-          {preparation.jobs?.some((j) =>
-            ['failed', 'rejected', 'stale', 'cancelled'].includes(j.status),
-          ) && (
-            <Button busy={busy} onClick={() => void launch('restart')}>
-              {t('Новая попытка с новой оценкой')}
-            </Button>
+      <HeroSelection selection={heroSelection} disabled={busy || state !== 'estimate'} compact />
+      {status && <p role="status">{t(status)}</p>}
+      {!confirm && (
+        <Button
+          type="button"
+          disabled={
+            !versionId ||
+            versions.loading ||
+            !heroSelection.ready ||
+            (state === 'running' && !error)
+          }
+          busy={busy || (state === 'running' && !error)}
+          onClick={() => void launch(primaryAction)}
+        >
+          {t(
+            state === 'failed'
+              ? 'Новая оценка'
+              : ['review', 'unknown', 'checking'].includes(state) ||
+                  (state === 'running' && !!error)
+                ? 'Проверить состояние'
+                : state === 'running'
+                  ? 'Подготовка игры'
+                  : state === 'ready'
+                    ? 'Открыть игру'
+                    : 'Начать прохождение',
           )}
-          <Button busy={busy} onClick={() => void launch('refresh')}>
-            {t('Обновить состояние')}
-          </Button>
-        </div>
+        </Button>
+      )}
+      {!versionId && !versions.loading && (
+        <small>{t('У этой истории пока нет доступной игровой версии.')}</small>
       )}
       {confirm && quote && (
         <Modal
@@ -191,11 +226,6 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
             if (!busy) setConfirm(false);
           }}
         >
-          <p>
-            {t(
-              'Оплата подготовки списывается с вашего баланса, не с автора истории. Сохранённые изображения используются повторно.',
-            )}
-          </p>
           <p>
             {t('Оценка в искрах')}:{' '}
             {quote.estimatedTotalMicros === undefined
@@ -206,7 +236,9 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
             {t('Резерв искр')}:{' '}
             {quote.sparks ? formatSparkSubunits(quote.sparks.reserveSubunits) : '—'}
           </p>
-          <p>{t('После подготовки спишется фактическая стоимость, остаток резерва вернётся.')}</p>
+          <small>
+            {t('После подготовки спишется фактическая стоимость, остаток резерва вернётся.')}
+          </small>
           <Button
             busy={busy}
             disabled={!quote.sparks || Date.parse(quote.expiresAt) <= Date.now()}

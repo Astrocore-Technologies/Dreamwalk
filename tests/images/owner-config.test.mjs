@@ -480,3 +480,33 @@ test('contradictory usage or an unpriced text-output modality remains unknown, n
     140,
   );
 });
+
+test('story plan output override requires per-request estimates and fits reviewed context and caps', async () => {
+  const { requestEstimateOwnerProfile } = await import('./owner-config-fixture.mjs');
+  const p = requestEstimateOwnerProfile(now);
+  p.text.storyPlanMaxOutputTokens = 8192;
+  const c = config(p);
+  assert.equal(c.text.maxOutputTokens, 512);
+  assert.equal(c.text.storyPlanMaxOutputTokens, 8192);
+  const { safeOwnerProfile } = await import('../../apps/api/src/generation/policy-revisions.ts');
+  assert.equal(safeOwnerProfile(c).text.storyPlanMaxOutputTokens, 8192);
+  for (const mutate of [
+    (p) => delete p.text.estimation,
+    (p) => {
+      p.text.storyPlanMaxOutputTokens = 32001;
+    },
+    (p) => {
+      p.text.contextTokens = 70000;
+    },
+    (p) => {
+      p.textCapMicros = 1000;
+    },
+  ]) {
+    const invalid = structuredClone(p);
+    mutate(invalid);
+    assert.throws(() => config(invalid), /OWNER_GENERATION_/);
+  }
+  const changed = structuredClone(p);
+  changed.text.storyPlanMaxOutputTokens = 4096;
+  assert.notEqual(config(changed).configFingerprint, c.configFingerprint);
+});

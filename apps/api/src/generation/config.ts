@@ -58,6 +58,7 @@ const textSchema = z
       .strict()
       .optional(),
     maxOutputTokens: z.number().int().min(16).max(32_000),
+    storyPlanMaxOutputTokens: z.number().int().min(16).max(32_000).optional(),
     maxInputBytes: z.number().int().min(1024).max(TEXT_CONTEXT_TRANSPORT_BYTES).optional(),
     inputMicrosPerMillion: positiveMicros,
     outputMicrosPerMillion: positiveMicros,
@@ -73,15 +74,21 @@ const textSchema = z
     pricing: pricingSchema,
   })
   .strict()
+  // Purpose overrides are explicit operator policy and require per-request quoting.
+  .refine((value) => value.storyPlanMaxOutputTokens === undefined || !!value.estimation)
   // Conservative UTF-8 byte bound plus protocol allowance, not a guessed tokenizer ratio.
   .refine((value) =>
     value.contextBudgetTokens !== undefined
       ? !!value.estimation &&
-        value.maxOutputTokens < Math.min(value.contextBudgetTokens, value.contextTokens)
+        Math.max(value.maxOutputTokens, value.storyPlanMaxOutputTokens ?? 0) <
+          Math.min(value.contextBudgetTokens, value.contextTokens)
       : !value.counting &&
         value.maxInputBytes !== undefined &&
         value.maxInputBytes <= 64000 &&
-        value.maxInputBytes + 4096 + value.maxOutputTokens <= value.contextTokens,
+        value.maxInputBytes +
+          4096 +
+          Math.max(value.maxOutputTokens, value.storyPlanMaxOutputTokens ?? 0) <=
+          value.contextTokens,
   )
   .transform((value) => ({
     ...value,
@@ -278,23 +285,30 @@ function validatedProfile(value: unknown, now: number, unlimited: boolean) {
     maxImageReserve: number,
     imageBaseline: { estimatedTotalMicros: number; reserveMicros: number };
   try {
+    const budgetProfile = {
+      ...profile.text,
+      maxOutputTokens: Math.max(
+        profile.text.maxOutputTokens,
+        profile.text.storyPlanMaxOutputTokens ?? 0,
+      ),
+    };
     upper = estimateTextRequest(
       'a'.repeat(
         profile.text.contextBudgetTokens !== undefined
           ? Math.max(
               0,
               Math.min(profile.text.contextBudgetTokens, profile.text.contextTokens) -
-                profile.text.maxOutputTokens -
+                budgetProfile.maxOutputTokens -
                 Math.max(4096, profile.text.estimation?.textProtocolTokens ?? 0),
             )
           : profile.text.maxInputBytes,
       ),
-      profile.text,
+      budgetProfile,
       'configuration-limit-validation',
     ).reserveMicros;
     minimumTextReserve = estimateTextRequest(
       '',
-      profile.text,
+      budgetProfile,
       'configuration-minimum',
     ).reserveMicros;
     const imageProfile = profile.image as ImageEstimateProfile;
