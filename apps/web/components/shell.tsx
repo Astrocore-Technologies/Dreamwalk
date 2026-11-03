@@ -40,6 +40,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const path = usePathname(),
     router = useRouter(),
     { user, setUser, toast } = useClient();
+  const inAuth = path.startsWith('/auth/');
   const inGame = /^\/game\/[^/]+$/.test(path);
   const [menu, setMenu] = useState(false);
   const [query, setQuery] = useState('');
@@ -58,13 +59,13 @@ export function Shell({ children }: { children: React.ReactNode }) {
     (href !== '/home' && path.startsWith(`${href}/`));
   return (
     <div
-      className={`app-shell ${inGame ? 'game-shell' : ''}`}
+      className={`app-shell ${inGame ? 'game-shell' : ''} ${inAuth ? 'auth-shell' : ''}`}
       data-surface={inGame ? 'game' : path.split('/')[1] || 'home'}
     >
       <a className="skip-link" href="#main-content">
         {tr('К содержимому')}
       </a>
-      {!inGame && (
+      {!inGame && !inAuth && (
         <aside id="main-sidebar" className={`sidebar ${menu ? 'open' : ''}`}>
           <Link href="/" className="brand" onClick={() => setMenu(false)}>
             <span className="brand-mark" aria-hidden="true">
@@ -137,7 +138,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </aside>
       )}
-      {!inGame && menu && (
+      {!inGame && !inAuth && menu && (
         <button
           aria-label={tr('Закрыть меню')}
           className="menu-backdrop"
@@ -146,7 +147,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
       )}
       <div className="workspace">
         <header className="topbar">
-          {!inGame && (
+          {!inGame && !inAuth && (
             <button
               className="icon-button mobile-menu"
               aria-label={tr('Открыть меню')}
@@ -157,7 +158,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <Menu />
             </button>
           )}
-          {inGame ? (
+          {inAuth ? (
+            <Link href="/" className="auth-brand">
+              <MoonStar size={30} aria-hidden="true" />
+              Dreamwalk
+            </Link>
+          ) : inGame ? (
             <div id="game-toolbar" className="game-toolbar-slot">
               <Link href="/game" className="game-return">
                 <ArrowLeft size={18} />
@@ -214,56 +220,61 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <Sun size={18} />
               <Moon size={18} />
             </button>
-            {user ? (
-              <>
-                <Link href="/wallet" className="wallet-chip">
-                  <Sparkles size={15} />
-                  <span>{tr('Искры')}</span>
-                  <SparksBalance key={user.id} ownerId={user.id} />
-                  <span className="currency-divider" aria-hidden="true">
-                    ·
-                  </span>
-                  <MoonStar size={15} aria-hidden="true" />
-                  <span className="wallet-currency-name">{dreamsText.name}</span>
-                  <DreamsBalance key={`dreams-${user.id}`} ownerId={user.id} />
-                </Link>
-                <Link href="/notifications" className="icon-button" aria-label={tr('Уведомления')}>
-                  <Bell size={19} />
-                </Link>
-                <Link href="/account/profile" className="profile-chip">
-                  <span className="avatar">
-                    {user.avatarAssetId ? (
-                      <img src={assetUrl(user.avatarAssetId)} alt="" />
-                    ) : (
-                      user.handle.slice(0, 1)
-                    )}
-                  </span>
-                  <span>{user.handle}</span>
-                </Link>
-                <button
-                  className="icon-button logout"
-                  aria-label={tr('Выйти')}
-                  onClick={async () => {
-                    await api('/auth/logout', { method: 'POST', body: '{}' });
-                    setUser(null);
-                    router.push('/');
-                    toast(tr('Вы вышли из аккаунта'));
-                  }}
-                >
-                  <LogOut size={17} />
-                </button>
-              </>
-            ) : (
-              <>
-                <Link className="login-link" href="/auth/sign-in">
-                  {tr('Войти')}
-                </Link>
-                <Link className="button primary compact" href="/auth/sign-up">
-                  {tr('Начать историю')}
-                  <ArrowUpRight size={15} />
-                </Link>
-              </>
-            )}
+            {!inAuth &&
+              (user ? (
+                <>
+                  <Link href="/wallet" className="wallet-chip">
+                    <Sparkles size={15} />
+                    <span>{tr('Искры')}</span>
+                    <SparksBalance key={user.id} ownerId={user.id} />
+                    <span className="currency-divider" aria-hidden="true">
+                      ·
+                    </span>
+                    <MoonStar size={15} aria-hidden="true" />
+                    <span className="wallet-currency-name">{dreamsText.name}</span>
+                    <DreamsBalance key={`dreams-${user.id}`} ownerId={user.id} />
+                  </Link>
+                  <Link
+                    href="/notifications"
+                    className="icon-button"
+                    aria-label={tr('Уведомления')}
+                  >
+                    <Bell size={19} />
+                  </Link>
+                  <Link href="/account/profile" className="profile-chip">
+                    <span className="avatar">
+                      {user.avatarAssetId ? (
+                        <img src={assetUrl(user.avatarAssetId)} alt="" />
+                      ) : (
+                        user.handle.slice(0, 1)
+                      )}
+                    </span>
+                    <span>{user.handle}</span>
+                  </Link>
+                  <button
+                    className="icon-button logout"
+                    aria-label={tr('Выйти')}
+                    onClick={async () => {
+                      await api('/auth/logout', { method: 'POST', body: '{}' });
+                      setUser(null);
+                      router.push('/');
+                      toast(tr('Вы вышли из аккаунта'));
+                    }}
+                  >
+                    <LogOut size={17} />
+                  </button>
+                </>
+              ) : (
+                <>
+                  <Link className="login-link" href="/auth/sign-in">
+                    {tr('Войти')}
+                  </Link>
+                  <Link className="button primary compact" href="/auth/sign-up">
+                    {tr('Начать историю')}
+                    <ArrowUpRight size={15} />
+                  </Link>
+                </>
+              ))}
           </div>
         </header>
         <main id="main-content" tabIndex={-1} className="main-content">
@@ -278,7 +289,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           </div>
         </footer>
       </div>
-      {!inGame && (
+      {!inGame && !inAuth && (
         <nav className="bottom-nav" aria-label={tr('Мобильная навигация')}>
           {nav.map(({ href, label, icon: Icon }) => (
             <Link key={href} href={href} className={active(href) ? 'active' : ''}>

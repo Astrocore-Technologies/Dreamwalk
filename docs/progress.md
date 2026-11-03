@@ -999,3 +999,29 @@ is a presentation change, not removal of safety rules or existing author data.
 Added source regression checks and a public mobile browser case that checks the
 panels are absent while API metadata remains unchanged. Browser verification uses CI;
 this executor cannot launch Chromium under its Unix-socket restrictions.
+
+## Public visual audit follow-through — 2026-11-03
+
+Implemented art-first catalog/creator cards with responsive minimum-width tracks,
+three-line visible title overlays (full authored title remains in the DOM/title),
+compact metadata, and real uploaded covers. Creator identity uses only the actual
+avatar or an initial, never a substitute character portrait. The creator header now
+has a decorative scenic banner. Story headings are less dominant, missing NPC
+portraits no longer occupy tall empty boxes, and hero preparation is secondary to
+starting the story. The homepage start appears before optional cast previews, with
+compact missing-portrait treatment and a shorter synopsis preview.
+
+Authentication has its own full-width illustration/form composition with no app
+sidebar, search, or bottom navigation; home, language and theme remain reachable.
+Help gains an illustrated header, large icons and clear actions; About retains all
+reviewed copy verbatim while adding a banner and two illustrated sections. Existing
+bundled artwork is reused: the mockup's bespoke portal/person artwork is not yet an
+exact asset match. No new paid generation, production changes, merge or deployment.
+
+Local focused design/legal tests: 10 passed; focused ESLint passed. Full workspace
+typecheck was attempted but several compiler processes were killed (137), so this
+is not a full local verification pass. CI is required for the fresh dependency
+build, full suite, isolated PostgreSQL integration and browser screenshots. New
+browser coverage exercises 1165px and 390px widths, both themes, three languages,
+a synthetic long title, standalone auth navigation, and all changed public routes.
+Screenshots from those tests represent synthetic local QA, not production.
