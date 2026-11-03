@@ -184,7 +184,7 @@ for (const locale of ['ru', 'en', 'uk']) {
       await expect(page.locator('tbody tr').first().getByRole('button')).toBeFocused();
       await page.locator('tbody tr').nth(1).getByRole('button').click();
       await expect(dialog.locator('select')).toHaveValue('quarantine');
-      await expect(dialog.locator('option[value="approve"]')).toBeDisabled();
+      await expect(dialog.locator('option[value="approve"]')).toHaveJSProperty('disabled', true);
       await expect(dialog.getByRole('checkbox')).toHaveCount(0);
       await page.keyboard.press('Escape');
       await page.locator('tbody tr').nth(2).getByRole('button').click();
