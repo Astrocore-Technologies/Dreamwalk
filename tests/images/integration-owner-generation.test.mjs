@@ -359,79 +359,99 @@ await test(
           assert.equal(reads, 1);
         },
       );
-      await t.test(
-        'unsaved hero portrait settles the existing Sparks hold once and selection is free',
-        async () => {
-          const before = (
-            await sql.query(
-              'SELECT balance_subunits,held_subunits FROM spark_wallets WHERE owner_id=$1',
-              [owner.user.id],
-            )
-          ).rows[0];
-          const portrait = {
-            heroPortraitContext: { draftId: randomUUID() },
-            prompt: 'Synthetic hero portrait',
-            title: 'Hero',
-            kind: 'portrait',
-            camera: 'portrait',
-            background: 'opaque',
-            tags: ['hero-portrait'],
-            mode: 'external',
-            rights,
-            declineReuse: true,
-          };
-          const quote = await engine.quote(owner.user.id, portrait);
-          assert.ok(quote.quote.sparks);
-          const operation = {
-            quoteId: quote.quote.id,
-            operationId: randomUUID(),
-            consent: true,
-            estimateRiskConsent: true,
-          };
-          const queued = await engine.enqueue(owner.user.id, operation);
-          assert.equal((await engine.enqueue(owner.user.id, operation)).id, queued.id);
-          const held = (
-            await sql.query('SELECT held_subunits FROM spark_wallets WHERE owner_id=$1', [
-              owner.user.id,
-            ])
-          ).rows[0];
-          assert.ok(BigInt(held.held_subunits) > BigInt(before.held_subunits));
-          await engine.workOnce();
-          const done = await engine.get(owner.user.id, queued.id);
-          assert.equal(done.status, 'admitted', done.errorCode);
-          const after = (
-            await sql.query(
-              'SELECT balance_subunits,held_subunits FROM spark_wallets WHERE owner_id=$1',
-              [owner.user.id],
-            )
-          ).rows[0];
-          assert.ok(BigInt(after.balance_subunits) < BigInt(before.balance_subunits));
-          assert.equal(after.held_subunits, before.held_subunits);
-          const selected = await engine.heroPortraitAsset(owner.user.id, done.revisionId);
-          assert.deepEqual(
-            await engine.heroPortraitAsset(owner.user.id, done.revisionId),
-            selected,
-          );
-          assert.deepEqual(
-            (
+      for (const target of ['hero portrait', 'story cover'])
+        await t.test(
+          `unsaved ${target} settles the existing Sparks hold once and selection is free`,
+          async () => {
+            const before = (
               await sql.query(
                 'SELECT balance_subunits,held_subunits FROM spark_wallets WHERE owner_id=$1',
                 [owner.user.id],
               )
-            ).rows[0],
-            after,
-          );
-          assert.equal(
-            (
+            ).rows[0];
+            const cover = target === 'story cover';
+            const beforeCalls = calls;
+            const input = {
+              ...(cover
+                ? { storyCoverContext: { draftId: randomUUID() } }
+                : { heroPortraitContext: { draftId: randomUUID() } }),
+              prompt: `Synthetic ${target}`,
+              title: cover ? 'Story' : 'Hero',
+              kind: cover ? 'background' : 'portrait',
+              camera: cover ? 'unrestricted' : 'portrait',
+              background: 'opaque',
+              tags: [cover ? 'story-cover' : 'hero-portrait'],
+              mode: 'external',
+              rights,
+              declineReuse: true,
+            };
+            const quote = await engine.quote(owner.user.id, input);
+            assert.ok(quote.quote.sparks);
+            const operation = {
+              quoteId: quote.quote.id,
+              operationId: randomUUID(),
+              consent: true,
+              estimateRiskConsent: true,
+            };
+            const queued = await engine.enqueue(owner.user.id, operation);
+            assert.equal((await engine.enqueue(owner.user.id, operation)).id, queued.id);
+            const held = (
+              await sql.query('SELECT held_subunits FROM spark_wallets WHERE owner_id=$1', [
+                owner.user.id,
+              ])
+            ).rows[0];
+            assert.ok(BigInt(held.held_subunits) > BigInt(before.held_subunits));
+            await engine.workOnce();
+            const done = await engine.get(owner.user.id, queued.id);
+            assert.equal(done.status, 'admitted', done.errorCode);
+            const after = (
               await sql.query(
-                'SELECT count(*)::int n FROM image_generation_attempts WHERE job_id=$1',
-                [queued.id],
+                'SELECT balance_subunits,held_subunits FROM spark_wallets WHERE owner_id=$1',
+                [owner.user.id],
               )
-            ).rows[0].n,
-            1,
-          );
-        },
-      );
+            ).rows[0];
+            assert.ok(BigInt(after.balance_subunits) < BigInt(before.balance_subunits));
+            assert.equal(after.held_subunits, before.held_subunits);
+            const select = () =>
+              cover
+                ? engine.storyCoverAsset(owner.user.id, done.revisionId)
+                : engine.heroPortraitAsset(owner.user.id, done.revisionId);
+            const selected = await select();
+            assert.deepEqual(await select(), selected);
+            await engine.workOnce();
+            assert.equal((await engine.enqueue(owner.user.id, operation)).id, queued.id);
+            assert.equal(calls - beforeCalls, 1);
+            const ledger = (
+              await sql.query(
+                'SELECT kind,count(*)::int n FROM spark_ledger WHERE hold_id=$1 GROUP BY kind ORDER BY kind',
+                [quote.quote.sparks.quoteId],
+              )
+            ).rows;
+            assert.deepEqual(ledger, [
+              { kind: 'capture', n: 1 },
+              { kind: 'release', n: 1 },
+              { kind: 'reserve', n: 1 },
+            ]);
+            assert.deepEqual(
+              (
+                await sql.query(
+                  'SELECT balance_subunits,held_subunits FROM spark_wallets WHERE owner_id=$1',
+                  [owner.user.id],
+                )
+              ).rows[0],
+              after,
+            );
+            assert.equal(
+              (
+                await sql.query(
+                  'SELECT count(*)::int n FROM image_generation_attempts WHERE job_id=$1',
+                  [queued.id],
+                )
+              ).rows[0].n,
+              1,
+            );
+          },
+        );
       await t.test(
         'private owner photo becomes explicit concept then approved portrait/sheet via bounded multipart, never public photo reuse',
         async () => {

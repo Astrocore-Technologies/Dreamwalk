@@ -130,3 +130,20 @@ test('hidden NPC controls retain saved profile/model fields in both editor draft
   assert.match(standalone, /modelProfileId: n.modelProfileId/);
   assert.match(scoped, /Object.entries\(data\).*key in npcSchema.shape/);
 });
+
+test('header balance stays prominent and is not hidden with the compact wallet label', async () => {
+  const source = (path) => readFile(new URL(`../../apps/web/${path}`, import.meta.url), 'utf8');
+  const balance = await source('components/sparks-balance.tsx');
+  const css = await source('app/globals.css');
+  assert.match(balance, /<strong\s+className="sparks-balance"/);
+  assert.match(balance, /aria-live="polite"/);
+  const rule = css.match(/\.wallet-chip \.sparks-balance\s*\{([^}]+)\}/)?.[1];
+  assert.ok(rule);
+  assert.match(rule, /font-size: 16px/);
+  assert.match(rule, /font-weight: 700/);
+  assert.match(rule, /font-variant-numeric: tabular-nums/);
+  assert.doesNotMatch(
+    css,
+    /\.wallet-chip\s*>\s*(?:strong|\.sparks-balance)[^{]*\{[^}]*display:\s*none/,
+  );
+});

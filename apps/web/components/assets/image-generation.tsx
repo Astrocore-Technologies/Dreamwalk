@@ -1,5 +1,9 @@
 'use client';
-import { imageFramingEvidenceMatches, type ImageFraming } from '@dreamwalk/contracts';
+import {
+  defaultImageStylePrompt,
+  imageFramingEvidenceMatches,
+  type ImageFraming,
+} from '@dreamwalk/contracts';
 import { ImageConfirmation } from './image-confirmation';
 import { ImageFramingNotice } from '../visual-authoring/image-framing-notice';
 import { useEffect, useRef, useState } from 'react';
@@ -141,6 +145,7 @@ function GeneratedRevision({
 export function ImageGeneration({
   adventureId,
   heroPortrait,
+  storyCover,
   liveTestSessionId,
   authorization,
   preparedRequest,
@@ -152,6 +157,7 @@ export function ImageGeneration({
 }: {
   adventureId?: string;
   heroPortrait?: { draftId: string; prompt: string; title: string };
+  storyCover?: { draftId: string; prompt: string; title: string };
   liveTestSessionId?: string;
   authorization?: LiveTestStatus | null;
   preparedRequest?: PreparedStudioLocationRequest;
@@ -176,8 +182,20 @@ export function ImageGeneration({
   const modeChosen = useRef(false);
   const library = useResource<ArtRevision[]>('/asset-library');
   const [mode, setMode] = useState<'mock' | 'external'>(externalOnly ? 'external' : 'mock');
-  const [prompt, setPrompt] = useState(heroPortrait?.prompt ?? ''),
-    [title, setTitle] = useState(heroPortrait?.title ?? ''),
+  const [prompt, setPrompt] = useState(
+      heroPortrait?.prompt ??
+        storyCover?.prompt ??
+        defaultImageStylePrompt(
+          spec.camera === 'top-down' && spec.kind === 'background'
+            ? 'battlemap'
+            : spec.kind === 'portrait' || spec.kind === 'sprite'
+              ? 'character'
+              : spec.kind === 'background'
+                ? 'location'
+                : 'asset',
+        ),
+    ),
+    [title, setTitle] = useState(heroPortrait?.title ?? storyCover?.title ?? ''),
     [background, setBackground] = useState<'opaque' | 'transparent'>(
       spec.kind === 'sprite' || spec.kind === 'object' ? 'transparent' : 'opaque',
     ),
@@ -211,6 +229,7 @@ export function ImageGeneration({
   const request = {
     adventureId,
     ...(heroPortrait ? { heroPortraitContext: { draftId: heroPortrait.draftId } } : {}),
+    ...(storyCover ? { storyCoverContext: { draftId: storyCover.draftId } } : {}),
     prompt: prompt.trim(),
     title: title.trim() || prompt.trim().slice(0, 120),
     kind: spec.kind,
@@ -223,7 +242,7 @@ export function ImageGeneration({
       basis: 'generated' as const,
       licenseLabel: license.trim(),
       attribution: attribution.trim(),
-      allowAuthorReuse: heroPortrait ? false : allowReuse,
+      allowAuthorReuse: heroPortrait || storyCover ? false : allowReuse,
       attested: true as const,
     },
     mode: externalOnly ? ('external' as const) : mode,
@@ -304,9 +323,11 @@ export function ImageGeneration({
       pending = true;
       try {
         const result = await api<{ jobs: Job[] }>(
-          heroPortrait
-            ? '/image-generation/hero-portraits'
-            : `/image-generation/jobs?adventureId=${adventureId}`,
+          storyCover
+            ? '/image-generation/story-covers'
+            : heroPortrait
+              ? '/image-generation/hero-portraits'
+              : `/image-generation/jobs?adventureId=${adventureId}`,
         );
         if (active) {
           const scopedJobs = preparedRequest
@@ -344,6 +365,7 @@ export function ImageGeneration({
     user?.id,
     adventureId,
     heroPortrait?.draftId,
+    storyCover?.draftId,
     preparedRequest?.studioLocationContext.locationId,
     preparedRequest?.studioLocationContext.sourceHash,
   ]);
@@ -565,7 +587,7 @@ export function ImageGeneration({
               <Select
                 aria-label={g('background')}
                 value={background}
-                disabled={spec.kind === 'sprite' || spec.kind === 'object'}
+                disabled={!!storyCover || spec.kind === 'sprite' || spec.kind === 'object'}
                 onChange={(event) => setBackground(event.target.value as 'opaque' | 'transparent')}
               >
                 <option value="opaque">{g('opaque')}</option>
@@ -589,7 +611,7 @@ export function ImageGeneration({
             <label>
               <input
                 type="checkbox"
-                disabled={!!heroPortrait}
+                disabled={!!heroPortrait || !!storyCover}
                 checked={allowReuse}
                 onChange={(event) => setAllowReuse(event.target.checked)}
               />
@@ -644,7 +666,7 @@ export function ImageGeneration({
               {onSelected && (
                 <Button
                   type="button"
-                  disabled={busy || (!!heroPortrait && !revision.owned)}
+                  disabled={busy || ((!!heroPortrait || !!storyCover) && !revision.owned)}
                   onClick={() => onSelected(revision)}
                 >
                   {a('use')}

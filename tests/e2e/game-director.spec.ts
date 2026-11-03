@@ -112,7 +112,7 @@ test('two realtime players coauthor committed evolving scenes, travel and retain
     await expect(
       owner.locator(`[data-member-handle="${guestHandle}"]`).getByText('Принято', { exact: true }),
     ).toBeVisible();
-    await expect(owner.getByTestId('game-advanced')).not.toHaveAttribute('open', '');
+    await expect(owner.getByTestId('game-advanced')).toHaveCount(0);
     const original = await snapshot(owner, id);
     const originalMap = original.map.id;
     const originalExits = original.map.exits.map((exit) => exit.id);
@@ -192,9 +192,7 @@ test('two realtime players coauthor committed evolving scenes, travel and retain
     await generation
       .getByLabel('Подтверждаю права на запрос и выбранные собственные референсы.', { exact: true })
       .check();
-    await generation
-      .getByRole('button', { name: 'Узнать стоимость', exact: true })
-      .click();
+    await generation.getByRole('button', { name: 'Узнать стоимость', exact: true }).click();
     await expect(generation.getByTestId('grounded-image-quote')).toBeVisible();
     await generation
       .getByLabel(

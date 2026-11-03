@@ -273,50 +273,19 @@ test('API-authored realtime fixture retains personality, obligations and private
     await expect(speech.getByLabel('Твой ход', { exact: true })).toHaveValue('', {
       timeout: 30000,
     });
-    await page.getByTestId('game-advanced').locator('summary').click();
-    await guest.getByTestId('game-advanced').locator('summary').click();
-    const sponsor = page.getByRole('region', { name: 'Бюджет организатора', exact: true });
-    await expect(
-      guest.getByRole('region', { name: 'Бюджет организатора', exact: true }),
-    ).toHaveCount(0);
-    await sponsor
-      .getByLabel('Разрешаю только указанные операции в пределах этих лимитов', { exact: true })
-      .check();
-    const granted = page.waitForResponse(
-      (r) => r.url().endsWith('/ai/sponsors') && r.request().method() === 'POST',
-    );
-    await sponsor.getByRole('button', { name: 'Выдать ограниченный бюджет', exact: true }).click();
-    expect((await granted).ok()).toBeTruthy();
-    await sponsor.getByRole('button', { name: 'Отозвать бюджет', exact: true }).click();
-    await expect(sponsor.getByText(/Бюджет отозван/)).toBeVisible();
-    const budget = page.getByRole('region', { name: 'Проверка AI-операции', exact: true });
-    await expect(budget.getByText('Тестовый планировщик доступен', { exact: true })).toBeVisible();
-    const quoteResponse = page.waitForResponse(
-      (r) => r.url().endsWith('/ai/quote') && r.request().method() === 'POST',
-    );
-    await budget.getByRole('button', { name: 'Узнать стоимость', exact: true }).click();
-    expect((await quoteResponse).ok()).toBeTruthy();
-    await expect(budget.locator('[data-spark-quote-price]')).toHaveText(
-      'Демонстрационные единицы: 0',
-    );
-    const queued = page.waitForResponse(
-      (r) => r.url().endsWith('/ai/jobs') && r.request().method() === 'POST',
-    );
-    await budget
-      .getByRole('button', { name: 'Подтвердить тестовую операцию', exact: true })
-      .click();
-    expect((await queued).ok()).toBeTruthy();
-    await budget.getByLabel('Тип AI-операции', { exact: true }).selectOption('speech');
-    await budget.getByLabel('Спросить об объекте', { exact: true }).selectOption('helper');
-    const topicalQuote = page.waitForResponse(
-      (r) => r.url().endsWith('/ai/quote') && r.request().postDataJSON()?.topicId === 'helper',
-    );
-    await budget.getByRole('button', { name: 'Узнать стоимость', exact: true }).click();
-    expect((await topicalQuote).ok()).toBeTruthy();
-    await budget.getByLabel('Спросить об объекте', { exact: true }).selectOption('');
-    await expect(
-      budget.getByRole('button', { name: 'Подтвердить тестовую операцию', exact: true }),
-    ).toHaveCount(0);
+    // Legacy session AI/budget controls are no longer part of the player sidebar.
+    for (const client of [page, guest]) {
+      await expect(client.getByTestId('game-advanced')).toHaveCount(0);
+      await expect(
+        client.getByRole('region', { name: 'Бюджет организатора', exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        client.getByRole('region', { name: 'Проверка AI-операции', exact: true }),
+      ).toHaveCount(0);
+      await expect(
+        client.getByText('Это временные игровые изображения. Целевой стиль — рисованный 2D.'),
+      ).toHaveCount(0);
+    }
 
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),

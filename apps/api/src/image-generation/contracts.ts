@@ -16,6 +16,7 @@ export const generationRequestSchema = z
     adventureId: z.uuid().optional(),
     // Draft identity is scoped to the authenticated actor, never a hero ownership claim.
     heroPortraitContext: z.object({ draftId: z.uuid() }).strict().optional(),
+    storyCoverContext: z.object({ draftId: z.uuid() }).strict().optional(),
     framingVersion: z.literal(1).optional(),
     imageFraming: imageFramingSchema.optional(),
     liveTestSessionId: z.uuid().optional(),
@@ -87,11 +88,16 @@ export const generationRequestSchema = z
         v.campaignContext,
         v.studioLocationContext,
         v.heroPortraitContext,
+        v.storyCoverContext,
       ].filter(Boolean).length <= 1,
   )
-  .refine((v) => !!v.adventureId || !!v.authoringContext || !!v.heroPortraitContext, {
-    message: 'GENERATION_CONTEXT_REQUIRED',
-  })
+  .refine(
+    (v) =>
+      !!v.adventureId || !!v.authoringContext || !!v.heroPortraitContext || !!v.storyCoverContext,
+    {
+      message: 'GENERATION_CONTEXT_REQUIRED',
+    },
+  )
   .refine(
     (v) =>
       !v.heroPortraitContext ||
@@ -101,6 +107,16 @@ export const generationRequestSchema = z
         !v.rights.allowAuthorReuse &&
         !v.privateReferenceAssetIds.length),
     { message: 'PRIVATE_HERO_PORTRAIT_REQUIRED' },
+  )
+  .refine(
+    (v) =>
+      !v.storyCoverContext ||
+      (v.kind === 'background' &&
+        v.camera === 'unrestricted' &&
+        v.background === 'opaque' &&
+        !v.rights.allowAuthorReuse &&
+        !v.privateReferenceAssetIds.length),
+    { message: 'PRIVATE_STORY_COVER_REQUIRED' },
   )
   .refine((v) => !(v.authoringContext && v.campaignContext), {
     message: 'INVALID_GENERATION_CONTEXT',

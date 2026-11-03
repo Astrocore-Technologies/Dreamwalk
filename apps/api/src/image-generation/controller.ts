@@ -31,6 +31,15 @@ export class ImageGenerationController {
   ) {
     return this.images.heroPortraitAsset((await this.auth.require(req)).id, revisionId);
   }
+  @Get('story-covers') async storyCovers(@Req() req: Request) {
+    return this.images.storyCovers((await this.auth.require(req)).id);
+  }
+  @Get('story-covers/:revisionId/asset') async storyCoverAsset(
+    @Req() req: Request,
+    @Param('revisionId') revisionId: string,
+  ) {
+    return this.images.storyCoverAsset((await this.auth.require(req)).id, revisionId);
+  }
   @Post('quotes') async quote(@Req() req: Request, @Body() body: unknown) {
     return this.images.quote((await this.auth.require(req)).id, body);
   }

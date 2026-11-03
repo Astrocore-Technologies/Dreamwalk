@@ -169,3 +169,24 @@ test('maximum public story excerpts fit fixed 24x24 prompt without truncating ge
   assert.ok(Object.values(data.storyReference).some((value) => value?.excerpted));
   assert.equal(result.spec.imageFraming.size, '1024x1024');
 });
+
+test('anime defaults preserve map geometry and explicit character appearance', () => {
+  const state = fixture();
+  state.entities.keeper.publicProfile = {
+    ...state.entities.keeper.publicProfile,
+    appearance: 'Watercolor illustration with soft ink washes.',
+  };
+  const before = structuredClone(state);
+  const portrait = prepareSceneMedia(state, 'player-a', 'source-v1', {
+    kind: 'portrait',
+    entityId: 'keeper',
+  });
+  assert.match(portrait.prompt, /drawn 2D anime/);
+  assert.match(portrait.prompt, /Explicit author art style takes precedence/);
+  assert.match(portrait.prompt, /Watercolor illustration/);
+  const floor = prepareSceneMedia(state, 'player-a', 'source-v1', { kind: 'background' });
+  assert.match(floor.prompt, /drawn 2D anime/);
+  assert.match(floor.prompt, /No drawn grid/);
+  assert.equal(floor.spec.camera, 'top-down');
+  assert.deepEqual(state, before);
+});

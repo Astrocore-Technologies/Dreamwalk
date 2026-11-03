@@ -275,7 +275,6 @@ export function NarrativeDirector({
         <div data-testid="narrative-quote" className="stack">
           <SparkQuotePrice quote={prepared.quote} />
           <SparkQuoteNotice quote={prepared.quote} />
-          {prepared.quote.demo && <small>{h('demo')}</small>}
           {(prepared.quote.external ?? status?.configuration.provider === 'external') && (
             <ProviderSparkReserve quote={prepared.quote} />
           )}

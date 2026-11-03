@@ -48,6 +48,20 @@ for (const locale of ['en', 'ru', 'uk']) {
     await page.goto('/auth/sign-up');
     const balance = page.getByTestId('sparks-balance');
     await expect(balance).toHaveText(locale === 'en' ? '50.00' : '50,00');
+    await expect(balance).toHaveCSS('font-size', '16px');
+    await expect(balance).toHaveCSS('font-weight', '700');
+    for (const width of [320, 375, 768, 1280]) {
+      await page.setViewportSize({ width, height: 800 });
+      await expect(balance).toBeVisible();
+      const box = await balance.boundingBox();
+      expect(box!.x).toBeGreaterThanOrEqual(0);
+      expect(box!.x + box!.width).toBeLessThanOrEqual(width);
+      const headerFits = await page
+        .locator('.topbar')
+        .evaluate((header) => header.scrollWidth <= header.clientWidth);
+      expect(headerFits).toBe(true);
+    }
+    await page.setViewportSize({ width: 1280, height: 800 });
     amount = '487655';
     // Real app mutation helper emits a refresh after the theme PATCH succeeds.
     await page
