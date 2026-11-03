@@ -1,15 +1,12 @@
 'use client';
-import {
-  defaultImageStylePrompt,
-  imageFramingEvidenceMatches,
-  type ImageFraming,
-} from '@dreamwalk/contracts';
+import { imageFramingEvidenceMatches, type ImageFraming } from '@dreamwalk/contracts';
+import { ImageQuotePrice } from './image-quote-price';
 import { ImageConfirmation } from './image-confirmation';
 import { GenerationProgress } from '../visual-authoring/generation-progress';
 import { ImageFramingNotice } from '../visual-authoring/image-framing-notice';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, errorMessage, useResource, useClient } from '@/lib/client';
-import { Button, ErrorBox, Field, Input, Select, Textarea } from '@/components/ui';
+import { Button, ErrorBox, Field, Select, Textarea } from '@/components/ui';
 import { LiveTestPanel, useLiveTestStatus } from '../live-test/live-test-panel';
 import {
   generationAuthorizationId,
@@ -22,13 +19,7 @@ import {
   ownerImageQuoteMatches,
   type ImageConfiguration,
 } from '../visual-authoring/generation-types';
-import {
-  useSparkCosts,
-  SparkQuotePrice,
-  SparkQuoteNotice,
-  SparkReceiptCost,
-} from '../visual-authoring/sparks-cost';
-import { RequestReserve } from '../live-test/request-reserve';
+import { useSparkCosts, SparkReceiptCost } from '../visual-authoring/sparks-cost';
 import type {
   RequestEstimateSnapshot,
   RequestPricingProfileSnapshot,
@@ -181,28 +172,15 @@ export function ImageGeneration({
     authorizationId = generationAuthorizationId(grant) ?? liveTestSessionId,
     ownerMode = grant?.mode === 'owner' || grant?.mode === 'release';
   const modeChosen = useRef(false);
-  const library = useResource<ArtRevision[]>('/asset-library');
   const [mode, setMode] = useState<'mock' | 'external'>(externalOnly ? 'external' : 'mock');
-  const [prompt, setPrompt] = useState(
-      heroPortrait?.prompt ??
-        storyCover?.prompt ??
-        defaultImageStylePrompt(
-          spec.camera === 'top-down' && spec.kind === 'background'
-            ? 'battlemap'
-            : spec.kind === 'portrait' || spec.kind === 'sprite'
-              ? 'character'
-              : spec.kind === 'background'
-                ? 'location'
-                : 'asset',
-        ),
-    ),
+  const [prompt, setPrompt] = useState(heroPortrait?.prompt ?? storyCover?.prompt ?? ''),
     [title, setTitle] = useState(heroPortrait?.title ?? storyCover?.title ?? ''),
     [background, setBackground] = useState<'opaque' | 'transparent'>(
       spec.kind === 'sprite' || spec.kind === 'object' ? 'transparent' : 'opaque',
     ),
-    [license, setLicense] = useState('Generated artwork; reuse requires owner permission'),
-    [attribution, setAttribution] = useState(''),
-    [allowReuse, setAllowReuse] = useState(false),
+    [license] = useState('Generated artwork; reuse requires owner permission'),
+    [attribution] = useState(''),
+    [allowReuse] = useState(false),
     [references, setReferences] = useState<string[]>([]),
     [dispatchUncertain, setDispatchUncertain] = useState(false),
     [quote, setQuote] = useState<Quote | null>(null),
@@ -562,97 +540,17 @@ export function ImageGeneration({
             (mode === 'mock' ? !config.data?.mockAvailable : !config.data?.externalEnabled)
           }
         >
-          <Field label={g('prompt')}>
-            <Textarea
-              aria-label={g('prompt')}
-              value={prompt}
-              readOnly={!!preparedRequest}
-              maxLength={2000}
-              onChange={(event) => setPrompt(event.target.value)}
-            />
-          </Field>
-          <details>
-            <summary>{g('advanced')}</summary>
-            <Field label={a('name')}>
-              <Input
-                value={title}
+          {!preparedRequest && (
+            <Field label={g('prompt')}>
+              <Textarea
+                aria-label={g('prompt')}
+                value={prompt}
                 readOnly={!!preparedRequest}
-                maxLength={120}
-                onChange={(event) => setTitle(event.target.value)}
+                maxLength={2000}
+                onChange={(event) => setPrompt(event.target.value)}
               />
             </Field>
-            <p>
-              {a(spec.kind)} · {a(spec.camera)}
-            </p>
-            <Field label={g('background')}>
-              <Select
-                aria-label={g('background')}
-                value={background}
-                disabled={!!storyCover || spec.kind === 'sprite' || spec.kind === 'object'}
-                onChange={(event) => setBackground(event.target.value as 'opaque' | 'transparent')}
-              >
-                <option value="opaque">{g('opaque')}</option>
-                <option value="transparent">{g('transparent')}</option>
-              </Select>
-            </Field>
-            <Field label={a('license')}>
-              <Input
-                value={license}
-                maxLength={120}
-                onChange={(event) => setLicense(event.target.value)}
-              />
-            </Field>
-            <Field label={a('attribution')}>
-              <Input
-                value={attribution}
-                maxLength={240}
-                onChange={(event) => setAttribution(event.target.value)}
-              />
-            </Field>
-            <label>
-              <input
-                type="checkbox"
-                disabled={!!heroPortrait || !!storyCover}
-                checked={allowReuse}
-                onChange={(event) => setAllowReuse(event.target.checked)}
-              />
-              {a('allowReuse')}
-            </label>
-            {!preparedRequest && (
-              <fieldset>
-                <legend>
-                  {g(
-                    referenceLimit === 0 && mode === 'external'
-                      ? 'referencesUnavailable'
-                      : 'references',
-                  )}
-                </legend>
-                <p>{g('derivative')}</p>
-                {library.data
-                  ?.filter((revision) => revision.owned)
-                  .map((revision) => (
-                    <label key={revision.id}>
-                      <input
-                        type="checkbox"
-                        checked={references.includes(revision.id)}
-                        disabled={
-                          !references.includes(revision.id) && references.length >= referenceLimit
-                        }
-                        onChange={(event) => {
-                          setReferences((current) =>
-                            event.target.checked
-                              ? [...current, revision.id]
-                              : current.filter((id) => id !== revision.id),
-                          );
-                        }}
-                      />
-                      {revision.metadata.title} · {a('revision')} {revision.revision}
-                    </label>
-                  ))}
-              </fieldset>
-            )}
-          </details>
-          <small>{g('quoteRights')}</small>
+          )}
           <Button type="submit" disabled={!valid || !dispatchAllowed || dispatchUncertain}>
             {g('quote')}
           </Button>
@@ -690,34 +588,7 @@ export function ImageGeneration({
       {dispatchUncertain && <p role="status">{g('unknown')}</p>}
       {quote && (
         <div role="status">
-          <p>
-            {quote.mode === 'mock' ? (
-              g('cost')
-            ) : (
-              <>
-                {s(quote.costBasis === 'approved_estimate' ? 'estimate' : 'upper')}:{' '}
-                {amount(
-                  quote.estimatedTotalMicros ?? quote.upperMicros,
-                  quote.sparks ? (quote.sparks.rateVersion ?? null) : undefined,
-                )}
-              </>
-            )}
-          </p>
-          {quote.sparks && <SparkQuotePrice quote={quote} />}
-          {quote.mode === 'external' && <SparkQuoteNotice quote={quote} />}
-          {user?.role === 'admin' && quote.estimateSnapshot && (
-            <RequestReserve snapshot={quote.estimateSnapshot} />
-          )}
-          {quote.costBasis === 'approved_estimate' && (
-            <p>
-              {s('reserve')}:{' '}
-              {amount(
-                quote.reserveMicros,
-                quote.sparks ? (quote.sparks.rateVersion ?? null) : undefined,
-              )}
-              . {g('estimateNotice')}
-            </p>
-          )}
+          {quote.mode === 'mock' ? <p>{g('cost')}</p> : <ImageQuotePrice quote={quote} />}
           {quote.upperMicros === null && !estimatedQuote ? (
             <p>{g('estimatePending')}</p>
           ) : !Number.isFinite(Date.parse(quote.expiresAt)) ||
@@ -725,6 +596,7 @@ export function ImageGeneration({
             <p>{g('expires')}</p>
           ) : (
             <ImageConfirmation
+              walletCharging={!!quote.sparks?.walletCharging}
               estimated={estimatedQuote}
               external={quote.mode === 'external'}
               busy={busy}

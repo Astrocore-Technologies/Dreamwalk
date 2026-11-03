@@ -9,7 +9,7 @@ test('cover uses shared quote/confirmation and owned asset selection outside the
   assert.match(studio, /<\/form>\s*\{coverGenerationOpen && \(/);
   assert.match(studio, /<MediaPicker/);
   assert.match(studio, /onSelected=\{\(assetId\) => change\('coverAssetId', assetId\)\}/);
-  assert.match(dialog, /defaultImageStylePrompt\('cover'\)/);
+  assert.doesNotMatch(dialog, /defaultImageStylePrompt|Default art:/);
   assert.match(dialog, /<ImageGeneration/);
   assert.match(dialog, /externalOnly/);
   assert.match(dialog, /storyCover=\{draft\}/);
@@ -29,7 +29,7 @@ test('cover jobs recover from server history and keep shared Sparks/idempotency 
   assert.match(flow, /'\/image-generation\/story-covers'/);
   assert.match(flow, /operationId: operation.current.id/);
   assert.match(flow, /<ImageConfirmation/);
-  assert.match(flow, /<SparkQuotePrice/);
+  assert.match(flow, /<ImageQuotePrice/);
   assert.match(flow, /width=\{revision.width\}/);
   assert.match(flow, /height=\{revision.height\}/);
   assert.match(flow, /if \(generation === epoch.current\)/);

@@ -1,11 +1,12 @@
 'use client';
+import { ImageQuotePrice } from '../assets/image-quote-price';
 import { GenerationProgress } from './generation-progress';
 import { imageFramingEvidenceMatches } from '@dreamwalk/contracts';
 import { ImageConfirmation } from '../assets/image-confirmation';
 import { ImageFramingNotice } from './image-framing-notice';
 import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage, useClient } from '@/lib/client';
-import { useSparkCosts, SparkQuotePrice, SparkQuoteNotice, SparkReceiptCost } from './sparks-cost';
+import { useSparkCosts, SparkReceiptCost } from './sparks-cost';
 import { Button, ErrorBox, Select, Field } from '../ui';
 import { useAssetText } from '../assets/messages';
 import { useImageText } from '../assets/image-messages';
@@ -423,27 +424,13 @@ export function LocationImageInline(p: Props) {
         {g('quote')}
       </Button>
       {busy && !lock.current && <small role="status">{m('preparing')}</small>}
-      {quoteCurrent && quote && (
-        <p>
-          {s('estimate')}:{' '}
-          {amount(
-            quote.quote.estimatedTotalMicros ?? quote.quote.upperMicros,
-            quote.quote.sparks ? (quote.quote.sparks.rateVersion ?? null) : undefined,
-          )}{' '}
-          · {s('reserve')}:{' '}
-          {amount(
-            reserve,
-            quote.quote.sparks ? (quote.quote.sparks.rateVersion ?? null) : undefined,
-          )}
-        </p>
-      )}
       {quoteCurrent && (
         <>
           <>
-            {quote.quote.sparks && <SparkQuotePrice quote={quote.quote} />}
-            <SparkQuoteNotice quote={quote.quote} />
+            <ImageQuotePrice quote={quote.quote} />
           </>
           <ImageConfirmation
+            walletCharging={!!quote.quote.sparks?.walletCharging}
             estimated={estimate}
             busy={busy}
             disabled={

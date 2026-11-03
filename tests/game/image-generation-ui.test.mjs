@@ -28,7 +28,7 @@ test('generation UI gates the selected mode with fresh quote consent and stable 
   assert.match(s, /revision.owned/);
   assert.match(s, /Math.min\(\s*2,/);
   assert.match(s, /references.length <= referenceLimit/);
-  assert.match(s, /references.length >= referenceLimit/);
+  assert.doesNotMatch(s, /setAllowReuse|setLicense|setAttribution/);
   assert.doesNotMatch(s, /api.openai|Authorization:|apiKey|process.env/);
 });
 test('job result cannot silently publish or bind and external unavailable copy has all locales', async () => {
@@ -51,6 +51,8 @@ test('image confirmation is one explicit action; inline maps never auto-quote fr
   assert.match(confirmation, /onClick=\{onConfirm\}/);
   assert.match(confirmation, /onClick=\{onCancel\}/);
   assert.match(confirmation, /confirmRisk/);
+  assert.match(confirmation, /walletCharging \? 'confirmNotice' : 'confirmProviderNotice'/);
+  assert.match(confirmation, /walletCharging \? 'confirmRisk' : 'confirmProviderRisk'/);
   const inline = await readFile(
     new URL(
       '../../apps/web/components/visual-authoring/location-image-inline.tsx',
@@ -77,5 +79,10 @@ test('image confirmation is one explicit action; inline maps never auto-quote fr
   }
   const generic = await read('image-generation.tsx');
   assert.match(generic, /title: title.trim\(\) \|\| prompt.trim\(\).slice\(0, 120\)/);
-  assert.match(generic, /<summary>\{g\('advanced'\)\}/);
+  assert.doesNotMatch(
+    generic,
+    /g\('advanced'\)|g\('quoteRights'\)|RequestReserve|defaultImageStylePrompt/,
+  );
+  assert.match(generic, /ImageQuotePrice/);
+  assert.match(generic, /!preparedRequest &&/);
 });

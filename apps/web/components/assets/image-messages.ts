@@ -11,14 +11,24 @@ const rows = {
     'Запитуючи оцінку, ви підтверджуєте права на опис і вибрані референси. Запит оцінки не запускає генерацію.',
   ],
   confirmNotice: [
-    'Подтверждение разрешает один запрос и передачу выбранных референсов. Искры резервируются сейчас; итоговое списание — по фактическому расходу. Автоматического повтора не будет.',
-    'Confirming authorizes one request and transfer of the selected references. Sparks are reserved now; the final charge follows actual usage. There is no automatic retry.',
-    'Підтвердження дозволяє один запит і передавання вибраних референсів. Іскри резервуються зараз; остаточне списання — за фактичними витратами. Автоматичного повтору не буде.',
+    'Будет зарезервирована показанная сумма: сначала Грёзы, затем Искры. Подтверждение запускает один запрос; автоматического повтора не будет.',
+    'The displayed amount will be held: Dreams first, then Sparks. Confirmation starts one request, with no automatic retry.',
+    'Буде зарезервовано показану суму: спочатку Мрії, потім Іскри. Підтвердження запускає один запит, без автоматичного повтору.',
+  ],
+  confirmProviderNotice: [
+    'Один запрос оплачивается через счёт провайдера; кошелёк игрока не используется.',
+    'One request is billed to the provider account; the player wallet is not used.',
+    'Один запит оплачується через рахунок провайдера; гаманець гравця не використовується.',
+  ],
+  confirmProviderRisk: [
+    'Оценка не ограничивает счёт провайдера: фактический расход может быть выше.',
+    'The estimate does not cap the provider invoice: actual cost may be higher.',
+    'Оцінка не обмежує рахунок провайдера: фактичні витрати можуть бути вищими.',
   ],
   confirmRisk: [
-    'Цена приблизительная: фактический расход может быть выше оценки и резерва. Подтверждая, вы принимаете этот риск только для данного запроса. При неизвестном результате резерв сохраняется.',
-    'The price is approximate: actual usage may exceed the estimate and reserve. Confirming accepts this risk for this request only. An unknown outcome keeps the reserve held.',
-    'Ціна приблизна: фактичні витрати можуть перевищити оцінку й резерв. Підтверджуючи, ви приймаєте цей ризик лише для цього запиту. За невідомого результату резерв зберігається.',
+    'Списание не превысит показанную сумму. Если расход провайдера выше или неизвестен, запрос останется на сверке без дополнительного списания.',
+    'The charge will not exceed the displayed amount. Higher or unknown provider costs remain pending reconciliation without an additional charge.',
+    'Списання не перевищить показану суму. Вищі або невідомі витрати провайдера залишаться на звірці без додаткового списання.',
   ],
 
   referencesUnavailable: [
