@@ -34,6 +34,7 @@ async function setup(owner, role = 'guard', change = () => {}) {
     values: ['duty'],
     taboos: ['disclose_private'],
     speechStyle: 'brief',
+    biography: 'PRIVATE identity instruction',
   };
   draft.objects[1].x = 4;
   draft.objects[1].y = 2;
@@ -188,7 +189,11 @@ await test(
             await db.query('SELECT context FROM npc_ai_jobs WHERE id=$1', [privateReply.id])
           ).rows[0].context;
           assert.ok(privateContext.claims.some((c) => c.untrustedUtterance === text));
-          assert.equal(privateContext.publicSpeechStyle, 'neutral');
+          assert.equal(privateContext.publicSpeechStyle, 'terse');
+          assert.equal(
+            JSON.stringify(privateContext).includes('PRIVATE identity instruction'),
+            false,
+          );
           const publicReply = await owner.request(path(id2, 'ai/jobs'), {
             npcId: 'gardener',
             purpose: 'speech',
