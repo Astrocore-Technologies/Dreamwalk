@@ -12,7 +12,7 @@ import { useSearchParams } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import { ArrowUpRight, UsersRound, Search, SlidersHorizontal } from 'lucide-react';
 import { useResource, coverUrl, assetUrl, type Adventure } from '@/lib/client';
-import { Button, Empty, ErrorBox, Input, Loading, Select } from './ui';
+import { Badge, Button, Empty, ErrorBox, Input, Loading, Select } from './ui';
 function discoveryCover(adventure: Adventure) {
   // Custom uploads retain their authenticated asset URL and access checks.
   if (adventure.coverAssetId) return coverUrl(adventure);
