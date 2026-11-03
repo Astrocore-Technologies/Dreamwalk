@@ -25,6 +25,12 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
     tree,
     props;
   const react = {
+    useCallback(fn, deps) {
+      const index = cursor++;
+      const old = cells[index];
+      if (!old || deps.some((dep, i) => dep !== old.deps[i])) cells[index] = { deps, fn };
+      return cells[index].fn;
+    },
     useState(initial) {
       const index = cursor++;
       if (!cells[index]) cells[index] = { value: initial };
@@ -64,19 +70,34 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
     '@/lib/client': { api, ApiError, errorMessage: (error) => error.message },
     '@/lib/i18n': { useT: () => ({ locale }) },
     '../ui': { Button: 'button', ErrorBox: 'error' },
+    './story-reply-confirmation': { StoryReplyConfirmation: 'reply-confirmation' },
     './story-cost': { StoryCost: 'cost', RuntimeMapQuoteNotice: 'map-notice' },
     '../wallet-funding': { FundingBreakdown: 'funding', FundingNotice: 'funding-notice' },
     './narrative-guards': { providerBoundKnown },
     './story-messages': { useStoryText: () => copy },
     './story-feed.module.css': {},
   };
-  new Function('require', 'module', 'exports', 'setTimeout', 'clearTimeout', code)(
+  new Function(
+    'require',
+    'module',
+    'exports',
+    'setTimeout',
+    'clearTimeout',
+    'setInterval',
+    'clearInterval',
+    code,
+  )(
     (name) => {
       assert.ok(name in imports, name);
       return imports[name];
     },
     module,
     module.exports,
+    (fn) => {
+      timers.set(++nextTimer, fn);
+      return nextTimer;
+    },
+    (id) => timers.delete(id),
     (fn) => {
       timers.set(++nextTimer, fn);
       return nextTimer;
@@ -104,6 +125,14 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
       const found = nodes().find((node) => node.type === 'button' && node.props.children === label);
       assert.ok(found, `Button ${label} exists`);
       return found.props.onClick;
+    },
+    elements(type) {
+      return nodes().filter((node) => node.type === type);
+    },
+    async flush() {
+      await Promise.resolve();
+      await Promise.resolve();
+      render();
     },
     has(label) {
       return nodes().some((node) => node.props?.children === label);
@@ -398,4 +427,97 @@ test('currency-aware story estimates pass the original allocation through withou
   assert.equal(tree.props.children[0].props.funding, funding);
   assert.equal(tree.props.children[1].type, 'funding-notice');
   assert.doesNotMatch(ui.text(), /estimatedHold|estimatedCost/);
+});
+
+test('world waiting shows metadata and preserves the standard consent action without automatic writes', async () => {
+  const calls = [];
+  let status = { available: true, pending: false, unknown: false, reason: 'awaiting_consent' };
+  const ui = await harness('world-generation-confirmation', async (...args) => {
+    calls.push(args);
+    return status;
+  });
+  const props = { campaignId: 'campaign', scope: 'round-22', disabled: false, access: 'owner' };
+  ui.render(props);
+  await ui.flush();
+  assert.equal(ui.elements('reply-confirmation').length, 1);
+  assert.equal(
+    ui.elements('reply-confirmation')[0].props.endpoint,
+    '/game/campaigns/campaign/world-generation',
+  );
+  assert.equal(ui.elements('reply-confirmation')[0].props.worldBatch, true);
+  assert.ok(
+    calls.every((args) => args.length === 1),
+    'polling performs GET only',
+  );
+  ui.render({ ...props, membershipError: true });
+  assert.equal(ui.elements('error')[0].props.message, 'worldMembersError');
+  assert.equal(
+    ui.elements('reply-confirmation').length,
+    1,
+    'a verified owner keeps uncertain consent mounted during member refresh failures',
+  );
+  assert.equal(ui.elements('reply-confirmation')[0].props.disabled, true);
+  ui.render({ ...props, membershipPending: true });
+  assert.equal(ui.has('worldCheckingOwner'), true);
+  assert.equal(
+    ui.elements('reply-confirmation')[0].props.disabled,
+    true,
+    'retry does not re-enable consent before membership verification',
+  );
+  ui.render(props);
+  assert.equal(ui.elements('reply-confirmation')[0].props.disabled, false);
+  ui.unmount();
+  for (const [reason, copy] of [
+    ['manual_authorization_required', 'worldManualAuthorization'],
+    ['unavailable', 'worldGenerationUnavailable'],
+    ['no_pending_generation', 'worldNoPendingGeneration'],
+  ]) {
+    status = { available: false, pending: false, unknown: false, reason };
+    const waiting = await harness('world-generation-confirmation', async () => status);
+    waiting.render(props);
+    await waiting.flush();
+    assert.equal(waiting.has(copy), true);
+    assert.equal(waiting.elements('reply-confirmation').length, 0);
+    waiting.unmount();
+  }
+  const unknown = await harness('world-generation-confirmation', async () => ({
+    available: false,
+    pending: true,
+    unknown: true,
+  }));
+  unknown.render(props);
+  await unknown.flush();
+  assert.equal(unknown.has('unknown'), true);
+  assert.equal(unknown.elements('reply-confirmation').length, 0);
+  unknown.unmount();
+});
+
+test('unverified members and non-owners see safe guidance without reading private generation status', async () => {
+  let calls = 0;
+  const ui = await harness('world-generation-confirmation', async () => {
+    calls++;
+    throw new Error('unexpected private read');
+  });
+  const props = { campaignId: 'campaign', scope: 'round-22', disabled: false };
+  ui.render({ ...props, access: 'error' });
+  await ui.flush();
+  assert.equal(ui.elements('error')[0].props.message, 'worldMembersError');
+  ui.render({ ...props, access: 'loading' });
+  assert.equal(ui.has('worldCheckingOwner'), true);
+  ui.render({ ...props, access: 'member' });
+  assert.equal(ui.has('worldOwnerReview'), true);
+  assert.equal(calls, 0);
+  assert.equal(ui.elements('reply-confirmation').length, 0);
+  ui.unmount();
+});
+
+test('game page propagates membership revalidation instead of treating cleared retry errors as success', async () => {
+  const source = await readFile(
+    new URL('../../apps/web/components/game/game-page.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    source,
+    /members\.error\s*\? 'error'\s*:\s*members\.loading \|\| !members\.data \|\| !user\s*\? 'loading'/,
+  );
 });
