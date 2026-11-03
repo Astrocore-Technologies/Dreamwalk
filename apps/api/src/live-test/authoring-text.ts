@@ -1,4 +1,5 @@
 import { quoteFunding, heldFunding } from '../generation/currency-funding';
+import { readStoryImages } from '../ai/story-vision';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import {
   quoteSparks,
@@ -165,6 +166,7 @@ export class AuthoringTextEngine {
         : {}),
       expiresAt: new Date(row.expires_at).toISOString(),
       requiresConsent: true,
+      imageInputCount: readStoryImages(row.context).length,
       model: row.request_snapshot?.model ?? this.live.textProfile().model,
       costEvidence: row.request_snapshot ? 'operator_estimate' : 'conservative_configured_rates',
     };
@@ -217,9 +219,19 @@ export class AuthoringTextEngine {
         ),
       );
     const context = JSON.parse(JSON.stringify(input.context));
-    if (Buffer.byteLength(JSON.stringify(context)) > 32000)
+    if (
+      Buffer.byteLength(JSON.stringify(context)) >
+      (readStoryImages(context).length ? 3500000 : 32000)
+    )
       fail(400, 'AUTHORING_CONTEXT_TOO_LARGE', 'AUTHORING_CONTEXT_TOO_LARGE');
-    const snapshot = this.provider.prepareTextRequest?.(context)?.snapshot ?? null;
+    let snapshot: TextReserveSnapshot | null;
+    try {
+      snapshot = this.provider.prepareTextRequest?.(context)?.snapshot ?? null;
+    } catch (error) {
+      if (error instanceof Error && error.message === 'MAP_VISION_POLICY_REQUIRED')
+        fail(409, 'MAP_VISION_POLICY_REQUIRED', 'MAP_VISION_POLICY_REQUIRED');
+      throw error;
+    }
     return this.db.tx(async (c) => {
       await this.lockSource(c, ownerId);
       const sessionId =
@@ -835,8 +847,18 @@ export class AuthoringTextEngine {
     } catch (error) {
       // A stable public validation category only; never persist raw model/source details.
       const errorCode =
-        error instanceof Error && error.message === 'STORY_MAP_INTENT_MISMATCH'
-          ? 'STORY_MAP_INTENT_MISMATCH'
+        error instanceof Error &&
+        [
+          'STORY_MAP_INTENT_MISMATCH',
+          'MAP_IMAGE_UNCERTAIN',
+          'MAP_IMAGE_UNSAFE_SPAWN',
+          'MAP_IMAGE_UNSAFE_NPC',
+          'MAP_IMAGE_DISCONNECTED_SPAWN',
+          'MAP_IMAGE_UNSAFE_PASSAGE',
+          'MAP_IMAGE_SOURCE_MISMATCH',
+          'MAP_IMAGE_DUPLICATE_GEOMETRY',
+        ].includes(error.message)
+          ? error.message
           : 'AUTHORING_STALE';
       await this.db.tx(async (c) => {
         await this.live.lockAuthorization(c, current.session_id);

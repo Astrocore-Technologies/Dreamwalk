@@ -800,8 +800,8 @@
 }
 .featureArt:after {
   background:
-    linear-gradient(90deg, #17111fe8 0%, #17111fba 28%, #17111f44 65%, transparent),
-    linear-gradient(0deg, #17111fc9, transparent 65%);
+    linear-gradient(90deg, #17111fe8 0%, #17111fba 28%, #17111f38 58%, transparent 78%),
+    linear-gradient(0deg, #17111fa8, transparent 48%);
 }
 .artStamp {
   top: 22px;
@@ -1087,5 +1087,23 @@
   }
   .railControls > a {
     display: none;
+  }
+}
+
+/* Scenic space remains visible between readable discovery surfaces. */
+.intro,
+.sectionHeading {
+  background: color-mix(in srgb, var(--bg) 86%, transparent);
+  border: 1px solid color-mix(in srgb, var(--line) 60%, transparent);
+  border-radius: 16px;
+  padding: 18px 22px;
+}
+.intro h1 {
+  color: var(--text);
+}
+@media (max-width: 700px) {
+  .intro,
+  .sectionHeading {
+    padding: 14px 16px;
   }
 }

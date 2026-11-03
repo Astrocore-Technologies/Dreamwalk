@@ -52,3 +52,19 @@ test('game shell removes navigation without removing global language and theme c
   assert.match(layout, /dreamwalk-theme/);
   assert.match(layout, /design-system.css/);
 });
+test('scenic world artwork is decorative, theme-specific and excluded from the game canvas', async () => {
+  const css = await read('app/design-system.css');
+  assert.match(css, /dreamwalk-world-night\.webp/);
+  assert.match(css, /dreamwalk-world-dawn\.webp/);
+  assert.match(css, /\.app-shell:not\(\.game-shell\)::before/);
+  assert.match(css, /pointer-events: none/);
+  assert.match(css, /isolation: isolate/);
+  for (const theme of ['night', 'dawn']) {
+    const asset = await readFile(
+      new URL(`../../apps/web/public/images/dreamwalk-world-${theme}.webp`, import.meta.url),
+    );
+    assert.equal(asset.toString('ascii', 0, 4), 'RIFF');
+    assert.equal(asset.toString('ascii', 8, 12), 'WEBP');
+    assert.ok(asset.length < 600_000, 'decorative art stays within the compressed asset budget');
+  }
+});

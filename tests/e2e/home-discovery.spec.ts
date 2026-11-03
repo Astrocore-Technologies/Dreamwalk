@@ -12,6 +12,22 @@ async function appearance(page: Page, language: 'en' | 'uk' | 'ru', theme: 'dark
     { language, theme },
   );
 }
+async function scenicBackground(page: Page, theme: 'night' | 'dawn') {
+  const name = `dreamwalk-world-${theme}.webp`;
+  const background = await page
+    .locator('.app-shell')
+    .evaluate((shell) => getComputedStyle(shell, '::before').backgroundImage);
+  expect(background).toContain(name);
+  const decoded = await page.evaluate(async (src) => {
+    const image = new Image();
+    image.src = `/images/${src}`;
+    await image.decode();
+    return { width: image.naturalWidth, height: image.naturalHeight };
+  }, name);
+  expect(decoded.width).toBeGreaterThanOrEqual(1600);
+  expect(decoded.height).toBeGreaterThanOrEqual(900);
+  await expect(page.locator('.app-shell')).toHaveCSS('isolation', 'isolate');
+}
 async function publicHome(page: Page, preferredSlug?: string) {
   await exposeDiscoveryFixtures(page);
   const catalog = await page.request.get('/api/v1/adventures?sort=popular');
@@ -86,7 +102,11 @@ test('public homepage is art-led, manually navigable, localized and captures act
   await expect(page.getByTestId('home-continue').locator('a[href="/auth/sign-in"]')).toBeVisible();
   await expect(page.getByTestId('home-continue').locator('a[href^="/game/"]')).toHaveCount(0);
   const first = await featured.getAttribute('data-featured-slug');
+  await scenicBackground(page, 'night');
   await screenshot(page, info, 'home-desktop-dark.png');
+  await page.setViewportSize({ width: 1920, height: 1080 });
+  await screenshot(page, info, 'home-desktop-scenic-wide.png');
+  await page.setViewportSize({ width: 1440, height: 1000 });
   await page.getByTestId('home-next').click();
   await expect(featured).not.toHaveAttribute('data-featured-slug', first!);
   expect(stories.map((story) => story.slug)).toContain(
@@ -117,6 +137,7 @@ test('public homepage is art-led, manually navigable, localized and captures act
     'color',
     'rgb(247, 242, 234)',
   );
+  await scenicBackground(page, 'dawn');
   await screenshot(page, info, 'home-desktop-light.png');
 });
 

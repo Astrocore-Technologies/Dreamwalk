@@ -1,13 +1,53 @@
 /* Shared modern-fantasy surfaces. Existing behavior and route-specific controls remain intact. */
 body {
-  background:
-    radial-gradient(
-      ellipse at 85% 0%,
-      color-mix(in srgb, var(--surface-soft) 45%, transparent),
-      transparent 60%
-    ),
-    var(--bg);
+  background: var(--bg);
 }
+/* Decorative world art is independent of authored story covers and never interactive. */
+.app-shell {
+  isolation: isolate;
+  --world-art: url('/images/dreamwalk-world-night.webp');
+  --world-wash: linear-gradient(180deg, #15111d35, #15111d80 65%, #15111dcc);
+}
+html[data-theme='light'] .app-shell {
+  --world-art: url('/images/dreamwalk-world-dawn.webp');
+  --world-wash: linear-gradient(180deg, #f8f5f020, #f8f5f070 65%, #f8f5f0ba);
+}
+.app-shell:not(.game-shell)::before {
+  content: '';
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  pointer-events: none;
+  background-image: var(--world-wash), var(--world-art);
+  background-size: cover;
+  background-position: center top;
+  background-repeat: no-repeat;
+}
+.app-shell:not(.game-shell) .topbar {
+  background: color-mix(in srgb, var(--bg) 72%, transparent);
+  backdrop-filter: blur(12px);
+}
+.app-shell:not(.game-shell) .sidebar {
+  background: color-mix(in srgb, var(--sidebar) 76%, transparent);
+  backdrop-filter: blur(16px);
+}
+.app-shell:not(.game-shell) .main-content {
+  background: color-mix(in srgb, var(--bg) 70%, transparent);
+  border-radius: 24px;
+  margin-block: 24px;
+  width: calc(100% - 48px);
+  max-width: 1440px;
+}
+.app-shell:not(.game-shell) .main-content:has([data-testid='home-featured']) {
+  background: transparent;
+}
+@media (max-width: 900px) {
+  .app-shell:not(.game-shell) .main-content {
+    width: calc(100% - 24px);
+    margin-block: 12px;
+  }
+}
+
 h1,
 h2,
 h3,

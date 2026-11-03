@@ -1,4 +1,10 @@
 import {
+  readStoryImages,
+  storyVisionInput,
+  storyVisionCounter,
+  type StoryVisionPolicy,
+} from '../ai/story-vision';
+import {
   textUsageCostMicros,
   textInputReserveRate,
   type TextCachePricing,
@@ -26,6 +32,7 @@ export interface AuthoringTextProfile {
   contextBudgetTokens?: number;
   maxOutputTokens: number;
   storyPlanMaxOutputTokens?: number;
+  storyVision?: StoryVisionPolicy;
   maxInputBytes: number;
   inputMicrosPerMillion: number;
   outputMicrosPerMillion: number;
@@ -85,7 +92,10 @@ export function buildAuthoringTextRequestBody(
     reasoning: { effort: 'none' },
     max_output_tokens: profile.maxOutputTokens,
     instructions: definition.instructions,
-    input: JSON.stringify(profile.estimation ? canonical(context) : context),
+    input:
+      definition.purpose === 'story_plan'
+        ? storyVisionInput(profile.estimation ? canonical(context) : context, profile.storyVision)
+        : JSON.stringify(profile.estimation ? canonical(context) : context),
     text: {
       format: {
         type: 'json_schema',
@@ -141,6 +151,14 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
       ...profile,
       ...(profile.cachePricing ? { cachePricing: Object.freeze({ ...profile.cachePricing }) } : {}),
       ...(profile.estimation ? { estimation: Object.freeze({ ...profile.estimation }) } : {}),
+      ...(profile.storyVision
+        ? {
+            storyVision: Object.freeze({
+              ...profile.storyVision,
+              pricing: Object.freeze({ ...profile.storyVision.pricing }),
+            }),
+          }
+        : {}),
       ...(profile.pricing ? { pricing: Object.freeze({ ...profile.pricing }) } : {}),
     });
     this.version = createHash('sha256')
@@ -155,7 +173,10 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
       .digest('hex');
   }
   prepareTextRequest(context: unknown): PreparedTextRequest | undefined {
-    if (!this.profile.estimation) return undefined;
+    if (!this.profile.estimation) {
+      if (readStoryImages(context).length) throw new Error('MAP_VISION_POLICY_REQUIRED');
+      return undefined;
+    }
     const body = buildAuthoringTextRequestBody(this.definition, this.profile, context);
     const { pricing, ...profile } = this.profile;
     return {
@@ -175,6 +196,7 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
             : {}),
         },
         this.version,
+        storyVisionCounter(body, this.profile.model, this.profile.storyVision),
       ),
     };
   }
@@ -188,10 +210,21 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
       )
     )
       throw new ProviderFailure('GENERATION_PRICING_EXPIRED', false);
-    const body = buildAuthoringTextRequestBody(this.definition, this.profile, request.context);
+    let body: string;
+    try {
+      body = buildAuthoringTextRequestBody(this.definition, this.profile, request.context);
+    } catch {
+      throw new ProviderFailure('MAP_VISION_POLICY_REQUIRED', false);
+    }
     if (this.profile.contextBudgetTokens !== undefined) {
       try {
-        assertTextContext(measureTextContext(body, this.profile));
+        assertTextContext(
+          measureTextContext(
+            body,
+            this.profile,
+            storyVisionCounter(body, this.profile.model, this.profile.storyVision),
+          ),
+        );
       } catch {
         throw new ProviderFailure('TEXT_CONTEXT_WINDOW_EXCEEDED', false);
       }
@@ -330,6 +363,12 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
           }
         : {}),
     };
+    if (
+      readStoryImages(request.context).length &&
+      (!this.profile.storyVision ||
+        tokenUsage.inputTokens > this.profile.storyVision.maxPricedInputTokens)
+    )
+      throw new ProviderFailure('PROVIDER_USAGE_UNKNOWN', true, value.id);
     const usage = {
       ...tokenUsage,
       ...textUsageCostMicros(this.profile, tokenUsage),
