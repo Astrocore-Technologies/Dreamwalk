@@ -58,7 +58,20 @@ export function safeAdventureMetadata(adventure: AdventureMetadata): AdventureMe
     const entry = adventure.translations?.[locale];
     if (entry)
       translations[locale] =
-        entry.sourceRevision === sourceRevision ? entry : { sourceRevision: entry.sourceRevision };
+        entry.sourceRevision === sourceRevision
+          ? {
+              sourceRevision: entry.sourceRevision,
+              ...(typeof entry.title === 'string' ? { title: entry.title } : {}),
+              ...(typeof entry.synopsis === 'string' ? { synopsis: entry.synopsis } : {}),
+              ...(entry.tags && typeof entry.tags === 'object'
+                ? {
+                    tags: Object.fromEntries(
+                      Object.entries(entry.tags).filter(([, value]) => typeof value === 'string'),
+                    ),
+                  }
+                : {}),
+            }
+          : { sourceRevision: entry.sourceRevision };
   }
   return {
     title: adventure.title,
@@ -66,6 +79,22 @@ export function safeAdventureMetadata(adventure: AdventureMetadata): AdventureMe
     sourceLanguage: adventure.sourceLanguage ?? 'ru',
     sourceRevision,
     translations,
+  };
+}
+/** Invitation recipients and their exports receive catalog metadata, never author payloads. */
+export function readerInvitationPayload(value: unknown) {
+  const payload = value && typeof value === 'object' ? (value as Record<string, unknown>) : {};
+  const raw = payload.adventureMetadata;
+  const metadata = raw && typeof raw === 'object' ? (raw as Record<string, unknown>) : {};
+  return {
+    adventureId: typeof payload.adventureId === 'string' ? payload.adventureId : '',
+    adventureTitle: typeof payload.adventureTitle === 'string' ? payload.adventureTitle : '',
+    inviter: typeof payload.inviter === 'string' ? payload.inviter : '',
+    adventureMetadata: safeAdventureMetadata({
+      ...metadata,
+      title: typeof metadata.title === 'string' ? metadata.title : '',
+      synopsis: typeof metadata.synopsis === 'string' ? metadata.synopsis : '',
+    } as AdventureMetadata),
   };
 }
 export const controlledTagSchema = z

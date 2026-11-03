@@ -126,7 +126,7 @@ test('new private starts bind to current release while existing saves require an
     assert.ok(text.includes(guard), guard);
 });
 
-test('detail version history is owner-only and invitee NPC display reads frozen snapshot', () => {
+test('detail version history is owner-only and readers receive no authored cast', () => {
   const detail = method(content, 'detail');
   const history = nodes(
     detail,
@@ -134,9 +134,11 @@ test('detail version history is owner-only and invitee NPC display reads frozen 
   )[0];
   assert.ok(history);
   assert.match(compact(history), /access !== 'owner'/);
-  assert.match(
-    compact(detail),
-    /access === 'invited' \? row\.private_snapshot : row\.published_snapshot/,
+  assert.match(compact(detail), /access !== 'owner'/);
+  assert.match(compact(detail), /npcPreview = \[\]/);
+  assert.doesNotMatch(
+    compact(method(admin, 'npcs')),
+    /adventure_private_releases|adventure_invitations/,
   );
 });
 

@@ -271,6 +271,7 @@ export class AdminController {
         r,
         r.owner_id !== u.id && (r.visibility === 'private' || r.status !== 'pending_review'),
         r.owner_id !== u.id,
+        r.owner_id !== u.id && r.visibility === 'public' && r.status === 'pending_review',
       ),
     );
   }
@@ -286,16 +287,6 @@ export class AdminController {
           AND (n.story_id IS NULL OR n.story_id=a.id)
           AND a.data->'content'->'npcIds' ? n.id::text
           AND a.visibility='public' AND a.status IN('pending_review','published'))
-        UNION ALL
-        SELECT npc->>'id',a.owner_id,npc,pr.created_at,pr.created_at,2
-        FROM adventures a JOIN adventure_private_releases pr
-          ON pr.id=a.private_release_id AND pr.adventure_id=a.id AND pr.owner_id=a.owner_id
-        CROSS JOIN LATERAL jsonb_array_elements(CASE WHEN jsonb_typeof(pr.snapshot->'publicNpcs')='array'
-          THEN pr.snapshot->'publicNpcs' ELSE '[]'::jsonb END) AS npc
-        WHERE a.owner_id<>$1 AND a.visibility='private' AND a.status<>'archived'
-          AND npc->>'id' IS NOT NULL
-          AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id
-            AND i.recipient_id=$1 AND i.status='accepted')
       ), chosen AS (SELECT DISTINCT ON (id) * FROM visible ORDER BY id,priority,updated_at DESC)
       SELECT id,owner_id,data,created_at,updated_at FROM chosen ORDER BY updated_at DESC,id LIMIT 200`,
       [u.id],

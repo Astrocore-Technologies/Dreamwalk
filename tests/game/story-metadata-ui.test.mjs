@@ -23,3 +23,9 @@ test('public story boundaries panel is removed without deleting author warnings 
   assert.match(contracts, /duration: text\(80\)/);
   assert.match(await read('apps/web/components/studio/npc-character-copy.ts'), /Границы поведения/);
 });
+
+test('public detail never renders the private author world even in the owner preview', async () => {
+  const publicUi = await read('apps/web/components/public.tsx');
+  assert.doesNotMatch(publicUi, /a\.content(?:\?|)\.world/);
+  assert.match(publicUi, /className="prose">\{text\.synopsis\}/);
+});
