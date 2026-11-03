@@ -63,6 +63,12 @@ test('public art layouts preserve long titles, theme, locale and mobile reachabi
         }
         if (route.startsWith('/adventures/')) {
           await expect(page.locator('.story-intro h1')).toBeVisible();
+          if (width === 390) {
+            expect((await page.locator('.story-intro').boundingBox())!.width).toBeGreaterThan(300);
+            expect((await page.locator('.story-actions').boundingBox())!.width).toBeGreaterThan(
+              300,
+            );
+          }
           await expect(page.locator('.prepare-panel a[href^="/my-characters"]')).toHaveClass(
             /secondary/,
           );

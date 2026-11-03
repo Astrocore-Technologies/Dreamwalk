@@ -1151,3 +1151,31 @@ td {
   background: #17111fe6;
   color: #f7f2ea;
 }
+
+/* Retire the old mobile poster/title split; it created an implicit narrow second track. */
+@media (max-width: 900px) {
+  .discovery-detail .story-overview {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 22px;
+  }
+  .discovery-detail .story-poster,
+  .discovery-detail .story-intro,
+  .discovery-detail .story-actions {
+    grid-column: 1 / -1;
+    grid-row: auto;
+    width: 100%;
+    min-width: 0;
+  }
+  .discovery-detail .story-intro {
+    display: block;
+  }
+  .discovery-detail .story-intro > h1 {
+    margin: 12px 0;
+  }
+  .discovery-detail .story-synopsis {
+    margin: 18px 0;
+  }
+  .discovery-detail .story-tags {
+    margin: 12px 0 0;
+  }
+}
