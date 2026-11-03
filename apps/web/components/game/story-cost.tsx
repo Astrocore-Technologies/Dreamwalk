@@ -1,5 +1,6 @@
 'use client';
 import { formatSparkSubunits, type StoryQuote } from '@dreamwalk/contracts';
+import { providerSparkSubunits } from '../visual-authoring/spark-equivalent';
 import { useT } from '@/lib/i18n';
 import { useStoryText } from './story-messages';
 
@@ -11,12 +12,12 @@ export function StoryCost({ quote }: { quote: StoryQuote }) {
   const estimate = quote.estimateSnapshot?.estimatedTotalMicros ?? quote.estimatedTotalMicros;
   const providerEstimate = estimate ?? quote.providerReserveMicros ?? quote.providerUpperMicros;
   const amount =
-    (reserve != null || quote.external) &&
-    providerEstimate != null &&
-    Number.isSafeInteger(providerEstimate) &&
-    providerEstimate >= 0
-      ? String(providerEstimate)
-      : reserve;
+    (reserve != null || quote.external
+      ? providerSparkSubunits(
+          providerEstimate,
+          reserve != null ? (quote.sparkRateVersion ?? null) : undefined,
+        )
+      : null) ?? reserve;
   return (
     <div data-testid="story-cost">
       <p data-spark-quote-price>

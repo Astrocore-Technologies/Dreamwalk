@@ -1,7 +1,9 @@
 /** Pure proposed fixed-point representation; does not activate billing or convert demo credits. */
 export const SPARK_SUBUNITS = 10_000n;
 export const MAX_SPARK_SUBUNITS = 9_223_372_036_854_775_807n;
-export const SPARK_RATE_VERSION = 'api-cent-1-spark-v1' as const;
+export const LEGACY_SPARK_RATE_VERSION = 'api-cent-1-spark-v1' as const;
+export const SPARK_RATE_VERSION = 'api-cent-2-sparks-v2' as const;
+export type SparkRateVersion = typeof LEGACY_SPARK_RATE_VERSION | typeof SPARK_RATE_VERSION;
 export const SPARK_PACK = Object.freeze({ usdCents: '500', sparkSubunits: '2000000' });
 
 /** Canonical decimal strings survive JSON and PostgreSQL bigint without number coercion. */
@@ -19,9 +21,14 @@ function checked(value: bigint): string {
   return value.toString();
 }
 
-/** Approved debit rate: one USD micro = one subunit. No extra markup multiplier. */
-export function providerMicrosToSparkSubunits(micros: string): string {
-  return parseSparkInteger(micros).toString();
+/** Debit conversion only. Provider USD pricing and the wallet denomination stay unchanged. */
+export function providerMicrosToSparkSubunits(
+  micros: string,
+  rateVersion: SparkRateVersion = SPARK_RATE_VERSION,
+): string {
+  if (rateVersion !== SPARK_RATE_VERSION && rateVersion !== LEGACY_SPARK_RATE_VERSION)
+    throw new RangeError('Unsupported Sparks rate version');
+  return checked(parseSparkInteger(micros) * (rateVersion === SPARK_RATE_VERSION ? 2n : 1n));
 }
 
 export type SparkTariffInput = Readonly<{
@@ -37,7 +44,7 @@ export type SparkTariffInput = Readonly<{
 
 export type SparkTariffSnapshot = SparkTariffInput &
   Readonly<{
-    sparkRateVersion: typeof SPARK_RATE_VERSION;
+    sparkRateVersion: SparkRateVersion;
     currency: 'USD';
     subunitsPerSpark: '10000';
     rounding: 'ceil-total-provider-micro';
@@ -45,7 +52,11 @@ export type SparkTariffSnapshot = SparkTariffInput &
   }>;
 
 /** Copy primitives and freeze: later config edits cannot mutate an admitted quote's rates. */
-export function createSparkTariffSnapshot(input: SparkTariffInput): SparkTariffSnapshot {
+export function createSparkTariffSnapshot(
+  input: SparkTariffInput & { sparkRateVersion?: SparkRateVersion },
+): SparkTariffSnapshot {
+  const rateVersion = input.sparkRateVersion ?? SPARK_RATE_VERSION;
+  providerMicrosToSparkSubunits('0', rateVersion);
   for (const value of [input.provider, input.model, input.providerRateVersion])
     if (typeof value !== 'string' || !value.trim() || value.length > 200)
       throw new RangeError('Missing or oversized tariff identity');
@@ -63,7 +74,7 @@ export function createSparkTariffSnapshot(input: SparkTariffInput): SparkTariffS
           ).toString(),
         }),
     outputMicrosPerMillion: parseSparkInteger(input.outputMicrosPerMillion).toString(),
-    sparkRateVersion: SPARK_RATE_VERSION,
+    sparkRateVersion: rateVersion,
     currency: 'USD',
     subunitsPerSpark: '10000',
     rounding: 'ceil-total-provider-micro',
@@ -73,7 +84,8 @@ export function createSparkTariffSnapshot(input: SparkTariffInput): SparkTariffS
 
 function verifiedTariff(tariff: SparkTariffSnapshot): SparkTariffSnapshot {
   if (
-    tariff.sparkRateVersion !== SPARK_RATE_VERSION ||
+    (tariff.sparkRateVersion !== SPARK_RATE_VERSION &&
+      tariff.sparkRateVersion !== LEGACY_SPARK_RATE_VERSION) ||
     tariff.currency !== 'USD' ||
     tariff.subunitsPerSpark !== '10000' ||
     tariff.rounding !== 'ceil-total-provider-micro' ||
@@ -113,11 +125,14 @@ export function actualSparkCost(
   if (cached + written > input) throw new RangeError('Cache reads and writes exceed total input');
   if (written > 0n && rates.cacheWriteMicrosPerMillion === undefined)
     throw new RangeError('Cache-write usage has no immutable price');
-  return cost(
-    (input - cached - written) * BigInt(rates.inputMicrosPerMillion) +
-      cached * BigInt(rates.cachedInputMicrosPerMillion) +
-      written * BigInt(rates.cacheWriteMicrosPerMillion ?? '0') +
-      output * BigInt(rates.outputMicrosPerMillion),
+  return providerMicrosToSparkSubunits(
+    cost(
+      (input - cached - written) * BigInt(rates.inputMicrosPerMillion) +
+        cached * BigInt(rates.cachedInputMicrosPerMillion) +
+        written * BigInt(rates.cacheWriteMicrosPerMillion ?? '0') +
+        output * BigInt(rates.outputMicrosPerMillion),
+    ),
+    rates.sparkRateVersion,
   );
 }
 
@@ -136,9 +151,12 @@ export function reserveSparkCost(
   const maxInputRate = [inputRate, cacheRate, writeRate].reduce((max, rate) =>
     rate > max ? rate : max,
   );
-  return cost(
-    parseSparkInteger(limits.inputTokensUpper) * maxInputRate +
-      parseSparkInteger(limits.outputTokensMax) * BigInt(rates.outputMicrosPerMillion),
+  return providerMicrosToSparkSubunits(
+    cost(
+      parseSparkInteger(limits.inputTokensUpper) * maxInputRate +
+        parseSparkInteger(limits.outputTokensMax) * BigInt(rates.outputMicrosPerMillion),
+    ),
+    rates.sparkRateVersion,
   );
 }
 

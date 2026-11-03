@@ -58,7 +58,11 @@ for (const outcome of ['ready', 'failed'] as const)
               id: randomUUID(),
               estimatedTotalMicros: 1000,
               expiresAt: new Date(Date.now() + 60000).toISOString(),
-              sparks: { reserveSubunits: '10000', walletCharging: true },
+              sparks: {
+                reserveSubunits: '10000',
+                walletCharging: true,
+                rateVersion: 'api-cent-2-sparks-v2',
+              },
             },
           });
         }
@@ -111,6 +115,8 @@ for (const outcome of ['ready', 'failed'] as const)
       expect(dispatches).toBe(0);
       await page.getByRole('button', { name: 'Начать прохождение', exact: true }).click();
       await expect(page.getByRole('dialog')).toBeVisible();
+      await expect(page.getByRole('dialog')).toContainText('0.20');
+      await expect(page.getByRole('dialog')).toContainText('1.00');
       expect(quotes).toBe(1);
       expect(dispatches).toBe(0);
       await page.keyboard.press('Escape');

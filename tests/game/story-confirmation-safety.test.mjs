@@ -2,7 +2,11 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { transformSync } from 'esbuild';
-import { formatSparkSubunits } from '../../packages/contracts/dist/index.js';
+import {
+  formatSparkSubunits,
+  providerMicrosToSparkSubunits,
+} from '../../packages/contracts/dist/index.js';
+import { providerSparkSubunits } from '../../apps/web/components/visual-authoring/spark-equivalent.ts';
 import { providerBoundKnown } from '../../apps/web/components/game/narrative-guards.ts';
 
 // Execute the actual component handlers with deterministic hooks/transport/time.
@@ -55,7 +59,8 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
   const imports = {
     react,
     'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
-    '@dreamwalk/contracts': { formatSparkSubunits },
+    '../visual-authoring/spark-equivalent': { providerSparkSubunits },
+    '@dreamwalk/contracts': { formatSparkSubunits, providerMicrosToSparkSubunits },
     '@/lib/client': { api, ApiError, errorMessage: (error) => error.message },
     '@/lib/i18n': { useT: () => ({ locale }) },
     '../ui': { Button: 'button', ErrorBox: 'error' },
@@ -237,10 +242,35 @@ test('Sparks estimate remains distinct from hold and demo units', async () => {
       chargeUnit: 'sparks',
       sparkReservedSubunits: '20000',
       estimatedTotalMicros: 12500,
+      sparkRateVersion: 'api-cent-2-sparks-v2',
     },
   });
-  assert.match(ui.text(), /estimatedCost:\{"amount":"1,25"\}/);
+  assert.match(ui.text(), /estimatedCost:\{"amount":"2,50"\}/);
   assert.match(ui.text(), /estimatedHold:\{"amount":"2,00"\}/);
+  ui.render({
+    quote: { credits: 0, external: false, chargeUnit: 'sparks', sparkReservedSubunits: '12500' },
+  });
+  assert.match(ui.text(), /estimatedCost:\{"amount":"1,25"\}/);
+  assert.match(ui.text(), /estimatedHold:\{"amount":"1,25"\}/);
+  for (const sparkRateVersion of ['api-cent-1-spark-v1', undefined, 'unknown']) {
+    ui.render({
+      quote: {
+        credits: 0,
+        external: true,
+        chargeUnit: 'sparks',
+        sparkReservedSubunits: '20000',
+        estimatedTotalMicros: 12500,
+        sparkRateVersion,
+      },
+    });
+    assert.match(
+      ui.text(),
+      sparkRateVersion === 'api-cent-1-spark-v1'
+        ? /estimatedCost:\{"amount":"1,25"\}/
+        : /estimatedCost:\{"amount":"2,00"\}/,
+    );
+    assert.match(ui.text(), /estimatedHold:\{"amount":"2,00"\}/);
+  }
   ui.render({ quote: { credits: 0, external: false } });
   assert.equal(ui.text(), 'freeTurn');
   ui.render({ quote: { credits: 0, external: true } });

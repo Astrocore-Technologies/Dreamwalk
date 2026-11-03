@@ -201,7 +201,7 @@ await test(
               [a.id],
             )
           ).rows[0];
-          assert.deepEqual(wallet, { balance_subunits: '499970', held_subunits: '0' });
+          assert.deepEqual(wallet, { balance_subunits: '499940', held_subunits: '0' });
         },
       );
       await t.test(
@@ -283,7 +283,7 @@ await test(
                 [who.id],
               )
             ).rows[0],
-            { balance_subunits: '498755', held_subunits: '0' },
+            { balance_subunits: '497510', held_subunits: '0' },
           );
           const receipt = (
             await db.query('SELECT provider_usage FROM live_authoring_text_jobs WHERE id=$1', [
@@ -404,7 +404,7 @@ await test(
                 [c.id],
               )
             ).rows[0],
-            { balance_subunits: '499900', held_subunits: '0' },
+            { balance_subunits: '499800', held_subunits: '0' },
           );
         },
       );

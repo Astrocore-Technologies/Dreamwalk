@@ -1,3 +1,4 @@
+import { SPARK_RATE_VERSION } from '@dreamwalk/contracts';
 import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
 import type { Request } from 'express';
 import { z } from 'zod';
@@ -91,7 +92,7 @@ export class AdminController {
       heldSubunits: held.toString(),
       availableSubunits: (balance - held).toString(),
       subunitsPerSpark: '10000',
-      rateVersion: 'api-cent-1-spark-v1',
+      rateVersion: SPARK_RATE_VERSION,
       purchaseAvailable: false,
       ledger: row.ledger.map(camel),
     };

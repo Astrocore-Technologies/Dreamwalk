@@ -1,10 +1,15 @@
+import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import { textUsageCostMicros } from '../generation/text-pricing';
 import { Inject, Injectable, type OnModuleInit, type OnModuleDestroy } from '@nestjs/common';
 import type { PoolClient, QueryResultRow } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import { Db } from '../db';
-import { SparksAccounting, type SparkSettlement } from '../generation/sparks-accounting';
+import {
+  SparksAccounting,
+  sparkQuoteRateVersion,
+  type SparkSettlement,
+} from '../generation/sparks-accounting';
 import { sparksEnabled, sparkTariff, settleReservationSparks } from '../generation/sparks-hooks';
 import { fenceGenerationAdmission } from '../generation/scope-fence';
 import { packNpcContextWindow } from '../game/npc-context-budget';
@@ -337,7 +342,7 @@ export class NpcAiEngine {
             operationId: id,
             sourceKind: 'npc',
             sourceId: id,
-            reserveSubunits: String(requestPlan.reserveMicros),
+            reserveSubunits: providerMicrosToSparkSubunits(String(requestPlan.reserveMicros)),
             expiresAt: expires.toISOString(),
             providerQuote: {
               ...requestPlan.snapshot!,
@@ -374,7 +379,10 @@ export class NpcAiEngine {
         id,
         credits: sparkMode ? 0 : this.policy.creditPrice,
         chargeUnit: sparkMode ? ('sparks' as const) : ('credits' as const),
-        sparkReservedSubunits: sparkMode ? String(requestPlan.reserveMicros) : null,
+        sparkReservedSubunits: sparkQuote?.reserve_subunits ?? null,
+        ...(sparkQuote
+          ? { sparkRateVersion: sparkQuoteRateVersion(sparkQuote.price_snapshot) }
+          : {}),
         expiresAt: expires.toISOString(),
         demo: !sparkMode,
         requiresConsent: sparkMode || this.policy.creditPrice > 0 || this.provider.external,
@@ -421,10 +429,19 @@ export class NpcAiEngine {
       fence.rulesetVersion === turn.ruleset.version
     );
   }
-  private dto(job: Job) {
+  private async dto(c: PoolClient, job: Job) {
     const sparkCharged =
       !!job.spark_hold_id ||
       (this.provider instanceof ReleaseGenerationProvider && !!job.generation_reservation_id);
+    // A queued job keeps the hold's persisted rate, including historical quotes.
+    const sparkHold = sparkCharged
+      ? (
+          await c.query(
+            'SELECT reserved_subunits FROM spark_holds WHERE id=COALESCE($1::uuid,(SELECT spark_quote_id FROM generation_budget_reservations WHERE id=$2))',
+            [job.spark_hold_id ?? null, job.generation_reservation_id ?? null],
+          )
+        ).rows[0]
+      : null;
     return {
       id: job.id,
       npcId: job.npc_id,
@@ -433,7 +450,7 @@ export class NpcAiEngine {
       status: job.status,
       credits: job.credits,
       chargeUnit: sparkCharged ? ('sparks' as const) : ('credits' as const),
-      sparkReservedSubunits: sparkCharged ? String(job.provider_upper_micros) : null,
+      sparkReservedSubunits: sparkHold?.reserved_subunits ?? null,
       sparkHoldId: job.spark_hold_id ?? null,
       reservationStatus: job.reservation_status,
       code: job.result_code ?? null,
@@ -478,7 +495,7 @@ export class NpcAiEngine {
           })
       )
         fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
-      return this.dto(j);
+      return this.dto(c, j);
     });
   }
   async queue(input: QueueDecision) {
@@ -546,7 +563,7 @@ export class NpcAiEngine {
           )
         )
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
-        return this.dto(previous);
+        return this.dto(c, previous);
       }
       const releaseProvider =
         this.provider instanceof ReleaseGenerationProvider ? this.provider : null;
@@ -882,7 +899,7 @@ export class NpcAiEngine {
         'UPDATE npc_ai_provider_budgets SET reserved_micros=reserved_micros+$2 WHERE provider_id=$1',
         [this.provider.id, requestPlan.reserveMicros],
       );
-      return this.dto(r.rows[0]);
+      return this.dto(c, r.rows[0]);
     });
   }
   async pending(campaignId: string) {
@@ -896,13 +913,17 @@ export class NpcAiEngine {
     );
   }
   async status(campaignId: string, viewerUserId: string) {
-    return (
-      await this.db.query<Job>(
-        'SELECT * FROM npc_ai_jobs WHERE campaign_id=$1 AND (requester_user_id=$2 OR payer_user_id=$2) ORDER BY created_at DESC LIMIT 30',
-        [campaignId, viewerUserId],
-      )
-    ).map((j) => this.dto(j));
+    return this.db.tx(async (c) => {
+      const jobs = (
+        await c.query<Job>(
+          'SELECT * FROM npc_ai_jobs WHERE campaign_id=$1 AND (requester_user_id=$2 OR payer_user_id=$2) ORDER BY created_at DESC LIMIT 30',
+          [campaignId, viewerUserId],
+        )
+      ).rows;
+      return Promise.all(jobs.map((job) => this.dto(c, job)));
+    });
   }
+
   async wallet(userId: string) {
     const r = (
       await this.db.query(

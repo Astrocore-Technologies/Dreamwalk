@@ -1,3 +1,4 @@
+import { totalQuotedSparkSubunits, commonQuotedSparkRate } from '../generation/sparks-quote-total';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { PoolClient, QueryResultRow } from 'pg';
@@ -221,7 +222,8 @@ export class WorldGenerationBatch {
         external: true,
         requiresConsent: true,
         chargeUnit: 'sparks',
-        sparkReservedSubunits: String(reserve),
+        sparkReservedSubunits: totalQuotedSparkSubunits(entries.map((entry) => entry.quote)),
+        ...commonQuotedSparkRate(entries.map((entry) => entry.quote)),
         providerUpperMicros: null,
         providerReserveMicros: reserve,
         estimatedTotalMicros: estimate,

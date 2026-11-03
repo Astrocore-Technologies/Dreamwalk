@@ -78,6 +78,7 @@ export interface StoryQuote {
   chargeUnit?: 'sparks' | 'credits';
   sparkReservedSubunits?: string | null;
   sparkQuoteId?: string | null;
+  sparkRateVersion?: string;
   id: string;
   credits: number;
   expiresAt: string;

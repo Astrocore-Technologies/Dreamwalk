@@ -1,5 +1,6 @@
 'use client';
 import { formatSparkSubunits } from '@dreamwalk/contracts';
+import { providerSparkSubunits } from './spark-equivalent';
 import { useT } from '@/lib/i18n';
 export const sparkCostMessages = {
   unit: ['Искр', 'Sparks', 'Іскор'],
@@ -26,13 +27,12 @@ export function useSparkCosts() {
   const { locale } = useT();
   const s = (key: keyof typeof sparkCostMessages) =>
     sparkCostMessages[key][locale === 'ru' ? 0 : locale === 'en' ? 1 : 2];
-  const amount = (micros: number | undefined | null) => {
-    if (typeof micros !== 'number' || !Number.isSafeInteger(micros) || micros < 0)
-      return <span>—</span>;
-    // Approved rate is exact: provider USD micros equal Sparks subunits. No markup multiplier.
+  const amount = (micros: number | undefined | null, rateVersion?: string | null) => {
+    const subunits = providerSparkSubunits(micros, rateVersion);
+    if (subunits === null) return <span>—</span>;
     return (
-      <span title={`${formatSparkSubunits(String(micros), locale, 'exact')} ${s('unit')}`}>
-        {formatSparkSubunits(String(micros), locale)} {s('unit')}
+      <span title={`${formatSparkSubunits(subunits, locale, 'exact')} ${s('unit')}`}>
+        {formatSparkSubunits(subunits, locale)} {s('unit')}
       </span>
     );
   };
@@ -100,14 +100,23 @@ export function SparkQuoteNotice({ quote }: { quote: SparkQuotedCharge }) {
 export function ProviderSparkReserve({
   quote,
 }: {
-  quote: { providerReserveMicros?: number; providerUpperMicros?: number | null };
+  quote: {
+    providerReserveMicros?: number;
+    providerUpperMicros?: number | null;
+    chargeUnit?: string;
+    sparkRateVersion?: string;
+  };
 }) {
   const { s, amount } = useSparkCosts(),
     { locale } = useT();
   const reserve = quote.providerReserveMicros ?? quote.providerUpperMicros;
   return (
     <p>
-      {s('reserve')}: {amount(reserve)}{' '}
+      {s('reserve')}:{' '}
+      {amount(
+        reserve,
+        quote.chargeUnit === 'sparks' ? (quote.sparkRateVersion ?? null) : undefined,
+      )}{' '}
       {quote.providerReserveMicros !== undefined && (
         <small>
           {locale === 'ru'

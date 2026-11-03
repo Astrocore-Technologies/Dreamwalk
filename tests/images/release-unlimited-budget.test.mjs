@@ -94,7 +94,7 @@ async function quote(a, reserve = 60) {
         operationId: sourceId,
         sourceKind: 'image',
         sourceId,
-        reserveSubunits: String(reserve),
+        reserveSubunits: String(reserve * 2), // Provider-micro fixture at 2 Sparks per cent.
         expiresAt: new Date(Date.now() + 60000).toISOString(),
         providerQuote: { fixture: true, sourceId },
         tariff: sparkTariff(
@@ -186,7 +186,7 @@ await test(
           assert.equal(
             (await db.query('SELECT held_subunits FROM spark_wallets WHERE owner_id=$1', [a.id]))
               .rows[0].held_subunits,
-            '60',
+            '120',
           );
           await assert.rejects(reserve(a, q), rejectCode('GENERATION_OUTSTANDING_REQUEST'));
           await database.tx(async (c) => {
@@ -205,7 +205,7 @@ await test(
                 [a.id],
               )
             ).rows[0],
-            { balance_subunits: '950', held_subunits: '0' },
+            { balance_subunits: '900', held_subunits: '0' },
           );
         },
       );

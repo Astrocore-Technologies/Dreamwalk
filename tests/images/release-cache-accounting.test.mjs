@@ -153,7 +153,7 @@ await test(
         await t.test(label, async () => {
           const f = await fixture(details);
           const held = await f.wallet();
-          assert.ok(BigInt(held.held_subunits) >= BigInt(expected));
+          assert.ok(BigInt(held.held_subunits) >= BigInt(expected * 2));
           assert.equal((await f.engine.queue(f.input)).id, f.job.id);
           await f.engine.run(f.job.id, async () => true);
           await database.tx((c) => f.engine.finalize(c, f.job.id, 'committed'));
@@ -161,7 +161,7 @@ await test(
           await f.engine.run(f.job.id, async () => true);
           assert.equal(f.calls(), 1);
           assert.deepEqual(await f.wallet(), {
-            balance_subunits: String(500000 - expected),
+            balance_subunits: String(500000 - expected * 2),
             held_subunits: '0',
           });
           const r = (

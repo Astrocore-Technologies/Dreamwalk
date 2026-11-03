@@ -233,10 +233,12 @@ function FullExternalGeneration({
                     <SparkReceiptCost receipt={{ ...job, generationCost: null }} />
                   </p>
                 )}
-                <p>
-                  {s('reserve')}: {money(job.heldMicros)}
-                </p>
-                {typeof job.actualMicros === 'number' && (
+                {!job.sparkStatus && (
+                  <p>
+                    {s('reserve')}: {money(job.heldMicros)}
+                  </p>
+                )}
+                {!job.sparkStatus && typeof job.actualMicros === 'number' && (
                   <p>
                     {s('actual')}: {money(job.actualMicros)}
                   </p>
@@ -344,9 +346,15 @@ function FullExternalGeneration({
                 <p>
                   {s(validBound ? 'upper' : 'estimate')}:{' '}
                   {typeof quote.upperMicros === 'number'
-                    ? money(quote.upperMicros)
+                    ? money(
+                        quote.upperMicros,
+                        quote.sparks ? (quote.sparks.rateVersion ?? null) : undefined,
+                      )
                     : typeof quote.estimatedTotalMicros === 'number'
-                      ? money(quote.estimatedTotalMicros)
+                      ? money(
+                          quote.estimatedTotalMicros,
+                          quote.sparks ? (quote.sparks.rateVersion ?? null) : undefined,
+                        )
                       : '—'}
                 </p>
                 {!validBound && (
@@ -354,7 +362,11 @@ function FullExternalGeneration({
                     <p>{g(estimatedQuote ? 'estimateNotice' : 'noInvoiceCap')}</p>
                     {typeof quote.reserveMicros === 'number' && (
                       <p>
-                        {s('reserve')}: {money(quote.reserveMicros)}
+                        {s('reserve')}:{' '}
+                        {money(
+                          quote.reserveMicros,
+                          quote.sparks ? (quote.sparks.rateVersion ?? null) : undefined,
+                        )}
                       </p>
                     )}
                   </>

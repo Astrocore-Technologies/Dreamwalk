@@ -696,7 +696,10 @@ export function ImageGeneration({
             ) : (
               <>
                 {s(quote.costBasis === 'approved_estimate' ? 'estimate' : 'upper')}:{' '}
-                {amount(quote.estimatedTotalMicros ?? quote.upperMicros)}
+                {amount(
+                  quote.estimatedTotalMicros ?? quote.upperMicros,
+                  quote.sparks ? (quote.sparks.rateVersion ?? null) : undefined,
+                )}
               </>
             )}
           </p>
@@ -707,7 +710,12 @@ export function ImageGeneration({
           )}
           {quote.costBasis === 'approved_estimate' && (
             <p>
-              {s('reserve')}: {amount(quote.reserveMicros)}. {g('estimateNotice')}
+              {s('reserve')}:{' '}
+              {amount(
+                quote.reserveMicros,
+                quote.sparks ? (quote.sparks.rateVersion ?? null) : undefined,
+              )}
+              . {g('estimateNotice')}
             </p>
           )}
           {quote.upperMicros === null && !estimatedQuote ? (
@@ -759,7 +767,7 @@ export function ImageGeneration({
               {job.diagnostic.requestId ? ` · ${job.diagnostic.requestId}` : ''}
             </p>
           )}
-          {job.mode === 'external' && (
+          {job.mode === 'external' && !job.sparkStatus && (
             <p>
               {s('reserve')}: {amount(job.heldMicros)}
               {job.actualMicros !== undefined && (

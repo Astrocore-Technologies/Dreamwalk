@@ -46,7 +46,10 @@ test('quote and review bind to source and build; stale inputs and expired quotes
   assert.match(source, /STORY_CONTEXT_STALE/);
 });
 test('ordinary quote shows distinct Sparks estimate and reserve while retaining explicit consent', () => {
-  assert.match(source, /formatSparkSubunits\(String\(micros\), locale\)/);
+  assert.match(
+    source,
+    /providerSparkSubunits\(\s*micros,\s*quote\?\.sparks \? \(quote.sparks.rateVersion \?\? null\) : undefined,/,
+  );
   assert.match(source, /copyText\('estimated'\)/);
   assert.match(source, /copyText\('reserved'\)/);
   assert.match(source, /consent: true/);

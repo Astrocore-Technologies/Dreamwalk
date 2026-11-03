@@ -1,3 +1,4 @@
+import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import {
   quoteSparks,
   reserveSparks,
@@ -134,10 +135,10 @@ export class AuthoringTextEngine {
       proposal: row.status === 'committed' ? row.proposal : null,
     };
   }
-  private quoteDto(row: QueryResultRow) {
+  private async quoteDto(c: PoolClient, row: QueryResultRow) {
     return {
       id: row.id,
-      ...sparkQuoteView(row.spark_quote_id, String(row.upper_micros)),
+      ...(await sparkQuoteView(c, row.spark_quote_id)),
       policyRevision: row.generation_policy_revision ?? null,
       policyHash: row.generation_policy_hash ?? null,
       upperMicros: row.request_snapshot ? null : Number(row.upper_micros),
@@ -233,7 +234,7 @@ export class AuthoringTextEngine {
       if (prior) {
         if (prior.request_hash !== requestHash)
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
-        return this.quoteDto(prior);
+        return this.quoteDto(c, prior);
       }
       const id = randomUUID(),
         expiresAt = new Date(
@@ -270,7 +271,7 @@ export class AuthoringTextEngine {
           operationId: id,
           sourceKind: 'text',
           sourceId: id,
-          reserveSubunits: String(row.upper_micros),
+          reserveSubunits: providerMicrosToSparkSubunits(String(row.upper_micros)),
           expiresAt: expiresAt.toISOString(),
           tariff: sparkTariff(
             snapshot ?? this.provider.profile ?? this.live.textProfile(),
@@ -292,7 +293,7 @@ export class AuthoringTextEngine {
         sparkQuoteId,
       ]);
       row.spark_quote_id = sparkQuoteId;
-      return this.quoteDto(row);
+      return this.quoteDto(c, row);
     });
   }
   async enqueue(
@@ -412,7 +413,8 @@ export class AuthoringTextEngine {
         ...job,
         spark_quote_id: locked.spark_quote_id,
         spark_status: locked.spark_quote_id ? 'held' : undefined,
-        spark_reserved_subunits: locked.spark_quote_id ? String(quote.upper_micros) : undefined,
+        spark_reserved_subunits: (await sparkQuoteView(c, locked.spark_quote_id)).sparks
+          ?.reserveSubunits,
         budget_upper_micros: String(quote.upper_micros),
       });
     });

@@ -705,7 +705,7 @@ test(
           [owner],
         )
       ).rows[0];
-      assert.deepEqual(walletAfter, { balance_subunits: '999995', held_subunits: '66950' });
+      assert.deepEqual(walletAfter, { balance_subunits: '999990', held_subunits: '66950' });
       // Actual wrapped engine -> GenerationAuthority settlement and reconciliation
       // must wait on provider budget BEFORE taking the shared global fence.
       const { GenerationAuthority } = require('../../apps/api/dist/generation/service');

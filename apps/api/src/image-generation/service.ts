@@ -1,3 +1,4 @@
+import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import { resolveOwnerImageProfile } from '../generation/config';
 import {
   quoteSparks,
@@ -653,7 +654,7 @@ export class ImageGenerationEngine {
             operationId: id,
             sourceKind: 'image',
             sourceId: id,
-            reserveSubunits: String(upper),
+            reserveSubunits: providerMicrosToSparkSubunits(String(upper)),
             expiresAt: expiresAt.toISOString(),
             tariff: sparkTariff(
               {
@@ -686,7 +687,7 @@ export class ImageGenerationEngine {
           ...(input.framingVersion
             ? { framingVersion: input.framingVersion, imageFraming: input.imageFraming ?? null }
             : {}),
-          ...sparkQuoteView(sparkQuoteId, String(upper)),
+          ...(await sparkQuoteView(c, sparkQuoteId)),
           id,
           mode: input.mode,
           upperMicros: costBasis === 'approved_estimate' ? null : upper,
@@ -932,7 +933,8 @@ export class ImageGenerationEngine {
       ]);
       job.spark_quote_id = q.spark_quote_id;
       job.spark_status = q.spark_quote_id ? 'held' : undefined;
-      job.spark_reserved_subunits = q.spark_quote_id ? String(q.upper_micros) : undefined;
+      job.spark_reserved_subunits = (await sparkQuoteView(c, q.spark_quote_id)).sparks
+        ?.reserveSubunits;
       return this.dto(job);
     });
   }

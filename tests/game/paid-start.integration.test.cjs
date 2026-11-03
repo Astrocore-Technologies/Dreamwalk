@@ -260,7 +260,7 @@ test(
           (
             await db.query('SELECT balance_subunits FROM spark_wallets WHERE owner_id=$1', [player])
           )[0].balance_subunits,
-          '499970',
+          '499940',
         );
         assert.equal(
           (
@@ -323,7 +323,7 @@ test(
                 player,
               ])
             )[0].balance_subunits,
-            '499970',
+            '499940',
           );
         },
       );
