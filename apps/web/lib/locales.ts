@@ -1041,6 +1041,11 @@ const messages: Record<string, Record<Locale, string>> = {
     en: 'Submit report',
     uk: 'Надіслати скаргу',
   },
+  'Автор миров': {
+    ru: 'Автор миров',
+    en: 'World creator',
+    uk: 'Автор світів',
+  },
   'АВТОР МИРОВ': {
     ru: 'АВТОР МИРОВ',
     en: 'WORLD CREATOR',

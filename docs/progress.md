@@ -1067,3 +1067,29 @@ restart; source ACLs, erasure and immutable body checks remain enforced.
 The API service was checked read-only through Railway. OAuth hides its variable
 values, so the live model/profile is not confirmed. No live calls or deployment were
 performed. Real visual accuracy remains unverified. See docs/runtime-map-vision.md.
+
+## Catalog and creator reference composition (2026-11-03)
+
+- Scoped public discovery cards now place readable world covers behind the title,
+  synopsis, genuine author handle/initial, genre and persisted metrics/player range.
+  Desktop uses three columns and mobile one. Creator profiles have a separate page
+  heading, large actual avatar or honest initial, biography and portrait-format worlds.
+- Reuses the original decorative world illustration in the creator banner only;
+  it is not an author-uploaded image or a story cover. No new authored content,
+  invented avatar, biography, popularity, publication or backend metadata is added.
+- Catalog query/filter/sort, editorial hiding, direct story/hero links, readable
+  creator API data and empty/error states remain. Shared AdventureCard, library,
+  launch, shell and backend access behavior are unchanged. Current APIs provide
+  arrays, not pagination; this visual slice does not invent pagination controls.
+- Added source contracts and browser-only synthetic RU/UK/EN × light/dark ×
+  desktop/mobile captures, font/image decoding, search/filter/sort/reset, query
+  navigation, error retry, long content and empty publication coverage.
+- Local focused source/unit checks: 11 passed; focused lint is clean. All 240 game
+  core tests passed, but the npm-test contracts rebuild was killed (exit 137).
+  Repository-wide typecheck and lint
+  were attempted but killed by the executor (exit 137); no full-pass claim.
+  Web typecheck retry also exited 137. Local Playwright Chromium is absent after
+  executor restart; browser execution is not claimed. Exact-head CI and rendered
+  review remain acceptance gates. Existing
+  shared-shell draft owns surrounding chrome. Real story/author content differs
+  from the reference; no complete sitewide 1:1 claim is made.

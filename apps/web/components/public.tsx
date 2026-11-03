@@ -1,4 +1,6 @@
 'use client';
+import { DiscoveryWorldCard } from './public-discovery';
+import './public-discovery.css';
 import { StoryMetrics, StoryLikeButton } from './story-metrics';
 import { isDiscoveryStory } from '@/lib/discovery';
 import { storyReturnPath, withStoryReturn } from './story-return';
@@ -181,7 +183,7 @@ export function ExplorePage() {
       ) : data?.length ? (
         <div className="adventure-grid discovery-grid">
           {data.map((a) => (
-            <AdventureCard discovery key={a.id} adventure={a} />
+            <DiscoveryWorldCard key={a.id} adventure={a} />
           ))}
         </div>
       ) : (
@@ -471,7 +473,14 @@ export function CreatorPage({ handle }: { handle: string }) {
   if (!data) return <ErrorBox message={error} retry={reload} />;
   return (
     <div className="discovery-page creator-page">
+      <header className="creator-page-heading">
+        <h1>{tr('Автор миров')}</h1>
+      </header>
       <div className="creator-header creator-banner">
+        <picture className="creator-decoration" aria-hidden="true">
+          <source srcSet="/images/dreamwalk-world-night.webp" />
+          <img src="/images/dreamwalk-world-night.webp" alt="" />
+        </picture>
         <span className="avatar large">
           {data.creator.avatarAssetId ? (
             <img src={assetUrl(data.creator.avatarAssetId)} alt="" />
@@ -480,9 +489,7 @@ export function CreatorPage({ handle }: { handle: string }) {
           )}
         </span>
         <div>
-          <span className="eyebrow">{tr('АВТОР МИРОВ')}</span>
-          <h1>{data.creator.handle}</h1>
-          <p>@{data.creator.handle}</p>
+          <h2>@{data.creator.handle}</h2>
           <p className="creator-bio">
             {data.creator.bio || tr('Истории говорят об авторе лучше любых слов.')}
           </p>
@@ -491,7 +498,7 @@ export function CreatorPage({ handle }: { handle: string }) {
       <h2 className="section-title">{tr('Опубликованные приключения')}</h2>
       <div className="adventure-grid discovery-grid">
         {data.adventures.map((a) => (
-          <AdventureCard adventure={a} key={a.id} />
+          <DiscoveryWorldCard adventure={a} key={a.id} portrait />
         ))}
       </div>
       {!data.adventures.length && (
