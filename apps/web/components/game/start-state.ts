@@ -3,6 +3,7 @@ export type StartPreparation = {
   status: string;
   reused: boolean;
   campaignId: string | null;
+  directorProfileId?: string;
   jobs?: { status: string; error_code?: string; sparkStatus?: string | null }[];
 };
 export function startState(preparation: StartPreparation | null, dispatchUncertain = false) {

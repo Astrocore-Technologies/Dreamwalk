@@ -1052,3 +1052,18 @@ production activation is performed. The reviewed model-specific image accounting
 and separately authorized visual-quality check remain activation prerequisites;
 Luna's undocumented image multiplier/counting-endpoint price is not invented.
 See `docs/runtime-map-vision.md` for behavior and the exact remaining decision.
+
+## 2026-11-03 — runtime vision activation without an image allowance
+
+The owner explicitly asked to enable map vision rather than wait for a model-specific
+image allowance. PR69 now defaults release gpt-6-luna profiles with per-request context
+planning to operational exact image-aware counting. Explicit runtimeVision:false
+opts out. The count runs only on a gameplay quote POST, outside campaign/SQL locks;
+the existing one quote/confirmation and actual generation-usage settlement remain.
+Operational counting fee metadata stays NULL/unverified, never a fabricated zero
+invoice or a second player debit. Durable evidence and unknown attempts survive
+restart; source ACLs, erasure and immutable body checks remain enforced.
+
+The API service was checked read-only through Railway. OAuth hides its variable
+values, so the live model/profile is not confirmed. No live calls or deployment were
+performed. Real visual accuracy remains unverified. See docs/runtime-map-vision.md.

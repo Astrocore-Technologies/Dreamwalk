@@ -1,12 +1,12 @@
 'use client';
+import { ImageQuotePrice } from '../assets/image-quote-price';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError, useClient } from '@/lib/client';
 import { useT } from '@/lib/i18n';
-import { useSparkCosts, SparkQuotePrice, SparkQuoteNotice, SparkReceiptCost } from './sparks-cost';
+import { useSparkCosts, SparkReceiptCost } from './sparks-cost';
 import { ImageConfirmation } from '../assets/image-confirmation';
 import { useImageText } from '../assets/image-messages';
 import { Button, ErrorBox } from '../ui';
-import { RequestReserve } from '../live-test/request-reserve';
 import { artPreviewUrl } from '../assets/types';
 import { generationRemaining, liveSessionActive, type LiveTestStatus } from '../live-test/types';
 import {
@@ -338,45 +338,14 @@ function FullExternalGeneration({
             )}
             {quote && !immutable && !dismissed[quoteKey] && (
               <div className={styles.quote}>
-                {quote.sparks && <SparkQuotePrice quote={quote} />}
-                <SparkQuoteNotice quote={quote} />
-                {user?.role === 'admin' && quote.estimateSnapshot && (
-                  <RequestReserve snapshot={quote.estimateSnapshot} />
-                )}
-                <p>
-                  {s(validBound ? 'upper' : 'estimate')}:{' '}
-                  {typeof quote.upperMicros === 'number'
-                    ? money(
-                        quote.upperMicros,
-                        quote.sparks ? (quote.sparks.rateVersion ?? null) : undefined,
-                      )
-                    : typeof quote.estimatedTotalMicros === 'number'
-                      ? money(
-                          quote.estimatedTotalMicros,
-                          quote.sparks ? (quote.sparks.rateVersion ?? null) : undefined,
-                        )
-                      : '—'}
-                </p>
-                {!validBound && (
-                  <>
-                    <p>{g(estimatedQuote ? 'estimateNotice' : 'noInvoiceCap')}</p>
-                    {typeof quote.reserveMicros === 'number' && (
-                      <p>
-                        {s('reserve')}:{' '}
-                        {money(
-                          quote.reserveMicros,
-                          quote.sparks ? (quote.sparks.rateVersion ?? null) : undefined,
-                        )}
-                      </p>
-                    )}
-                  </>
-                )}
+                <ImageQuotePrice quote={quote} />
                 <small>
                   {g('expires')}: {new Date(quote.expiresAt).toLocaleString(locale)}
                 </small>
                 {expired && <p>{g('expired')}</p>}
                 <ImageConfirmation
-                  estimated={estimatedQuote}
+                  walletCharging={!!quote.sparks?.walletCharging}
+                  estimated={quote.upperMicros === null}
                   busy={busy}
                   disabled={
                     disabled ||

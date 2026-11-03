@@ -132,3 +132,24 @@ export async function runtimeMapStillCurrent(
     return false;
   }
 }
+
+/** Quote simulation may predict later positions. Before sending its count input,
+ * recheck the immutable source and access without pretending those moves happened. */
+export async function runtimeMapSourceStillCurrent(
+  query: Query,
+  campaignId: string,
+  state: GameState,
+  context: unknown,
+) {
+  const image = readRuntimeMapImage(context);
+  if (!image) return true;
+  try {
+    const actorId =
+      image.view.observerIds.find((id) => state.entities[id]?.kind === 'player') ??
+      image.view.observerIds[0];
+    const row = await currentRaster(query, campaignId, state, actorId);
+    return row?.revisionId === image.revisionId && row.sha256 === image.sha256;
+  } catch {
+    return false;
+  }
+}

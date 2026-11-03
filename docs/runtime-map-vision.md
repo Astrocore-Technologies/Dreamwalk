@@ -28,61 +28,87 @@ collision, move characters, repair old spawns or regenerate art.
   background revision/hash and access/takedown status are rechecked. A mismatch
   invalidates the quoted request instead of silently replacing or repricing it.
 
-## One request and one quote
+## Enabled release path: one quote and one generation
 
-`text.runtimeVision` is an explicit operator-reviewed policy, independent of
-`text.storyVision`. It uses the same model, one image, high detail, a reviewed image
-input-token allowance, text-input billing and a maximum admitted input-token tier.
-It requires the existing per-request estimate and context-window policy. No default
-allowance, model multiplier or production activation is supplied by this change.
+At the owner's explicit request, release profiles using `gpt-6-luna`, per-request
+`contextBudgetTokens` and `estimation` now default to `text.runtimeVision` with
+`counting: "operational_exact"`. `text.runtimeVision: false` opts out. Other models,
+owner/manual modes and profiles without per-request planning are unchanged. An
+explicit reviewed allowance policy remains compatible. No image multiplier or
+`inputTokensPerImage` is invented, and there is no fixed 20-Spark reserve or new
+cumulative spending cap.
 
-The normal local quote contains the final multimodal body, its SHA-256, the text and
-image input allowance, reserved output and the existing margin. Image base64 bytes
-are transport bytes, not text tokens. The existing quote confirmation explicitly
-says the map image/visible characters are sent and analysis is included. There is no
-second analysis generation, automatic token-count request or hidden retry.
+The default uses the existing profile's tariff and pricing validity, one high-detail
+image, and a 272,000-input-token pricing boundary. This is the documented Luna
+long-context tariff threshold, not a guessed image-token count. The ordinary
+configuration fingerprint and release deployment revision include the policy.
 
-When the existing explicitly authorized token-count preflight supplies matching
-exact evidence, that count takes precedence over the allowance. It is pinned to the
-complete same body/model/provider/policy and cannot survive changed pixels or
-positions. Receipt settlement uses actual provider input/output/cache usage. Usage
-outside the reviewed input tier remains unknown rather than being charged at an
-incorrect lower rate. Vision does not change wallet, consent or system-work gates.
+Only a player's explicit gameplay quote POST can initiate an operational count.
+The UI discloses image/token counting before that action. The first local pass
+prepares the exact audience-authorized request; all campaign serialization and SQL
+transactions unwind before `/v1/responses/input_tokens` is called. Access, source
+pins and source takedowns are checked again immediately before that call. The local
+quote is then rebuilt, with stable turn IDs and the same frozen body, after which
+the existing single player confirmation authorizes generation. GETs, typing,
+startup and worker ticks never initiate counting or silently retry it.
 
-## Activation decision still required
+Migration 057 records only operation metadata, body hash, model/provider identity,
+status and exact input tokens. It does not store images, labels, prompts or keys.
+Successful evidence is reused for ten minutes for the same immutable body and
+model/policy; an explicit later quote refreshes it, avoiding an indefinite count
+cache for a mutable model alias. Queue
+admission reloads it after restart; a dispatched generation also carries its durable
+quote snapshot. Changed images/positions/settings invalidate that evidence rather
+than silently repricing the accepted request. An uncertain or interrupted count is
+not replayed automatically, including after restart. A changed state during counting
+requires a fresh quote. Missing count access and over-window/tariff inputs produce
+specific errors before generation.
 
-The feature is implemented and tested through injected transport, not activated on
-production. A valid reviewed runtime policy and separately authorized real-image
-quality check are still required. Do not fill `inputTokensPerImage` with a guessed
-GPT-6 Luna multiplier simply to make the configuration pass.
+The exact input count is combined with the existing output reservation and margin.
+Final generation settlement still uses actual reported input/output/cache usage.
+The count response does not prove an invoice amount: `provider_fee_micros` stays
+NULL and `cost_basis` is `unverified_operational`. This operational fee is not claimed
+to be free, is not fabricated into the player's Spark/Dream ledger, and remains
+available for operator reconciliation. One successful count is not a second story
+or analysis generation. The older explicitly priced manual text-count workflow is
+unchanged. Account erasure removes the operational count's actor/campaign links and
+body hash while preserving unresolved cost metadata.
+
+## Deployment and verification boundary
+
+No production variable, restart or deployment was changed by this implementation.
+The owner deploys manually. A read-only Railway check on 2026-11-03 confirmed the
+Dreamwalk API service and that its configuration variable exists, but OAuth hides
+its values, so the current live text model and profile were not verified. After a
+manual deployment, a matching release profile activates the exact path automatically;
+provider access is still checked by the actual count response, never assumed.
+
+No live paid count or model-quality evaluation was run. Injected transport and real
+PostgreSQL tests establish transport, accounting boundaries, privacy and restart
+behavior, not Luna's visual accuracy on the owner's actual art. Collision, obstacle
+inference, spawn repair and movement based on painted terrain remain out of scope.
 
 Official documentation checked on 2026-11-03:
 
-- https://developers.openai.com/api/docs/models/gpt-6-luna confirms image inputs.
-- https://developers.openai.com/api/docs/guides/images-vision says image inputs are
-  converted to billable input tokens. Its multiplier table omits GPT-6 Luna.
+- https://developers.openai.com/api/docs/models/gpt-6-luna confirms image inputs and
+  the higher tariff for prompts above 272K input tokens.
 - https://developers.openai.com/api/docs/guides/token-counting and
   https://developers.openai.com/api/reference/resources/responses/subresources/input_tokens/methods/count
-  document exact image-aware input counting, but do not establish that the counting
-  endpoint is free. Existing separate counting-cost authorization remains intact.
-- https://developers.openai.com/api/docs/pricing lists Luna Standard rates per
-  million: $0.10 ordinary input, $0.01 cache reads, $0.125 30-minute writes,
-  $0.25 12-hour writes, $0.50 output for up to 272,000 input tokens. Above that
-  threshold, input/cache rates double and output is multiplied by 1.5 for the
-  whole request. These are documentation findings, not automatic configuration.
+  document exact counting with image input. They do not establish a free count fee.
+- https://developers.openai.com/api/docs/guides/images-vision describes billable image
+  input tokens; no unpublished Luna image multiplier is assumed.
 
-A defensible activation of this implementation still needs a verified model-specific
-image allowance. Existing exact evidence can refine the estimate, but does not remove
-that configuration requirement. An allowance-free activation would require a separate
-explicitly authorized exact-count workflow and verified counting-cost accounting; it
-is not implemented here and must not be disguised as an unpriced background request. Mock
-success establishes protocol, privacy and budget fencing, not real map-reading
-quality, provider access, or safe placement on the user's actual art.
+## Offline tests
 
-## Verification
+`runtime-map-raster.test.cjs` covers visibility masking, unseen identities,
+immutable inputs, contain framing, markers, footprints and invalid rasters.
+`runtime-map-vision.test.cjs` covers quote-body pinning, count/dispatch parity,
+no-network packing, restart restoration, model default/opt-out, tier/window fences,
+errors and release of the quote scope before counting. Both run in `test:game`.
 
-`runtime-map-raster.test.cjs` covers intersection masking, unseen identities, immutable
-inputs, contain framing, numeric labels, footprints, deterministic output and invalid
-raster inputs. `runtime-map-vision.test.cjs` covers current-map rights/pins, revocation,
-changed positions, actual mocked `input_image` dispatch, byte/body pinning, exact-count
-precedence, tier fences and zero extra calls. Both are included in `npm run test:game`.
+The disposable PostgreSQL paid-start suite also runs
+`runtime-map-preflight.fixture.cjs`: real authorization and quote tables, SQL-lock
+release before the injected transport, exact count reuse after engine restart,
+no player wallet mutation, NULL operational fees, unknown-outcome replay prevention,
+and revoked access. The separate runtime-map ACL fixture covers private source
+revocation, map pins and takedowns.

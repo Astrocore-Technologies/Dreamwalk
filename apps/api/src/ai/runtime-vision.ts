@@ -67,7 +67,15 @@ export const runtimeMapImageSchema = z
   })
   .strict();
 export type RuntimeMapImage = z.infer<typeof runtimeMapImageSchema>;
-export type RuntimeVisionPolicy = StoryVisionPolicy;
+export type RuntimeVisionPolicy =
+  | StoryVisionPolicy
+  | (Omit<StoryVisionPolicy, 'inputTokensPerImage'> & {
+      counting: 'operational_exact';
+      inputTokensPerImage?: never;
+    });
+export const RUNTIME_MAP_COUNT_VERSION = 'runtime-map-exact-input-tokens-v1';
+export const usesRuntimeExactCount = (policy?: RuntimeVisionPolicy) =>
+  !!policy && 'counting' in policy && policy.counting === 'operational_exact';
 export function readRuntimeMapImage(context: unknown): RuntimeMapImage | undefined {
   const value = (context as { runtimeMapImage?: unknown } | null)?.runtimeMapImage;
   if (value === undefined) return undefined;
@@ -96,8 +104,8 @@ export function runtimeVisionInput(
     policy.maxImages < 1 ||
     policy.detail !== 'high' ||
     policy.billing !== 'text_input_rate' ||
-    !Number.isSafeInteger(policy.inputTokensPerImage) ||
-    policy.inputTokensPerImage < 1 ||
+    (!usesRuntimeExactCount(policy) &&
+      (!Number.isSafeInteger(policy.inputTokensPerImage) || policy.inputTokensPerImage! < 1)) ||
     !(
       Date.parse(policy.pricing.reviewedAt) <= Date.now() &&
       Date.parse(policy.pricing.validUntil) > Date.now()
@@ -144,8 +152,8 @@ export function runtimeVisionCounter(
     !policy ||
     policy.model !== model ||
     policy.maxImages !== 1 ||
-    !Number.isSafeInteger(policy.inputTokensPerImage) ||
-    policy.inputTokensPerImage < 1 ||
+    (!usesRuntimeExactCount(policy) &&
+      (!Number.isSafeInteger(policy.inputTokensPerImage) || policy.inputTokensPerImage! < 1)) ||
     !Number.isSafeInteger(policy.maxPricedInputTokens) ||
     policy.maxPricedInputTokens < 1
   )
@@ -159,7 +167,12 @@ export function runtimeVisionCounter(
         part.image_url = '[pinned raster]';
       }
   if (images !== 1) throw new Error('RUNTIME_MAP_VISION_POLICY_REQUIRED');
-  const tokens = Buffer.byteLength(JSON.stringify(envelope)) + 4096 + policy.inputTokensPerImage;
+  // Packing is always local and deterministic. This text-only estimate is never
+  // admitted as an image quote: operational-exact mode requires provider evidence below.
+  const tokens =
+    Buffer.byteLength(JSON.stringify(envelope)) + 4096 + (policy.inputTokensPerImage ?? 0);
+  if (usesRuntimeExactCount(policy) && enforcePricedRange && exact?.precision !== 'exact')
+    throw new Error('RUNTIME_MAP_EXACT_COUNT_REQUIRED');
   const hash = createHash('sha256').update(body).digest('hex');
   const counter: TextTokenCounter = exact?.supports(model)
     ? exact

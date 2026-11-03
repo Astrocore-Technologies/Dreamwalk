@@ -510,3 +510,30 @@ test('story plan output override requires per-request estimates and fits reviewe
   changed.text.storyPlanMaxOutputTokens = 4096;
   assert.notEqual(config(changed).configFingerprint, c.configFingerprint);
 });
+
+test('maximum authored prompt gets hidden style after public validation; old requests keep original bytes', async () => {
+  const sent = [];
+  const runtime = createOwnerImageRuntime(config(), {
+    now: () => now,
+    resolveApiKey: () => 'synthetic-key',
+    fetchImpl: async (_url, init) => {
+      sent.push(JSON.parse(init.body).prompt);
+      return result();
+    },
+  });
+  const prompt = 'x'.repeat(2000);
+  await runtime.provider.generate(request({ prompt, requestPolicyVersion: 2 }), randomUUID(), []);
+  assert.ok(sent[0].length > 2000);
+  assert.match(sent[0], /Default art: detailed drawn 2D anime/);
+  assert.ok(sent[0].endsWith(prompt));
+  await runtime.provider.generate(request({ prompt }), randomUUID(), []);
+  assert.equal(sent[1], prompt);
+  await assert.rejects(
+    runtime.provider.generate(
+      request({ prompt: 'x'.repeat(2001), requestPolicyVersion: 2 }),
+      randomUUID(),
+      [],
+    ),
+  );
+  assert.equal(sent.length, 2);
+});

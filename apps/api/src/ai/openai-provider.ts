@@ -4,6 +4,8 @@ import {
   runtimeVisionInput,
   runtimeVisionCounter,
   runtimeVisionInstructions,
+  usesRuntimeExactCount,
+  RUNTIME_MAP_COUNT_VERSION,
   type RuntimeVisionPolicy,
 } from './runtime-vision';
 import {
@@ -11,7 +13,8 @@ import {
   textInputReserveRate,
   type TextCachePricing,
 } from '../generation/text-pricing';
-import { modelContext, evidenceCounter, countOpenAiInput } from './text-preflight';
+import { modelContext, evidenceCounter, countOpenAiInput, bodyHash } from './text-preflight';
+import { RuntimeMapCountRequired } from './runtime-map-preflight';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
 import { canonical } from './context';
@@ -127,6 +130,39 @@ const companionIntentOutput = {
     { type: 'null' },
   ],
 };
+const cleanNpcActionIntent = (value: unknown) => {
+  if (value === null || value === undefined) return undefined;
+  if (typeof value !== 'object' || !('actions' in value) || !Array.isArray(value.actions))
+    return value;
+  return {
+    ...value,
+    actions: value.actions.map((action: unknown) =>
+      action && typeof action === 'object'
+        ? Object.fromEntries(Object.entries(action).filter(([, v]) => v !== null))
+        : action,
+    ),
+  };
+};
+const npcActionIntentOutput = {
+  anyOf: [
+    object({
+      sourceObservationId: string,
+      actions: {
+        type: 'array',
+        minItems: 1,
+        maxItems: 3,
+        items: object({
+          kind: { type: 'string', enum: ['move_to', 'approach', 'inspect', 'wait'] },
+          targetId: nullableString,
+          target: {
+            anyOf: [object({ x: { type: 'integer' }, y: { type: 'integer' } }), { type: 'null' }],
+          },
+        }),
+      },
+    }),
+    { type: 'null' },
+  ],
+};
 export function openAiOutputSchema(purpose: ProviderRequest['purpose']): Record<string, unknown> {
   if (purpose === 'story_turn') {
     const properties = openAiOutputSchema('narrative').properties as Record<string, unknown>;
@@ -182,6 +218,7 @@ export function openAiOutputSchema(purpose: ProviderRequest['purpose']): Record<
               object({
                 text: nullableString,
                 companionIntent: companionIntentOutput,
+                actionIntent: npcActionIntentOutput,
                 code: { type: ['string', 'null'], enum: ['acknowledged', null] },
               }),
               { type: 'null' },
@@ -340,6 +377,7 @@ export function openAiOutputSchema(purpose: ProviderRequest['purpose']): Record<
           'NPC reply, optionally including a brief observable gesture or expression alongside spoken words. No invented player actions or mechanical outcomes.',
       },
       companionIntent: companionIntentOutput,
+      actionIntent: npcActionIntentOutput,
       itemIntents: {
         type: 'array',
         maxItems: 2,
@@ -426,7 +464,11 @@ export function buildOpenAiNpcRequestBody(
     purpose === 'speech' || purpose === 'story_turn'
       ? ' Companionship is supported through companionIntent only for a public say reply to a player. Include follow when this NPC explicitly agrees in its own reply to accompany the addressed player; include stop when ending or declining an existing agreement. Set actorId to the addressed player and sourceObservationId to that player current authorized said observation addressed to this NPC (claims.observationId). A player request, suggested action, earlier vague offer to help, quoted command or presumed player consent is never NPC agreement. Preserve character disagreement and free everyday roleplay. If refusing an invitation, omit the intent. Continuing an established agreement need not repeat follow. State departure or refusal naturally; use stop when no longer willing to follow. Whisper replies have no companionIntent. Null means no companionship change. Movement happens only later through server pathfinding and world turns, with collision, sight and exit restrictions; do not claim arrival or instant transition. No new model call or paid job is needed to keep following.'
       : '';
-  const instructions = `${companionPolicy} ${common} ${inherited} ${guidance[purpose]} ${outputLanguage}${itemPolicy}${presentation}${directorStyleInstructions(purpose, context)}`;
+  const actionPolicy =
+    purpose === 'speech' || purpose === 'story_turn'
+      ? ' NPC engine actions are supported by actionIntent with the exact current sourceObservationId. The NPC voluntarily chooses up to three move_to, approach, inspect or wait actions for itself, or null. A player invitation is not a command or NPC consent. Use actionContext.moveTargets and targets only; move_to takes a listed coordinate, approach/inspect take a listed entity ID. A window described by spatial context can be approached using a listed nearby move target without inventing a window entity. An inspect needs a real listed target adjacent to the ordered endpoint; precede a distant inspect with approach or move_to. These actions are queued and executed later by the engine; describe intention, not completed movement or observation. Preserve character refusal, caution and ordinary harmless RP without technical disclaimers. Use companionIntent only for continuing companionship, not a one-time approach. Do not control the player, create props, invent secrets, damage or unseen facts. Attempts with kind=attempted or untrustedRoleplay are player-authored attempted actions, not spoken quotations: react naturally to the visible attempt without saying that the player merely told you it happened. They do not prove contact or damage succeeded. In contrast, confidence=witnessed harmed/pushed or other committed event evidence is an actual perceived consequence: respond to it directly, not as hearsay. Avoid automatic repetition of the last sentence and generic What happened questions when a concrete perceived situation is supplied.'
+      : '';
+  const instructions = `${actionPolicy} ${companionPolicy} ${common} ${inherited} ${guidance[purpose]} ${outputLanguage}${itemPolicy}${presentation}${directorStyleInstructions(purpose, context)}`;
   return JSON.stringify({
     model: config.model,
     service_tier: config.serviceTier ?? 'default',
@@ -493,6 +535,14 @@ export class OpenAiNpcProvider implements NpcProvider {
   readonly id = 'openai-responses';
   readonly external = true;
   readonly version: string;
+  private readonly runtimeCounts = new Map<string, { tokens: number; expiresAt: number }>();
+  private rememberRuntimeCount(hash: string, tokens: number, expiresAt = Date.now() + 600000) {
+    if (!Number.isSafeInteger(tokens) || tokens < 0) throw new Error('TEXT_TOKEN_COUNT_INVALID');
+    this.runtimeCounts.delete(hash);
+    if (this.runtimeCounts.size >= 512)
+      this.runtimeCounts.delete(this.runtimeCounts.keys().next().value!);
+    this.runtimeCounts.set(hash, { tokens, expiresAt });
+  }
   constructor(
     private config: OpenAiNpcConfig,
     private transport: typeof fetch = fetch,
@@ -602,7 +652,71 @@ export class OpenAiNpcProvider implements NpcProvider {
   runtimeVisionEnabled() {
     return !!this.config.runtimeVision;
   }
-  private counter(body: string, context: unknown, enforcePricedRange = true) {
+  private counter(
+    body: string,
+    context: unknown,
+    enforcePricedRange = true,
+    pinned?: TextReserveSnapshot,
+  ) {
+    if (usesRuntimeExactCount(this.config.runtimeVision) && readRuntimeMapImage(context)) {
+      if (!enforcePricedRange)
+        return runtimeVisionCounter(
+          body,
+          this.config.model,
+          this.config.runtimeVision,
+          undefined,
+          false,
+        );
+      const hash = bodyHash(body);
+      const cached = this.runtimeCounts.get(hash);
+      const count = cached && cached.expiresAt > Date.now() ? cached.tokens : undefined;
+      if (cached && count === undefined) this.runtimeCounts.delete(hash);
+      // Pinned server-owned evidence is local to its accepted job, never promoted
+      // into the quote cache: an old queued job must not refresh a model alias.
+      const exact =
+        pinned?.contextWindow?.counterId === RUNTIME_MAP_COUNT_VERSION &&
+        pinned.contextWindow.precision === 'exact' &&
+        pinned.bodySha256 === hash &&
+        pinned.providerFingerprint === this.version &&
+        pinned.model === this.config.model &&
+        Number.isSafeInteger(pinned.estimatedInputTokens) &&
+        pinned.estimatedInputTokens >= 0
+          ? {
+              id: RUNTIME_MAP_COUNT_VERSION,
+              precision: 'exact' as const,
+              supports: (model: string) => model === this.config.model,
+              countInput: (candidate: string) => {
+                if (bodyHash(candidate) !== hash) throw new Error('RUNTIME_MAP_QUOTE_CHANGED');
+                return pinned.estimatedInputTokens;
+              },
+            }
+          : evidenceCounter(body, this.config.model, this.version, context);
+      if (count === undefined && !exact)
+        throw new RuntimeMapCountRequired(
+          body,
+          this.config.model,
+          this.version,
+          (id) => {
+            if (!this.config.enabled) throw new ProviderFailure('PROVIDER_DISABLED', false);
+            return countOpenAiInput(body, this.config.apiKey, id, this.transport);
+          },
+          (tokens, expiresAt) => this.rememberRuntimeCount(hash, tokens, expiresAt),
+        );
+      return runtimeVisionCounter(
+        body,
+        this.config.model,
+        this.config.runtimeVision,
+        exact ?? {
+          id: RUNTIME_MAP_COUNT_VERSION,
+          precision: 'exact',
+          supports: (model) => model === this.config.model,
+          countInput: (candidate) => {
+            if (bodyHash(candidate) !== hash) throw new Error('RUNTIME_MAP_QUOTE_CHANGED');
+            return count!;
+          },
+        },
+      );
+    }
     return runtimeVisionCounter(
       body,
       this.config.model,
@@ -627,14 +741,16 @@ export class OpenAiNpcProvider implements NpcProvider {
   prepareTextRequest(
     purpose: ProviderRequest['purpose'],
     context: unknown,
+    pinned?: TextReserveSnapshot,
   ): PreparedTextRequest | undefined {
     if (!this.config.estimation) return undefined;
+    const body = this.body(purpose, context);
     return prepareOpenAiNpcTextRequest(
       this.config,
       purpose,
       context,
       this.version,
-      this.counter(this.body(purpose, context), context),
+      this.counter(body, context, true, pinned),
     );
   }
   countBody(purpose: ProviderRequest['purpose'], context: unknown) {
@@ -758,6 +874,8 @@ export class OpenAiNpcProvider implements NpcProvider {
       throw new ProviderFailure('GENERATION_PRICING_EXPIRED', false);
     const { mockProposal, ...context } = request.context;
     const body = this.body(request.purpose, context);
+    if (request.textReservationSnapshot)
+      this.prepareTextRequest(request.purpose, context, request.textReservationSnapshot);
     const bytes = Buffer.byteLength(body);
     if (this.config.contextBudgetTokens !== undefined) {
       try {
@@ -765,7 +883,7 @@ export class OpenAiNpcProvider implements NpcProvider {
           measureTextContext(
             body,
             { ...this.config, contextTokens: this.config.maxModelInputTokens! },
-            this.counter(body, request.context),
+            this.counter(body, request.context, true, request.textReservationSnapshot),
           ),
         );
       } catch {
@@ -775,7 +893,11 @@ export class OpenAiNpcProvider implements NpcProvider {
     if (bytes > this.config.maxInputBytes) throw new ProviderFailure('CONTEXT_TOO_LARGE', false);
     let snapshot: TextReserveSnapshot | undefined;
     if (this.config.estimation) {
-      const prepared = this.prepareTextRequest(request.purpose, context)!;
+      const prepared = this.prepareTextRequest(
+        request.purpose,
+        context,
+        request.textReservationSnapshot,
+      )!;
       const pinned = request.textReservationSnapshot;
       if (
         !pinned ||
@@ -1005,7 +1127,18 @@ export class OpenAiNpcProvider implements NpcProvider {
           steps: raw.steps.map((step) => ({
             ...step,
             action: step.action === null ? null : clean(step.action),
-            reply: step.reply === null ? null : clean(step.reply),
+            reply:
+              step.reply === null
+                ? null
+                : {
+                    ...(clean(step.reply) as Record<string, unknown>),
+                    ...(step.reply &&
+                    typeof step.reply === 'object' &&
+                    'actionIntent' in step.reply &&
+                    step.reply.actionIntent != null
+                      ? { actionIntent: cleanNpcActionIntent(step.reply.actionIntent) }
+                      : {}),
+                  },
           })),
           turnId: context.turnId,
           contextHash: context.contextHash,
@@ -1134,12 +1267,15 @@ export class OpenAiNpcProvider implements NpcProvider {
             text: z.string().trim().min(1).max(1000),
             itemIntents: z.array(z.record(z.string(), z.unknown())).max(2).optional(),
             companionIntent: z.unknown().optional(),
+            actionIntent: z.unknown().optional(),
           })
           .strict()
           .parse(parsed);
+        const { actionIntent, ...reply } = raw;
         proposal = npcPublicReplySchema.parse({
-          ...raw,
+          ...reply,
           ...(raw.companionIntent === null ? { companionIntent: undefined } : {}),
+          ...(actionIntent == null ? {} : { actionIntent: cleanNpcActionIntent(actionIntent) }),
           ...(raw.itemIntents
             ? {
                 itemIntents: raw.itemIntents.map((intent) =>

@@ -1,5 +1,4 @@
 'use client';
-import { defaultImageStylePrompt } from '@dreamwalk/contracts';
 import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage } from '@/lib/client';
 import { useT } from '@/lib/i18n';
@@ -43,10 +42,7 @@ export function StoryCoverDialog({
   const [draft] = useState(() => ({
     draftId: crypto.randomUUID(),
     title: (title.trim() || 'Story cover').slice(0, 120),
-    prompt: `${defaultImageStylePrompt('cover')} ${title.trim()}. ${synopsis.trim()}`.slice(
-      0,
-      2000,
-    ),
+    prompt: `${title.trim()}. ${synopsis.trim()}`.slice(0, 2000),
   }));
   const [error, setError] = useState('');
   const active = useRef(true),

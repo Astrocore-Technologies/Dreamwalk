@@ -43,6 +43,14 @@ export async function lockManualLiveData(client, userId, campaigns) {
 export async function purgeManualLiveData(client, userId, campaigns) {
   const sessions = await lockManualLiveData(client, userId, campaigns);
   const campaignIds = campaigns.map((c) => c.id);
+  if (
+    (await client.query("SELECT to_regclass('runtime_map_token_counts') AS present")).rows[0]
+      .present
+  )
+    await client.query(
+      "UPDATE runtime_map_token_counts SET actor_id=NULL,campaign_id=NULL,body_sha256=NULL,status=CASE WHEN status='dispatched' THEN 'unknown' ELSE 'erased' END,result_code='DATA_ERASED' WHERE actor_id=$1 OR campaign_id=ANY($2::uuid[])",
+      [userId, campaignIds],
+    );
   for (const session of sessions) {
     await client.query('SELECT id FROM generation_budget_scopes WHERE id=$1 FOR UPDATE', [
       session.scope_id,
@@ -164,5 +172,23 @@ export async function exportManualLiveData(client, userId) {
         )
       ).rows
     : [];
-  return { sessions, permits, authoring, authoringQuotes, policyRevisions, textCounts };
+  const runtimeMapCounts = (
+    await client.query("SELECT to_regclass('runtime_map_token_counts') AS present")
+  ).rows[0].present
+    ? (
+        await client.query(
+          'SELECT id,campaign_id,model,status,input_tokens,provider_fee_micros,cost_basis,result_code,created_at,completed_at FROM runtime_map_token_counts WHERE actor_id=$1 ORDER BY created_at',
+          [userId],
+        )
+      ).rows
+    : [];
+  return {
+    sessions,
+    permits,
+    authoring,
+    authoringQuotes,
+    policyRevisions,
+    textCounts,
+    runtimeMapCounts,
+  };
 }

@@ -1,11 +1,12 @@
 'use client';
+import { ImageQuotePrice } from '../assets/image-quote-price';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, useClient } from '@/lib/client';
 import { Button, ErrorBox, Modal } from '../ui';
 import { artPreviewUrl, type ArtRevision } from '../assets/types';
 import { useImageText } from '../assets/image-messages';
 import { generationRemaining, liveSessionActive, type LiveTestStatus } from '../live-test/types';
-import { useSparkCosts, SparkQuotePrice, SparkReceiptCost } from './sparks-cost';
+import { SparkReceiptCost } from './sparks-cost';
 import {
   useGenerationText,
   generationMessages,
@@ -35,7 +36,6 @@ export function CompactCharacterGeneration({
 }) {
   const g = useGenerationText(),
     imageText = useImageText(),
-    { s, amount } = useSparkCosts(),
     { user } = useClient();
   const [state, setState] = useState<GenerationState | null>(null),
     [error, setError] = useState(''),
@@ -248,11 +248,7 @@ export function CompactCharacterGeneration({
               <>
                 {fresh && quote && (
                   <div className={styles.quote} data-compact-quote>
-                    <p>
-                      {s(validBound ? 'upper' : 'estimate')}:{' '}
-                      {amount(quote.estimatedTotalMicros ?? quote.upperMicros)}
-                    </p>
-                    {quote.sparks && <SparkQuotePrice quote={quote} />}
+                    <ImageQuotePrice quote={quote} />
                     <small>{g('generateConsent')}</small>
                     {estimated && <small>{g('estimateNotice')}</small>}
                   </div>

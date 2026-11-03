@@ -1,3 +1,4 @@
+import { runtimeQuoteIdentity } from '../ai/runtime-map-preflight';
 import { aggregateFunding, heldFunding, optionalFunding } from '../generation/currency-funding';
 import { totalQuotedSparkSubunits, commonQuotedSparkRate } from '../generation/sparks-quote-total';
 import { randomUUID } from 'node:crypto';
@@ -78,7 +79,12 @@ interface Port {
     state: GameState,
     actorId: string,
     npcId: string,
-    speech: { channel: 'say' | 'whisper'; text: string; replyLocale?: Locale },
+    speech: {
+      channel: 'say' | 'whisper';
+      text: string;
+      replyLocale?: Locale;
+      presentationKind?: 'attempt';
+    },
     requestId: string,
     userId: string,
     identity: { turnId: string; segmentIndex: number },
@@ -320,15 +326,12 @@ export class StoryTurnRuntime {
           audienceIds: input.channel === 'whisper' ? [actorId] : listeners(next),
         });
         if (!applied.error)
-          next =
-            action.kind === 'consume'
-              ? recordNpcEvents(
-                  next,
-                  applied.state,
-                  applied.events,
-                  `turn:${turnId}:${segment.index}`,
-                ).state
-              : applied.state;
+          next = recordNpcEvents(
+            next,
+            applied.state,
+            applied.events,
+            `turn:${turnId}:${segment.index}`,
+          ).state;
         entries.push({
           ordinal: entries.length,
           tick: next.tick,
@@ -387,6 +390,7 @@ export class StoryTurnRuntime {
         {
           channel: input.channel,
           text: untrustedRoleplay.map((entry) => entry.text).join('; '),
+          presentationKind: 'attempt',
           replyLocale: input.replyLocale,
         },
         requestId,
@@ -453,7 +457,7 @@ export class StoryTurnRuntime {
         if (old.request_hash !== hash) fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
         return old.quote_result;
       }
-      const turnId = randomUUID();
+      const turnId = runtimeQuoteIdentity(`turn:${id}:${a.user.id}:${input.operationId}`);
       let simulation: ReturnType<StoryTurnRuntime['simulateTurnPost']>;
       try {
         simulation = this.simulateTurnPost(live.state, a.actorId, input, turnId, a.user.id);
@@ -757,7 +761,7 @@ export class StoryTurnRuntime {
           ).rows[0].n,
         );
         if (count >= 1024) fail(429, 'TURN_LIMIT', 'TURN_LIMIT');
-        const turnId = randomUUID();
+        const turnId = runtimeQuoteIdentity(`turn:${id}:${a.user.id}:${input.operationId}`);
         let context!: ReturnType<typeof buildStoryTurnContext>;
         try {
           context = buildStoryTurnContext(live.state, a.actorId, input, turnId);

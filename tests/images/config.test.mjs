@@ -283,3 +283,30 @@ test('estimate planning remains non-dispatchable even with synthetic approval fl
   assert.equal(reads, 0);
   assert.equal(calls, 0);
 });
+
+test('bounded provider validates 2000 authored characters before adding hidden style', async () => {
+  let sent;
+  const runtime = createImageRuntime(configured(), {
+    now,
+    resolveApiKey: () => 'synthetic-key',
+    fetchImpl: async (_url, init) => {
+      sent = JSON.parse(init.body).prompt;
+      return new Response(
+        JSON.stringify({
+          data: [{ b64_json: Buffer.from('synthetic').toString('base64') }],
+          usage: { input_tokens_details: { text_tokens: 1, image_tokens: 0 }, output_tokens: 1 },
+        }),
+        { headers: { 'x-request-id': 'synthetic-boundary' } },
+      );
+    },
+  });
+  const prompt = 'x'.repeat(2000);
+  await runtime.provider.generate(
+    { ...input(), prompt, requestPolicyVersion: 2 },
+    randomUUID(),
+    [],
+  );
+  assert.match(sent, /Default art: detailed drawn 2D anime/);
+  assert.ok(sent.endsWith(prompt));
+  assert.ok(sent.length > 2000);
+});

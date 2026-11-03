@@ -1,3 +1,8 @@
+import {
+  campaignDirectorUpdateSchema,
+  directorProfileIdSchema,
+} from '@dreamwalk/contracts/dist/director-style';
+import { readDirectorCatalog, directorProfile, transactionQueries } from '../ai/director-style';
 import { WorldGenerationBatch } from './world-generation-batch';
 import { NarrativeCorrections } from './narrative-corrections';
 import { npcPublicReplySchema, footprintDistance } from '@dreamwalk/contracts';
@@ -45,6 +50,7 @@ import {
   finishWorldPhase,
   applyWorldTurnAction,
   companionAction,
+  stepWorldNpcPlan,
   turnFence,
   matchesTurnFence,
   createStateFromPlayable,
@@ -257,7 +263,10 @@ export class GameService implements OnModuleDestroy {
         this.prepareTurnSpeech(state, actorId, npcId, speech, requestId, userId, identity),
     });
     this.art.attachRuntimeStateReader((id) => this.live.get(id)?.state);
-    this.ai.attachRuntimeStateReader?.((id) => this.live.get(id)?.state);
+    this.ai.attachRuntimeStateReader?.(
+      (id) => this.live.get(id)?.state,
+      (id) => this.live.get(id)?.dbRevision,
+    );
     images?.attachRuntimeStateReader((id) => {
       const cached = this.live.get(id);
       return cached ? { state: cached.state, dbRevision: cached.dbRevision } : undefined;
@@ -405,11 +414,67 @@ export class GameService implements OnModuleDestroy {
     this.live.set(id, live);
     return live;
   }
+  async directors() {
+    const catalog = await readDirectorCatalog(this.db);
+    return { ...catalog, profiles: catalog.profiles.filter((profile) => profile.enabled) };
+  }
+  async director(req: Request, id: string, body?: unknown) {
+    const input = body === undefined ? undefined : campaignDirectorUpdateSchema.parse(body);
+    return this.serial(id, async () => {
+      const access = await this.access(req, id);
+      return this.db.tx(async (c) => {
+        if (input) {
+          if (access.user.id !== access.ownerId) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+          // Account/source locks precede campaign locks, matching erasure and preference updates.
+          await c.query(
+            `SELECT u.id FROM users u WHERE u.id=$2 OR u.id IN (SELECT m.user_id FROM game_members m WHERE m.campaign_id=$1) OR u.id IN (SELECT a.owner_id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1) ORDER BY u.id FOR SHARE OF u`,
+            [id, access.user.id],
+          );
+          await c.query(
+            'SELECT a.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1 FOR SHARE OF a',
+            [id],
+          );
+          await c.query(
+            "SELECT i.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventure_invitations i ON i.adventure_id=v.adventure_id WHERE c.id=$1 AND i.recipient_id=$2 AND i.status='accepted' FOR SHARE OF i",
+            [id, access.user.id],
+          );
+        }
+        const row = (
+          await c.query(
+            `SELECT c.director_profile_id,c.director_revision,c.owner_id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.user_id=$2 AND m.status='accepted' AND u.deleted_at IS NULL AND c.status='active' AND ${sourceAccessSql('$2')} ${input ? 'FOR UPDATE OF c' : ''}`,
+            [id, access.user.id],
+          )
+        ).rows[0];
+        if (!row || (input && row.owner_id !== access.user.id)) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+        const catalog = await readDirectorCatalog(transactionQueries(c));
+        if (input && row.director_profile_id !== input.profileId) {
+          if (Number(row.director_revision) !== input.expectedRevision)
+            fail(409, 'DIRECTOR_STYLE_STALE', 'DIRECTOR_STYLE_STALE');
+          directorProfile(catalog, input.profileId, true);
+          row.director_profile_id = input.profileId;
+          row.director_revision = Number(row.director_revision) + 1;
+          await c.query(
+            'UPDATE game_campaigns SET director_profile_id=$2,director_revision=$3 WHERE id=$1',
+            [id, input.profileId, row.director_revision],
+          );
+        }
+        return {
+          profileId: row.director_profile_id,
+          revision: Number(row.director_revision),
+          profile: directorProfile(catalog, row.director_profile_id),
+          canChange: row.owner_id === access.user.id,
+        };
+      });
+    });
+  }
   narrativePreferences(req: Request, id: string, body?: unknown) {
     return this.corrections.preferences(req, id, body);
   }
   storyFeed(req: Request, id: string) {
     return this.story.feed(req, id);
+  }
+  withRuntimeVisionQuote<T>(work: () => Promise<T>) {
+    return this.ai.withRuntimeVisionQuote(work);
   }
   storyQuote(req: Request, id: string, body: unknown) {
     return this.story.quote(req, id, body);
@@ -2177,6 +2242,7 @@ export class GameService implements OnModuleDestroy {
           .object({
             template: z.literal('observatory-v1'),
             heroId: z.uuid().optional(),
+            directorProfileId: directorProfileIdSchema.optional(),
             turnBased: z.boolean().optional(),
           })
           .strict(),
@@ -2185,6 +2251,7 @@ export class GameService implements OnModuleDestroy {
             playableVersionId: z.uuid(),
             startPreparationId: z.uuid().optional(),
             heroId: z.uuid().optional(),
+            directorProfileId: directorProfileIdSchema.optional(),
             turnBased: z.boolean().optional(),
           })
           .strict(),
@@ -2213,7 +2280,9 @@ export class GameService implements OnModuleDestroy {
         if (
           preparation.source_version_id !== sourceVersion ||
           preparation.hero_id !== (input.heroId ?? null) ||
-          input.turnBased === false
+          input.turnBased === false ||
+          (input.directorProfileId !== undefined &&
+            input.directorProfileId !== preparation.director_profile_id)
         )
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
         const source = await this.playable.sourceForStart(c, u.id, sourceVersion!);
@@ -2231,6 +2300,12 @@ export class GameService implements OnModuleDestroy {
         [u.id],
       );
       if (campaigns.rows[0].n >= 20) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+      const catalog = await readDirectorCatalog(transactionQueries(c));
+      const selectedDirector = directorProfile(
+        catalog,
+        preparation?.director_profile_id ?? input.directorProfileId ?? catalog.defaultProfileId,
+        !preparation,
+      );
       const selectedHero = await readOwnedHero(c, u.id, input.heroId);
       if (preparation && digest(selectedHero) !== digest(preparation.hero_snapshot))
         fail(409, 'START_SOURCE_CHANGED', 'START_SOURCE_CHANGED');
@@ -2262,8 +2337,15 @@ export class GameService implements OnModuleDestroy {
       }
       dressHero(state, actorId, selectedHero);
       await c.query(
-        'INSERT INTO game_campaigns(id,owner_id,playable_version,state,source_version_id) VALUES($1,$2,$3,$4,$5)',
-        [id, u.id, sourceVersion ?? 'observatory-v1', JSON.stringify(state), sourceVersion],
+        'INSERT INTO game_campaigns(id,owner_id,playable_version,state,source_version_id,director_profile_id) VALUES($1,$2,$3,$4,$5,$6)',
+        [
+          id,
+          u.id,
+          sourceVersion ?? 'observatory-v1',
+          JSON.stringify(state),
+          sourceVersion,
+          selectedDirector.id,
+        ],
       );
       await c.query(
         "INSERT INTO game_members(campaign_id,user_id,actor_id,status) VALUES($1,$2,$3,'accepted')",
@@ -3139,14 +3221,16 @@ export class GameService implements OnModuleDestroy {
     state: GameState,
     actorId: string,
     npcId: string,
-    speech: z.infer<typeof npcSpeechSchema>,
+    speech: z.infer<typeof npcSpeechSchema> & { presentationKind?: 'attempt' },
     requestId: string,
     userId: string,
     identity: { turnId: string; segmentIndex: number },
   ) {
-    const applied = applyNpcSpeech(state, actorId, npcId, speech, {
+    const utterance = { channel: speech.channel, text: speech.text };
+    const applied = applyNpcSpeech(state, actorId, npcId, utterance, {
       suppressReply: true,
       identity,
+      presentationKind: speech.presentationKind,
     });
     if (applied.error) fail(409, applied.error, applied.error);
     let next = recordNpcEvents(
@@ -3155,7 +3239,7 @@ export class GameService implements OnModuleDestroy {
       applied.events,
       `turn:${identity.turnId}:${identity.segmentIndex}`,
     ).state;
-    const marker = admittedNpcSpeechObservationId(next, actorId, npcId, speech, identity);
+    const marker = admittedNpcSpeechObservationId(next, actorId, npcId, utterance, identity);
     if (!marker) fail(409, 'STALE_STATE', 'STALE_STATE');
     const context = this.speechContext(
       next,
@@ -3212,9 +3296,28 @@ export class GameService implements OnModuleDestroy {
     };
   }
   /** No wall-clock gameplay ticks. Finite ordered jobs/plans run only in the world phase. */
+  private async reconcileWorldOrphans(id: string) {
+    // A missing job is not permission to retry. Terminalize only demonstrably
+    // unpaid orphans; preserve every permit, hold, liability and accepted consent.
+    await this.db.query(
+      `UPDATE game_npc_decision_requests SET status='failed',result_code='MISSING_PROVIDER_JOB'
+      WHERE id IN (SELECT r.id FROM game_npc_decision_requests r
+        WHERE r.campaign_id=$1 AND r.status='scheduled' AND r.job_id IS NULL
+        AND NOT EXISTS(SELECT 1 FROM npc_ai_jobs j WHERE j.campaign_id=r.campaign_id AND
+          (j.operation_id=r.id OR j.request_meta->>'runtimeRequestId'=r.id::text))
+        AND NOT EXISTS(SELECT 1 FROM live_test_text_permits p WHERE p.request_id=r.id)
+        AND NOT EXISTS(SELECT 1 FROM generation_budget_reservations b WHERE b.operation_key='manual-text:'||r.id::text)
+        AND NOT EXISTS(SELECT 1 FROM spark_holds h WHERE h.source_id=r.id::text)
+        AND NOT EXISTS(SELECT 1 FROM game_world_generation_batches b WHERE b.campaign_id=r.campaign_id AND b.state='accepted'
+          AND b.entries @> jsonb_build_array(jsonb_build_object('requestId',r.id::text)))
+        ORDER BY r.created_at,r.id LIMIT 8)`,
+      [id],
+    );
+  }
   private async advanceTurnWorld(id: string, live: Live) {
     const turn = live.state.turnController;
     if (!turn || turn.phase !== 'world') return;
+    await this.reconcileWorldOrphans(id);
     if (live.aiPending) await this.processAi(id, live);
     await this.processDecisionRequests(id, live);
     await this.scheduleAutonomousRequests(id, live);
@@ -3244,50 +3347,32 @@ export class GameService implements OnModuleDestroy {
       [id],
     );
     if (work.length || live.state.turnController!.deferredSpeech.length) return;
-    // A provider chooses bounded plans. Applying their legal actions uses the same core.
-    let state = live.state;
+    // Every NPC gets the existing bounded local policy opportunity. This is pure
+    // deterministic work, not another model request or a compulsory spoken reply.
+    const routine = stepLivingNpcs(live.state);
+    let state = recordNpcEvents(
+      live.state,
+      routine.state,
+      routine.events,
+      `world:${live.state.turnController!.roundId}:routine`,
+    ).state;
     for (const npcId of Object.keys(state.npcBrains ?? {}).sort()) {
-      const companion = companionAction(state, npcId);
-      if (companion) {
-        const applied = applyWorldTurnAction(state, npcId, companion, turnFence(state)!);
-        if (!applied.error)
-          state = recordNpcEvents(
-            state,
-            applied.state,
-            applied.events,
-            `world:${state.turnController!.roundId}:${npcId}:companion`,
-          ).state;
-        continue;
-      }
       const brain = state.npcBrains![npcId];
-      while (brain.cursor < brain.plan.length) {
-        const action = brain.plan[brain.cursor];
-        const applied = applyWorldTurnAction(state, npcId, action, turnFence(state)!);
-        if (applied.error) {
-          if (applied.error !== 'ROUND_LOCKED') {
-            state = structuredClone(state);
-            state.npcBrains![npcId].cursor = state.npcBrains![npcId].plan.length;
-          }
-          break;
-        }
+      const companion =
+        brain.cursor >= brain.plan.length ? companionAction(state, npcId) : undefined;
+      const applied = companion
+        ? applyWorldTurnAction(state, npcId, companion, turnFence(state)!)
+        : stepWorldNpcPlan(state, npcId);
+      if (!applied.error)
         state = recordNpcEvents(
           state,
           applied.state,
           applied.events,
-          `world:${state.turnController!.roundId}:${npcId}:${brain.cursor}`,
+          `world:${state.turnController!.roundId}:${npcId}:action`,
         ).state;
-        state.npcBrains![npcId].cursor++;
-        if (state.turnController!.phase !== 'world') {
-          await this.persist(id, live, state, 'turn.world.reaction');
-          return;
-        }
-        // Read the current immutable brain on each iteration, never a stale reference.
-        if (
-          state.npcBrains![npcId].cursor >= state.npcBrains![npcId].plan.length ||
-          state.turnController!.worldActions >= state.turnController!.ruleset.maxWorldActions
-        )
-          break;
-        break; // One action per actor per phase keeps the world step short and reviewable.
+      if (state.turnController!.phase !== 'world') {
+        await this.persist(id, live, state, 'turn.world.reaction');
+        return;
       }
     }
     const finished = finishWorldPhase(state, turnFence(state)!);

@@ -411,3 +411,234 @@ test('oversized image-context history packs down instead of throwing a policy er
   assert.equal(packed.history[0].id, 'latest');
   assert.ok(provider.prepareTextRequest('speech', packed).snapshot.estimatedInputTokens <= 50000);
 });
+
+test('operational exact quote counts the immutable image body once, without an image allowance', async () => {
+  const { config, context } = fixture();
+  delete config.runtimeVision.inputTokensPerImage;
+  config.runtimeVision.counting = 'operational_exact';
+  const { RuntimeMapCountRequired } = require('../../apps/api/dist/ai/runtime-map-preflight');
+  const calls = [];
+  const transport = async (url, init) => {
+    calls.push({ url, body: init.body });
+    return url.endsWith('/input_tokens')
+      ? new Response(JSON.stringify({ object: 'response.input_tokens', input_tokens: 1234 }))
+      : response(1234);
+  };
+  const provider = new OpenAiNpcProvider(config, transport);
+  assert.equal(provider.contextFits('speech', context), true);
+  assert.equal(calls.length, 0, 'packing cannot dispatch');
+  let required;
+  try {
+    provider.prepareTextRequest('speech', context);
+  } catch (e) {
+    required = e;
+  }
+  assert.ok(required instanceof RuntimeMapCountRequired);
+  assert.equal(calls.length, 0, 'synchronous planning only asks the quote boundary to preflight');
+  required.accept(await required.count(randomUUID()));
+  const prepared = provider.prepareTextRequest('speech', context);
+  assert.equal(prepared.snapshot.estimatedInputTokens, 1234);
+  assert.equal(prepared.snapshot.contextWindow.precision, 'exact');
+  assert.equal(prepared.snapshot.contextWindow.counterId, 'runtime-map-exact-input-tokens-v1');
+  assert.equal(prepared.snapshot.inputMicros, 1234);
+  assert.deepEqual(JSON.parse(calls[0].body), JSON.parse(countRequestBody(prepared.body)));
+  assert.equal(calls.length, 1);
+  const restarted = new OpenAiNpcProvider(config, transport);
+  await restarted.generate({
+    jobId: randomUUID(),
+    purpose: 'speech',
+    context,
+    signal: new AbortController().signal,
+    maxCostMicros: prepared.snapshot.reserveMicros,
+    textReservationSnapshot: prepared.snapshot,
+  });
+  assert.equal(calls.length, 2, 'restart reuses the durable quote, never recounts');
+  assert.equal(calls[1].url, 'https://api.openai.com/v1/responses');
+  assert.equal(calls[1].body, prepared.body);
+  assert.throws(
+    () => restarted.prepareTextRequest('speech', context),
+    /EXACT_COUNT_REQUIRED/,
+    'pinned dispatch evidence never refreshes the quote cache',
+  );
+  context.runtimeMapImage.view.markers[0].x++;
+  await assert.rejects(
+    restarted.generate({
+      jobId: randomUUID(),
+      purpose: 'speech',
+      context,
+      signal: new AbortController().signal,
+      maxCostMicros: prepared.snapshot.reserveMicros,
+      textReservationSnapshot: prepared.snapshot,
+    }),
+    /EXACT_COUNT_REQUIRED/,
+  );
+  assert.equal(calls.length, 2, 'changed body cannot generate, recount, or silently reprice');
+});
+
+test('operational preflight errors and counts outside the context/tariff tier never generate', async () => {
+  for (const value of [null, 272001, 60000]) {
+    const { config, context } = fixture();
+    delete config.runtimeVision.inputTokensPerImage;
+    config.runtimeVision.counting = 'operational_exact';
+    let calls = 0;
+    const provider = new OpenAiNpcProvider(config, async (url) => {
+      calls++;
+      assert.ok(url.endsWith('/input_tokens'));
+      if (value === null) throw new Error('uncertain transport');
+      return new Response(JSON.stringify({ object: 'response.input_tokens', input_tokens: value }));
+    });
+    let required;
+    try {
+      provider.prepareTextRequest('speech', context);
+    } catch (e) {
+      required = e;
+    }
+    if (value === null) await assert.rejects(required.count(randomUUID()), /OUTCOME_UNKNOWN/);
+    else {
+      required.accept(await required.count(randomUUID()));
+      assert.throws(
+        () => provider.prepareTextRequest('speech', context),
+        /RANGE_EXCEEDED|WINDOW_EXCEEDED/,
+      );
+    }
+    assert.equal(calls, 1);
+  }
+});
+
+test('quote preflight runs after locks unwind, pins quote IDs and stops changed-state retries', async () => {
+  const {
+    RuntimeMapCountRequired,
+    withRuntimeMapPreflight,
+    runtimeQuoteIdentity,
+  } = require('../../apps/api/dist/ai/runtime-map-preflight');
+  const observed = [];
+  let locked = false,
+    counted = false,
+    completed = false;
+  const result = await withRuntimeMapPreflight(
+    async () => {
+      locked = true;
+      try {
+        observed.push(runtimeQuoteIdentity('turn'));
+        if (!counted) {
+          const e = new RuntimeMapCountRequired(
+            'body',
+            'model',
+            'version',
+            async () => 42,
+            () => {},
+          );
+          e.scope = { campaignId: 'campaign' };
+          e.context = { contextHash: 'context' };
+          e.stateHash = 'state';
+          throw e;
+        }
+        completed = true;
+        return 'quoted';
+      } finally {
+        locked = false;
+      }
+    },
+    async () => {
+      assert.equal(locked, false);
+      counted = true;
+    },
+  );
+  assert.equal(result, 'quoted');
+  assert.ok(completed);
+  assert.equal(observed[0], observed[1]);
+  let n = 0;
+  await assert.rejects(
+    withRuntimeMapPreflight(
+      async () => {
+        const e = new RuntimeMapCountRequired(
+          'body' + n,
+          'model',
+          'version',
+          async () => 42,
+          () => {},
+        );
+        e.scope = { campaignId: 'campaign' };
+        e.context = { contextHash: 'context' };
+        e.stateHash = 'state' + n;
+        throw e;
+      },
+      async () => {
+        n++;
+      },
+    ),
+    /QUOTE_CHANGED/,
+  );
+  assert.equal(n, 1, 'state changes cannot cause an automatic second count');
+});
+
+test('release Luna defaults to exact runtime vision; explicit opt-out, other models and owner mode stay unchanged', async () => {
+  const { readGenerationConfig } = require('../../apps/api/dist/generation/config');
+  const { safeOwnerProfile } = require('../../apps/api/dist/generation/policy-revisions');
+  const { requestEstimateOwnerProfile } = await import('../images/owner-config-fixture.mjs');
+  const profile = requestEstimateOwnerProfile();
+  profile.text.model = 'gpt-6-luna';
+  profile.text.contextTokens = 1050000;
+  profile.text.contextBudgetTokens = 256000;
+  profile.text.inputMicrosPerMillion = 100000;
+  profile.text.outputMicrosPerMillion = 500000;
+  delete profile.text.maxInputBytes;
+  const read = (p) =>
+    readGenerationConfig({
+      GENERATION_MODE: 'release',
+      GENERATION_CONFIG_JSON: JSON.stringify({
+        allowance: 'unlimited',
+        text: p.text,
+        image: p.image,
+      }),
+    });
+  const enabled = read(profile);
+  assert.equal(enabled.text.runtimeVision.counting, 'operational_exact');
+  assert.equal(enabled.text.runtimeVision.inputTokensPerImage, undefined);
+  assert.equal(enabled.text.runtimeVision.maxPricedInputTokens, 272000);
+  assert.equal(enabled.aggregateCapMicros, null);
+  assert.equal(safeOwnerProfile(enabled).text.runtimeVision.counting, 'operational_exact');
+  const off = structuredClone(profile);
+  off.text.runtimeVision = false;
+  assert.equal(read(off).text.runtimeVision, false);
+  assert.notEqual(read(off).configFingerprint, enabled.configFingerprint);
+  const other = structuredClone(profile);
+  other.text.model = 'synthetic-other-model';
+  assert.equal(read(other).text.runtimeVision, undefined);
+  assert.equal(
+    readGenerationConfig({
+      GENERATION_MODE: 'owner',
+      GENERATION_OWNER_HANDLE: 'synthetic_owner',
+      GENERATION_OWNER_CONFIG_JSON: JSON.stringify(profile),
+    }).text.runtimeVision,
+    undefined,
+  );
+  const ambiguous = structuredClone(profile);
+  ambiguous.text.runtimeVision = { ...enabled.text.runtimeVision, inputTokensPerImage: 2000 };
+  assert.throws(() => read(ambiguous), /CONFIG_INVALID/);
+});
+
+test('operational count cache respects original expiry and bounds all insertions', () => {
+  const { config, context } = fixture();
+  delete config.runtimeVision.inputTokensPerImage;
+  config.runtimeVision.counting = 'operational_exact';
+  const provider = new OpenAiNpcProvider(config, async () => {
+    throw new Error('no network');
+  });
+  let expired;
+  try {
+    provider.prepareTextRequest('speech', context);
+  } catch (error) {
+    expired = error;
+  }
+  expired.accept(1234, Date.now() - 1);
+  assert.throws(() => provider.prepareTextRequest('speech', context), /EXACT_COUNT_REQUIRED/);
+  for (let i = 0; i < 520; i++) {
+    try {
+      provider.prepareTextRequest('speech', { ...context, contextHash: 'cache-' + i });
+    } catch (error) {
+      error.accept(1234);
+    }
+  }
+  assert.equal(provider.runtimeCounts.size, 512);
+});

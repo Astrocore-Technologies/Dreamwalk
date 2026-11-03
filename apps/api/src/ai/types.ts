@@ -106,7 +106,11 @@ export interface NpcProvider {
       }
     | undefined;
   contextFits?(purpose: AiPurpose, context: unknown): boolean;
-  prepareTextRequest?(purpose: AiPurpose, context: unknown): PreparedTextRequest | undefined;
+  prepareTextRequest?(
+    purpose: AiPurpose,
+    context: unknown,
+    pinned?: TextReserveSnapshot,
+  ): PreparedTextRequest | undefined;
 }
 export interface AiPolicy {
   creditPrice: number;

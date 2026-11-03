@@ -4,6 +4,19 @@ import { GameService } from './game.service';
 @Controller('api/v1/game')
 export class GameController {
   constructor(@Inject(GameService) private game: GameService) {}
+  @Get('directors') directors() {
+    return this.game.directors();
+  }
+  @Get('campaigns/:id/director') director(@Req() req: Request, @Param('id') id: string) {
+    return this.game.director(req, id);
+  }
+  @Post('campaigns/:id/director') selectDirector(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.director(req, id, body);
+  }
   @Get('campaigns/:id/intent-proposals') intents(@Req() req: Request, @Param('id') id: string) {
     return this.game.intents(req, id);
   }
@@ -43,7 +56,7 @@ export class GameController {
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
-    return this.game.storyQuote(req, id, body);
+    return this.game.withRuntimeVisionQuote(() => this.game.storyQuote(req, id, body));
   }
   @Get('campaigns/:id/world-generation') worldGenerationStatus(
     @Req() req: Request,
@@ -56,7 +69,7 @@ export class GameController {
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
-    return this.game.worldGenerationQuote(req, id, body);
+    return this.game.withRuntimeVisionQuote(() => this.game.worldGenerationQuote(req, id, body));
   }
   @Post('campaigns/:id/world-generation/consent') worldGenerationConsent(
     @Req() req: Request,
@@ -71,7 +84,7 @@ export class GameController {
     @Param('turnId') turnId: string,
     @Body() body: unknown,
   ) {
-    return this.game.storyReplyQuote(req, id, turnId, body);
+    return this.game.withRuntimeVisionQuote(() => this.game.storyReplyQuote(req, id, turnId, body));
   }
   @Post('campaigns/:id/turns/:turnId/replies/consent') storyReplyConsent(
     @Req() req: Request,
@@ -131,7 +144,7 @@ export class GameController {
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
-    return this.game.aiDecision(req, id, body, true);
+    return this.game.withRuntimeVisionQuote(() => this.game.aiDecision(req, id, body, true));
   }
   @Post('campaigns/:id/ai/jobs') aiQueue(
     @Req() req: Request,
@@ -170,7 +183,7 @@ export class GameController {
     @Param('id') id: string,
     @Body() body: unknown,
   ) {
-    return this.game.narrative(req, id, body, true);
+    return this.game.withRuntimeVisionQuote(() => this.game.narrative(req, id, body, true));
   }
   @Post('campaigns/:id/media-bindings') mediaBinding(
     @Req() req: Request,

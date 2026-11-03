@@ -26,7 +26,7 @@ export async function extendContextHistory<T extends object>(
           (await transaction.query(sql, values)).rows,
       }
     : db;
-  context = await withDirectorStyle(settingsDb, context, purpose);
+  context = await withDirectorStyle(settingsDb, context, purpose, campaignId);
   context = await (ai.withRuntimeMap?.(
     campaignId,
     state,

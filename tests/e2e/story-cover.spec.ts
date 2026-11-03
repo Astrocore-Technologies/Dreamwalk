@@ -3,7 +3,7 @@ import { randomUUID } from 'node:crypto';
 
 test('story cover quotes once, cancels freely, recovers and selects without nested forms', async ({
   page,
-}) => {
+}, testInfo) => {
   const ownerId = randomUUID(),
     revisionId = randomUUID(),
     assetId = randomUUID(),
@@ -82,6 +82,7 @@ test('story cover quotes once, cancels freely, recovers and selects without nest
       expect(request.adventureId).toBeUndefined();
       expect(request.rights.allowAuthorReuse).toBe(false);
       expect(request.prompt).toContain('Floating castle');
+      expect(request.prompt).not.toContain('Default art:');
       expect(request.kind).toBe('background');
       expect(request.camera).toBe('unrestricted');
       json = {
@@ -130,6 +131,10 @@ test('story cover quotes once, cancels freely, recovers and selects without nest
   await page.getByRole('button', { name: 'Generate AI cover', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Generate AI cover' });
   await expect(page.locator('form form')).toHaveCount(0);
+  await expect(dialog.getByText('Advanced settings', { exact: true })).toHaveCount(0);
+  await expect(dialog.getByRole('textbox', { name: 'Artwork description' })).not.toHaveValue(
+    /Default art:/,
+  );
   await dialog
     .getByRole('textbox', { name: 'Artwork description' })
     .fill('Floating castle above a quiet sea');
@@ -137,6 +142,10 @@ test('story cover quotes once, cancels freely, recovers and selects without nest
   await expect(
     dialog.getByRole('button', { name: 'Confirm and generate', exact: true }),
   ).toBeVisible();
+  await expect(dialog.locator('[data-image-quote-price]')).toContainText('10.0000 Sparks');
+  await expect(dialog.locator('[data-image-quote-price]')).toHaveCount(1);
+  await expect(dialog.locator('[data-spark-quote-price], [data-request-reserve]')).toHaveCount(0);
+  await page.screenshot({ path: testInfo.outputPath('image-single-estimate.png') });
   expect(dispatches).toBe(0);
   await dialog.getByRole('button', { name: 'Cancel', exact: true }).click();
   expect(dispatches).toBe(0);

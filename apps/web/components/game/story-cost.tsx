@@ -22,10 +22,10 @@ export function StoryCost({ quote }: { quote: StoryQuote & { funding?: WalletFun
   const vision = quote.runtimeMapImages ? (
     <small data-runtime-map-consent>
       {locale === 'ru'
-        ? 'Изображение текущей карты с видимыми персонажами будет отправлено ИИ. Анализ включён в эту оценку.'
+        ? 'Изображение текущей карты с видимыми персонажами входит в запрос ИИ. Анализ включён в эту оценку.'
         : locale === 'uk'
-          ? 'Зображення поточної мапи з видимими персонажами буде надіслано ШІ. Аналіз включено в цю оцінку.'
-          : 'The current map image and visible characters will be sent to the AI. Analysis is included in this estimate.'}
+          ? 'Зображення поточної мапи з видимими персонажами входить до запиту ШІ. Аналіз включено в цю оцінку.'
+          : 'The current map image and visible characters are part of the AI request. Analysis is included in this estimate.'}
     </small>
   ) : null;
   if (quote.funding)
@@ -59,5 +59,19 @@ export function StoryCost({ quote }: { quote: StoryQuote & { funding?: WalletFun
         <small>{h('providerEstimateOnly')}</small>
       )}
     </div>
+  );
+}
+
+/** Disclosure precedes the quote action, not just its later generation confirmation. */
+export function RuntimeMapQuoteNotice() {
+  const { locale } = useT();
+  return (
+    <small data-runtime-map-quote-notice>
+      {locale === 'ru'
+        ? 'Для оценки стоимости ИИ может получить текущую карту с видимыми персонажами и подсчитать токены. Ответ начнёт создаваться только после подтверждения.'
+        : locale === 'uk'
+          ? 'Для оцінки вартості ШІ може отримати поточну мапу з видимими персонажами й підрахувати токени. Відповідь почне створюватися лише після підтвердження.'
+          : 'To estimate the cost, the AI may receive the current map and visible characters to count tokens. The response is generated only after confirmation.'}
+    </small>
   );
 }
