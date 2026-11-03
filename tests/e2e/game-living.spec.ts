@@ -187,6 +187,7 @@ test('API-authored realtime fixture retains personality, obligations and private
     });
     expect(help.ok()).toBeTruthy();
     expect((await help.json()).status).toBe('committed');
+    await campaignDetails(page);
     await expect(page.locator('[data-npc-obligation="proposed"]')).toBeVisible();
     await reconfirmKnownStale(
       page,
@@ -199,6 +200,7 @@ test('API-authored realtime fixture retains personality, obligations and private
       },
     );
     await expect(page.locator('[data-npc-obligation="fulfilled"]')).toBeVisible();
+    await campaignDetails(page, false);
     await expect((await inventory(page)).locator('[data-inventory-id="token"]')).toBeVisible();
     await closeInventory(page);
     expect((await readProjection(guest, campaignId)).inventory.some((e) => e.id === 'token')).toBe(
@@ -251,7 +253,9 @@ test('API-authored realtime fixture retains personality, obligations and private
     await closeInventory(guest);
     await expect(guest.locator('[data-npc-obligation]')).toHaveCount(0);
     await expect(guest.locator('[data-story-code="fulfilled"]')).toBeVisible();
+    await campaignDetails(page);
     await expect(page.locator('[data-npc-obligation="fulfilled"]')).toBeVisible();
+    await campaignDetails(page, false);
     await expect(speech.getByText(/Thank you, helper/)).toBeVisible();
     // OOC controls were intentionally removed. Its retained transport must still
     // remain separate from authoritative story canon and visible story output.

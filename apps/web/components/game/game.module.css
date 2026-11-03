@@ -1083,7 +1083,8 @@
     right: 8px;
     max-height: 70%;
     overflow: auto;
-    z-index: 15;
+    /* Map action and inventory dialogs (12) remain usable above this preview. */
+    z-index: 10;
     box-shadow: 0 12px 32px #0005;
   }
   .extrasPanel {
