@@ -1,3 +1,8 @@
+import {
+  campaignDirectorUpdateSchema,
+  directorProfileIdSchema,
+} from '@dreamwalk/contracts/dist/director-style';
+import { readDirectorCatalog, directorProfile, transactionQueries } from '../ai/director-style';
 import { WorldGenerationBatch } from './world-generation-batch';
 import { NarrativeCorrections } from './narrative-corrections';
 import { npcPublicReplySchema, footprintDistance } from '@dreamwalk/contracts';
@@ -403,6 +408,59 @@ export class GameService implements OnModuleDestroy {
     };
     this.live.set(id, live);
     return live;
+  }
+  async directors() {
+    const catalog = await readDirectorCatalog(this.db);
+    return { ...catalog, profiles: catalog.profiles.filter((profile) => profile.enabled) };
+  }
+  async director(req: Request, id: string, body?: unknown) {
+    const input = body === undefined ? undefined : campaignDirectorUpdateSchema.parse(body);
+    return this.serial(id, async () => {
+      const access = await this.access(req, id);
+      return this.db.tx(async (c) => {
+        if (input) {
+          if (access.user.id !== access.ownerId) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+          // Account/source locks precede campaign locks, matching erasure and preference updates.
+          await c.query(
+            `SELECT u.id FROM users u WHERE u.id=$2 OR u.id IN (SELECT m.user_id FROM game_members m WHERE m.campaign_id=$1) OR u.id IN (SELECT a.owner_id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1) ORDER BY u.id FOR SHARE OF u`,
+            [id, access.user.id],
+          );
+          await c.query(
+            'SELECT a.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1 FOR SHARE OF a',
+            [id],
+          );
+          await c.query(
+            "SELECT i.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventure_invitations i ON i.adventure_id=v.adventure_id WHERE c.id=$1 AND i.recipient_id=$2 AND i.status='accepted' FOR SHARE OF i",
+            [id, access.user.id],
+          );
+        }
+        const row = (
+          await c.query(
+            `SELECT c.director_profile_id,c.director_revision,c.owner_id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.user_id=$2 AND m.status='accepted' AND u.deleted_at IS NULL AND c.status='active' AND ${sourceAccessSql('$2')} ${input ? 'FOR UPDATE OF c' : ''}`,
+            [id, access.user.id],
+          )
+        ).rows[0];
+        if (!row || (input && row.owner_id !== access.user.id)) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+        const catalog = await readDirectorCatalog(transactionQueries(c));
+        if (input && row.director_profile_id !== input.profileId) {
+          if (Number(row.director_revision) !== input.expectedRevision)
+            fail(409, 'DIRECTOR_STYLE_STALE', 'DIRECTOR_STYLE_STALE');
+          directorProfile(catalog, input.profileId, true);
+          row.director_profile_id = input.profileId;
+          row.director_revision = Number(row.director_revision) + 1;
+          await c.query(
+            'UPDATE game_campaigns SET director_profile_id=$2,director_revision=$3 WHERE id=$1',
+            [id, input.profileId, row.director_revision],
+          );
+        }
+        return {
+          profileId: row.director_profile_id,
+          revision: Number(row.director_revision),
+          profile: directorProfile(catalog, row.director_profile_id),
+          canChange: row.owner_id === access.user.id,
+        };
+      });
+    });
   }
   narrativePreferences(req: Request, id: string, body?: unknown) {
     return this.corrections.preferences(req, id, body);
@@ -2176,6 +2234,7 @@ export class GameService implements OnModuleDestroy {
           .object({
             template: z.literal('observatory-v1'),
             heroId: z.uuid().optional(),
+            directorProfileId: directorProfileIdSchema.optional(),
             turnBased: z.boolean().optional(),
           })
           .strict(),
@@ -2184,6 +2243,7 @@ export class GameService implements OnModuleDestroy {
             playableVersionId: z.uuid(),
             startPreparationId: z.uuid().optional(),
             heroId: z.uuid().optional(),
+            directorProfileId: directorProfileIdSchema.optional(),
             turnBased: z.boolean().optional(),
           })
           .strict(),
@@ -2212,7 +2272,9 @@ export class GameService implements OnModuleDestroy {
         if (
           preparation.source_version_id !== sourceVersion ||
           preparation.hero_id !== (input.heroId ?? null) ||
-          input.turnBased === false
+          input.turnBased === false ||
+          (input.directorProfileId !== undefined &&
+            input.directorProfileId !== preparation.director_profile_id)
         )
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
         const source = await this.playable.sourceForStart(c, u.id, sourceVersion!);
@@ -2230,6 +2292,12 @@ export class GameService implements OnModuleDestroy {
         [u.id],
       );
       if (campaigns.rows[0].n >= 20) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+      const catalog = await readDirectorCatalog(transactionQueries(c));
+      const selectedDirector = directorProfile(
+        catalog,
+        preparation?.director_profile_id ?? input.directorProfileId ?? catalog.defaultProfileId,
+        !preparation,
+      );
       const selectedHero = await readOwnedHero(c, u.id, input.heroId);
       if (preparation && digest(selectedHero) !== digest(preparation.hero_snapshot))
         fail(409, 'START_SOURCE_CHANGED', 'START_SOURCE_CHANGED');
@@ -2261,8 +2329,15 @@ export class GameService implements OnModuleDestroy {
       }
       dressHero(state, actorId, selectedHero);
       await c.query(
-        'INSERT INTO game_campaigns(id,owner_id,playable_version,state,source_version_id) VALUES($1,$2,$3,$4,$5)',
-        [id, u.id, sourceVersion ?? 'observatory-v1', JSON.stringify(state), sourceVersion],
+        'INSERT INTO game_campaigns(id,owner_id,playable_version,state,source_version_id,director_profile_id) VALUES($1,$2,$3,$4,$5,$6)',
+        [
+          id,
+          u.id,
+          sourceVersion ?? 'observatory-v1',
+          JSON.stringify(state),
+          sourceVersion,
+          selectedDirector.id,
+        ],
       );
       await c.query(
         "INSERT INTO game_members(campaign_id,user_id,actor_id,status) VALUES($1,$2,$3,'accepted')",

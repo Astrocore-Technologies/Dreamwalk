@@ -163,6 +163,12 @@ await test(
           });
           const quote = await engine.quote(owner.user.id, request);
           assert.equal(quote.quote.generationMode, 'owner');
+          assert.equal(quote.quote.reserveMicros, configured.image.estimatedTotalMicros);
+          assert.notEqual(quote.quote.reserveMicros, configured.image.reserveMicros);
+          assert.equal(
+            quote.quote.sparks.reserveSubunits,
+            String(BigInt(quote.quote.reserveMicros) * 2n),
+          );
           assert.equal(quote.quote.estimateRiskConsentRequired, true);
           assert.equal(quote.quote.verifiedUpperMicros, null);
           assert.equal(quote.quote.upperMicros, null);
@@ -197,6 +203,7 @@ await test(
             ).rowCount,
             0,
           );
+          assert.equal(stored.input.requestPolicyVersion, 2);
           const queued = await engine.enqueue(owner.user.id, {
             ...body,
             estimateRiskConsent: true,
@@ -209,6 +216,12 @@ await test(
             engine.enqueue(owner.user.id, body),
             failureCode('IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED'),
           );
+          const held = (
+            await sql.query('SELECT reserved_subunits FROM spark_holds WHERE id=$1', [
+              quote.quote.sparks.quoteId,
+            ])
+          ).rows[0];
+          assert.equal(held.reserved_subunits, quote.quote.sparks.reserveSubunits);
           const second = await engine.quote(owner.user.id, request);
           await assert.rejects(
             engine.enqueue(owner.user.id, {

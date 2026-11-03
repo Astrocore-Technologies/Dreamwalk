@@ -129,7 +129,10 @@ for (const locale of ['ru', 'en', 'uk']) {
       expect((await bounds(page)).width).toBeLessThanOrEqual(1);
       expect((await bounds(page)).pageTop).toBe(0);
       await expect(input).toBeInViewport();
-      await expect.poll(offset).toBeCloseTo(anchor.offset, 0);
+      // Reflow can round fractional scrollTop values to a device pixel.
+      await expect
+        .poll(async () => Math.abs((await offset()) - anchor.offset))
+        .toBeLessThanOrEqual(1);
     }
     await campaignDetails(page);
     await expect(page.getByTestId('campaign-hero')).toBeVisible();

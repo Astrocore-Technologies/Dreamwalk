@@ -315,6 +315,7 @@ export function estimateImageRequest(
   referenceCount: number,
   profile: ImageEstimateProfile,
   providerFingerprint: string,
+  estimateIsReservation = false,
 ): ImageReserveSnapshot {
   if (typeof prompt !== 'string' || !providerFingerprint)
     throw new RequestEstimationError('GENERATION_ESTIMATION_INVALID');
@@ -357,7 +358,7 @@ export function estimateImageRequest(
     reserve = total + margin + fixed + referenceAllowance;
   } else {
     total = integer(profile.estimatedTotalMicros!, 1);
-    reserve = integer(profile.reserveMicros!, 1);
+    reserve = estimateIsReservation ? total : integer(profile.reserveMicros!, 1);
     if (reserve < total) throw new RequestEstimationError('GENERATION_ESTIMATION_INVALID');
     fixed = reserve - total;
   }

@@ -19,6 +19,7 @@ import { authorizedArt } from '../assets/art-visibility';
 import { useAssetText } from '../assets/messages';
 import { useCampaignArt } from '../assets/use-campaign-art';
 import { HeroSelection, useHeroSelection, useHeroText, CampaignHero } from './hero-selection';
+import { DirectorSelection, useDirectorSelection, CampaignDirector } from './director-selection';
 import { useLaunchGate } from './use-launch-gate';
 import { localizedProjection } from './localized-projection';
 import { NarrativePreferences } from './narrative-preferences';
@@ -84,14 +85,15 @@ function CampaignLobby() {
   const turnText = useTurnText();
   const heroSelection = useHeroSelection();
   const heroText = useHeroText();
-  const launchGate = useLaunchGate(heroSelection.heroId);
+  const directorSelection = useDirectorSelection('lobby');
+  const launchGate = useLaunchGate(`${heroSelection.heroId}:${directorSelection.profileId}`);
   const { t } = useT();
   const router = useRouter();
   const campaigns = useResource<{ campaigns: CampaignSummary[] }>('/game/campaigns');
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   async function create() {
-    if (!heroSelection.ready) return;
+    if (!heroSelection.ready || !directorSelection.ready) return;
     const lease = launchGate.begin();
     if (!lease) return;
     let navigating = false;
@@ -103,6 +105,7 @@ function CampaignLobby() {
         body: JSON.stringify({
           template: 'observatory-v1',
           turnBased: true,
+          directorProfileId: directorSelection.profileId,
           ...heroSelection.body,
         }),
       });
@@ -146,6 +149,7 @@ function CampaignLobby() {
         description={turnText('lobbyIntro')}
       />
       <HeroSelection selection={heroSelection} disabled={busy} />
+      <DirectorSelection selection={directorSelection} disabled={busy} />
       <Link
         className="button secondary"
         href={`/?heroId=${encodeURIComponent(heroSelection.heroId)}`}
@@ -161,7 +165,11 @@ function CampaignLobby() {
           <p className={styles.kicker}>{t('Исследование')}</p>
           <h2>{t('Обсерватория')}</h2>
           <p>{t('Этот отдельный тестовый мир не изменяет твои опубликованные истории.')}</p>
-          <Button busy={busy} disabled={!heroSelection.ready} onClick={() => void create()}>
+          <Button
+            busy={busy}
+            disabled={!heroSelection.ready || !directorSelection.ready}
+            onClick={() => void create()}
+          >
             <Compass size={18} />
             {t('Новая кампания')}
           </Button>
@@ -471,6 +479,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             </span>
           </div>
         </details>
+        <CampaignDirector campaignId={campaignId} disabled={!connected || game.busy || storyBusy} />
         <NarrativePreferences
           key={campaignId}
           campaignId={campaignId}

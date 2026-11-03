@@ -5,7 +5,12 @@ import {
   initializeTurnController,
   projectState,
 } from '@dreamwalk/game-core';
-import { gameEnvelopeSchema } from '@dreamwalk/contracts';
+import {
+  formatSparkSubunits,
+  providerMicrosToSparkSubunits,
+  gameEnvelopeSchema,
+} from '@dreamwalk/contracts';
+import { defaultDirectorCatalog } from '@dreamwalk/contracts/dist/director-style';
 import { expect, test, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { settingsSchema } from '@dreamwalk/contracts';
@@ -852,7 +857,7 @@ async function applyThenOpenImage(page: Page) {
   const stage = page.locator('[data-generation-role="concept"]');
   await expect(stage).toBeVisible();
   await stage.getByRole('button', { name: 'Estimate cost', exact: true }).click();
-  await expect(stage.getByTestId('request-reserve')).toBeVisible();
+  await expect(stage.locator('[data-image-quote-price]')).toBeVisible();
   return stage;
 }
 
@@ -874,23 +879,27 @@ test('after a policy change each image uses its own reserve snapshot and require
   const first = images.quotes[0];
   expect(first.reserveMicros).not.toBe(images.configuration().reserveMicros);
   expect(first.estimatedTotalMicros).not.toBe(images.configuration().estimatedTotalMicros);
-  const reserve = stage.getByTestId('request-reserve');
-  await expect(reserve).toContainText('Planning estimate');
-  await expect(reserve).toContainText('Percentage margin (25%)');
-  await expect(reserve).toContainText('Fixed margin');
-  await expect(reserve).toContainText('Reference allowance');
-  await expect(reserve).toContainText('Total reserve');
-  await expect(reserve).toContainText(usd(first.reserveMicros));
-  await expect(reserve).toContainText('The estimate and margin do not cap the provider invoice.');
+  const reserve = stage.locator('[data-image-quote-price]');
+  await expect(reserve).toHaveCount(1);
+  await expect(stage.getByTestId('request-reserve')).toHaveCount(0);
+  expect(first.reserveMicros).toBe(
+    first.estimatedTotalMicros +
+      first.estimateSnapshot.percentageMarginMicros +
+      first.estimateSnapshot.fixedMarginMicros +
+      first.estimateSnapshot.referenceAllowanceMicros,
+  );
   await expect(reserve).toContainText(
-    'Reference processing cost is uncertain. Review the image cost confirmation before dispatch.',
+    formatSparkSubunits(providerMicrosToSparkSubunits(String(first.reserveMicros)), 'en', 'exact'),
+  );
+  await expect(stage).toContainText(
+    'The estimate does not cap the provider invoice: actual cost may be higher.',
   );
   await reserve.scrollIntoViewIfNeeded();
-  await page.screenshot({ path: test.info().outputPath('request-reserve-desktop.png') });
+  await page.screenshot({ path: test.info().outputPath('single-image-estimate-desktop.png') });
   const originalViewport = page.viewportSize()!;
   await page.setViewportSize({ width: 390, height: 844 });
   await reserve.scrollIntoViewIfNeeded();
-  await page.screenshot({ path: test.info().outputPath('request-reserve-mobile.png') });
+  await page.screenshot({ path: test.info().outputPath('single-image-estimate-mobile.png') });
   await page.setViewportSize(originalViewport);
   const dispatch = stage.getByRole('button', { name: 'Confirm and generate', exact: true });
   await expect(dispatch).toBeEnabled();
@@ -901,7 +910,9 @@ test('after a policy change each image uses its own reserve snapshot and require
   expect(second.id).not.toBe(first.id);
   expect(second.estimateSnapshotId).not.toBe(first.estimateSnapshotId);
   expect(second.reserveMicros).not.toBe(first.reserveMicros);
-  await expect(reserve).toContainText(usd(second.reserveMicros));
+  await expect(reserve).toContainText(
+    formatSparkSubunits(providerMicrosToSparkSubunits(String(second.reserveMicros)), 'en', 'exact'),
+  );
   await expect(dispatch).toBeEnabled();
   await dispatch.click();
   await expect.poll(() => images.dispatches.length).toBe(1);
@@ -1050,6 +1061,20 @@ async function preflightFixture(
     const path = new URL(route.request().url()).pathname,
       method = route.request().method();
     if (path.endsWith(`/game/campaigns/${id}/snapshot`)) return route.fulfill({ json: envelope });
+    // Director discovery is read-only. Keep the unexpected-route guard strict for writes.
+    if (method === 'GET' && path === '/api/v1/game/directors')
+      return route.fulfill({ json: defaultDirectorCatalog() });
+    if (method === 'GET' && path === `/api/v1/game/campaigns/${id}/director`) {
+      const catalog = defaultDirectorCatalog();
+      return route.fulfill({
+        json: {
+          profileId: catalog.defaultProfileId,
+          revision: 1,
+          profile: catalog.profiles.find((profile) => profile.id === catalog.defaultProfileId),
+          canChange: true,
+        },
+      });
+    }
     if (illustrated && method === 'POST' && path.endsWith(`/game/campaigns/${id}/move`)) {
       const body = route.request().postDataJSON();
       expect(body.turnFence).toEqual(turnFence);

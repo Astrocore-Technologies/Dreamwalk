@@ -36,6 +36,7 @@ async function harness(
   saved = new Map(),
   selection = { heroId: '', ready: true, body: {} },
   client = { user: { id: 'u' }, loading: false },
+  director = { profileId: 'coauthor', ready: true },
 ) {
   const source = await readFile(
     new URL('../../apps/web/components/game/adventure-launch.tsx', import.meta.url),
@@ -46,7 +47,8 @@ async function harness(
     effects = [],
     timers = new Map(),
     gate = new LaunchGate(),
-    paths = [];
+    paths = [],
+    directorBindings = new Map();
   let cursor = 0,
     tree,
     timer = 0;
@@ -82,6 +84,40 @@ async function harness(
     './hero-selection': {
       HeroSelection: 'hero',
       useHeroSelection: () => selection,
+    },
+    './director-selection': {
+      DirectorSelection: 'director',
+      useDirectorSelection: (_scope, key) => {
+        if (!directorBindings.has(key)) {
+          const pinnedId = saved.get(key + ':director') || '';
+          const legacy =
+            !pinnedId && (saved.has(key + ':prepare') || saved.has(key + ':dispatch-pending'));
+          directorBindings.set(key, { pinnedId: pinnedId || (legacy ? 'coauthor' : ''), legacy });
+        }
+        const binding = directorBindings.get(key);
+        const profileId = binding.pinnedId || director.profileId;
+        return {
+          profileId,
+          hydrated: true,
+          ready: director.ready,
+          legacy: binding.legacy,
+          locked: !!binding.pinnedId,
+          resource: { reload() {} },
+          lock() {
+            if (binding.pinnedId) return;
+            binding.pinnedId = profileId;
+            saved.set(key + ':director', profileId);
+          },
+          unlock() {
+            if (binding.legacy) return;
+            binding.pinnedId = '';
+            saved.delete(key + ':director');
+          },
+          setProfileId(id) {
+            if (!binding.pinnedId) director.profileId = id;
+          },
+        };
+      },
     },
     './use-launch-gate': {
       useLaunchGate: (key) => {
@@ -236,7 +272,7 @@ test('lost dispatch response preserves uncertainty across reload and never auto-
   h.render();
   await h.click('Начать прохождение');
   await h.click('Подтвердить и начать');
-  assert.equal(saved.get('dreamwalk-start:u:v::dispatch-pending'), 'yes');
+  assert.equal(saved.get('dreamwalk-start:u:v::coauthor:dispatch-pending'), 'yes');
   const restored = await harness(transport, saved);
   restored.render();
   await restored.flush();
@@ -528,7 +564,7 @@ for (const code of [
     h.render();
     await h.click('Начать прохождение');
     await h.click('Подтвердить и начать');
-    assert.equal(h.saved.has('dreamwalk-start:u:v::dispatch-pending'), false);
+    assert.equal(h.saved.has('dreamwalk-start:u:v::coauthor:dispatch-pending'), false);
     assert.equal(dispatches, 1);
     assert.equal(quotes, 1);
     assert.equal(h.timers.size, 0);
@@ -555,7 +591,7 @@ for (const error of [
     h.render();
     await h.click('Начать прохождение');
     await h.click('Подтвердить и начать');
-    assert.equal(h.saved.get('dreamwalk-start:u:v::dispatch-pending'), 'yes');
+    assert.equal(h.saved.get('dreamwalk-start:u:v::coauthor:dispatch-pending'), 'yes');
     assert.ok(
       h.nodes().some((n) => n.type === 'button' && n.props.children === 'Проверить состояние'),
     );
@@ -687,4 +723,115 @@ test('leaving during a status read prevents campaign creation and navigation', a
   await h.flush();
   assert.deepEqual(h.paths, []);
   assert.equal(calls.length, 1);
+});
+
+test('selected director binds preparation, campaign and operation identity without changing paid consent', async () => {
+  const calls = [];
+  const h = await harness(
+    async (path, options = {}) => {
+      calls.push([path, options.body ? JSON.parse(options.body) : null]);
+      if (path === '/game/campaigns') return { campaignId: 'with-director' };
+      return { ...prepared, status: 'ready', directorProfileId: 'storyteller' };
+    },
+    new Map(),
+    { heroId: '', ready: true, body: {} },
+    { user: { id: 'u' }, loading: false },
+    { profileId: 'storyteller', ready: true },
+  );
+  h.render();
+  await h.click('Начать прохождение');
+  assert.equal(
+    calls.find(([path]) => path === '/game/start-preparations')[1].directorProfileId,
+    'storyteller',
+  );
+  assert.equal(
+    calls.find(([path]) => path === '/game/campaigns')[1].directorProfileId,
+    'storyteller',
+  );
+  assert.equal(h.saved.get('dreamwalk-start:u:v::director'), 'storyteller');
+  assert.equal(h.saved.get('dreamwalk-start:u:v::storyteller:prepare'), 'op');
+  assert.deepEqual(h.paths, ['/game/with-director']);
+  assert.equal(
+    calls.some(([path]) => path.endsWith('/dispatch')),
+    false,
+  );
+});
+
+test('failed catalog load blocks a new start instead of silently choosing the default', async () => {
+  const calls = [];
+  const h = await harness(
+    async (path) => {
+      calls.push(path);
+      return prepared;
+    },
+    new Map(),
+    { heroId: '', ready: true, body: {} },
+    { user: { id: 'u' }, loading: false },
+    { profileId: '', ready: false },
+  );
+  h.render();
+  assert.equal(h.nodes().find((node) => node.type === 'button').props.disabled, true);
+  await h.click('Начать прохождение');
+  assert.deepEqual(calls, []);
+});
+
+test('pinned director cannot switch operation identity while dispatch is uncertain', async () => {
+  let dispatches = 0;
+  const h = await harness(
+    async (path) => {
+      if (path.endsWith('/quote')) return quote;
+      if (path.endsWith('/dispatch')) {
+        dispatches++;
+        throw Error('offline');
+      }
+      return { ...prepared, directorProfileId: 'storyteller' };
+    },
+    new Map(),
+    { heroId: '', ready: true, body: {} },
+    { user: { id: 'u' }, loading: false },
+    { profileId: 'storyteller', ready: true },
+  );
+  h.render();
+  await h.click('Начать прохождение');
+  await h.click('Подтвердить и начать');
+  const selector = h.nodes().find((node) => node.type === 'director');
+  assert.equal(selector.props.locked, true);
+  selector.props.selection.setProfileId('director');
+  h.render();
+  assert.equal(
+    h.nodes().find((node) => node.type === 'director').props.selection.profileId,
+    'storyteller',
+  );
+  assert.equal(h.saved.get('dreamwalk-start:u:v::storyteller:dispatch-pending'), 'yes');
+  assert.equal(dispatches, 1);
+});
+
+test('a replaced legacy preparation preserves its director parameter on later reload replay', async () => {
+  const saved = new Map([['dreamwalk-start:u:v::prepare', 'legacy-operation']]);
+  const bodies = [];
+  let rejectLegacy = true;
+  const transport = async (path, options = {}) => {
+    if (path === '/game/start-preparations') {
+      bodies.push(JSON.parse(options.body));
+      if (rejectLegacy) {
+        rejectLegacy = false;
+        throw new ApiError('source changed', 409, 'START_PREPARATION_STALE');
+      }
+    }
+    if (path.endsWith('/quote')) return quote;
+    return { ...prepared, directorProfileId: 'coauthor' };
+  };
+  const h = await harness(transport, saved);
+  h.render();
+  await h.flush();
+  await h.click('Начать прохождение');
+  await h.click('Начать прохождение');
+  assert.equal(bodies[0].directorProfileId, undefined, 'old operation retains its original shape');
+  assert.equal(bodies[1].directorProfileId, 'coauthor', 'new operation pins its profile');
+  assert.equal(saved.get('dreamwalk-start:u:v::director-included'), 'yes');
+  const restored = await harness(transport, saved);
+  restored.render();
+  await restored.flush();
+  await restored.click('Начать прохождение');
+  assert.deepEqual(bodies[2], bodies[1], 'replay uses the identical operation and profile');
 });

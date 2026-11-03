@@ -13,6 +13,7 @@ export const authoringContextSchema = z
 export type AuthoringContext = z.infer<typeof authoringContextSchema>;
 export const generationRequestSchema = z
   .object({
+    requestPolicyVersion: z.literal(2).optional(),
     adventureId: z.uuid().optional(),
     // Draft identity is scoped to the authenticated actor, never a hero ownership claim.
     heroPortraitContext: z.object({ draftId: z.uuid() }).strict().optional(),

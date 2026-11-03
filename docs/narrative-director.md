@@ -82,32 +82,51 @@ by this bridge. The composer explicitly labels the shared destination as the dir
 whisper/selected-character mode does not silently broaden its audience or create a
 public scene. Administrative director personas are separate from these permissions.
 
-## Administrator director styles (KAN-24)
+## Named directors and per-playthrough selection (KAN-24)
 
-The existing Admin → Models page contains one compact director panel. Administrators
-can choose Coauthor (natural/balanced/balanced), Storyteller
-(atmospheric/deliberate/reactive), or Director (cinematic/brisk/proactive), then
-optionally adjust the three bounded axes. This is one platform-wide active profile,
-not a new player-facing selector or an arbitrary system-prompt editor. Player detail
-and dialogue preferences take precedence over these presentation defaults.
+Admin → Models contains a compact catalog of named directors. Administrators can
+create profiles, edit their public name/description and bounded style, pacing and
+initiative, set the default, or archive a profile. Coauthor
+(natural/balanced/balanced), Storyteller (atmospheric/deliberate/reactive), and Director
+(cinematic/brisk/proactive) are initial profiles and reusable presentation presets.
+There is no arbitrary system-prompt editor. Names and descriptions are display text,
+not model instructions; only the three validated enums enter provider guidance.
 
-GET/PATCH `/api/v1/admin/director-style` require server-verified admin access. PATCH
-accepts only `style`, `pacing`, `initiative`, and `expectedRevision`. Saves use a
-transactional revision check and record old/new values in the audit log. The default
-is compatible with existing play and needs no database migration; the existing
-`platform_settings` row is created only on the first save.
+Players select a director before preparing a story or creating the test campaign.
+The choice is pinned with the start preparation and saved on the new campaign.
+The campaign owner can change it while playing; accepted participants can see the
+current shared director but cannot overwrite the owner's choice. Each playthrough
+has its own selection. Changing the catalog default never rewrites saved campaigns.
+A started or paid preparation cannot silently switch directors or reset consent:
+its profile ID is immutable, and an inconsistent create request is rejected.
 
-A shared director turn captures the current profile before token fitting and quoting.
-Its persisted snapshot is used for retry/dispatch, so an admin edit affects new turns,
-not previously prepared replies. The actual profile participates in cache and request
-body identities. Only fixed server-owned guidance selected by the enums enters the
-provider instructions. NPC-only speech, whispers and planning do not use this profile. In a mixed director
-turn, the profile applies only to narration, never overrides the public NPC speaker’s
-own voice or performance.
-Initiative changes the optional opening within the requested turn, never schedules
-additional generation or increases scene/NPC/action limits. No style changes private
-knowledge, protected canon, player agency, validation, consent, provider or budget gates.
+GET/PATCH `/api/v1/admin/directors` require server-verified admin access. PATCH
+accepts `profiles`, `defaultProfileId` and `expectedRevision`. Strict validation
+requires unique IDs, at most 24 profiles and an enabled default. Saves compare
+revisions under a row lock and audit old/new values in the same transaction.
+Existing profiles cannot be removed: archiving hides them from new choices but
+preserves saved campaigns and preparations. The original admin `/director-style`
+endpoint remains a compatibility adapter for the catalog's current default only.
 
-Verification uses offline request-body tests, real disposable PostgreSQL/API tests and
-synthetic browser transport fixtures in all three UI languages. No real-provider
-literary quality, paid generation, merge or deployment is implied by these tests.
+GET `/api/v1/game/directors` exposes enabled public choices. GET/POST
+`/api/v1/game/campaigns/:id/director` enforce active membership and source access;
+POST additionally requires campaign ownership and the expected selection revision.
+Selecting a director does not dispatch generation, change gameplay state or charge
+anything. Migration 056 pins existing campaigns/preparations to `coauthor`; the
+first catalog uses the earlier global style as that profile's presentation so
+upgrading does not discard an administrator's existing settings.
+
+A shared director turn captures its campaign's selected profile before token
+fitting and quoting. The persisted snapshot is reused on retry/dispatch, so profile
+edits and campaign changes affect new turns rather than prepared replies. The
+actual style, profile ID and selection revision participate in cache/request
+identities. NPC-only speech, whispers and planning do not use this profile. In a
+mixed director turn it applies only to narration and preserves each NPC's public
+voice and performance. Player detail and dialogue preferences take precedence.
+
+Initiative changes an optional opening inside the requested turn, never schedules
+additional generation or raises scene/NPC/action limits. No style changes private
+knowledge, protected canon, player agency, validation, consent, provider or budget
+gates. Verification uses offline request-body tests, isolated PostgreSQL/API tests
+and synthetic browser fixtures in RU/EN/UK. Live-model literary quality and paid
+generation are not claimed.
