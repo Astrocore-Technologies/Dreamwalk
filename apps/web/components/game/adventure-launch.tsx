@@ -2,6 +2,7 @@
 import { MapImageNotice } from './map-image-notice';
 import { storyReturnPath, withStoryReturn } from '../story-return';
 import { HeroSelection, useHeroSelection } from './hero-selection';
+import { DirectorSelection, useDirectorSelection } from './director-selection';
 import { useLaunchGate } from './use-launch-gate';
 import { useRouter } from 'next/navigation';
 import { useEffect, useState } from 'react';
@@ -36,7 +37,11 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
           version.id === adventure.playableVersionId,
       )?.id
     : adventure.playableVersionId;
-  const gate = useLaunchGate(`${user?.id}:${adventure.id}:${versionId}:${heroSelection.heroId}`);
+  const baseStorageKey = `dreamwalk-start:${user?.id}:${versionId}:${heroSelection.heroId}`;
+  const directorSelection = useDirectorSelection(`adventure:${adventure.id}`, baseStorageKey);
+  const gate = useLaunchGate(
+    `${user?.id}:${adventure.id}:${versionId}:${heroSelection.heroId}:${directorSelection.profileId}`,
+  );
   type Quote = {
     imageInputCount?: number;
     schematicMapCount?: number;
@@ -60,7 +65,9 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
   const [entryKey, setEntryKey] = useState('');
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
-  const storageKey = `dreamwalk-start:${user?.id}:${versionId}:${heroSelection.heroId}`;
+  const storageKey = directorSelection.legacy
+    ? baseStorageKey
+    : `${baseStorageKey}:${directorSelection.profileId}`;
   useEffect(() => {
     setPreparation(null);
     setEntryKey('');
@@ -75,12 +82,13 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
       user &&
       versionId &&
       heroSelection.ready &&
+      directorSelection.hydrated &&
       !busy &&
       restoredKey !== storageKey &&
       sessionStorage.getItem(storageKey + ':prepare')
     )
       void launch('restore');
-  }, [storageKey, heroSelection.ready, busy, restoredKey]);
+  }, [storageKey, heroSelection.ready, directorSelection.hydrated, busy, restoredKey]);
   function operation(suffix: string) {
     const key = storageKey + ':' + suffix;
     let id = sessionStorage.getItem(key);
@@ -94,12 +102,15 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
     action: 'prepare' | 'confirm' | 'refresh' | 'restart' | 'restore' | 'open' = 'prepare',
   ) {
     if (!user) {
+      if (directorSelection.ready) directorSelection.setProfileId(directorSelection.profileId);
       router.push(
         withStoryReturn('/auth/sign-in', storyReturnPath(adventure.slug, heroSelection.heroId)),
       );
       return;
     }
-    if (!versionId || !heroSelection.ready) return;
+    if (!versionId || !heroSelection.ready || !directorSelection.hydrated) return;
+    if (['prepare', 'restart'].includes(action) && !directorSelection.ready && !preparation) return;
+    if (action === 'restart' && !directorSelection.ready) return;
     const lease = gate.begin();
     if (!lease) return;
     const enterRequested = ['prepare', 'confirm', 'restart', 'open'].includes(action);
@@ -127,11 +138,21 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
             )
           : null;
       } else if (action === 'prepare') {
+        const legacyReplay =
+          directorSelection.legacy &&
+          !!sessionStorage.getItem(storageKey + ':prepare') &&
+          sessionStorage.getItem(storageKey + ':director-included') !== 'yes';
+        // A safely replaced legacy operation starts including the chosen profile.
+        // Remember that request shape so a later reload replays the same hash.
+        if (directorSelection.legacy && !legacyReplay)
+          sessionStorage.setItem(storageKey + ':director-included', 'yes');
+        directorSelection.lock();
         current = await api<StartPreparation>('/game/start-preparations', {
           method: 'POST',
           body: JSON.stringify({
             operationId: operation('prepare'),
             playableVersionId: versionId,
+            ...(legacyReplay ? {} : { directorProfileId: directorSelection.profileId }),
             ...heroSelection.body,
           }),
         });
@@ -171,6 +192,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
               body: JSON.stringify({
                 playableVersionId: versionId,
                 startPreparationId: current.id,
+                directorProfileId: current.directorProfileId || directorSelection.profileId,
                 turnBased: true,
                 ...heroSelection.body,
               }),
@@ -224,7 +246,25 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
           setQuote(null);
           setConfirm(false);
         }
-        setError(errorMessage(err));
+        setError(
+          err instanceof ApiError && err.code === 'DIRECTOR_UNAVAILABLE'
+            ? t('DIRECTOR_UNAVAILABLE')
+            : errorMessage(err),
+        );
+        if (err instanceof ApiError && err.code === 'DIRECTOR_UNAVAILABLE') {
+          directorSelection.resource.reload();
+          // This response is rejected before preparation admission. Unknown/network
+          // results keep the pinned choice and every dispatch guard untouched.
+          if (
+            action === 'prepare' &&
+            !preparation &&
+            !dispatchUncertain &&
+            !sessionStorage.getItem(storageKey + ':dispatch-pending')
+          ) {
+            sessionStorage.removeItem(storageKey + ':prepare');
+            directorSelection.unlock();
+          }
+        }
       }
     } finally {
       if (action === 'restore' && gate.accepts(lease)) setRestoredKey(storageKey);
@@ -261,7 +301,16 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
           : 'prepare';
   return (
     <>
-      <HeroSelection selection={heroSelection} disabled={busy || state !== 'estimate'} compact />
+      <HeroSelection
+        selection={heroSelection}
+        disabled={busy || directorSelection.locked || state !== 'estimate'}
+        compact
+      />
+      <DirectorSelection
+        selection={directorSelection}
+        disabled={busy || state !== 'estimate'}
+        locked={directorSelection.locked}
+      />
       {status && <p role="status">{t(status)}</p>}
       {Boolean(preparation?.jobs?.[0]?.error_code?.startsWith('MAP_IMAGE_')) && (
         <p>
@@ -279,6 +328,9 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
             !versionId ||
             versions.loading ||
             !heroSelection.ready ||
+            !directorSelection.hydrated ||
+            (!directorSelection.ready && !preparation) ||
+            (state === 'failed' && !directorSelection.ready) ||
             (state === 'running' && !error)
           }
           busy={busy || (state === 'running' && !error)}

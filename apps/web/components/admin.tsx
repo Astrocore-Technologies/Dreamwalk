@@ -85,6 +85,7 @@ const actionLabels: Record<string, string> = {
   'runtime.update': 'Runtime-конфигурация обновлена',
   'report.resolve': 'Жалоба рассмотрена',
   'director_style.update': 'Стиль ведущего обновлён',
+  'director_catalog.update': 'Ведущие сохранены',
   'taxonomy.update': 'Справочник обновлён',
   'user.role': 'Роль пользователя изменена',
   'wallet.adjust': 'Баланс скорректирован',

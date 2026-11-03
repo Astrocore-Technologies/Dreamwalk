@@ -199,6 +199,12 @@ test('author, player and account surfaces retain controls in both themes; gamepl
   const story = page.getByTestId('unified-story');
   const toolbar = page.locator('.topbar');
   await expect(page.locator('#game-toolbar h1')).toBeVisible();
+  // The disconnected-state warning intentionally takes extra room. Measure the
+  // compact gameplay layout only after the real socket has connected.
+  await expect(page.getByText('Подключено', { exact: true })).toBeVisible();
+  await expect(
+    page.getByText('Соединение потеряно. Движение остановлено.', { exact: true }),
+  ).toHaveCount(0);
   const toolbarBox = (await toolbar.boundingBox())!;
   const surfaceBox = (await surface.boundingBox())!;
   expect(toolbarBox.height).toBeLessThan(100);
