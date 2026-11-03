@@ -156,7 +156,12 @@ async function screenshot(page: Page, file: string) {
         images.every((image) => (image as HTMLImageElement).naturalWidth > 0),
       ),
   ).toBe(true);
-  await page.screenshot({ path: file, fullPage: true, animations: 'disabled' });
+  // A modal is viewport-fixed. Full-page captures distort its backdrop after scrolling.
+  await page.screenshot({
+    path: file,
+    fullPage: !(await page.getByRole('dialog').count()),
+    animations: 'disabled',
+  });
 }
 // Supports the current topbar and the reviewed shared shell's mobile preferences drawer.
 async function preferences(page: Page, locale: string, theme: string) {
@@ -274,9 +279,14 @@ test('art dialog cancels cleanly, previews upload and retains explicit rights on
     element.scrollTop = 0;
   });
   await screenshot(page, info.outputPath('register-art-mobile.png'));
+  await dialog.getByRole('button', { name: 'Add to library', exact: true }).scrollIntoViewIfNeeded();
+  await screenshot(page, info.outputPath('register-art-mobile-actions.png'));
   server.failNextAdmission();
   await dialog.getByRole('button', { name: 'Add to library', exact: true }).click();
-  await expect(dialog.getByRole('alert')).toContainText('Synthetic retry required');
+  await expect(dialog.getByRole('alert')).toHaveText(
+    'The service is temporarily unavailable. Please try later.',
+  );
+  await expect(dialog.getByRole('alert')).not.toContainText('Synthetic retry required');
   server.holdNextAdmission();
   await dialog.getByRole('button', { name: 'Add to library', exact: true }).click();
   await expect
