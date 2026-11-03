@@ -287,6 +287,9 @@ await test(
         async () => {
           const f4 = await setup(owner, 'guard', (d) => {
             d.npcs[0].initialKnowledge = [{ entityId: 'authored-door', revealCondition: 'never' }];
+            // The door is private knowledge, not a target both listeners can see.
+            // Visible entities may now appear in the bounded NPC action context.
+            d.objects.find((object) => object.id === 'authored-door').mapId = 'garden';
           });
           const cid = f4.campaignId;
           await moveTo(owner, cid, { x: 3, y: 2 });
@@ -314,6 +317,10 @@ await test(
           ])
             assert.ok(!json.includes(secret), secret);
           assert.ok(row.context.audienceIds.length === 2);
+          assert.ok(
+            row.context.actionContext.targets.some((target) => target.id === 'authored-key'),
+            'a visible target remains usable without exposing the unseen private door',
+          );
           await owner.request(
             path(cid, 'ai/jobs'),
             { ...req, requestedFactIds: ['initial-gardener-authored-door'] },

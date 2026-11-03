@@ -1000,7 +1000,10 @@ export class OpenAiNpcProvider implements NpcProvider {
                 ? null
                 : {
                     ...(clean(step.reply) as Record<string, unknown>),
-                    ...(step.reply && typeof step.reply === 'object' && 'actionIntent' in step.reply
+                    ...(step.reply &&
+                    typeof step.reply === 'object' &&
+                    'actionIntent' in step.reply &&
+                    step.reply.actionIntent != null
                       ? { actionIntent: cleanNpcActionIntent(step.reply.actionIntent) }
                       : {}),
                   },
@@ -1136,10 +1139,11 @@ export class OpenAiNpcProvider implements NpcProvider {
           })
           .strict()
           .parse(parsed);
+        const { actionIntent, ...reply } = raw;
         proposal = npcPublicReplySchema.parse({
-          ...raw,
+          ...reply,
           ...(raw.companionIntent === null ? { companionIntent: undefined } : {}),
-          actionIntent: cleanNpcActionIntent(raw.actionIntent),
+          ...(actionIntent == null ? {} : { actionIntent: cleanNpcActionIntent(actionIntent) }),
           ...(raw.itemIntents
             ? {
                 itemIntents: raw.itemIntents.map((intent) =>
