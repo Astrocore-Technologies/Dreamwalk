@@ -18,8 +18,8 @@ import { useObjectiveText } from './campaign-objectives';
 import { drawBundledScene, drawJournal } from './bundled-scene';
 import { TextureBudget, textureDimensions } from '../assets/texture-budget';
 import { decodeArt } from '../assets/decode-art';
-import { visibleSceneArt } from '../assets/art-visibility';
-import type { VisibleArtBinding } from '../assets/use-campaign-art';
+import { canvasSceneArt } from '../assets/art-visibility';
+import type { SceneIllustration, VisibleArtBinding } from '../assets/use-campaign-art';
 import { artPreviewUrl } from '../assets/types';
 import type { GamePoint, GameProjection, GameAction } from '@dreamwalk/contracts';
 import { resolveGameAtlas } from '@/lib/game-assets';
@@ -30,6 +30,7 @@ import styles from './game.module.css';
 export function GameCanvas({
   projection,
   art = [],
+  illustration = null,
   onMove,
   onSelectNpc,
   onInspectNpc,
@@ -42,6 +43,7 @@ export function GameCanvas({
 }: {
   projection: GameProjection;
   art?: VisibleArtBinding[];
+  illustration?: SceneIllustration | null;
   onMove: (point: GamePoint) => void;
   onSelectNpc: (npcId: string) => void;
   onInspectNpc?: (npcId: string) => void;
@@ -63,6 +65,7 @@ export function GameCanvas({
   const latest = useRef({
     projection,
     art,
+    illustration,
     onMove,
     onSelectNpc,
     onInspectNpc,
@@ -84,6 +87,7 @@ export function GameCanvas({
     latest.current = {
       projection,
       art,
+      illustration,
       onMove,
       onSelectNpc,
       onInspectNpc,
@@ -93,6 +97,7 @@ export function GameCanvas({
   }, [
     projection,
     art,
+    illustration,
     onMove,
     onSelectNpc,
     onInspectNpc,
@@ -366,7 +371,7 @@ export function GameCanvas({
       };
       const synchronizeArt = () => {
         const state = latest.current;
-        const visible = visibleSceneArt(state.projection, state.art);
+        const visible = canvasSceneArt(state.projection, state.art, state.illustration);
         const allowed = new Set(visible.map((entry) => entry.url));
         for (const [url, controller] of artRequests)
           if (!allowed.has(url)) {
@@ -423,7 +428,11 @@ export function GameCanvas({
                 disposed ||
                 controller.signal.aborted ||
                 artRequests.get(entry.url) !== controller ||
-                !visibleSceneArt(latest.current.projection, latest.current.art).some(
+                !canvasSceneArt(
+                  latest.current.projection,
+                  latest.current.art,
+                  latest.current.illustration,
+                ).some(
                   (candidate) =>
                     candidate.url === entry.url && candidate.revisionId === entry.revisionId,
                 )
@@ -572,11 +581,18 @@ export function GameCanvas({
           for (const exit of p.map.exits) spriteAt(8, exit.x, exit.y, terrain);
           grid.clear();
           const edge = Math.max(BATTLEMAP_CELLS, p.map.width, p.map.height);
-          for (let cell = 0; cell <= edge; cell++) {
-            grid.moveTo(cell * tile, 0).lineTo(cell * tile, edge * tile);
-            grid.moveTo(0, cell * tile).lineTo(edge * tile, cell * tile);
+          // Rebuild each path: Pixi consumes it on stroke. The dark outline
+          // keeps the mandatory grid legible on bright artwork too.
+          for (const stroke of [
+            { color: 0x171321, alpha: 0.5, width: 3 },
+            { color: 0xf4ecd8, alpha: 0.6, width: 1 },
+          ]) {
+            for (let cell = 0; cell <= edge; cell++) {
+              grid.moveTo(cell * tile, 0).lineTo(cell * tile, edge * tile);
+              grid.moveTo(0, cell * tile).lineTo(edge * tile, cell * tile);
+            }
+            grid.stroke(stroke);
           }
-          grid.stroke({ color: 0xf4ecd8, alpha: 0.4, width: 1 });
           element.dataset.battlemapGrid = `${edge}x${edge}`;
           world.hitArea = new Rectangle(0, 0, p.map.width * tile, p.map.height * tile);
         }
@@ -724,6 +740,13 @@ export function GameCanvas({
               record.animatedTexture?.destroy(false);
               sprites.delete(id);
             }
+          element.dataset.renderedPlayers = String(
+            p.entities.filter((entity) => entity.kind === 'player' && sprites.has(entity.id))
+              .length,
+          );
+          element.dataset.renderedNpcs = String(
+            p.entities.filter((entity) => entity.kind === 'npc' && sprites.has(entity.id)).length,
+          );
           boundary.clear();
           if (p.encounter?.phase === 'planning') {
             const area = p.encounter.area;
@@ -856,6 +879,9 @@ export function GameCanvas({
       cleanup();
     };
   }, []);
+  const background = canvasSceneArt(projection, art, illustration).find(
+    (entry) => entry.slot === `map:${projection.map.id}:background`,
+  );
   const explicitStop = () => {
     if (!latest.current.disabled && !planning) onStop();
   };
@@ -915,6 +941,27 @@ export function GameCanvas({
         <div className={styles.mapTools}>
           <button
             type="button"
+            aria-label={itemText('actions')}
+            aria-haspopup="dialog"
+            onClick={() => {
+              setInventoryOpen(false);
+              setMenu({
+                ids: [
+                  ...projection.entities
+                    .filter((entity) => entity.id !== projection.actorId)
+                    .map((entity) => entity.id),
+                  ...projection.map.exits.map((exit) => `exit:${exit.id}`),
+                ],
+                x: 8,
+                y: 8,
+                mapId: projection.map.id,
+              });
+            }}
+          >
+            ⋯
+          </button>
+          <button
+            type="button"
             onClick={() => setZoom((value) => Math.min(MAX_MAP_ZOOM, value + 0.2))}
             disabled={zoom >= MAX_MAP_ZOOM}
             aria-label={t('Увеличить карту')}
@@ -934,7 +981,15 @@ export function GameCanvas({
           </button>
         </div>
       </div>
-      {projection.map.sceneProfile && <small>{objectiveText.art}</small>}
+      {background?.attribution || background?.licenseLabel ? (
+        <small>
+          {background.attribution}
+          {background.attribution && background.licenseLabel ? ' · ' : ''}
+          {background.licenseLabel}
+        </small>
+      ) : projection.map.sceneProfile ? (
+        <small>{objectiveText.art}</small>
+      ) : null}
       <div className={styles.controls}>
         <p id="game-controls-help">{itemText('help')} </p>
         <div className={styles.dpad}>

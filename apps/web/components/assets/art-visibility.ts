@@ -1,5 +1,6 @@
 import type { GameProjection } from '@dreamwalk/contracts';
-import type { VisibleArtBinding } from './use-campaign-art';
+import { artPreviewUrl } from './types';
+import type { SceneIllustration, VisibleArtBinding } from './use-campaign-art';
 type ArtProjection = Pick<GameProjection, 'map' | 'entities' | 'artBindings'>;
 /** Explicit empty allowlist removes cached metadata immediately. Older projections may omit it. */
 export function authorizedArt(projection: ArtProjection, art: VisibleArtBinding[]) {
@@ -39,4 +40,27 @@ export function visibleSceneArt(projection: ArtProjection, art: VisibleArtBindin
         return false;
       }),
   );
+}
+
+/** A server-authorized saved illustration is a backdrop, never spatial evidence.
+ * Keep it separate from the normal allowlist: it may restore only this map's
+ * background and cannot admit entity art, layers, another map, or external URLs.
+ */
+export function canvasSceneArt(
+  projection: ArtProjection,
+  art: VisibleArtBinding[],
+  illustration: SceneIllustration | null = null,
+): VisibleArtBinding[] {
+  const visible = visibleSceneArt(projection, art);
+  const slot = `map:${projection.map.id}:background`;
+  if (
+    projection.map.backgroundMode === 'schematic' &&
+    !projection.map.spatialGrounding &&
+    illustration?.mapId === projection.map.id &&
+    illustration.slot === slot &&
+    artPreviewUrl(illustration.url) &&
+    !visible.some((entry) => entry.slot === slot)
+  )
+    return [illustration, ...visible];
+  return visible;
 }
