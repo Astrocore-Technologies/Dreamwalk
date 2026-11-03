@@ -148,3 +148,38 @@ recipient-erasure bundle and compatible unrestricted-camera reuse. The assets-in
 full gameplay regression previously passed **115/115**; the later changes were confined
 to asset recipient locking/redaction and camera selection, not NPC/game rules. Exact final
 CI must still run the whole integrated source, including browser acceptance.
+
+## Library layout refinement (2026-11-03)
+
+The art library now leads with title/tag browsing, compact type/camera/tag/variant
+filters and image cards. A selected-art inspector displays the actual revision,
+dimensions, camera, variant, tags, rights, license, attribution and provenance.
+Owned-revision grants and withdrawal keep their existing explicit consent controls.
+The catalog still contains only server-authorized revisions. Local browsing covers
+up to 200 loaded revisions; expanded size/compatibility controls retain the server
+search (up to 50 results) and reuse-first resolver. No generation runs on browse.
+
+Registration is a native dialog with an actual uploaded-image preview alongside
+metadata and rights. It keeps the existing 5 MB raster upload limit, immutable
+new-revision creation, family revision check, retry operation ID, optional reuse
+permission and unchecked rights attestation. Cancel/Escape dismiss without admitting
+an art revision; an already uploaded file is still governed by existing upload
+lifecycle behavior. Save remains disabled until a fresh upload and required rights
+fields are present.
+
+This follows the selected asset-library and registration reference compositions,
+not a claim of pixel parity. Real author art and permissions are not replaced with
+reference samples. Shared shell, Studio tabs, generation/builder screens and the
+reference's unsupported drag/drop, filename display and 20 MB limit are outside
+this change. Images use contain sizing to preserve uncropped sprites and maps.
+The existing comma-separated tag contract and free-text license/variant fields
+remain; these are not the reference's chip editor and predefined menus.
+
+Validation: focused browsing/rights/source assertions are part of
+`tests/game/assets-ui.test.mjs`. The synthetic `asset-library-layout.spec.ts` checks
+filtering, desktop/mobile layouts, both themes, all three locales, owner/shared
+inspection, late search isolation, cancel/reopen, upload preview, attestation
+invalidation, retry identity and immutable revision entry. It awaits font and image decoding and records screenshots for all three
+locales, both themes and desktop/mobile into normal browser CI artifacts. Local Chromium and socket-based integrations are unavailable in the
+current sandbox; browser, database and production-build evidence must be taken
+from CI for the published head, not inferred from source checks.
