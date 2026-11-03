@@ -39,7 +39,7 @@ test('story composer parses escapes, rejects malformed and bounded segments, cla
     assert.equal(g.parseStorySegments(text).code, 'INVALID_MARKUP');
   assert.equal(g.parseStorySegments('*wait* a *wait* b *wait*').code, 'TOO_MANY_SEGMENTS');
   for (const text of ['*walk to keeper*', '*подхожу к двери*', '*йду до дверей*'])
-    assert.equal(g.parseStorySegments(text).code, 'WALK_FIRST');
+    assert.equal(g.parseStorySegments(text).code, undefined);
 });
 test('targeted dialogue uses only addressed NPC safe memory and excludes director/secrets', () => {
   const s = near();
@@ -102,9 +102,9 @@ test('whispers never create canon or public prose; physical outcomes only safe t
 });
 test('movement and distant immediate action rejected before provider context', () => {
   const s = near();
-  assert.throws(
-    () => g.buildStoryTurnContext(s, 'alice', input('*walk to door*'), randomUUID()),
-    /WALK_FIRST/,
+  assert.equal(
+    g.buildStoryTurnContext(s, 'alice', input('*walk to door*'), randomUUID()).actionPreview.length,
+    0,
   );
   Object.assign(s.entities.door, { x: 8, y: 4 });
   assert.throws(

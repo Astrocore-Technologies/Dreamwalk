@@ -345,7 +345,7 @@ function FullExternalGeneration({
                 {expired && <p>{g('expired')}</p>}
                 <ImageConfirmation
                   walletCharging={!!quote.sparks?.walletCharging}
-                  estimated={estimatedQuote}
+                  estimated={quote.upperMicros === null}
                   busy={busy}
                   disabled={
                     disabled ||

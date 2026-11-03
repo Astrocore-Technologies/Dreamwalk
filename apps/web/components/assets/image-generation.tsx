@@ -597,7 +597,7 @@ export function ImageGeneration({
           ) : (
             <ImageConfirmation
               walletCharging={!!quote.sparks?.walletCharging}
-              estimated={estimatedQuote}
+              estimated={quote.upperMicros === null}
               external={quote.mode === 'external'}
               busy={busy}
               disabled={!quoteBudgetAvailable || !dispatchAllowed || dispatchUncertain}

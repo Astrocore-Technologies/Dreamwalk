@@ -299,7 +299,7 @@ export class StoryTurnRuntime {
         const applied = applyTurnAction(next, actorId, action, input.turnFence!);
         actions.push({
           segmentIndex: segment.index,
-          action: action as StoryActionPreview['action'],
+          action: action as NonNullable<StoryFeedEntry['action']>,
         });
         entries.push({
           ordinal: entries.length,
@@ -327,7 +327,7 @@ export class StoryTurnRuntime {
           kind: 'outcome',
           channel: input.channel,
           code: applied.error ?? 'ACTION_SUCCEEDED',
-          action: action as StoryActionPreview['action'],
+          action: action as NonNullable<StoryFeedEntry['action']>,
           audienceIds: input.channel === 'whisper' ? [actorId] : listeners(next),
         });
       } else if (input.targetNpcId) {
@@ -414,7 +414,7 @@ export class StoryTurnRuntime {
               segment.kind === 'speech'
                 ? [segment.text]
                 : untrustedRoleplay.some((entry) => entry.segmentIndex === segment.index)
-                  ? [`${segment.text.replaceAll('\\', '\\\\').replaceAll('*', '\\*')}`]
+                  ? [`*${segment.text.replaceAll('\\', '\\\\').replaceAll('*', '\\*')}*`]
                   : [],
             )
             .join('\n')

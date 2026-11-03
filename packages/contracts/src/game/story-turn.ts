@@ -38,6 +38,9 @@ export const storyClarificationSchema = z.enum([
   'INVALID_MARKUP',
   'TOO_MANY_SEGMENTS',
 ]);
+export const storyActionSchema = narrativeActionSchema.extend({
+  kind: z.enum([...narrativeActionSchema.shape.kind.options, 'approach']),
+});
 export const storyTurnProposalSchema = z
   .object({
     turnId: z.uuid(),
@@ -49,7 +52,9 @@ export const storyTurnProposalSchema = z
         z
           .object({
             segmentIndex: z.number().int().min(0).max(5),
-            action: narrativeActionSchema.nullable(),
+            action: storyActionSchema.nullable(),
+            replyNpcId: id.nullable().optional(),
+            replyContextHash: z.string().min(1).max(160).nullable().optional(),
             reply: z
               .union([
                 z
@@ -79,7 +84,8 @@ export const storyTurnProposalSchema = z
 export type StoryTurnProposal = z.infer<typeof storyTurnProposalSchema>;
 export type StoryActionPreview = {
   segmentIndex: number;
-  action: z.infer<typeof narrativeActionSchema>;
+  targetLabel?: string;
+  action: z.infer<typeof storyActionSchema>;
 };
 export interface StoryQuote {
   chargeUnit?: 'sparks' | 'credits';
