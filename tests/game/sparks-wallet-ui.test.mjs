@@ -116,7 +116,7 @@ test('wallet and admin UI use actual Sparks without duplicate explanation or dem
 });
 test('hidden NPC controls retain saved profile/model fields in both editor drafts', async () => {
   const standalone = await readFile(
-    new URL('../../apps/web/components/studio.tsx', import.meta.url),
+    new URL('../../apps/web/components/studio/npc-library.tsx', import.meta.url),
     'utf8',
   );
   const scoped = await readFile(
