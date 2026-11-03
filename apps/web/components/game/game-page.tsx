@@ -20,7 +20,6 @@ import { useCampaignArt } from '../assets/use-campaign-art';
 import { HeroSelection, useHeroSelection, useHeroText, CampaignHero } from './hero-selection';
 import { useLaunchGate } from './use-launch-gate';
 import { localizedProjection } from './localized-projection';
-import { CampaignObjectives } from './campaign-objectives';
 import { NarrativePreferences } from './narrative-preferences';
 import { GameCanvas } from './game-canvas';
 import { TurnControls } from './turn-controls';
@@ -530,7 +529,6 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
               </p>
             </section>
           )}
-          <CampaignObjectives objectives={p.objectives} />
         </div>
         <UnifiedStory
           key={campaignId}

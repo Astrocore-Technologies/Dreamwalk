@@ -39,26 +39,8 @@ async function capture(page: Page, filename: string) {
   await page.evaluate(() => document.fonts.ready);
   await expect(page.locator('canvas')).toBeVisible();
   await page.evaluate(() => window.scrollTo(0, 0));
-  if (filename.includes('ending')) {
-    const canvas = await page.locator('canvas').boundingBox();
-    const objective = await page.getByTestId('campaign-objectives').boundingBox();
-    expect(canvas).not.toBeNull();
-    expect(objective).not.toBeNull();
-    const x = Math.max(0, Math.min(canvas!.x, objective!.x) - 8);
-    const y = Math.max(0, Math.min(canvas!.y, objective!.y) - 8);
-    const right = Math.min(
-      page.viewportSize()!.width,
-      Math.max(canvas!.x + canvas!.width, objective!.x + objective!.width) + 8,
-    );
-    const bottom = Math.max(canvas!.y + canvas!.height, objective!.y + objective!.height) + 8;
-    await page.screenshot({
-      path: test.info().outputPath(filename),
-      fullPage: true,
-      clip: { x, y, width: right - x, height: bottom - y },
-    });
-  } else {
-    await page.screenshot({ path: test.info().outputPath(filename), fullPage: false });
-  }
+  await expect(page.getByTestId('campaign-objectives')).toHaveCount(0);
+  await page.screenshot({ path: test.info().outputPath(filename), fullPage: false });
 }
 test('four players retain the legacy realtime Observatory ending with owned heroes', async ({
   browser,
@@ -124,10 +106,15 @@ test('four players retain the legacy realtime Observatory ending with owned hero
     // page's full assertion/open/close order, without serializing unrelated clients.
     await Promise.all(
       pages.map(async (page, index) => {
-        await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
-          'data-objective-status',
-          'active',
-        );
+        await expect
+          .poll(
+            async () =>
+              (await readProjection(page, id)).objectives?.find(
+                (objective) => objective.id === 'recover-journal',
+              )?.status,
+          )
+          .toBe('active');
+        await expect(page.getByTestId('campaign-objectives')).toHaveCount(0);
         await expect(page.getByTestId('objective-epilogue')).toHaveCount(0);
         for (let i = 1; i <= 4; i++) {
           if (i !== index + 1)
@@ -244,11 +231,16 @@ test('four players retain the legacy realtime Observatory ending with owned hero
     );
     await Promise.all(
       pages.map(async (page) => {
-        await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
-          'data-objective-status',
-          'achieved',
-        );
-        await expect(page.getByTestId('objective-epilogue')).toBeVisible();
+        await expect
+          .poll(
+            async () =>
+              (await readProjection(page, id)).objectives?.find(
+                (objective) => objective.id === 'recover-journal',
+              )?.status,
+          )
+          .toBe('achieved');
+        await expect(page.getByTestId('campaign-objectives')).toHaveCount(0);
+        await expect(page.getByTestId('objective-epilogue')).toHaveCount(0);
       }),
     );
     await Promise.all(
@@ -310,10 +302,15 @@ test('four players retain the legacy realtime Observatory ending with owned hero
       } finally {
         await finishProfile?.();
       }
-      await expect(page.locator('[data-objective-id="recover-journal"]')).toHaveAttribute(
-        'data-objective-status',
-        'achieved',
-      );
+      await expect
+        .poll(
+          async () =>
+            (await readProjection(page, id)).objectives?.find(
+              (objective) => objective.id === 'recover-journal',
+            )?.status,
+        )
+        .toBe('achieved');
+      await expect(page.getByTestId('campaign-objectives')).toHaveCount(0);
       await page.evaluate(
         ({ x, y }) => window.scrollTo({ left: x, top: y, behavior: 'instant' }),
         viewport,
