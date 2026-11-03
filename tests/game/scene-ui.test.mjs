@@ -109,17 +109,16 @@ test('author source rename clears stale curated variants while movement preserve
   assert.deepEqual(source.labelTranslations, { ru: 'Журнал' });
 });
 
-test('game scene precedes expanded objective text while private hero stays in the HUD', async () => {
+test('game scene omits the objective checklist while private hero stays in the HUD', async () => {
   const source = await readFile(
     new URL('../../apps/web/components/game/game-page.tsx', import.meta.url),
     'utf8',
   );
   const canvas = source.indexOf('<GameCanvas');
-  const objective = source.indexOf('<CampaignObjectives');
+  assert.doesNotMatch(source, /CampaignObjectives/);
   const sidebar = source.indexOf('<aside className={styles.hud}>');
   const hero = source.indexOf('<CampaignHero');
-  assert.ok(canvas > 0 && objective > canvas);
-  assert.ok(sidebar > objective && hero > sidebar);
+  assert.ok(canvas > 0 && sidebar > canvas && hero > sidebar);
 });
 
 test('camera centers small maps and clamps large maps at every edge without changing hit coordinates', () => {

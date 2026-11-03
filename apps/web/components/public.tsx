@@ -16,7 +16,6 @@ import { useState, useEffect } from 'react';
 import {
   ArrowUpRight,
   ArrowRight,
-  Clock3,
   UsersRound,
   Heart,
   Compass,
@@ -98,10 +97,6 @@ export function AdventureCard({
           <span>
             <UsersRound size={14} />
             {adventure.playersMin}–{formatCount(locale, adventure.playersMax, 'player')}
-          </span>
-          <span>
-            <Clock3 size={14} />
-            {adventure.duration ? taxonomy(adventure.duration) : tr('Короткая история')}
           </span>
         </div>
       </div>
@@ -289,11 +284,6 @@ export function AdventurePage({ slug }: { slug: string }) {
                 </strong>
               </span>
               <span>
-                <Clock3 size={18} />
-                {tr('Длительность')}
-                <strong>{taxonomy(a.duration)}</strong>
-              </span>
-              <span>
                 <Compass size={18} />
                 {tr('Сложность')}
                 <strong>{taxonomy(a.difficulty)}</strong>
@@ -392,23 +382,6 @@ export function AdventurePage({ slug }: { slug: string }) {
           <section className="story-section">
             <h2>{tr('За порогом истории')}</h2>
             <p className="prose">{a.content?.world || text.synopsis}</p>
-          </section>
-          <section className="story-section">
-            <h2>{tr('Границы истории')}</h2>
-            <p className="muted">
-              {tr('Комфортное приключение начинается с понятных договорённостей.')}
-            </p>
-            <ul className="plain-list">
-              {(a.content?.boundaries?.length
-                ? a.content.boundaries
-                : [tr('Приключения без откровенного контента')]
-              ).map((b) => (
-                <li key={b}>
-                  <Shield size={15} />
-                  {b}
-                </li>
-              ))}
-            </ul>
           </section>
           {a.access !== 'invited' && (
             <details className="story-versions">
