@@ -162,3 +162,86 @@ test('oversized context fails before transport', async () => {
   );
   assert.equal(calls, 0);
 });
+test('story plan output budget is explicit, purpose-specific, quoted and pinned before dispatch', async () => {
+  const profile = {
+    model: 'synthetic',
+    contextTokens: 32768,
+    contextBudgetTokens: 32768,
+    maxOutputTokens: 2048,
+    storyPlanMaxOutputTokens: 8192,
+    maxInputBytes: 64000,
+    inputMicrosPerMillion: 200000,
+    outputMicrosPerMillion: 600000,
+    upperMicros: 20000,
+    estimation: {
+      kind: 'operator_heuristic',
+      textTokensPerKiBUtf8: 1024,
+      textProtocolTokens: 256,
+      marginBps: 2500,
+      fixedMarginMicros: 100,
+    },
+  };
+  let calls = 0;
+  const transport = async (_url, init) => {
+    calls++;
+    assert.equal(JSON.parse(init.body).max_output_tokens, 8192);
+    return new Response(
+      JSON.stringify({
+        id: 'synthetic-plan',
+        status: 'incomplete',
+        service_tier: 'default',
+        usage: { input_tokens: 50, output_tokens: 8192 },
+        output: [],
+      }),
+    );
+  };
+  const story = { ...definition, purpose: 'story_plan' };
+  const provider = new BoundedAuthoringTextProvider(story, 'synthetic', transport, profile);
+  const ordinary = new BoundedAuthoringTextProvider(definition, 'synthetic', transport, profile);
+  const fallback = new BoundedAuthoringTextProvider(story, 'synthetic', transport, {
+    ...profile,
+    storyPlanMaxOutputTokens: undefined,
+  });
+  const prepared = provider.prepareTextRequest(request.context);
+  const old = fallback.prepareTextRequest(request.context);
+  assert.equal(provider.profile.maxOutputTokens, 8192);
+  assert.equal(ordinary.profile.maxOutputTokens, 2048);
+  assert.equal(fallback.profile.maxOutputTokens, 2048);
+  assert.equal(profile.maxOutputTokens, 2048);
+  assert.equal(prepared.snapshot.maxOutputTokens, 8192);
+  assert.ok(prepared.snapshot.reserveMicros > old.snapshot.reserveMicros);
+  assert.notEqual(provider.version, fallback.version);
+  await assert.rejects(
+    provider.generate({
+      ...request,
+      textReservationSnapshot: old.snapshot,
+      maxCostMicros: prepared.snapshot.reserveMicros,
+    }),
+    (e) => e.code === 'PROVIDER_REQUEST_SNAPSHOT_CHANGED',
+  );
+  await assert.rejects(
+    provider.generate({
+      ...request,
+      textReservationSnapshot: prepared.snapshot,
+      maxCostMicros: old.snapshot.reserveMicros,
+    }),
+    (e) => e.code === 'PROVIDER_BUDGET_TOO_SMALL',
+  );
+  assert.equal(calls, 0);
+  const result = await provider.generate({
+    ...request,
+    textReservationSnapshot: prepared.snapshot,
+    maxCostMicros: prepared.snapshot.reserveMicros,
+  });
+  assert.equal(result.failureCode, 'PROVIDER_INCOMPLETE');
+  assert.equal(result.usage.outputTokens, 8192);
+  assert.equal(calls, 1);
+  assert.throws(
+    () =>
+      new BoundedAuthoringTextProvider(story, undefined, transport, {
+        ...profile,
+        estimation: undefined,
+      }),
+    /INVALID_AUTHORING_PROVIDER_PROFILE/,
+  );
+});
