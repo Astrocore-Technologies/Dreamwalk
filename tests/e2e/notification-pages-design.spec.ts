@@ -205,10 +205,10 @@ test('notifications retain individual read, duplicate protection, safe failure, 
   await expect(page.locator('.notifications-page .empty')).toBeVisible();
   data.failList(true);
   await page.reload();
-  await expect(page.getByRole('alert')).toBeVisible();
+  await expect(page.locator('.notifications-page .error-box[role="alert"]')).toBeVisible();
   await expect(page.locator('.notifications-page .empty')).toHaveCount(0);
   data.failList(false);
-  await page.getByRole('alert').getByRole('button').click();
+  await page.locator('.notifications-page .error-box[role="alert"]').getByRole('button').click();
   await expect(page.locator('.notifications-page .empty')).toBeVisible();
 });
 
