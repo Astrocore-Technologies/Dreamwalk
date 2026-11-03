@@ -1,0 +1,268 @@
+/* Scoped editorial pages: decorative artwork never substitutes real story content. */
+.editorial-help .help-banner {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  min-height: 280px;
+  padding: 32px 18px;
+  margin-bottom: 22px;
+  border-radius: 0;
+  background: #170c24;
+}
+.editorial-help .help-hero-art {
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center;
+}
+.editorial-help .help-banner .page-heading {
+  max-width: 70%;
+  color: #fff9ff;
+  background: transparent;
+  border-radius: 0;
+  padding: 0;
+}
+.editorial-help .help-banner .eyebrow {
+  color: #ead0fa;
+  font-size: 16px;
+}
+.editorial-help .help-banner h1 {
+  font-size: clamp(32px, 3.4vw, 52px);
+  line-height: 1.12;
+}
+.editorial-help .help-banner p {
+  color: #ead0fa;
+  font-size: 21px;
+}
+.editorial-help .help-grid {
+  gap: 20px;
+}
+.editorial-help .help-grid .panel {
+  grid-template-columns: 116px minmax(0, 1fr);
+  gap: 14px 24px;
+  padding: 32px 24px;
+  border: 1px solid color-mix(in srgb, var(--accent) 58%, var(--line));
+  border-radius: 22px;
+  background: linear-gradient(130deg, var(--surface-soft), var(--surface));
+}
+.editorial-help .help-emblem {
+  position: relative;
+  grid-row: 1 / 4;
+  display: flex;
+  align-items: center;
+  padding-right: 22px;
+  border-right: 1px solid var(--accent);
+  color: var(--accent);
+}
+.editorial-help .help-emblem > svg {
+  width: 90px;
+  height: 100px;
+  stroke-width: 1.1;
+}
+.editorial-help .help-emblem .emblem-star {
+  position: absolute;
+  width: 17px;
+  height: 17px;
+  top: 15%;
+  left: 26%;
+  fill: currentColor;
+}
+.editorial-help .help-grid .panel > h2 {
+  font-size: clamp(24px, 2.1vw, 32px);
+  line-height: 1.15;
+}
+.editorial-help .help-grid .panel > p {
+  font-size: 17px;
+  line-height: 1.45;
+}
+.editorial-help .help-grid .panel > .button {
+  font-size: 18px;
+  min-height: 50px;
+  border-radius: 15px;
+  padding: 12px 20px;
+}
+.editorial-help .button svg {
+  flex-shrink: 0;
+}
+.editorial-about .about-banner {
+  display: block;
+  width: 100%;
+  height: clamp(180px, 16vw, 245px);
+  object-fit: cover;
+  object-position: center 46%;
+  margin-bottom: 0;
+  border: 1px solid var(--accent);
+  border-radius: 22px;
+}
+.editorial-about .about-body {
+  padding: 22px 28px;
+  border-radius: 22px;
+  background: linear-gradient(120deg, var(--surface-soft), var(--surface));
+}
+.editorial-about .page-heading {
+  margin-bottom: 12px;
+}
+.editorial-about .page-heading h1 {
+  font-size: clamp(34px, 3.7vw, 56px);
+}
+.editorial-about .page-heading .eyebrow {
+  color: var(--accent);
+  font-size: 15px;
+}
+.editorial-about .about-intro {
+  font-size: 21px;
+  line-height: 1.5;
+  margin: 0;
+}
+.editorial-about .about-draft-note {
+  font-size: 14px;
+  line-height: 1.5;
+  margin: 14px 0 0;
+  color: var(--muted);
+}
+.editorial-about .about-divider {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 15px;
+  margin: 22px 0;
+  color: var(--accent);
+}
+.editorial-about .about-divider::before,
+.editorial-about .about-divider::after {
+  content: '';
+  height: 1px;
+  flex: 1;
+  background: linear-gradient(90deg, transparent, var(--accent));
+}
+.editorial-about .about-divider::after {
+  transform: rotate(180deg);
+}
+.editorial-about .about-divider svg {
+  width: 16px;
+  height: 16px;
+  fill: currentColor;
+}
+.editorial-about .about-divider svg:nth-child(2) {
+  width: 32px;
+  height: 32px;
+}
+.editorial-about .about-features {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 20px;
+}
+.editorial-about .about-feature {
+  display: grid;
+  grid-template-columns: minmax(140px, 38%) minmax(0, 1fr);
+  align-items: start;
+  gap: 20px;
+  padding: 15px;
+  border: 1px solid color-mix(in srgb, var(--accent) 58%, var(--line));
+  border-radius: 22px;
+}
+.editorial-about .about-feature img {
+  width: 100%;
+  height: 240px;
+  object-fit: cover;
+  margin: 0;
+  border-radius: 16px;
+}
+.editorial-about .about-feature h2 {
+  font-size: 26px;
+  line-height: 1.15;
+  margin: 8px 0 16px;
+}
+.editorial-about .about-feature p {
+  margin: 0;
+  font-size: 16px;
+  line-height: 1.5;
+  color: var(--muted);
+}
+.editorial-about .about-operator {
+  font-size: 15px;
+  line-height: 1.5;
+  margin: 22px 0 0;
+  color: var(--muted);
+}
+@media (max-width: 1200px) {
+  .editorial-help .help-grid .panel {
+    grid-template-columns: 76px minmax(0, 1fr);
+    gap: 14px 18px;
+    padding: 24px 18px;
+  }
+  .editorial-help .help-emblem {
+    padding-right: 14px;
+  }
+  .editorial-help .help-emblem > svg {
+    width: 60px;
+  }
+  .editorial-about .about-features {
+    grid-template-columns: 1fr;
+  }
+}
+@media (max-width: 700px) {
+  .editorial-help .help-banner {
+    min-height: 300px;
+    padding: 24px 18px;
+    align-items: end;
+  }
+  .editorial-help .help-banner::after {
+    content: '';
+    position: absolute;
+    inset: 0;
+    z-index: -1;
+    background: linear-gradient(0deg, #170c24 5%, #170c24dd 50%, transparent);
+  }
+  .editorial-help .help-hero-art {
+    object-position: 75% center;
+  }
+  .editorial-help .help-banner .page-heading {
+    max-width: 100%;
+  }
+  .editorial-help .help-banner .eyebrow {
+    font-size: 12px;
+  }
+  .editorial-help .help-banner p {
+    font-size: 17px;
+  }
+  .editorial-help .help-grid .panel {
+    grid-template-columns: 52px minmax(0, 1fr);
+    padding: 22px 16px;
+    gap: 12px;
+  }
+  .editorial-help .help-emblem > svg {
+    width: 38px;
+    height: 58px;
+  }
+  .editorial-help .help-grid .panel > h2 {
+    font-size: 24px;
+  }
+  .editorial-help .help-grid .panel > p {
+    font-size: 16px;
+  }
+  .editorial-help .help-grid .panel > .button {
+    font-size: 15px;
+    padding: 12px;
+    max-width: 100%;
+  }
+  .editorial-about .about-body {
+    padding: 22px 16px;
+  }
+  .editorial-about .about-intro {
+    font-size: 18px;
+  }
+  .editorial-about .about-feature {
+    grid-template-columns: 1fr;
+    padding: 14px;
+  }
+  .editorial-about .about-feature img {
+    height: 230px;
+  }
+  .editorial-about .about-feature h2 {
+    margin-top: 0;
+  }
+}

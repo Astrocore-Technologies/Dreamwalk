@@ -323,7 +323,10 @@ test(
         { expectedRevision: 0, draft },
         'PUT',
       );
-      await page.getByRole('button', { name: /Публикация$/ }).click();
+      await page
+        .getByRole('navigation', { name: 'Шаги создания приключения', exact: true })
+        .getByRole('button', { name: 'Публикация', exact: true })
+        .click();
       await page
         .getByLabel('Опубликовать эту готовую версию приватно, без общего каталога', {
           exact: true,

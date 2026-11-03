@@ -121,7 +121,7 @@ test('real likes are independent from saved stories and refresh public metrics',
   expect(draftResponse.ok()).toBeTruthy();
   const draft = await draftResponse.json();
   await page.goto(`/adventures/${draft.slug}`);
-  await expect(page.locator('.discovery-detail')).toBeVisible();
+  await expect(page.getByTestId('story-detail')).toBeVisible();
   await expect(page.locator('.story-like-action')).toHaveCount(0);
 });
 

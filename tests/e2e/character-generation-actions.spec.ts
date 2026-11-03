@@ -156,6 +156,8 @@ async function setup(page: Page) {
   });
   await page.addInitScript(() => localStorage.setItem('dreamwalk-language', 'en'));
   await page.goto('/my-characters');
+  await page.locator('.hero-card summary').filter({ hasText: 'Hero appearance' }).click();
+  expect(counters.dispatch).toBe(0);
   await page.getByRole('button', { name: 'Prepare sprite', exact: true }).click();
   return {
     counters,

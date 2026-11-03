@@ -11,6 +11,8 @@ import { useT } from '@/lib/i18n';
 import { api, errorMessage, useClient, useResource } from '@/lib/client';
 import { Button, ErrorBox, Field, Input, Loading, Modal, Panel } from '../ui';
 import styles from './admin.module.css';
+import toolStyles from './admin-tools.module.css';
+import { useToolDialog } from './admin-tool-dialog';
 
 const copy = {
   ru: {
@@ -73,8 +75,10 @@ export function AdminTaxonomy() {
       setTags(resource.data.tags);
     }
   }, [resource.data]);
+  const dialog = useToolDialog(!!picker, () => setPicker(null));
   const tag = selectedTag === null ? undefined : tags[selectedTag];
   function openPicker(kind: 'genres' | 'tags') {
+    dialog.capture();
     setQuery('');
     setPicker(kind);
   }
@@ -132,7 +136,7 @@ export function AdminTaxonomy() {
     }
   }
   return (
-    <>
+    <section className={toolStyles.taxonomy} data-admin-tool="taxonomy">
       <div className={styles.sectionHeading}>
         <Layers size={22} />
         <h2>{t('Жанры и теги')}</h2>
@@ -170,6 +174,40 @@ export function AdminTaxonomy() {
                   <Plus size={16} />
                   {text.addGenre}
                 </Button>
+              </div>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>{text.genre}</th>
+                      <th>RU</th>
+                      <th>EN</th>
+                      <th>UK</th>
+                      <th>{t('Настройки')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {genres.map((entry, index) => (
+                      <tr key={index}>
+                        <td>
+                          <code>{entry.id || '—'}</code>
+                        </td>
+                        {(['ru', 'en', 'uk'] as const).map((language) => (
+                          <td key={language}>{entry.labels[language] || '—'}</td>
+                        ))}
+                        <td>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => setSelectedGenre(index)}
+                          >
+                            {t('Изменить')}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
               </div>
               {selectedGenre !== null && genres[selectedGenre] !== undefined ? (
                 <div className="stack">
@@ -258,6 +296,40 @@ export function AdminTaxonomy() {
                   {t('Добавить тег')}
                 </Button>
               </div>
+              <div className="table-wrap">
+                <table className="table">
+                  <thead>
+                    <tr>
+                      <th>{t('ID тега')}</th>
+                      <th>RU</th>
+                      <th>EN</th>
+                      <th>UK</th>
+                      <th>{t('Настройки')}</th>
+                    </tr>
+                  </thead>
+                  <tbody>
+                    {tags.map((entry, index) => (
+                      <tr key={index}>
+                        <td>
+                          <code>{entry.id || '—'}</code>
+                        </td>
+                        {(['ru', 'en', 'uk'] as const).map((language) => (
+                          <td key={language}>{entry.labels[language] || '—'}</td>
+                        ))}
+                        <td>
+                          <Button
+                            type="button"
+                            variant="secondary"
+                            onClick={() => setSelectedTag(index)}
+                          >
+                            {t('Изменить')}
+                          </Button>
+                        </td>
+                      </tr>
+                    ))}
+                  </tbody>
+                </table>
+              </div>
               {tag ? (
                 <div className="stack">
                   <Field label={t('ID тега')}>
@@ -343,10 +415,7 @@ export function AdminTaxonomy() {
         </Panel>
       )}
       {picker && (
-        <Modal
-          title={picker === 'tags' ? text.chooseTag : text.chooseGenre}
-          onClose={() => setPicker(null)}
-        >
+        <Modal title={picker === 'tags' ? text.chooseTag : text.chooseGenre} onClose={dialog.close}>
           <div className="stack">
             <Field label={text.search}>
               <Input autoFocus value={query} onChange={(e) => setQuery(e.target.value)} />
@@ -371,6 +440,6 @@ export function AdminTaxonomy() {
           </div>
         </Modal>
       )}
-    </>
+    </section>
   );
 }

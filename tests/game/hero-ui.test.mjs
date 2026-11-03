@@ -54,3 +54,16 @@ test('hero portrait uses the shared paid-image flow outside the hero form and ex
   for (const value of ['Сгенерировать арт героя', 'Generate hero art', 'Згенерувати арт героя'])
     assert.ok(control.includes(value));
 });
+
+test('hero composition scopes portrait cards and wide editor without dropping consent controls', async () => {
+  const personal = await source('personal.tsx');
+  const css = await source('heroes.module.css');
+  assert.match(personal, /<details className={styles.appearance}>[\s\S]*?<CharacterSpriteControl/);
+  assert.match(personal, /className={styles.editor}/);
+  assert.match(personal, /styles.editorActions/);
+  assert.match(personal, /setTraitsText\(hero.traits.join/);
+  assert.match(personal, /\.filter\(Boolean\)/);
+  assert.match(css, /object-position: center 25%/);
+  assert.match(css, /overflow: auto/);
+  assert.match(css, /max-height: 92dvh/);
+});
