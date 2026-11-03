@@ -149,7 +149,7 @@ await test(
             null,
           );
           assert.equal(proposal.plan.title, spatialFixture('greenhouse').title);
-          assert.equal(proposal.plan.maps[0].width, 18);
+          assert.equal(proposal.plan.maps[0].width, 24);
           assert.ok(!JSON.stringify(proposal.plan).includes('Mira'));
           assert.ok(!JSON.stringify(proposal.plan).includes('PRIVATE_SPATIAL_CANARY'));
           const budget = await owner.request('/live-test/status');
@@ -163,7 +163,7 @@ await test(
           const apply = { ...mutation(project), proposalId: proposal.id, consent: true };
           const applied = await owner.request(route(project.id) + '/apply', apply);
           assert.equal(applied.revision, project.revision + 1);
-          assert.equal(applied.plan.maps[0].width, 18);
+          assert.equal(applied.plan.maps[0].width, 24);
           assert.equal(
             (await owner.request(route(project.id) + '/apply', apply)).revision,
             applied.revision,

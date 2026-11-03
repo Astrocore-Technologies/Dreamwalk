@@ -1,4 +1,6 @@
 import {
+  footprintDistance,
+  footprintCells,
   turnRulesSchema,
   turnFenceSchema,
   deferredTurnSpeechSchema,
@@ -220,7 +222,7 @@ function contactGate(state: GameState, actorId: string, action: GameAction): Gam
     !visible(state, actor, target)
   )
     return 'TARGET_UNAVAILABLE';
-  if (distance(actor, target) !== 1) return 'OUT_OF_RANGE';
+  if (footprintDistance(actor, target) !== 1) return 'OUT_OF_RANGE';
   return undefined;
 }
 function resolveContact(
@@ -235,8 +237,20 @@ function resolveContact(
     actor = next.entities[actorId],
     target = next.entities[action.targetId!],
     rules = next.turnController!.ruleset;
-  const dx = Math.sign(target.x - actor.x),
-    dy = Math.sign(target.y - actor.y);
+  // Contact is edge-adjacent, so push away along that edge's axis, never a
+  // diagonal introduced solely by differently sized rectangle centers.
+  const dx =
+    target.x >= actor.x + footprintCells(actor)
+      ? 1
+      : actor.x >= target.x + footprintCells(target)
+        ? -1
+        : 0;
+  const dy =
+    target.y >= actor.y + footprintCells(actor)
+      ? 1
+      : actor.y >= target.y + footprintCells(target)
+        ? -1
+        : 0;
   let affected = false;
   if (!defended && action.kind === 'hit') {
     target.maxVitality ??= rules.vitality;

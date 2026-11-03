@@ -1,4 +1,6 @@
 import {
+  footprintDistance,
+  adjacentFootprintAnchors,
   npcConditionSchema,
   type GameAction,
   type GameState,
@@ -12,7 +14,7 @@ import { npcContextFingerprint, proposeNpcObligation, proposeNpcActionObligation
 const near = (
   a: { mapId: string; x: number; y: number },
   b: { mapId: string; x: number; y: number },
-) => a.mapId === b.mapId && Math.abs(a.x - b.x) + Math.abs(a.y - b.y) <= 1;
+) => a.mapId === b.mapId && footprintDistance(a, b) <= 1;
 export function npcConditionsMet(
   s: GameState,
   npcId: string,
@@ -184,12 +186,7 @@ function actionsForGoal(s: GameState, npcId: string, d: NpcGoalDefinition): Game
     return null;
   const actions: GameAction[] = [];
   if (!near(n, target)) {
-    const adjacent = [
-      { x: target.x - 1, y: target.y },
-      { x: target.x + 1, y: target.y },
-      { x: target.x, y: target.y - 1 },
-      { x: target.x, y: target.y + 1 },
-    ].find(
+    const adjacent = adjacentFootprintAnchors(n, target).find(
       (p) => walkable(s, n.mapId, p, npcId, true) && findPath(s, n.mapId, n, p, npcId) !== null,
     );
     if (!adjacent) return null;

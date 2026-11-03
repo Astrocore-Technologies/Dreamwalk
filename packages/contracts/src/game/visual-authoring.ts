@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { BATTLEMAP_CELLS, tokenSizeSchema } from './battlemap';
 
 const point = z
   .object({ x: z.number().int().min(0).max(31), y: z.number().int().min(0).max(31) })
@@ -208,8 +209,8 @@ export const compactSpatialPlanSchema = z
             id: spatialRoomId,
             name: z.string().trim().min(1).max(60),
             description: z.string().trim().min(1).max(160),
-            width: z.number().int().min(8).max(24),
-            height: z.number().int().min(8).max(20),
+            width: z.literal(BATTLEMAP_CELLS),
+            height: z.literal(BATTLEMAP_CELLS),
             spawns: z.array(point).length(4),
             blocked: z.array(point).max(12),
           })
@@ -243,6 +244,7 @@ export const compactSpatialPlanSchema = z
       .max(8),
     npc: z
       .object({
+        tokenSize: tokenSizeSchema.optional(),
         room: spatialRoomId,
         point,
         name: z.string().trim().min(1).max(60),

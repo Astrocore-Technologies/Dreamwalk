@@ -1,4 +1,5 @@
 import {
+  BATTLEMAP_CELLS,
   characterAnimation,
   type AuthoredGameDraft,
   type LocationBrief,
@@ -42,8 +43,8 @@ export function createLocationFixture(brief: LocationBrief): AuthoredGameDraft {
         id: 'atelier',
         label: brief.name,
         description: brief.description,
-        width: 16,
-        height: 12,
+        width: BATTLEMAP_CELLS,
+        height: BATTLEMAP_CELLS,
         blocked,
         composition: { version: 1, provenance: 'original-drawn-fixture', layers },
         spawns: [
@@ -67,8 +68,8 @@ export function createLocationFixture(brief: LocationBrief): AuthoredGameDraft {
       {
         id: 'annex',
         label: 'Rain room',
-        width: 8,
-        height: 7,
+        width: BATTLEMAP_CELLS,
+        height: BATTLEMAP_CELLS,
         blocked: border(8, 7),
         composition: { version: 1, provenance: 'original-drawn-fixture', layers: [] },
         spawns: [{ x: 2, y: 4 }],

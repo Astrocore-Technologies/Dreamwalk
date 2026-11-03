@@ -3,6 +3,8 @@ import { materializeNpcItems, npcItemContext } from './world-items';
 import type { NpcItemIntent } from '@dreamwalk/contracts';
 import { mockAcknowledgement, mockCharacterAcknowledgement, mockFactReply } from './mock-speech';
 import {
+  footprintDistance,
+  adjacentFootprintAnchors,
   readNarrativePreferences,
   npcLoreRelevance,
   npcSpeechSchema,
@@ -37,8 +39,7 @@ const result = (
   events: GameEvent[] = [],
   error?: GameResult['error'],
 ): GameResult => ({ state, events, ...(error ? { error } : {}) });
-const near = (a: GameEntity, b: GameEntity) =>
-  a.mapId === b.mapId && Math.abs(a.x - b.x) + Math.abs(a.y - b.y) <= 1;
+const near = (a: GameEntity, b: GameEntity) => a.mapId === b.mapId && footprintDistance(a, b) <= 1;
 const hash = (value: string) => {
   let a = 2166136261,
     b = 5381;
@@ -743,12 +744,7 @@ function adjacentPath(
   npc: GameEntity,
   target: GameEntity | { x: number; y: number },
 ) {
-  return [
-    { x: target.x - 1, y: target.y },
-    { x: target.x + 1, y: target.y },
-    { x: target.x, y: target.y - 1 },
-    { x: target.x, y: target.y + 1 },
-  ].find(
+  return adjacentFootprintAnchors(npc, target).find(
     (p) =>
       walkable(state, npc.mapId, p, npc.id, true) &&
       findPath(state, npc.mapId, npc, p, npc.id) !== null,

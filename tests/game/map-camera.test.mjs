@@ -98,7 +98,7 @@ test('invalid dimensions remain finite and relative zoom is bounded', () => {
   close(mapCamera({ ...fixture, zoom: 100 }).scale / mapCamera(fixture).scale, MAX_MAP_ZOOM);
   close(mapCamera({ ...fixture, zoom: 0.1 }).scale / mapCamera(fixture).scale, MIN_MAP_ZOOM);
 });
-test('canvas preserves local pointer conversion and blur containment; cancelled grid is absent', () => {
+test('canvas preserves local pointer conversion and blur containment; mandatory grid is an independent overlay', () => {
   const source = readFileSync(
     new URL('../../apps/web/components/game/game-canvas.tsx', import.meta.url),
     'utf8',
@@ -134,10 +134,10 @@ test('raster containment preserves aspect and centers letterboxing in world, ind
   }
 });
 
-test('legacy square artwork keeps full rectangular-world registration with actors and layers after fit/resize', () => {
+test('legacy square artwork is contained without stretching; world coordinates are unchanged', () => {
   const map = { id: 'legacy', width: 16, height: 8 };
   const r = mapRasterBounds(1024, 1024, 768, 384, undefined, map);
-  assert.deepEqual(r, { x: 0, y: 0, width: 768, height: 384 });
+  assert.deepEqual(r, { x: 192, y: 0, width: 384, height: 384 });
   for (const viewportWidth of [320, 1020]) {
     const c = mapCamera({ viewportWidth, viewportHeight: 570, worldWidth: 768, worldHeight: 384 });
     // Pixel at the old halfway landmark, layer origin and actor feet retain one world point.
@@ -149,7 +149,7 @@ test('legacy square artwork keeps full rectangular-world registration with actor
     close((screen.y - c.y) / c.scale, world.y);
   }
 });
-test('only matching versioned geometry opts in; new exact-aspect art fills and explicit fallback contains', () => {
+test('all raster paths contain without distortion, regardless of legacy framing metadata', () => {
   const map = { id: 'new', width: 16, height: 8 };
   const frame = {
     version: 1,
@@ -180,9 +180,9 @@ test('only matching versioned geometry opts in; new exact-aspect art fills and e
     { ...fallback, version: 2 },
   ])
     assert.deepEqual(mapRasterBounds(1024, 1024, 768, 384, invalid, map), {
-      x: 0,
+      x: 192,
       y: 0,
-      width: 768,
+      width: 384,
       height: 384,
     });
 });

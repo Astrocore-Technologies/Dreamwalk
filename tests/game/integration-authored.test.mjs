@@ -54,6 +54,17 @@ await test(
           assert.deepEqual(await author.request(draftPath(story.id)), { draft: null, revision: 0 });
           await outsider.request(draftPath(story.id), undefined, 'GET', 404);
           await outsider.request(draftPath(story.id), { expectedRevision: 0, draft }, 'PUT', 404);
+          const undersized = structuredClone(draft);
+          undersized.maps.forEach((map) => {
+            map.width = 9;
+            map.height = 9;
+          });
+          await author.request(
+            draftPath(story.id),
+            { expectedRevision: 0, draft: undersized },
+            'PUT',
+            400,
+          );
           const saved = await author.request(
             draftPath(story.id),
             { expectedRevision: 0, draft },
@@ -85,7 +96,7 @@ await test(
           ({ campaignId } = await create(author, versionId));
           const state = await snapshot(author, campaignId);
           assert.equal(state.projection.map.id, 'courtyard');
-          assert.equal(state.projection.map.width, 9);
+          assert.equal(state.projection.map.width, 24);
           assert.deepEqual([actor(state).x, actor(state).y], [2, 2]);
           assert.ok(state.projection.entities.some((e) => e.id === 'authored-key'));
           assert.ok(!JSON.stringify(state).includes('AUTHORED_PRIVATE_NPC_SECRET'));
@@ -277,7 +288,7 @@ await test(
           assert.equal(review.versionId, pending.id);
           assert.equal(review.sourceRevision, 1);
           assert.equal(review.compiled.startMapId, 'courtyard');
-          assert.equal(review.compiled.maps.courtyard.width, 9);
+          assert.equal(review.compiled.maps.courtyard.width, 24);
           assert.deepEqual(review.compiled.maps.courtyard.blocked, draft.maps[0].blocked);
           assert.deepEqual(review.compiled.maps.courtyard.spawns, draft.maps[0].spawns);
           assert.equal(review.compiled.entities['authored-key'].label, 'Copper key');

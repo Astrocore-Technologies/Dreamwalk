@@ -1,5 +1,6 @@
 'use client';
 import { useEffect, useRef } from 'react';
+import { footprintDistance } from '@dreamwalk/contracts';
 import type { GameAction, GameProjection } from '@dreamwalk/contracts';
 import { useItemText } from './item-messages';
 import styles from './game.module.css';
@@ -84,7 +85,7 @@ export function MapActions({
             </button>
             <button
               type="button"
-              disabled={disabled || !own || Math.abs(e.x - own.x) + Math.abs(e.y - own.y) > 1}
+              disabled={disabled || !own || footprintDistance(own, e) > 1}
               onClick={() => act({ kind: 'transition', targetId: e.id })}
             >
               {text('transition')}
@@ -93,7 +94,7 @@ export function MapActions({
         </section>
       ))}
       {entities.map((e) => {
-        const near = !!own && Math.abs(e.x - own.x) + Math.abs(e.y - own.y) <= 1;
+        const near = !!own && footprintDistance(own, e) <= 1;
         const main = disabled || !near || (!!projection.turn && projection.turn.resources.main < 1);
         const additional =
           disabled || !near || (!!projection.turn && projection.turn.resources.additional < 1);
