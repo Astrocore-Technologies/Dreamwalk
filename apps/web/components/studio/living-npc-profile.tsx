@@ -1,4 +1,5 @@
 'use client';
+import { NpcTemplateField } from './npc-template-field';
 import type { AuthoredGameDraft } from '@dreamwalk/contracts';
 import { useT } from '@/lib/i18n';
 import { LivingNpcExamples } from './living-npc-examples';
@@ -218,14 +219,13 @@ export function LivingNpcProfile({
           'Публичный стиль можно передавать генератору реплик. Произвольные заметки ниже остаются частными данными планировщика.',
         )}
       </p>
-      <Field label={t('Частные заметки о манере речи')}>
-        <Textarea
-          aria-label={t('Частные заметки о манере речи')}
-          maxLength={200}
-          value={profile.speechStyle}
-          onChange={(e) => onChange({ ...profile, speechStyle: e.target.value })}
-        />
-      </Field>
+      <NpcTemplateField
+        label={t('Частные заметки о манере речи')}
+        maxLength={200}
+        value={profile.speechStyle}
+        templates={['speech']}
+        onChange={(value) => onChange({ ...profile, speechStyle: value })}
+      />
       <p>{t('Характер направляет выбор NPC, но не отменяет правила мира и права доступа.')}</p>
     </fieldset>
   );

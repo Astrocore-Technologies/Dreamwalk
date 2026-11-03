@@ -1,0 +1,10 @@
+.buttons {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.25rem;
+}
+.buttons button {
+  min-height: 2.75rem;
+  padding: 0.35rem 0.65rem;
+  font-size: 0.85rem;
+}

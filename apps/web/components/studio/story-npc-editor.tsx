@@ -1,4 +1,5 @@
 'use client';
+import { NpcTemplateField } from './npc-template-field';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { npcSchema, type Adventure, type Npc } from '@dreamwalk/contracts';
 import { api, ApiError, assetUrl, errorMessage, useResource } from '@/lib/client';
@@ -355,15 +356,30 @@ export function StoryNpcEditor({
                   onChange={(event) => change('role', event.target.value)}
                 />
               </Field>
-              {fields.map(([key, label, limit]) => (
-                <Field key={key} label={t(label)}>
-                  <Textarea
+              {fields.map(([key, label, limit]) =>
+                key === 'personality' || key === 'greeting' ? (
+                  <NpcTemplateField
+                    key={key}
+                    label={t(label)}
                     maxLength={limit}
                     value={draft[key]}
-                    onChange={(event) => change(key, event.target.value)}
+                    templates={
+                      key === 'personality'
+                        ? ['personality', 'motivation', 'reaction']
+                        : ['example']
+                    }
+                    onChange={(value) => change(key, value)}
                   />
-                </Field>
-              ))}
+                ) : (
+                  <Field key={key} label={t(label)}>
+                    <Textarea
+                      maxLength={limit}
+                      value={draft[key]}
+                      onChange={(event) => change(key, event.target.value)}
+                    />
+                  </Field>
+                ),
+              )}
               <UploadField
                 label={t('Загрузить портрет')}
                 onUploaded={(asset) => {

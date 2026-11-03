@@ -1,4 +1,5 @@
 'use client';
+import { NpcTemplateField } from './studio/npc-template-field';
 import { AssetLibrary } from './assets/asset-library';
 import { useAssetText } from './assets/messages';
 import { AutosaveStatus } from './studio/autosave-status';
@@ -1759,13 +1760,13 @@ function NpcEditor({ id }: { id: string }) {
                   onChange={(e) => change('description', e.target.value)}
                 />
               </Field>
-              <Field label={t('Характер')}>
-                <Textarea
-                  maxLength={4000}
-                  value={draft.personality}
-                  onChange={(e) => change('personality', e.target.value)}
-                />
-              </Field>
+              <NpcTemplateField
+                label={t('Характер')}
+                maxLength={4000}
+                value={draft.personality}
+                templates={['personality', 'motivation', 'reaction']}
+                onChange={(value) => change('personality', value)}
+              />
               <Field label={t('Внешность')}>
                 <Textarea
                   maxLength={4000}
@@ -1790,13 +1791,13 @@ function NpcEditor({ id }: { id: string }) {
                   onChange={(e) => change('secrets', e.target.value)}
                 />
               </Field>
-              <Field label={t('Первая реплика')}>
-                <Textarea
-                  maxLength={2000}
-                  value={draft.greeting}
-                  onChange={(e) => change('greeting', e.target.value)}
-                />
-              </Field>
+              <NpcTemplateField
+                label={t('Первая реплика')}
+                maxLength={2000}
+                value={draft.greeting}
+                templates={['example']}
+                onChange={(value) => change('greeting', value)}
+              />
               <UploadField
                 label={t('Загрузить портрет')}
                 onUploaded={(asset) => change('portraitAssetId', asset.id)}
