@@ -58,11 +58,15 @@ test('shared public design keeps both themes and all languages through navigatio
     await expect(page.locator('.theme-button')).toBeVisible();
     await expect(page.locator('.locale-select')).toBeVisible();
     await noOverflow(page);
+    await expect(page.locator('#main-sidebar')).toHaveCount(0);
+    await expect(page.locator('.bottom-nav')).toHaveCount(0);
+    await page.goto('/home');
     await expect(page.locator('#main-sidebar')).not.toBeVisible();
     await page.locator('.mobile-menu').click();
     await expect(page.locator('#main-sidebar')).toBeInViewport();
     await page.locator('#main-sidebar a[href="/studio"]').click();
     await expect(page.locator('#main-sidebar')).not.toHaveClass(/open/);
+    await page.goto('/auth/sign-in');
   }
 });
 
