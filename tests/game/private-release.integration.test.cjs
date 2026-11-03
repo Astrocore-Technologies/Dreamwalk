@@ -7,6 +7,7 @@ const { tmpdir } = require('node:os');
 const { join } = require('node:path');
 const { once } = require('node:events');
 const net = require('node:net');
+const { spawnSync } = require('node:child_process');
 const { Pool } = require('pg');
 const code = (expected) => (error) => error.getResponse?.().code === expected;
 
@@ -55,6 +56,7 @@ test(
     const { sourceAccessSql } = require('../../apps/api/dist/game/source-access.js');
     const { AssetReuseService } = require('../../apps/api/dist/assets/reuse.service.js');
     const { AssetsController } = require('../../apps/api/dist/assets.js');
+    const { AccountController } = require('../../apps/api/dist/auth.js');
     const { AdminController } = require('../../apps/api/dist/admin.js');
     const { adventureSchema, npcSchema } = require('../../packages/contracts/dist');
     const { createAuthoredDraft } = require('../../packages/game-core/dist');
@@ -259,14 +261,24 @@ test(
         },
       );
       await t.test(
-        'invited reader sees only released snapshot/package and safe NPC fields',
+        'invited reader sees released metadata, not authored source or cast',
         async () => {
           const detail = await controller.detail(storyId, request(invited));
           assert.equal(detail.title, 'Released opening');
           assert.equal(detail.status, 'published');
           assert.equal(detail.playableVersionId, release.playableVersionId);
-          assert.equal(detail.npcs[0].secrets, undefined);
-          assert.equal(detail.npcs[0].biography, undefined);
+          assert.deepEqual(detail.npcs, []);
+          assert.equal(detail.content.world, '');
+          assert.deepEqual(detail.content.locations, []);
+          assert.equal(
+            (await controller.detail(storyId, request(owner))).content.world,
+            source.content.world,
+          );
+          const serverSource = await db.tx((c) =>
+            playable.sourceForStart(c, invited, release.playableVersionId),
+          );
+          assert.equal(serverSource.package.source.content.world, source.content.world);
+          assert.equal(serverSource.package.compiled.narrativePremise.world, source.content.world);
           const versions = await playable.versions(request(invited), storyId);
           assert.deepEqual(
             versions.versions.map((v) => v.id),
@@ -315,7 +327,7 @@ test(
         await assert.rejects(file(coverId, outsider), code('NOT_FOUND'));
       });
       await t.test(
-        'invited admin reads frozen private release and NPCs, never live private drafts',
+        'invited admin reads frozen metadata without private cast or live drafts',
         async () => {
           await pool.query("UPDATE users SET role='admin' WHERE id=$1", [invited]);
           const unreleasedNpc = randomUUID();
@@ -346,7 +358,7 @@ test(
           assert.equal(listed.status, 'published');
           assert.equal(listed.coverAssetId, coverId);
           assert.equal(listed.editRevision, undefined);
-          assert.deepEqual(listed.content.npcIds, [templateId]);
+          assert.deepEqual(listed.content.npcIds, []);
           assert.ok(
             (await admin.adventures(adminRequest(invited), 'published')).some(
               (a) => a.id === storyId,
@@ -357,10 +369,7 @@ test(
           );
           const listedNpcs = await admin.npcs(adminRequest(invited)),
             releasedNpc = listedNpcs.find((n) => n.id === templateId);
-          assert.equal(releasedNpc.name, 'Fixture keeper');
-          assert.equal(releasedNpc.portraitAssetId, coverId);
-          assert.equal(releasedNpc.secrets, undefined);
-          assert.equal(releasedNpc.biography, undefined);
+          assert.equal(releasedNpc, undefined);
           assert.ok(!listedNpcs.some((n) => n.id === unreleasedNpc));
           assert.ok(
             !(await admin.adventures(adminRequest(outsider))).some((a) => a.id === storyId),
@@ -450,6 +459,115 @@ test(
             playable.save(request(owner), storyId, { expectedRevision: 1, draft: wrong }),
             code('FORBIDDEN'),
           );
+        },
+      );
+      await t.test(
+        'legacy public snapshots never expose author source through reader API projections',
+        async () => {
+          const id = randomUUID();
+          const marker = 'SYNTHETIC_AUTHOR_ONLY_CANARY';
+          const legacy = {
+            ...source,
+            title: 'Public catalog title',
+            coverAssetId: null,
+            synopsis: 'Public teaser',
+            visibility: 'public',
+            status: 'published',
+            hiddenFutureField: marker,
+            translations: {
+              en: { title: 'Public title', sourceRevision: 1, hiddenFutureField: marker },
+            },
+            content: {
+              ...source.content,
+              npcIds: [],
+              world: marker,
+              rules: marker,
+              locations: [{ id: 'room', name: marker, description: marker }],
+              scenes: [{ id: 'scene', name: marker, description: marker, locationId: 'room' }],
+              lorebook: [{ text: marker }],
+            },
+            publicNpcs: [
+              {
+                id: templateId,
+                name: marker,
+                secrets: marker,
+                biography: marker,
+                characterProfile: { private: marker },
+              },
+            ],
+          };
+          await pool.query(
+            "INSERT INTO adventures(id,owner_id,slug,title,synopsis,genre,visibility,status,data,published_snapshot) VALUES($1::uuid,$2,$1::uuid::text,$3,$4,$5,'public','published',$6,$6)",
+            [id, owner, legacy.title, legacy.synopsis, source.genre, JSON.stringify(legacy)],
+          );
+          await pool.query('INSERT INTO favorites(user_id,adventure_id) VALUES($1,$2)', [
+            invited,
+            id,
+          ]);
+          await pool.query(
+            "UPDATE users SET settings=jsonb_set(settings,'{profilePublic}','true') WHERE id=$1",
+            [owner],
+          );
+          const projections = [
+            await controller.detail(id, {}),
+            await controller.detail(id, request(invited)),
+            await controller.detail(id, request(owner), 'published'),
+            await controller.catalog('', '', 'popular', {}),
+            await controller.creator(owner),
+            await controller.library(request(invited)),
+          ];
+          for (const projected of projections)
+            assert.ok(!JSON.stringify(projected).includes(marker));
+          assert.equal((await controller.detail(id, request(owner))).content.world, marker);
+          assert.equal((await content.own(id, owner)).data.content.world, marker);
+          assert.equal(
+            (await pool.query('SELECT published_snapshot FROM adventures WHERE id=$1', [id]))
+              .rows[0].published_snapshot.content.world,
+            marker,
+          );
+          await assert.rejects(content.own(id, invited), code('NOT_FOUND'));
+          // Actual account-export command against this disposable DB only.
+          await pool.query(
+            "INSERT INTO notifications(user_id,title,message,type,payload) VALUES($1,'Invitation','Public invite','invitation',$2)",
+            [
+              invited,
+              JSON.stringify({
+                adventureId: storyId,
+                adventureTitle: legacy.title,
+                hidden: marker,
+                adventureMetadata: legacy,
+              }),
+            ],
+          );
+          const notifications = await new AccountController(auth, db).notifications(
+            request(invited),
+          );
+          assert.ok(!JSON.stringify(notifications).includes(marker));
+          for (const user of [owner, invited]) {
+            const exportId = randomUUID();
+            await pool.query("INSERT INTO data_requests(id,user_id,kind) VALUES($1,$2,'export')", [
+              exportId,
+              user,
+            ]);
+            const command = spawnSync(
+              process.execPath,
+              [
+                'scripts/process-data-request.mjs',
+                '--request',
+                exportId,
+                '--operator',
+                'synthetic-privacy-test',
+              ],
+              { encoding: 'utf8', env: { ...process.env, ASSET_DIR: assetDir }, timeout: 20000 },
+            );
+            assert.equal(command.status, 0, command.stderr);
+            const exported = (
+              await pool.query('SELECT artifact FROM data_requests WHERE id=$1', [exportId])
+            ).rows[0].artifact;
+            if (user === invited) assert.ok(!JSON.stringify(exported).includes(marker));
+            else
+              assert.equal(exported.adventures.find((a) => a.id === id).data.content.world, marker);
+          }
         },
       );
       await t.test(

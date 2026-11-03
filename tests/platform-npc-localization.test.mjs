@@ -11,6 +11,10 @@ for (const url of [base, process.env.DATABASE_URL])
     'Only disposable local services are allowed',
   );
 const db = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+async function storedApprovedNpc(id) {
+  return (await db.query('SELECT published_snapshot FROM adventures WHERE id=$1', [id])).rows[0]
+    .published_snapshot.publicNpcs[0];
+}
 const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
 function client() {
   let cookie = '';
@@ -136,7 +140,11 @@ await test('NPC original metadata translations stay revision-bound, owned and sn
       'approved NPC variants contain no private data and do not change with live NPC edits',
       async () => {
         const published = await anon.call('GET', `/adventures/${story.slug}`);
-        assert.equal(selectNpcText(published.npcs[0], 'en').description, 'English description');
+        assert.deepEqual(published.npcs, []);
+        assert.equal(
+          selectNpcText(await storedApprovedNpc(story.id), 'en').description,
+          'English description',
+        );
         assert.equal(JSON.stringify(published).includes('SECRET'), false);
         assert.equal(JSON.stringify(published).includes('PRIVATE'), false);
         npc = await author.call('PATCH', `/npcs/${npc.id}`, {
@@ -148,8 +156,7 @@ await test('NPC original metadata translations stay revision-bound, owned and sn
         assert.equal(selectNpcText(npc, 'en').description, 'Змінений опис');
         assert.equal(selectNpcText(npc, 'en').isFallback, true);
         assert.equal(
-          selectNpcText((await anon.call('GET', `/adventures/${story.slug}`)).npcs[0], 'en')
-            .description,
+          selectNpcText(await storedApprovedNpc(story.id), 'en').description,
           'English description',
         );
         await author.call(
@@ -180,8 +187,10 @@ await test('NPC original metadata translations stay revision-bound, owned and sn
           201,
         );
         const published = await anon.call('GET', `/adventures/${story.slug}`);
-        assert.equal(published.npcs[0].translations.en.description, undefined);
-        assert.equal(selectNpcText(published.npcs[0], 'en').name, 'Лада');
+        assert.deepEqual(published.npcs, []);
+        const approved = await storedApprovedNpc(story.id);
+        assert.equal(approved.translations.en.description, undefined);
+        assert.equal(selectNpcText(approved, 'en').name, 'Лада');
         const old = (
           await db.query(
             'SELECT snapshot FROM adventure_versions WHERE adventure_id=$1 AND version=1',
@@ -191,11 +200,16 @@ await test('NPC original metadata translations stay revision-bound, owned and sn
         assert.equal(old.publicNpcs[0].translations.en.description, 'English description');
       },
     );
-    await t.test('curated seed NPC public fields render English and Ukrainian', async () => {
-      const seed = await anon.call('GET', '/adventures/old-observatory');
-      assert.equal(selectNpcText(seed.npcs[0], 'en').name, 'Elias');
-      assert.equal(selectNpcText(seed.npcs[0], 'uk').name, 'Еліас');
-    });
+    await t.test(
+      'curated seed translations remain stored without exposing the authored cast',
+      async () => {
+        const seed = await anon.call('GET', '/adventures/old-observatory');
+        assert.deepEqual(seed.npcs, []);
+        const stored = await storedApprovedNpc(seed.id);
+        assert.equal(selectNpcText(stored, 'en').name, 'Elias');
+        assert.equal(selectNpcText(stored, 'uk').name, 'Еліас');
+      },
+    );
   } finally {
     await db.end();
   }
