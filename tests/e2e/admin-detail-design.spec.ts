@@ -374,6 +374,11 @@ test('compiled map, NPC and pinned art controls stay independent of decision sub
   await capture(page, info, 'admin-review-compiled-readiness-en-390', false);
   await save.click();
   await expect(save).toBeDisabled();
+  await page.keyboard.press('Escape');
+  await expect(dialog).toBeVisible();
+  await expect(dialog.getByRole('button', { name: 'Cancel', exact: true })).toBeDisabled();
+  await dialog.getByRole('button', { name: 'Close', exact: true }).click();
+  await expect(dialog).toBeVisible();
   await save.evaluate((button: HTMLButtonElement) => {
     button.click();
     button.click();

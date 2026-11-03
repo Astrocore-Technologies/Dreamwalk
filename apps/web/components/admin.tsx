@@ -5,7 +5,7 @@ import { formatSparkSubunits, selectAdventureText, selectNpcText } from '@dreamw
 import { readSparksWallet, type SparksWallet } from '@/lib/sparks-wallet';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
-import { useCallback, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   Activity,
   ArrowRight,
@@ -246,6 +246,21 @@ function AdminOverview() {
     </>
   );
 }
+// Keep the two admin dialogs' launchers stable without changing shared Modal behavior.
+function useAdminDialogFocus(open: boolean) {
+  const launcher = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (open || !launcher.current) return;
+    const target = launcher.current;
+    launcher.current = null;
+    // A detached native dialog cannot restore focus during passive cleanup.
+    // Do not steal focus from a newer control or restore a removed table row.
+    if (document.activeElement === document.body && target.isConnected)
+      target.focus({ preventScroll: true });
+  }, [open]);
+  return launcher;
+}
+
 function AdminUsers() {
   const date = useDate();
   const { t } = useT();
@@ -256,8 +271,14 @@ function AdminUsers() {
     [target, setTarget] = useState<User | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
+  const launcher = useAdminDialogFocus(!!target);
+  const pending = useRef(false);
+  const close = () => {
+    if (!pending.current) setTarget(null);
+  };
   async function changeRole() {
-    if (!target) return;
+    if (!target || pending.current) return;
+    pending.current = true;
     setBusy(true);
     setError('');
     try {
@@ -273,6 +294,7 @@ function AdminUsers() {
     } catch (e) {
       setError(t(errorMessage(e)));
     } finally {
+      pending.current = false;
       setBusy(false);
     }
   }
@@ -345,7 +367,8 @@ function AdminUsers() {
                       variant="ghost"
                       className={detailStyles.roleAction}
                       disabled={u.id === user?.id}
-                      onClick={() => {
+                      onClick={(event) => {
+                        launcher.current = event.currentTarget;
                         setError('');
                         setTarget(u);
                       }}
@@ -365,7 +388,7 @@ function AdminUsers() {
         )
       )}
       {target && (
-        <Modal title={t('Изменить роль пользователя?')} onClose={() => setTarget(null)}>
+        <Modal title={t('Изменить роль пользователя?')} onClose={close}>
           <p>
             <strong>{target.name}</strong> {t(' получит роль «')}
             {target.role === 'admin' ? t('Пользователь') : t('Администратор')}».
@@ -379,7 +402,7 @@ function AdminUsers() {
           )}
           <ErrorBox message={error} />
           <div className="form-actions">
-            <Button variant="secondary" onClick={() => setTarget(null)}>
+            <Button variant="secondary" disabled={busy} onClick={close}>
               {t('Отмена')}
             </Button>
             <Button busy={busy} onClick={() => void changeRole()}>
@@ -410,17 +433,23 @@ function AdminContent() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     { toast } = useClient();
+  const launcher = useAdminDialogFocus(!!target);
+  const pending = useRef(false);
+  const close = () => {
+    if (!pending.current) setTarget(null);
+  };
   const onPlayableReviewed = useCallback((value: boolean, versionId: string | null) => {
     setPlayableReviewed(value);
     setReviewedVersionId(versionId);
   }, []);
   async function moderate(e: FormEvent) {
     e.preventDefault();
-    if (!target) return;
+    if (!target || pending.current) return;
     if (decision === 'approve' && !playableReviewed) {
       setError(t('Сначала проверь отправленную игровую версию.'));
       return;
     }
+    pending.current = true;
     setBusy(true);
     setError('');
     try {
@@ -442,6 +471,7 @@ function AdminContent() {
         setError(t('Заявка изменилась. Обнови игровую версию и проверь её заново.'));
       } else setError(t(errorMessage(e)));
     } finally {
+      pending.current = false;
       setBusy(false);
     }
   }
@@ -540,7 +570,8 @@ function AdminContent() {
                       <td>
                         <Button
                           variant="primary"
-                          onClick={() => {
+                          onClick={(event) => {
+                            launcher.current = event.currentTarget;
                             setTarget(a);
                             setPlayableReviewed(false);
                             setReviewedVersionId(null);
@@ -632,10 +663,7 @@ function AdminContent() {
         </>
       )}
       {target && (
-        <Modal
-          title={t('Проверка: {title}', { title: target.title })}
-          onClose={() => setTarget(null)}
-        >
+        <Modal title={t('Проверка: {title}', { title: target.title })} onClose={close}>
           <div className={detailStyles.reviewLayout}>
             <article className={detailStyles.reviewContent}>
               <div className={detailStyles.reviewHero}>
@@ -771,7 +799,7 @@ function AdminContent() {
                 )}
               </section>
               <div className={detailStyles.decisionActions}>
-                <Button variant="secondary" type="button" onClick={() => setTarget(null)}>
+                <Button variant="secondary" type="button" disabled={busy} onClick={close}>
                   {t('Отмена')}
                 </Button>
                 <Button
