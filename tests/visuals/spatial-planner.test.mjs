@@ -212,7 +212,7 @@ await test(
           let state = await planner.state(owner, p.id);
           assert.equal(state.canApply, true);
           assert.equal(state.canQuote, false);
-          assert.equal(state.currentProposal.plan.maps[0].width, 14);
+          assert.equal(state.currentProposal.plan.maps[0].width, 24);
           assert.equal(state.currentProposal.plan.turnRules.movement, 4);
           assert.equal(state.currentProposal.plan.narrativeConstraints.allowNewScenes, false);
           assert.equal((await visuals.get(owner, p.id)).plan, null);
@@ -241,7 +241,7 @@ await test(
           assert.equal(p.projection.turn, undefined);
           p = await visuals.preview(owner, p.id, {
             ...mutation(p),
-            action: { kind: 'move_to', target: { x: 12, y: 4 } },
+            action: { kind: 'move_to', target: { x: spatialFixture().connection.door.x, y: 4 } },
           });
           p = await visuals.preview(owner, p.id, {
             ...mutation(p),
@@ -262,7 +262,7 @@ await test(
           );
           await dispatch(garden);
           state = await planner.state(owner, garden.id);
-          assert.equal(state.currentProposal.plan.maps[0].width, 18);
+          assert.equal(state.currentProposal.plan.maps[0].width, 24);
           assert.equal(state.currentProposal.plan.npcs[0].label, 'Elian');
           assert.equal((await visuals.get(owner, garden.id)).plan, null);
         },

@@ -50,8 +50,8 @@ const plan = {
   rooms: [
     {
       locationId: 'workshop',
-      width: 10,
-      height: 8,
+      width: 24,
+      height: 24,
       spawns: [
         { x: 2, y: 2 },
         { x: 3, y: 2 },

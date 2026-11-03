@@ -1,3 +1,5 @@
+import { tokenSizeSchema, footprintCells, type TokenSize } from './battlemap';
+export * from './battlemap';
 import { npcPlaceholderSchema, type NpcPlaceholder } from './npc-placeholder';
 export * from './npc-placeholder';
 import type { NarrativePreferences } from './narrative-corrections';
@@ -201,6 +203,7 @@ export interface GameEntity extends GamePoint {
   movementTrace?: { sequence: number; points: GamePoint[] };
   feedback?: { kind: 'hit' | 'push'; sequence: number; dx: number; dy: number };
   publicProfile?: { role: string; description: string; appearance: string };
+  tokenSize?: TokenSize;
   characterAnimation?: CharacterAnimation;
   supportingNpc?: SupportingNpcCard;
   id: string;
@@ -500,6 +503,7 @@ export const gamePublicEntitySchema = z
       })
       .strict()
       .optional(),
+    tokenSize: tokenSizeSchema.optional(),
     characterAnimation: characterAnimationSchema.optional(),
     visual: z.enum(['key', 'token', 'journal', 'door', 'keeper', 'traveler']).optional(),
     mapId: gameIdSchema,
@@ -635,8 +639,8 @@ export const gameProjectionSchema = z
     for (const e of p.entities) {
       if (
         e.mapId !== p.map.id ||
-        e.x >= p.map.width ||
-        e.y >= p.map.height ||
+        e.x + footprintCells(e) > p.map.width ||
+        e.y + footprintCells(e) > p.map.height ||
         e.ownerId !== undefined
       )
         invalid('Invalid visible entity');
@@ -800,6 +804,7 @@ export const authoredGameDraftSchema = z
               })
               .strict()
               .optional(),
+            tokenSize: tokenSizeSchema.optional(),
             characterAnimation: characterAnimationSchema.optional(),
             goal: z.enum(['patrol', 'help']),
             personality: npcPersonalitySchema.optional(),

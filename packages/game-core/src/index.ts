@@ -5,6 +5,12 @@ import { projectVisibleArtBindings } from './art';
 import { chooseLivingNpcIntent, publicNpcFactTopics, communicateNpcObservations } from './living';
 import { npcActionAllowed } from './living-policy';
 import {
+  footprintCells,
+  occupiedCells,
+  footprintDistance,
+  footprintOverlaps,
+  footprintInside,
+  footprintIntersectsArea,
   gameActionSchema,
   gameMoveSchema,
   gameIntentSchema,
@@ -34,8 +40,6 @@ const directions = [
   { x: 1, y: 0 },
   { x: 0, y: 1 },
 ];
-const inside = (p: GamePoint, a: GameEncounter['area']) =>
-  p.x >= a.x && p.y >= a.y && p.x < a.x + a.width && p.y < a.y + a.height;
 export function walkable(
   s: GameState,
   mapId: string,
@@ -44,13 +48,12 @@ export function walkable(
   strict = false,
 ): boolean {
   const m = s.maps[mapId];
+  const actor = actorId ? s.entities[actorId] : undefined;
+  const placed = { ...actor, ...p };
   if (
     !m ||
-    p.x < 0 ||
-    p.y < 0 ||
-    p.x >= m.width ||
-    p.y >= m.height ||
-    m.blocked.some((b) => same(b, p))
+    !footprintInside(placed, { x: 0, y: 0, width: m.width, height: m.height }) ||
+    occupiedCells(placed).some((cell) => m.blocked.some((b) => same(b, cell)))
   )
     return false;
   return !Object.values(s.entities).some(
@@ -58,8 +61,10 @@ export function walkable(
       e.mapId === mapId &&
       e.id !== actorId &&
       !e.ownerId &&
-      same(e, p) &&
-      ((e.kind === 'door' && !e.open) || (strict && (e.kind === 'player' || e.kind === 'npc'))),
+      footprintOverlaps(e, placed) &&
+      ((e.kind === 'door' && !e.open) ||
+        ((strict || footprintCells(e) > 1 || footprintCells(actor) > 1) &&
+          (e.kind === 'player' || e.kind === 'npc'))),
   );
 }
 export function findPath(
@@ -72,7 +77,9 @@ export function findPath(
   area?: GameEncounter['area'],
 ): GamePoint[] | null {
   if (
-    (area && (!inside(from, area) || !inside(to, area))) ||
+    (area &&
+      (!footprintInside({ ...s.entities[actorId ?? ''], ...from }, area) ||
+        !footprintInside({ ...s.entities[actorId ?? ''], ...to }, area))) ||
     !walkable(s, mapId, to, actorId, strict)
   )
     return null;
@@ -89,7 +96,7 @@ export function findPath(
     for (const d of directions) {
       const n = { x: p.x + d.x, y: p.y + d.y };
       if (
-        (!area || inside(n, area)) &&
+        (!area || footprintInside({ ...s.entities[actorId ?? ''], ...n }, area)) &&
         !seen.has(key(n)) &&
         walkable(s, mapId, n, actorId, strict)
       ) {
@@ -204,11 +211,15 @@ export function addPlayer(state: GameState, id: string): GameResult {
   const mapId = s.startMapId ?? 'observatory',
     map = s.maps[mapId];
   if (!map?.spawns.length) return fail(state, 'PATH_BLOCKED');
+  const spawn = map.spawns
+    .map((_, offset) => map.spawns[(n + offset) % map.spawns.length])
+    .find((point) => walkable(s, mapId, point));
+  if (!spawn) return fail(state, 'PATH_BLOCKED');
   s.entities[id] = {
     id,
     kind: 'player',
     mapId,
-    ...map.spawns[n % map.spawns.length],
+    ...spawn,
     revision: 0,
     inventory: [],
     movementGeneration: 0,
@@ -230,7 +241,10 @@ export function moveInput(state: GameState, id: string, input: GameMove): GameRe
   if (
     path.some((p) =>
       Object.values(state.encounters).some(
-        (e) => e.phase === 'planning' && e.mapId === a.mapId && inside(p, e.area),
+        (e) =>
+          e.phase === 'planning' &&
+          e.mapId === a.mapId &&
+          footprintIntersectsArea({ ...a, ...p }, e.area),
       ),
     )
   )
@@ -260,7 +274,10 @@ export function tick(state: GameState, tickCount = 1): GameResult {
       if (
         !walkable(s, a.mapId, next, a.id) ||
         Object.values(s.encounters).some(
-          (e) => e.phase === 'planning' && e.mapId === a.mapId && inside(next, e.area),
+          (e) =>
+            e.phase === 'planning' &&
+            e.mapId === a.mapId &&
+            footprintIntersectsArea({ ...a, ...next }, e.area),
         )
       ) {
         a.path = [];
@@ -276,29 +293,44 @@ export function tick(state: GameState, tickCount = 1): GameResult {
   return result(s, events);
 }
 export function visible(s: GameState, a: GameEntity, b: GameEntity): boolean {
-  if (a.mapId !== b.mapId || b.ownerId || distance(a, b) > 9) return false;
-  let x = a.x,
-    y = a.y;
-  const dx = Math.abs(b.x - x),
-    dy = -Math.abs(b.y - y),
-    sx = x < b.x ? 1 : -1,
-    sy = y < b.y ? 1 : -1;
-  let err = dx + dy;
-  for (let i = 0; i < 128; i++) {
-    if (x === b.x && y === b.y) return true;
-    if ((x !== a.x || y !== a.y) && !walkable(s, a.mapId, { x, y }, a.id)) return false;
-    const e = 2 * err;
-    if (e >= dy) {
-      err += dy;
-      x += sx;
+  if (a.mapId !== b.mapId || b.ownerId || footprintDistance(a, b) > 9) return false;
+  // Any exposed occupied cell can be seen; neither collision footprint nor anchor
+  // position may turn an otherwise visible large creature invisible.
+  const clearRay = (from: GamePoint, to: GamePoint) => {
+    let x = from.x,
+      y = from.y;
+    const dx = Math.abs(to.x - x),
+      dy = -Math.abs(to.y - y),
+      sx = x < to.x ? 1 : -1,
+      sy = y < to.y ? 1 : -1;
+    let err = dx + dy;
+    for (let i = 0; i < 128; i++) {
+      if (x === to.x && y === to.y) return true;
+      if (
+        (x !== from.x || y !== from.y) &&
+        (s.maps[a.mapId].blocked.some((p) => p.x === x && p.y === y) ||
+          Object.values(s.entities).some(
+            (e) => e.mapId === a.mapId && e.kind === 'door' && !e.open && e.x === x && e.y === y,
+          ))
+      )
+        return false;
+      const e = 2 * err;
+      if (e >= dy) {
+        err += dy;
+        x += sx;
+      }
+      if (e <= dx) {
+        err += dx;
+        y += sy;
+      }
     }
-    if (e <= dx) {
-      err += dx;
-      y += sy;
-    }
-  }
-  return false;
+    return false;
+  };
+  return occupiedCells(a).some((from) =>
+    occupiedCells(b).some((to) => distance(from, to) <= 9 && clearRay(from, to)),
+  );
 }
+
 function actionInternal(
   state: GameState,
   id: string,
@@ -321,7 +353,8 @@ function actionInternal(
         target: action.target,
       });
     if (
-      (a.encounterId && !inside(action.target, state.encounters[a.encounterId].area)) ||
+      (a.encounterId &&
+        !footprintInside({ ...a, ...action.target }, state.encounters[a.encounterId].area)) ||
       distance(a, action.target) > 1 ||
       !walkable(state, a.mapId, action.target, id, true)
     )
@@ -336,20 +369,29 @@ function actionInternal(
     const s = copy(state);
     if (action.kind === 'flee' && a.encounterId) {
       const e = s.encounters[a.encounterId];
-      const exit = directions
-        .map((d) => ({ x: a.x + d.x, y: a.y + d.y }))
-        .find(
-          (p) =>
-            !inside(p, e.area) &&
-            walkable(s, a.mapId, p, id, true) &&
-            !Object.values(s.encounters).some(
-              (other) =>
-                other.id !== e.id &&
-                other.phase === 'planning' &&
-                other.mapId === a.mapId &&
-                inside(p, other.area),
-            ),
-        );
+      // A large actor at the boundary needs its whole footprint to clear it.
+      // Validate the swept path; never jump a wall, actor, or another encounter.
+      const exit = directions.flatMap((d) => {
+        const path = Array.from({ length: footprintCells(a) }, (_, index) => ({
+          x: a.x + d.x * (index + 1),
+          y: a.y + d.y * (index + 1),
+        }));
+        const end = path[path.length - 1];
+        return !footprintIntersectsArea({ ...a, ...end }, e.area) &&
+          path.every(
+            (point) =>
+              walkable(s, a.mapId, point, id, true) &&
+              !Object.values(s.encounters).some(
+                (other) =>
+                  other.id !== e.id &&
+                  other.phase === 'planning' &&
+                  other.mapId === a.mapId &&
+                  footprintIntersectsArea({ ...a, ...point }, other.area),
+              ),
+          )
+          ? [end]
+          : [];
+      })[0];
       if (!exit) return fail(state, 'PATH_BLOCKED');
       Object.assign(s.entities[id], exit);
       e.participants = e.participants.filter((p) => p !== id);
@@ -366,14 +408,14 @@ function actionInternal(
     if (a.encounterId) return fail(state, 'WRONG_MODE');
     const exit = state.maps[a.mapId].exits.find((e) => e.id === action.targetId);
     if (!exit) return fail(state, 'TARGET_UNAVAILABLE');
-    if (distance(a, exit) > 1) return fail(state, 'OUT_OF_RANGE');
+    if (footprintDistance(a, exit) > 1) return fail(state, 'OUT_OF_RANGE');
     if (exit.doorId && !state.entities[exit.doorId]?.open) return fail(state, 'PATH_BLOCKED');
     if (
       Object.values(state.encounters).some(
         (e) =>
           e.phase === 'planning' &&
           e.mapId === exit.destinationMapId &&
-          inside(exit.destination, e.area),
+          footprintIntersectsArea({ ...a, ...exit.destination }, e.area),
       )
     )
       return fail(state, 'WRONG_MODE');
@@ -391,14 +433,14 @@ function actionInternal(
   }
   const target = action.targetId ? state.entities[action.targetId] : undefined;
   if (!target || !visible(state, a, target)) return fail(state, 'TARGET_UNAVAILABLE');
-  if (distance(a, target) > 1) return fail(state, 'OUT_OF_RANGE');
+  if (footprintDistance(a, target) > 1) return fail(state, 'OUT_OF_RANGE');
   if (
     (target.encounterId && target.encounterId !== a.encounterId) ||
     Object.values(state.encounters).some(
       (e) =>
         e.phase === 'planning' &&
         e.mapId === target.mapId &&
-        inside(target, e.area) &&
+        footprintIntersectsArea(target, e.area) &&
         (!inRound || e.id !== a.encounterId),
     )
   )
@@ -470,7 +512,7 @@ function actionInternal(
             e.id !== t.id &&
             e.mapId === t.mapId &&
             ['player', 'npc'].includes(e.kind) &&
-            same(e, t),
+            footprintOverlaps(e, t),
         )
       )
         return fail(state, 'PATH_BLOCKED');
@@ -514,7 +556,41 @@ export const applyAction = (state: GameState, id: string, action: GameAction): G
 export function beginEncounter(state: GameState, id: string, nowMs = 0): GameResult {
   const actor = state.entities[id];
   if (!actor || actor.encounterId) return fail(state, 'WRONG_MODE');
-  const area = { x: Math.max(0, actor.x - 2), y: Math.max(0, actor.y - 2), width: 5, height: 5 };
+  const map = state.maps[actor.mapId];
+  const area = {
+    x: Math.max(0, Math.min(actor.x - 2, map.width - 5)),
+    y: Math.max(0, Math.min(actor.y - 2, map.height - 5)),
+    width: Math.min(5, map.width),
+    height: Math.min(5, map.height),
+  };
+  // Close over intersecting actors so no large participant is sliced by the area.
+  // Expand before checking other encounters; AP/damage/turn duration are unchanged.
+  let expanded = true;
+  while (expanded) {
+    expanded = false;
+    for (const candidate of Object.values(state.entities)) {
+      if (
+        candidate.mapId !== actor.mapId ||
+        !['player', 'npc'].includes(candidate.kind) ||
+        !footprintIntersectsArea(candidate, area)
+      )
+        continue;
+      const edge = footprintCells(candidate);
+      const left = Math.min(area.x, candidate.x),
+        top = Math.min(area.y, candidate.y);
+      const right = Math.min(map.width, Math.max(area.x + area.width, candidate.x + edge));
+      const bottom = Math.min(map.height, Math.max(area.y + area.height, candidate.y + edge));
+      if (
+        left !== area.x ||
+        top !== area.y ||
+        right !== area.x + area.width ||
+        bottom !== area.y + area.height
+      ) {
+        Object.assign(area, { x: left, y: top, width: right - left, height: bottom - top });
+        expanded = true;
+      }
+    }
+  }
   if (
     Object.values(state.encounters).some(
       (e) =>
@@ -530,25 +606,32 @@ export function beginEncounter(state: GameState, id: string, nowMs = 0): GameRes
   const s = copy(state),
     participants = Object.values(s.entities)
       .filter(
-        (a) => ['player', 'npc'].includes(a.kind) && a.mapId === actor.mapId && inside(a, area),
+        (a) =>
+          ['player', 'npc'].includes(a.kind) &&
+          a.mapId === actor.mapId &&
+          footprintIntersectsArea(a, area),
       )
       .map((a) => a.id)
       .sort(),
     occupied = new Set<string>();
+  if (participants.length > 24) return fail(state, 'RATE_LIMITED');
   for (const p of participants) {
     const a = s.entities[p];
-    if (occupied.has(key(a))) {
+    if (!footprintInside(a, area)) return fail(state, 'PATH_BLOCKED');
+    if (occupiedCells(a).some((cell) => occupied.has(key(cell)))) {
       const candidates: GamePoint[] = [];
       for (let y = area.y; y < area.y + area.height; y++)
         for (let x = area.x; x < area.x + area.width; x++) candidates.push({ x, y });
       candidates.sort((l, r) => distance(a, l) - distance(a, r) || l.y - r.y || l.x - r.x);
       const next = candidates.find(
-        (c) => !occupied.has(key(c)) && findPath(s, a.mapId, a, c, p, false, area) !== null,
+        (c) =>
+          occupiedCells({ ...a, ...c }).every((cell) => !occupied.has(key(cell))) &&
+          findPath(s, a.mapId, a, c, p, false, area) !== null,
       );
       if (!next) return fail(state, 'PATH_BLOCKED');
       Object.assign(a, next);
     }
-    occupied.add(key(a));
+    for (const cell of occupiedCells(a)) occupied.add(key(cell));
     a.path = [];
     a.movementGeneration = (a.movementGeneration ?? 0) + 1;
     a.revision++;
@@ -658,11 +741,7 @@ export function resolveRound(state: GameState, encounterId: string, nowMs: numbe
     for (const id of [...(e.pendingJoinIds ?? [])].sort()) {
       const actor = s.entities[id];
       if (!actor || actor.encounterId || actor.mapId !== e.mapId) continue;
-      const candidates = [
-        { x: actor.x, y: actor.y },
-        ...directions.map((d) => ({ x: actor.x + d.x, y: actor.y + d.y })),
-      ];
-      const point = candidates.find((p) => inside(p, e.area) && walkable(s, e.mapId, p, id, true));
+      const point = e.participants.length < 24 ? encounterJoinPoint(s, actor, e, true) : undefined;
       if (!point) {
         events.push({
           kind: 'encounter.join_rejected',
@@ -689,6 +768,37 @@ export function resolveRound(state: GameState, encounterId: string, nowMs: numbe
   s.revision++;
   return result(s, events);
 }
+/** Only clear the creature's own width across an adjacent boundary; no teleporting. */
+function encounterJoinPoint(
+  state: GameState,
+  actor: GameEntity,
+  encounter: GameEncounter,
+  strict: boolean,
+) {
+  if (
+    footprintInside(actor, encounter.area) &&
+    walkable(state, actor.mapId, actor, actor.id, strict)
+  )
+    return { x: actor.x, y: actor.y };
+  for (const direction of directions) {
+    for (let step = 1; step <= footprintCells(actor); step++) {
+      const point = { x: actor.x + direction.x * step, y: actor.y + direction.y * step };
+      if (
+        !walkable(state, actor.mapId, point, actor.id, strict) ||
+        Object.values(state.encounters).some(
+          (other) =>
+            other.id !== encounter.id &&
+            other.mapId === actor.mapId &&
+            other.phase === 'planning' &&
+            footprintIntersectsArea({ ...actor, ...point }, other.area),
+        )
+      )
+        break;
+      if (footprintInside({ ...actor, ...point }, encounter.area)) return point;
+    }
+  }
+  return undefined;
+}
 export function requestEncounterJoin(
   state: GameState,
   id: string,
@@ -706,9 +816,8 @@ export function requestEncounterJoin(
   )
     return fail(state, 'TARGET_UNAVAILABLE');
   if (actor.encounterId) return fail(state, 'WRONG_MODE');
-  const adjacent = [actor, ...directions.map((d) => ({ x: actor.x + d.x, y: actor.y + d.y }))].some(
-    (p) => inside(p, e.area) && walkable(state, e.mapId, p, id),
-  );
+  if (e.participants.length >= 24) return fail(state, 'RATE_LIMITED');
+  const adjacent = encounterJoinPoint(state, actor, e, false);
   if (!adjacent) return fail(state, 'OUT_OF_RANGE');
   if (e.pendingJoinIds?.includes(id)) return result(state);
   if ((e.pendingJoinIds?.length ?? 0) >= 4) return fail(state, 'RATE_LIMITED');
@@ -850,7 +959,7 @@ export function mockNpcDecision(s: GameState, id = 'keeper'): unknown {
   const a = s.entities[id];
   if (!a) return null;
   const recipient = Object.values(s.entities).find(
-    (e) => e.kind === 'player' && visible(s, a, e) && distance(a, e) <= 1,
+    (e) => e.kind === 'player' && visible(s, a, e) && footprintDistance(a, e) <= 1,
   );
   const action: GameAction =
     recipient && a.inventory?.length
@@ -913,8 +1022,10 @@ export function validateMapState(s: GameState): string[] {
   const ownership = new Map<string, string>();
   for (const e of Object.values(s.entities)) {
     const map = s.maps[e.mapId];
-    if (!map || e.x < 0 || e.y < 0 || e.x >= map.width || e.y >= map.height)
+    if (!map || !footprintInside(e, { x: 0, y: 0, width: map.width, height: map.height }))
       errors.push(`entity:${e.id}:position`);
+    if (footprintCells(e) > 1 && !walkable(s, e.mapId, e, e.id, true))
+      errors.push(`entity:${e.id}:footprint`);
     if (e.ownerId && (!s.entities[e.ownerId]?.inventory?.includes(e.id) || e.kind !== 'item'))
       errors.push(`entity:${e.id}:owner`);
     for (const item of e.inventory ?? []) {

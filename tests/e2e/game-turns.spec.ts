@@ -127,8 +127,8 @@ test('sequential turns retain two addressed posts, freeze NPCs, and reply only a
         {
           id: 'room',
           label: 'Rain room',
-          width: 9,
-          height: 8,
+          width: 24,
+          height: 24,
           blocked: [],
           spawns: [
             { x: 2, y: 3 },

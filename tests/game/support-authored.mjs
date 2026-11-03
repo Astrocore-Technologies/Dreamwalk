@@ -14,8 +14,8 @@ export function authoredDraft(sourceNpcId) {
         id: 'courtyard',
         sourceLocationId: 'courtyard',
         label: 'Authored courtyard',
-        width: 9,
-        height: 9,
+        width: 24,
+        height: 24,
         blocked: boundary,
         spawns: [
           { x: 2, y: 2 },
@@ -36,8 +36,8 @@ export function authoredDraft(sourceNpcId) {
       {
         id: 'garden',
         label: 'Quiet garden',
-        width: 9,
-        height: 9,
+        width: 24,
+        height: 24,
         blocked: boundary,
         spawns: [
           { x: 2, y: 2 },

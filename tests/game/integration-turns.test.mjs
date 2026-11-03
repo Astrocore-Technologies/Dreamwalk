@@ -95,8 +95,8 @@ async function fixture(owner, guest) {
       {
         id: 'room',
         label: 'Rain room',
-        width: 10,
-        height: 8,
+        width: 24,
+        height: 24,
         blocked: [],
         spawns: [
           { x: 2, y: 2 },
@@ -481,14 +481,19 @@ await test(
             npcs: [],
             roundPolicy: { maxRounds: 5, planningMs: 30000 },
           };
+          // A genuinely preexisting map remains editable; fresh API imports now require24.
+          await db.query(
+            'INSERT INTO adventure_game_drafts(adventure_id,revision,draft) VALUES($1,1,$2)',
+            [story.id, JSON.stringify(draft)],
+          );
           await owner.request(
             `/studio/adventures/${story.id}/playable-draft`,
-            { expectedRevision: 0, draft },
+            { expectedRevision: 1, draft },
             'PUT',
           );
           const { versionId } = await owner.request(
             `/studio/adventures/${story.id}/playable-versions`,
-            { expectedRevision: 1 },
+            { expectedRevision: 2 },
           );
           const rejected = await owner.request(
             '/game/campaigns',

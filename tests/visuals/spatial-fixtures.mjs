@@ -1,8 +1,8 @@
 /** Provider fixtures only: different geometry and public canon, no network/model claim. */
 export function spatialFixture(kind = 'library') {
   const garden = kind === 'greenhouse',
-    width = garden ? 18 : 14,
-    height = garden ? 14 : 12;
+    width = 24,
+    height = 24;
   return {
     version: 1,
     title: garden ? 'The glass seedhouse' : 'The copper catalogue',
@@ -32,8 +32,8 @@ export function spatialFixture(kind = 'library') {
         description: garden
           ? 'A cool chamber keeps rare seed cases.'
           : 'A compact archive holds brass catalogue tags.',
-        width: 10,
-        height: 10,
+        width: 24,
+        height: 24,
         spawns: [
           { x: 2, y: 6 },
           { x: 3, y: 6 },

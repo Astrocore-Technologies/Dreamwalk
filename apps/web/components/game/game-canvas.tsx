@@ -1,4 +1,5 @@
 'use client';
+import { BATTLEMAP_CELLS, BATTLEMAP_TILE } from '@dreamwalk/contracts';
 import {
   drawNpcSilhouette,
   npcSilhouetteKey,
@@ -304,11 +305,12 @@ export function GameCanvas({
       }
       itemDrawing.destroy();
       const boundary = new Graphics();
+      const grid = new Graphics();
       const actors = objects;
       objects.sortableChildren = true;
       const decorations: InstanceType<typeof Sprite>[] = [];
       const focus = new Graphics();
-      world.addChild(artBackground, terrain, sceneDecoration, boundary, objects, focus);
+      world.addChild(artBackground, terrain, sceneDecoration, boundary, grid, objects, focus);
       app.stage.addChild(world);
       const sprites = new Map<
         string,
@@ -503,7 +505,7 @@ export function GameCanvas({
       };
       let mapKey = '';
       let lastRevision = -1;
-      const tile = 48;
+      const tile = BATTLEMAP_TILE;
       const spriteAt = (
         frame: number,
         x: number,
@@ -568,6 +570,14 @@ export function GameCanvas({
               spriteAt(blocked.has(`${x},${y}`) ? 1 : 0, x, y, terrain);
             }
           for (const exit of p.map.exits) spriteAt(8, exit.x, exit.y, terrain);
+          grid.clear();
+          const edge = Math.max(BATTLEMAP_CELLS, p.map.width, p.map.height);
+          for (let cell = 0; cell <= edge; cell++) {
+            grid.moveTo(cell * tile, 0).lineTo(cell * tile, edge * tile);
+            grid.moveTo(0, cell * tile).lineTo(edge * tile, cell * tile);
+          }
+          grid.stroke({ color: 0xf4ecd8, alpha: 0.4, width: 1 });
+          element.dataset.battlemapGrid = `${edge}x${edge}`;
           world.hitArea = new Rectangle(0, 0, p.map.width * tile, p.map.height * tile);
         }
         const now = performance.now();
@@ -784,12 +794,12 @@ export function GameCanvas({
         const camera = mapCamera({
           viewportWidth: app.screen.width,
           viewportHeight: app.screen.height,
-          worldWidth: p.map.width * tile,
-          worldHeight: p.map.height * tile,
+          worldWidth: Math.max(BATTLEMAP_CELLS, p.map.width, p.map.height) * tile,
+          worldHeight: Math.max(BATTLEMAP_CELLS, p.map.width, p.map.height) * tile,
           zoom: zoomRef.current,
           // Follow the animated world-cell center, not a tall/narrow sprite's top corner.
-          focusX: own ? own.sprite.x - (own.offsetX ?? 0) + tile / 2 : undefined,
-          focusY: own ? own.sprite.y - (own.offsetY ?? 0) + tile / 2 : undefined,
+          focusX: own ? own.sprite.x + own.sprite.width / 2 : undefined,
+          focusY: own ? own.sprite.y + own.sprite.height / 2 : undefined,
         });
         world.scale.set(camera.scale);
         world.position.set(camera.x, camera.y);

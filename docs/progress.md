@@ -923,15 +923,17 @@ separate, not-yet-authorized real-model acceptance procedure. New characterizati
 opt-in for authored NPCs; existing/generated NPCs retain their existing behavior unless
 explicitly authored. No external card import, TTS, new emotional art or paid calls.
 
-## 2026-11-02 — explicit reusable NPC silhouette placeholders
+## Fixed battlemap and creature-size update (2026-11-02)
 
-- Added optional neutral/male/female/crowd map-NPC presentation, neutral for legacy and
-  unspecified entities. Three stable ID-selected original vector variants per category;
-  no inference from character text and no provider calls.
-- Existing bound portrait/animation wins. Labels and authoritative geometry are unchanged.
-- Local exact-geometry offscreen contact sheet inspected at token sizes; schema/compile/
-  projection and deterministic-render-selection regressions added. Unique NPC image
-  generation remains future work, not part of this change.
+The latest owner request supersedes the earlier optional map proportions/no-grid
+presentation: newly built maps use 24×24 cells, mandatory deterministic engine
+grid, constant visual scale, and full surroundings composition. Existing saves
+and immutable geometry are preserved. Creature size is validated independently
+of raster dimensions; large/huge creatures occupy 2×2/3×3 cells for movement,
+collision and edge interaction range, without changing action budgets or damage.
+See [battlemap-layout.md](battlemap-layout.md) for compatibility boundaries and
+verification scope. This source change does not perform paid generation or a
+production update.
 
 ### Hero portrait creation (implementation, not production activation)
 
@@ -955,3 +957,13 @@ and references remain under Advanced options, and server rights/expiry/policy/fr
 validation is unchanged. Editing inputs or cancellation discards the pending decision;
 no automatic re-quote, dispatch or retry is introduced. Saved outputs still require an
 explicit selection/binding action. This does not enable providers or publish/deploy code.
+
+## 2026-11-02 — explicit reusable NPC silhouette placeholders
+
+- Added optional neutral/male/female/crowd map-NPC presentation, neutral for legacy and
+  unspecified entities. Three stable ID-selected original vector variants per category;
+  no inference from character text and no provider calls.
+- Existing bound portrait/animation wins. Labels and authoritative geometry are unchanged.
+- Local exact-geometry offscreen contact sheet inspected at token sizes; schema/compile/
+  projection and deterministic-render-selection regressions added. Unique NPC image
+  generation remains future work, not part of this change.

@@ -108,7 +108,7 @@ export function buildArtRequest(
   );
   const spatial =
     background && map
-      ? `Room: ${map.label}. ${map.description ?? ''}. Locked spatial plan ${map.width}x${map.height}; entrances ${JSON.stringify(map.exits.map((e) => ({ x: e.x, y: e.y })))}; furniture footprints ${JSON.stringify(map.composition?.layers ?? [])}. Draw the room shell/floor only. Leave furniture/door/NPC layers absent; these are composited separately. Image does not change collision.`
+      ? `Room: ${map.label}. ${map.description ?? ''}. Locked spatial plan ${map.width}x${map.height}; entrances ${JSON.stringify(map.exits.map((e) => ({ x: e.x, y: e.y })))}; furniture footprints ${JSON.stringify(map.composition?.layers ?? [])}. Compose the entire fixed extent at constant scale; a small focal location stays small amid its surroundings. No painted grid: straight cells are mandatory engine overlays. Draw the room shell/floor only. Leave furniture/door/NPC layers absent; these are composited separately. Image does not change collision.`
       : '';
   const instruction = sheet
     ? 'Transparent square sprite atlas, exactly SIX columns and FOUR rows, evenly aligned cells. Rows in order SOUTH, WEST, EAST, NORTH. Each row: columns 1-2 idle and 3-6 walk. SAME attractive adult full-body character, consistent clothing and proportions in all 24 cells. Feet at consistent cell baseline. No text, grid, labels, shadows outside cells or cropped limbs. Transparent margin around EVERY cell.'

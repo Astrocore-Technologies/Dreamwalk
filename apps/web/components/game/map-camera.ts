@@ -58,8 +58,8 @@ export function containRaster(
   return { x: (worldX - width) / 2, y: (worldY - height) / 2, width, height };
 }
 
-/** Legacy assets retain their pinned full-world mapping. Only server-validated,
- * versioned framing for this map opts into aspect-preserving containment. */
+/** Raster artwork is always contained without distortion, including legacy assets.
+ * Framing evidence remains validated by the server; it never changes collision. */
 export function mapRasterBounds(
   imageWidth: number,
   imageHeight: number,
@@ -88,5 +88,5 @@ export function mapRasterBounds(
   ) {
     return containRaster(imageWidth, imageHeight, worldWidth, worldHeight);
   }
-  return { x: 0, y: 0, width: positive(worldWidth, 1), height: positive(worldHeight, 1) };
+  return containRaster(imageWidth, imageHeight, worldWidth, worldHeight);
 }

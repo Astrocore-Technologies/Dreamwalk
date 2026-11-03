@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { tokenSizeSchema } from './battlemap';
 const id = z
   .string()
   .min(1)
@@ -39,6 +40,7 @@ export const narrativeNpcSchema = z
     roleLabel: copy(120),
     description: copy(1000),
     appearance: copy(500),
+    tokenSize: tokenSizeSchema.optional(),
     personalitySummary: copy(500),
     values: z
       .array(z.enum(['duty', 'kindness', 'caution', 'honesty']))

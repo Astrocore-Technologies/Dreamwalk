@@ -148,3 +148,24 @@ test('maximum valid NPC card yields bounded visual-only portrait prompt and igno
     before.groundingHash,
   );
 });
+
+test('maximum public story excerpts fit fixed 24x24 prompt without truncating geometry', () => {
+  const state = fixture();
+  const map = state.maps[state.entities['player-a'].mapId];
+  map.width = 24;
+  map.height = 24;
+  map.description = 'L'.repeat(6000);
+  state.narrativePremise = {
+    title: 'T'.repeat(120),
+    genre: 'G'.repeat(50),
+    summary: 'S'.repeat(500),
+    world: 'W'.repeat(1000),
+  };
+  const result = prepareSceneMedia(state, 'player-a', 'source-v1', { kind: 'background' });
+  assert.ok(result.prompt.length <= 2000);
+  const data = JSON.parse(result.prompt.split('\n').at(-1));
+  assert.equal(data.visual.blockedRows.length, 24);
+  assert.ok(data.visual.blockedRows.every((row) => row.length === 24));
+  assert.ok(Object.values(data.storyReference).some((value) => value?.excerpted));
+  assert.equal(result.spec.imageFraming.size, '1024x1024');
+});

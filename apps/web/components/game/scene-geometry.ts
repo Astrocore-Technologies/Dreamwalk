@@ -1,3 +1,4 @@
+import { TOKEN_FOOTPRINT, footprintCells } from '@dreamwalk/contracts';
 import type { GameProjection } from '@dreamwalk/contracts';
 export type SceneEntity = GameProjection['entities'][number];
 export type SceneRect = { x: number; y: number; width: number; height: number };
@@ -30,7 +31,17 @@ export function entityLayout(
     };
   }
   const actor = e.kind === 'npc' || e.kind === 'player';
-  const height = fullBody && actor ? tile * 1.5 : tile;
-  const width = fullBody && actor ? Math.min(tile, height * aspect) : tile;
-  return { x: e.x * tile + (tile - width) / 2, y: e.y * tile - (height - tile), width, height };
+  if (actor) {
+    const footprint = tile * TOKEN_FOOTPRINT[e.tokenSize ?? 'medium'];
+    const ratio = fullBody && Number.isFinite(aspect) && aspect > 0 ? aspect : 1;
+    const width = footprint * Math.min(1, ratio);
+    const height = footprint / Math.max(1, ratio);
+    return {
+      x: (e.x + footprintCells(e) / 2) * tile - width / 2,
+      y: (e.y + footprintCells(e) / 2) * tile - height / 2,
+      width,
+      height,
+    };
+  }
+  return { x: e.x * tile, y: e.y * tile, width: tile, height: tile };
 }
