@@ -37,27 +37,6 @@ function GameToolbar({ children }: { children: React.ReactNode }) {
   return host ? createPortal(children, host) : children;
 }
 
-function fitPlaySurface(element: HTMLDivElement | null) {
-  if (!element) return;
-  const update = () => {
-    const top = element.getBoundingClientRect().top + window.scrollY;
-    element.style.setProperty(
-      '--game-play-height',
-      `${Math.max(420, window.innerHeight - top - 12)}px`,
-    );
-  };
-  const observer = new ResizeObserver(update);
-  const toolbar = document.querySelector('.game-shell .topbar');
-  if (toolbar) observer.observe(toolbar);
-  if (element.parentElement) observer.observe(element.parentElement);
-  window.addEventListener('resize', update);
-  update();
-  return () => {
-    observer.disconnect();
-    window.removeEventListener('resize', update);
-  };
-}
-
 const actionKeys: Partial<Record<GameAction['kind'], string>> = {
   consume: 'Поесть',
   move_to: 'Подойти',
@@ -248,6 +227,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
       entry.slot === `map:${p?.map.id}:background` ||
       p?.entities.some((entity) => entry.slot.startsWith(`entity:${entity.id}:`)),
   );
+  const [extrasOpen, setExtrasOpen] = useState(false);
   const [username, setUsername] = useState(''),
     [inviteBusy, setInviteBusy] = useState(false),
     [inviteMessage, setInviteMessage] = useState('');
@@ -262,6 +242,9 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
     p?.encounter?.phase === 'planning' && p.encounter.participants.includes(p.actorId)
       ? p.encounter
       : undefined;
+  useEffect(() => {
+    if (encounter?.id) setExtrasOpen(true);
+  }, [encounter?.id]);
   const locked = !!(p && encounter?.intents[p.actorId]?.ready);
   const connected = game.connection === 'connected';
   const playerAvailable = playerControlsAvailable(p);
@@ -465,26 +448,28 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
       <div className={styles.roomOptions}>
         <details className={styles.roomMetadata}>
           <summary>{t(encounter ? 'Планирование раунда' : 'Исследование')}</summary>
-          {game.campaign?.title && <p className={styles.kicker}>{game.campaign.title}</p>}
-          {game.campaign?.sourceRevision && (
-            <small>
-              {t('Игровая версия {version}', { version: game.campaign.sourceRevision })}
-            </small>
-          )}
-          {own && (
-            <p
-              className={styles.position}
-              data-testid="game-position"
-              data-map-id={p.map.id}
-              data-x={own.x}
-              data-y={own.y}
-            >
-              {t('Твоя позиция: {x}, {y}', { x: own.x, y: own.y })}
-            </p>
-          )}
-          <span className={styles.mode}>
-            {t(encounter ? 'Планирование раунда' : 'Исследование')}
-          </span>
+          <div>
+            {game.campaign?.title && <p className={styles.kicker}>{game.campaign.title}</p>}
+            {game.campaign?.sourceRevision && (
+              <small>
+                {t('Игровая версия {version}', { version: game.campaign.sourceRevision })}
+              </small>
+            )}
+            {own && (
+              <p
+                className={styles.position}
+                data-testid="game-position"
+                data-map-id={p.map.id}
+                data-x={own.x}
+                data-y={own.y}
+              >
+                {t('Твоя позиция: {x}, {y}', { x: own.x, y: own.y })}
+              </p>
+            )}
+            <span className={styles.mode}>
+              {t(encounter ? 'Планирование раунда' : 'Исследование')}
+            </span>
+          </div>
         </details>
         <NarrativePreferences
           key={campaignId}
@@ -492,7 +477,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           disabled={!connected || game.busy || storyBusy}
         />
       </div>
-      <div className={styles.playGrid} data-testid="game-play-surface" ref={fitPlaySurface}>
+      <div className={styles.playGrid} data-testid="game-play-surface">
         <div className={styles.sceneColumn}>
           <GameCanvas
             projection={p}
@@ -514,23 +499,6 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             }}
             reducedMotion={!!user?.settings.reducedMotion}
           />
-          {p.map.backgroundMode !== 'schematic' && (
-            <p className={styles.inspectionHelp}>{turnText('inspectHint')}</p>
-          )}
-          <div className={styles.inspectionButtons}>
-            {p.entities
-              .filter((e) => e.kind === 'npc')
-              .map((npc) => (
-                <Button
-                  key={npc.id}
-                  type="button"
-                  variant="ghost"
-                  onClick={() => setInspectedNpcId(npc.id)}
-                >
-                  {turnText('inspect')} · {npc.label || t('NPC')}
-                </Button>
-              ))}
-          </div>
           {inspectedNpc && (
             <section
               className={styles.inspection}
@@ -581,193 +549,220 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           worldGenerationAllowed={members.data?.ownerId === user?.id}
         />
       </div>
-      <div className={styles.roomGrid}>
-        <div>
-          {artCredits.length > 0 && (
-            <details>
-              <summary>{artText('credits')}</summary>
-              <ul>
-                {artCredits.map((entry) => (
-                  <li key={entry.slot}>
-                    {entry.attribution}
-                    {entry.attribution ? ' · ' : ''}
-                    {entry.licenseLabel}
-                  </li>
-                ))}
-              </ul>
-            </details>
-          )}
-          {encounter && (
-            <section className={styles.encounter} aria-label={t('Планирование раунда')}>
-              <div>
-                <h2>{t('Раунд {round}', { round: encounter.round })}</h2>
-                <strong>
-                  {encounter.deadlineMs
-                    ? t('Осталось {seconds} с', {
-                        seconds: Math.max(
-                          0,
-                          Math.ceil((encounter.deadlineMs - now - game.clockOffset) / 1000),
-                        ),
-                      })
-                    : t('Ожидание без таймера')}
-                </strong>
-              </div>
-              <p>
-                {t(
-                  'Выбери действие, затем подтверди готовность. Другие комнаты не останавливаются.',
-                )}
-              </p>
-              <p>
-                {t('Намерение: {action}', {
-                  action:
-                    selected.kind === 'hit' || selected.kind === 'push'
-                      ? turnText(selected.kind)
-                      : t(actionKeys[selected.kind] || 'Ждать'),
-                })}
-                {selectedTarget
-                  ? ` · ${selectedTarget.label || t(entityKey(selectedTarget, p.actorId))}`
-                  : ''}
-              </p>
-              {encounter.policy && (
-                <p>
-                  {t('Не более {rounds} раундов. Выход — действием у границы области.', {
-                    rounds: encounter.policy.maxRounds,
-                  })}
-                </p>
+      <details
+        className={styles.roomExtras}
+        data-testid="campaign-details"
+        open={extrasOpen}
+        onKeyDown={(event) => {
+          if (event.key === 'Escape') {
+            setExtrasOpen(false);
+            event.currentTarget.querySelector('summary')?.focus();
+          }
+        }}
+        onToggle={(event) => setExtrasOpen(event.currentTarget.open)}
+      >
+        <summary>{t('Кампания')}</summary>
+        <div className={styles.extrasPanel}>
+          <Button
+            type="button"
+            variant="ghost"
+            className={styles.extrasClose}
+            onClick={() => setExtrasOpen(false)}
+            aria-label={t('Закрыть')}
+          >
+            ×
+          </Button>
+          <div className={styles.roomGrid}>
+            <div>
+              {artCredits.length > 0 && (
+                <details>
+                  <summary>{artText('credits')}</summary>
+                  <ul>
+                    {artCredits.map((entry) => (
+                      <li key={entry.slot}>
+                        {entry.attribution}
+                        {entry.attribution ? ' · ' : ''}
+                        {entry.licenseLabel}
+                      </li>
+                    ))}
+                  </ul>
+                </details>
               )}
-              <div className={styles.actions}>
-                <Button
-                  variant="secondary"
-                  disabled={locked || game.busy}
-                  onClick={() => setSelected({ kind: 'wait' })}
-                >
-                  {t('Ждать')}
-                </Button>
-                <Button
-                  variant="secondary"
-                  disabled={locked || game.busy}
-                  onClick={() => setSelected({ kind: 'flee' })}
-                >
-                  {t('Покинуть столкновение')}
-                </Button>
-                {encounter.policy && (
-                  <Button
-                    variant="ghost"
-                    disabled={!connected || game.busy || encounter.endVotes?.includes(p.actorId)}
-                    onClick={() => void game.command({ type: 'encounter.end' })}
-                  >
+              {encounter && (
+                <section className={styles.encounter} aria-label={t('Планирование раунда')}>
+                  <div>
+                    <h2>{t('Раунд {round}', { round: encounter.round })}</h2>
+                    <strong>
+                      {encounter.deadlineMs
+                        ? t('Осталось {seconds} с', {
+                            seconds: Math.max(
+                              0,
+                              Math.ceil((encounter.deadlineMs - now - game.clockOffset) / 1000),
+                            ),
+                          })
+                        : t('Ожидание без таймера')}
+                    </strong>
+                  </div>
+                  <p>
                     {t(
-                      encounter.endVotes?.includes(p.actorId)
-                        ? 'Завершение запрошено'
-                        : 'Предложить завершить',
+                      'Выбери действие, затем подтверди готовность. Другие комнаты не останавливаются.',
                     )}
-                  </Button>
-                )}
-                <Button
-                  disabled={locked || !connected}
-                  busy={game.busy}
-                  onClick={() => void ready()}
-                >
-                  {t(locked ? 'Намерение зафиксировано' : 'Подтвердить намерение')}
-                </Button>
-              </div>
-            </section>
-          )}
-          {!encounter &&
-            p.nearbyEncounters?.map((near) => (
-              <section key={near.id} className={styles.encounter}>
-                <h2>{t('Столкновение рядом')}</h2>
-                <p>{t('Раунд {round}', { round: near.round })}</p>
-                <Button
-                  disabled={!connected}
-                  busy={game.busy}
-                  onClick={() =>
-                    void game.command({ type: 'encounter.join', encounterId: near.id })
-                  }
-                >
-                  {t('Вступить со следующего раунда')}
-                </Button>
-              </section>
-            ))}
-        </div>
-        <aside className={styles.hud}>
-          <CampaignHero campaignId={campaignId} />
-          <section>
-            <h2>
-              <UsersRound size={18} />
-              {t('Участники кампании')}
-            </h2>
-            <ul className={styles.members}>
-              {members.data?.members.map((member) => (
-                <li
-                  key={member.userId}
-                  data-member-handle={member.username}
-                  data-member-status={member.status}
-                >
-                  <span>
-                    {member.username}
-                    <small>
-                      {t(
-                        member.status === 'pending'
-                          ? 'Ожидает ответа'
-                          : member.status === 'revoked'
-                            ? 'Доступ отозван'
-                            : 'Принято',
-                      )}
-                    </small>
-                  </span>
-                  {members.data?.ownerId === user?.id &&
-                    member.userId !== user?.id &&
-                    member.status !== 'revoked' && (
+                  </p>
+                  <p>
+                    {t('Намерение: {action}', {
+                      action:
+                        selected.kind === 'hit' || selected.kind === 'push'
+                          ? turnText(selected.kind)
+                          : t(actionKeys[selected.kind] || 'Ждать'),
+                    })}
+                    {selectedTarget
+                      ? ` · ${selectedTarget.label || t(entityKey(selectedTarget, p.actorId))}`
+                      : ''}
+                  </p>
+                  {encounter.policy && (
+                    <p>
+                      {t('Не более {rounds} раундов. Выход — действием у границы области.', {
+                        rounds: encounter.policy.maxRounds,
+                      })}
+                    </p>
+                  )}
+                  <div className={styles.actions}>
+                    <Button
+                      variant="secondary"
+                      disabled={locked || game.busy}
+                      onClick={() => setSelected({ kind: 'wait' })}
+                    >
+                      {t('Ждать')}
+                    </Button>
+                    <Button
+                      variant="secondary"
+                      disabled={locked || game.busy}
+                      onClick={() => setSelected({ kind: 'flee' })}
+                    >
+                      {t('Покинуть столкновение')}
+                    </Button>
+                    {encounter.policy && (
                       <Button
                         variant="ghost"
-                        onClick={() => {
-                          if (!window.confirm(t('Отозвать доступ к кампании?'))) return;
-                          void api(`/game/campaigns/${campaignId}/members/${member.userId}`, {
-                            method: 'DELETE',
-                          })
-                            .then(() => members.reload())
-                            .catch((err: unknown) => setInviteMessage(errorMessage(err)));
-                        }}
+                        disabled={
+                          !connected || game.busy || encounter.endVotes?.includes(p.actorId)
+                        }
+                        onClick={() => void game.command({ type: 'encounter.end' })}
                       >
-                        {t('Отозвать доступ')}
+                        {t(
+                          encounter.endVotes?.includes(p.actorId)
+                            ? 'Завершение запрошено'
+                            : 'Предложить завершить',
+                        )}
                       </Button>
                     )}
-                </li>
-              ))}
-            </ul>
-            {members.data?.ownerId === user?.id && (
-              <form onSubmit={(event) => void invite(event)} method="post">
-                <Field label={t('Пригласить по имени пользователя')}>
-                  <Input
-                    value={username}
-                    maxLength={40}
-                    onChange={(event) => setUsername(event.target.value)}
-                    placeholder="handle"
-                    required
-                    autoComplete="off"
-                  />
-                </Field>
-                <Button
-                  busy={inviteBusy}
-                  disabled={!username.trim()}
-                  type="submit"
-                  variant="secondary"
-                >
-                  {t('Пригласить игрока')}
-                </Button>
-              </form>
-            )}
-            {inviteMessage && <p role="status">{inviteMessage}</p>}
-          </section>
-          <LivingNotices
-            showJournal={false}
-            projection={p}
-            command={game.command}
-            disabled={controlsDisabled}
-          />
-        </aside>
-      </div>
+                    <Button
+                      disabled={locked || !connected}
+                      busy={game.busy}
+                      onClick={() => void ready()}
+                    >
+                      {t(locked ? 'Намерение зафиксировано' : 'Подтвердить намерение')}
+                    </Button>
+                  </div>
+                </section>
+              )}
+              {!encounter &&
+                p.nearbyEncounters?.map((near) => (
+                  <section key={near.id} className={styles.encounter}>
+                    <h2>{t('Столкновение рядом')}</h2>
+                    <p>{t('Раунд {round}', { round: near.round })}</p>
+                    <Button
+                      disabled={!connected}
+                      busy={game.busy}
+                      onClick={() =>
+                        void game.command({ type: 'encounter.join', encounterId: near.id })
+                      }
+                    >
+                      {t('Вступить со следующего раунда')}
+                    </Button>
+                  </section>
+                ))}
+            </div>
+            <aside className={styles.hud}>
+              <CampaignHero campaignId={campaignId} />
+              <section>
+                <h2>
+                  <UsersRound size={18} />
+                  {t('Участники кампании')}
+                </h2>
+                <ul className={styles.members}>
+                  {members.data?.members.map((member) => (
+                    <li
+                      key={member.userId}
+                      data-member-handle={member.username}
+                      data-member-status={member.status}
+                    >
+                      <span>
+                        {member.username}
+                        <small>
+                          {t(
+                            member.status === 'pending'
+                              ? 'Ожидает ответа'
+                              : member.status === 'revoked'
+                                ? 'Доступ отозван'
+                                : 'Принято',
+                          )}
+                        </small>
+                      </span>
+                      {members.data?.ownerId === user?.id &&
+                        member.userId !== user?.id &&
+                        member.status !== 'revoked' && (
+                          <Button
+                            variant="ghost"
+                            onClick={() => {
+                              if (!window.confirm(t('Отозвать доступ к кампании?'))) return;
+                              void api(`/game/campaigns/${campaignId}/members/${member.userId}`, {
+                                method: 'DELETE',
+                              })
+                                .then(() => members.reload())
+                                .catch((err: unknown) => setInviteMessage(errorMessage(err)));
+                            }}
+                          >
+                            {t('Отозвать доступ')}
+                          </Button>
+                        )}
+                    </li>
+                  ))}
+                </ul>
+                {members.data?.ownerId === user?.id && (
+                  <form onSubmit={(event) => void invite(event)} method="post">
+                    <Field label={t('Пригласить по имени пользователя')}>
+                      <Input
+                        value={username}
+                        maxLength={40}
+                        onChange={(event) => setUsername(event.target.value)}
+                        placeholder="handle"
+                        required
+                        autoComplete="off"
+                      />
+                    </Field>
+                    <Button
+                      busy={inviteBusy}
+                      disabled={!username.trim()}
+                      type="submit"
+                      variant="secondary"
+                    >
+                      {t('Пригласить игрока')}
+                    </Button>
+                  </form>
+                )}
+                {inviteMessage && <p role="status">{inviteMessage}</p>}
+              </section>
+              <LivingNotices
+                showJournal={false}
+                projection={p}
+                command={game.command}
+                disabled={controlsDisabled}
+              />
+            </aside>
+          </div>
+        </div>
+      </details>
     </div>
   );
 }

@@ -1,3 +1,4 @@
+import { campaignDetails } from './support/campaign-details';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { exposeDiscoveryFixtures } from './support/discovery-fixtures';
@@ -90,6 +91,7 @@ test('guest selected story survives signup and onboarding; explicit hero launch 
     .click({ clickCount: 2 });
   await expect(page).toHaveURL(/\/game\/[a-f0-9-]+$/);
   const campaignPath = new URL(page.url()).pathname;
+  await campaignDetails(page);
   await expect(
     page
       .getByTestId('campaign-hero')
@@ -108,12 +110,14 @@ test('guest selected story survives signup and onboarding; explicit hero launch 
   await expect(resume).toBeVisible();
   await resume.click();
   await expect(page).toHaveURL(new RegExp(`${campaignPath}$`));
+  await campaignDetails(page);
   await expect(
     page
       .getByTestId('campaign-hero')
       .getByRole('heading', { name: 'Вернувшаяся Лира', exact: true }),
   ).toBeVisible();
   await page.reload();
+  await campaignDetails(page);
   await expect(
     page
       .getByTestId('campaign-hero')

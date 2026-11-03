@@ -1,3 +1,4 @@
+import { campaignDetails } from './support/campaign-details';
 import { createAuthoredDraft } from '@dreamwalk/game-core';
 import {
   savePrivateFixture,
@@ -157,6 +158,7 @@ test('API-authored realtime fixture retains personality, obligations and private
         })
       ).ok(),
     ).toBeTruthy();
+    await campaignDetails(page);
     await page.getByLabel('Пригласить по имени пользователя').fill(guestHandle);
     await page.getByRole('button', { name: 'Пригласить игрока', exact: true }).click();
     await expect(page.getByText('Игрок приглашён', { exact: true })).toBeVisible();
@@ -164,6 +166,7 @@ test('API-authored realtime fixture retains personality, obligations and private
     await guest.getByRole('button', { name: 'Принять приглашение в кампанию' }).click();
     await expect(guest).toHaveURL(new RegExp(`/game/${campaignId}$`));
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
+    await campaignDetails(page, false);
     await approachTarget(page, campaignId, 'keeper');
     expect((await readProjection(page, campaignId)).entities.some((e) => e.id === 'helper')).toBe(
       true,
@@ -237,6 +240,7 @@ test('API-authored realtime fixture retains personality, obligations and private
 
     await Promise.all([page.reload(), guest.reload()]);
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
+    await campaignDetails(page, false);
     await expect(guest.getByText(/Thank you, helper/)).toHaveCount(0);
     await expect((await inventory(page)).locator('[data-inventory-id="token"]')).toBeVisible();
     await closeInventory(page);

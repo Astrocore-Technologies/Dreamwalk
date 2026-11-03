@@ -293,3 +293,66 @@
   min-height: 44px;
   padding: 10px;
 }
+
+/* Only history and unusually long confirmations scroll; the input never slides away. */
+.history {
+  position: relative;
+  display: flex;
+  flex: 1 1 auto;
+  min-height: 0;
+  overflow: hidden;
+}
+:global(.game-shell) .history .feed {
+  min-height: 0;
+  width: 100%;
+  overflow-anchor: none;
+  scrollbar-gutter: stable;
+}
+:global(.game-shell) .composer {
+  display: flex;
+  flex-direction: column;
+  flex: 0 0 auto;
+  max-height: none;
+  overflow: visible;
+}
+:global(.game-shell) .composer textarea {
+  height: 70px;
+  min-height: 70px;
+  max-height: 70px;
+  resize: none;
+}
+.composerFeedback {
+  display: grid;
+  gap: 8px;
+  min-height: 0;
+  max-height: min(240px, 25dvh);
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+}
+.composerFeedback:empty {
+  display: none;
+}
+.composerFeedback .status {
+  margin: 0;
+}
+.newEvents {
+  position: absolute;
+  bottom: 12px;
+  left: 50%;
+  transform: translateX(-50%);
+  max-width: calc(100% - 24px);
+  border: 1px solid var(--line);
+  border-radius: 20px;
+  background: var(--surface-raised, var(--bg));
+  color: var(--text);
+  padding: 8px 14px;
+  box-shadow: 0 4px 16px #0004;
+  cursor: pointer;
+}
+@media (min-width: 761px) {
+  :global(.game-shell) .panel {
+    height: 100%;
+    min-height: 0;
+  }
+}

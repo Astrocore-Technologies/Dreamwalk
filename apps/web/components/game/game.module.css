@@ -965,3 +965,136 @@
     max-width: 100%;
   }
 }
+
+.roomExtras > summary {
+  width: fit-content;
+  padding: 6px 12px;
+  cursor: pointer;
+  color: var(--muted);
+  font-size: 12px;
+}
+.extrasPanel {
+  position: relative;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  background: var(--surface);
+}
+.extrasClose {
+  position: absolute;
+  top: 4px;
+  right: 4px;
+  z-index: 1;
+}
+:global(.game-shell) .extrasPanel .roomGrid {
+  border: 0;
+  padding: 12px 0 0;
+  margin: 0;
+}
+@media (min-width: 761px) {
+  :global(.game-shell) .activeRoom {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    height: 100%;
+    min-height: 0;
+  }
+  :global(.game-shell) .roomOptions,
+  :global(.game-shell) .roomExtras {
+    flex: 0 0 auto;
+  }
+  .roomOptions > details {
+    position: relative;
+  }
+  .roomOptions > details > div {
+    position: absolute;
+    top: 100%;
+    left: 0;
+    z-index: 30;
+    width: min(360px, 70vw);
+    max-height: 65dvh;
+    overflow: auto;
+    padding: 16px;
+    background: var(--surface);
+    border: 1px solid var(--line);
+    border-radius: 12px;
+    box-shadow: 0 12px 32px #0005;
+  }
+  :global(.game-shell) .activeRoom .playGrid {
+    flex: 1;
+    min-height: 0;
+    grid-template-rows: minmax(0, 1fr);
+    align-items: stretch;
+  }
+  .playGrid > *,
+  .sceneColumn {
+    min-height: 0;
+  }
+  .sceneColumn {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+  }
+  :global(.game-shell) .sceneColumn .mapSection {
+    display: flex;
+    flex-direction: column;
+    position: relative;
+    flex: 1;
+    min-height: 0;
+  }
+  :global(.game-shell) .sceneColumn .canvasWrap {
+    height: auto;
+    flex: 1;
+    min-height: 0;
+  }
+  .controls {
+    position: absolute;
+    inset: auto 12px 12px auto;
+    padding: 0;
+    z-index: 8;
+  }
+  .controls p {
+    position: absolute;
+    width: 1px;
+    height: 1px;
+    overflow: hidden;
+    clip-path: inset(50%);
+  }
+  .mapSection > small {
+    position: absolute;
+    bottom: 68px;
+    left: 12px;
+    max-width: calc(100% - 24px);
+    background: var(--surface);
+  }
+  :global(.game-shell) .inspectionButtons {
+    flex: 0 0 auto;
+    flex-wrap: nowrap;
+    overflow-x: auto;
+    margin: 4px 0 0;
+  }
+  .inspectionButtons > button {
+    flex-shrink: 0;
+  }
+  .inspection {
+    position: absolute;
+    bottom: 44px;
+    left: 8px;
+    right: 8px;
+    max-height: 70%;
+    overflow: auto;
+    z-index: 15;
+    box-shadow: 0 12px 32px #0005;
+  }
+  .extrasPanel {
+    position: absolute;
+    bottom: 32px;
+    left: 0;
+    z-index: 30;
+    width: min(720px, 100%);
+    max-height: calc(100% - 64px);
+    overflow: auto;
+    overscroll-behavior: contain;
+    box-shadow: 0 12px 32px #0005;
+  }
+}

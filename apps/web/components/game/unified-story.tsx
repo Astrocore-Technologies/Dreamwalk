@@ -18,7 +18,7 @@ import { api, ApiError, errorMessage } from '@/lib/client';
 import { getLocale, useT } from '@/lib/i18n';
 import { Button, ErrorBox, Textarea } from '@/components/ui';
 import { noticeLabels } from './living-notices';
-import { SceneMedia } from './scene-media';
+import { useStoryScroll } from './use-story-scroll';
 import { providerBoundKnown } from './narrative-guards';
 import {
   storyTargetVisible,
@@ -98,9 +98,9 @@ export function UnifiedStory({
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
     [uncertain, setUncertain] = useState(false);
-  const [newEvents, setNewEvents] = useState(false);
-  const feedElement = useRef<HTMLDivElement>(null),
-    nearBottom = useRef(true);
+  const { feedElement, feedContent, newEvents, onFeedScroll, scrollToLatest } = useStoryScroll(
+    feed?.entries.at(-1)?.id,
+  );
   const epoch = useRef(0),
     feedEpoch = useRef(0),
     polling = useRef(false),
@@ -219,13 +219,6 @@ export function UnifiedStory({
     const timer = setTimeout(expire, remaining);
     return () => clearTimeout(timer);
   }, [prepared]);
-  const lastEntry = feed?.entries.at(-1)?.id;
-  useEffect(() => {
-    const element = feedElement.current;
-    if (!element) return;
-    if (nearBottom.current) element.scrollTop = element.scrollHeight;
-    else setNewEvents(true);
-  }, [lastEntry]);
   const available =
     !!feed?.canSubmit &&
     (!!projection.turn ||
@@ -458,67 +451,59 @@ export function UnifiedStory({
       </div>
       <div className={styles.body}>
         <div className={styles.story}>
-          <div
-            className={styles.feed}
-            role="log"
-            aria-label={h('title')}
-            aria-live="polite"
-            aria-relevant="additions"
-            data-testid="story-feed"
-            ref={feedElement}
-            onScroll={() => {
-              const element = feedElement.current;
-              if (element)
-                nearBottom.current =
-                  element.scrollHeight - element.scrollTop - element.clientHeight < 80;
-            }}
-          >
-            {!feed?.entries.length && <p className={styles.status}>{h('empty')}</p>}
-            {feed?.entries.map((entry) => (
-              <article
-                key={entry.id}
-                className={`${styles.entry} ${entry.authorId === projection.actorId ? styles.player : ''}`}
-                data-story-entry={entry.id}
-                data-story-kind={entry.kind}
-                data-story-code={entry.code}
-                data-story-turn={entry.turnId}
-                data-story-sequence={entry.sequence ?? 'legacy'}
-              >
-                <header>
-                  <strong>
-                    {entry.authorId === projection.actorId
-                      ? h('you')
-                      : entry.authorLabel ||
-                        h(
-                          entry.kind === 'narration'
-                            ? 'narrator'
-                            : entry.kind === 'outcome'
-                              ? 'outcome'
-                              : 'nearby',
-                        )}
-                  </strong>
-                  {!entry.legacy && entry.channel === 'whisper' && (
-                    <span className={styles.private}>{h('whisper')}</span>
-                  )}
-                  {entry.legacy && <span>{h('legacy')}</span>}
-                </header>
-                <p>{entryText(entry)}</p>
-              </article>
-            ))}
-          </div>
-          {newEvents && (
-            <button
-              type="button"
-              onClick={() => {
-                if (feedElement.current)
-                  feedElement.current.scrollTop = feedElement.current.scrollHeight;
-                nearBottom.current = true;
-                setNewEvents(false);
-              }}
+          <div className={styles.history}>
+            <div
+              className={styles.feed}
+              role="log"
+              aria-label={h('title')}
+              aria-live="polite"
+              aria-relevant="additions"
+              data-testid="story-feed"
+              ref={feedElement}
+              onScroll={onFeedScroll}
+              tabIndex={0}
             >
-              {h('newEvents')}
-            </button>
-          )}
+              <div ref={feedContent}>
+                {!feed?.entries.length && <p className={styles.status}>{h('empty')}</p>}
+                {feed?.entries.map((entry) => (
+                  <article
+                    key={entry.id}
+                    className={`${styles.entry} ${entry.authorId === projection.actorId ? styles.player : ''}`}
+                    data-story-entry={entry.id}
+                    data-story-kind={entry.kind}
+                    data-story-code={entry.code}
+                    data-story-turn={entry.turnId}
+                    data-story-sequence={entry.sequence ?? 'legacy'}
+                  >
+                    <header>
+                      <strong>
+                        {entry.authorId === projection.actorId
+                          ? h('you')
+                          : entry.authorLabel ||
+                            h(
+                              entry.kind === 'narration'
+                                ? 'narrator'
+                                : entry.kind === 'outcome'
+                                  ? 'outcome'
+                                  : 'nearby',
+                            )}
+                      </strong>
+                      {!entry.legacy && entry.channel === 'whisper' && (
+                        <span className={styles.private}>{h('whisper')}</span>
+                      )}
+                      {entry.legacy && <span>{h('legacy')}</span>}
+                    </header>
+                    <p>{entryText(entry)}</p>
+                  </article>
+                ))}
+              </div>
+            </div>
+            {newEvents && (
+              <button type="button" className={styles.newEvents} onClick={scrollToLatest}>
+                {h('newEvents')}
+              </button>
+            )}
+          </div>
           <form
             className={styles.composer}
             onSubmit={(event) => {
@@ -596,138 +581,131 @@ export function UnifiedStory({
             <p id={hintId} className={styles.hint}>
               {h('hint')}
             </p>
-            <ErrorBox message={error} />
-            {notice && (
-              <p className={styles.status} role="status">
-                {notice}
-              </p>
-            )}
-            {feed && !available && <p className={styles.status}>{h('unavailable')}</p>}
-            {worldGenerationAllowed && projection.turn?.phase === 'world' && (
-              <WorldGenerationConfirmation
-                campaignId={campaignId}
-                scope={JSON.stringify([turnFence, feed?.canonRevision, projection.map.id])}
-                disabled={partyDisabled}
-              />
-            )}
-            {feed?.turns
-              .filter((turn) => turn.generationNeedsConfirmation)
-              .map((turn) => (
-                <StoryReplyConfirmation
-                  key={turn.id}
+            <div className={styles.composerFeedback}>
+              <ErrorBox message={error} />
+              {notice && (
+                <p className={styles.status} role="status">
+                  {notice}
+                </p>
+              )}
+              {feed && !available && <p className={styles.status}>{h('unavailable')}</p>}
+              {worldGenerationAllowed && projection.turn?.phase === 'world' && (
+                <WorldGenerationConfirmation
                   campaignId={campaignId}
-                  turnId={turn.id}
-                  scope={JSON.stringify([turnFence, feed.canonRevision, projection.map.id])}
+                  scope={JSON.stringify([turnFence, feed?.canonRevision, projection.map.id])}
                   disabled={partyDisabled}
-                  onChanged={refresh}
                 />
-              ))}
-            {uncertain && (
-              <p role="status" className={styles.status}>
-                {h('unknown')}
-                <Button
-                  type="button"
-                  variant="secondary"
-                  disabled={busy || disabled}
-                  onClick={() => void submit(true)}
-                >
-                  {h('retrySame')}
-                </Button>
-              </p>
-            )}
-            {pendingTurns.map((turn) => (
-              <div key={turn.id} className={styles.quote} data-story-pending={turn.status}>
-                {turn.status === 'awaiting_confirmation' ? (
-                  <>
-                    <p>{h('actionHint')}</p>
-                    {actionsPreview(turn.actions || [])}
-                    <p className={styles.hint}>
-                      <SparkReceiptCost receipt={turn} />
-                    </p>
-                    <div className={styles.actions}>
-                      <Button
-                        type="button"
-                        disabled={disabled || busy}
-                        onClick={() => void confirmAction(turn, 'accept')}
-                      >
-                        {h('actionConfirm')}
-                      </Button>
-                      <Button
-                        type="button"
-                        variant="secondary"
-                        disabled={disabled || busy}
-                        onClick={() => void confirmAction(turn, 'decline')}
-                      >
-                        {h('decline')}
-                      </Button>
-                    </div>
-                  </>
-                ) : (
-                  <p role="status">{h(turn.jobStatus === 'unknown' ? 'unknown' : 'pending')}</p>
-                )}
-              </div>
-            ))}
-            {prepared?.result.quote && (
-              <div className={styles.quote} data-testid="story-quote">
-                {prepared.result.actionPreview.length > 0 && (
-                  <>
-                    <strong>{h('preview')}</strong>
-                    {actionsPreview(prepared.result.actionPreview)}
-                  </>
-                )}
-                <StoryCost quote={prepared.result.quote} />
-                {prepared.input.replyLocale && (
-                  <p data-testid="story-reply-language">
-                    {h('replyLanguage', {
-                      language: { uk: 'Українська', en: 'English', ru: 'Русский' }[
-                        prepared.input.replyLocale
-                      ],
-                    })}
-                  </p>
-                )}
-                <div className={styles.actions}>
-                  <Button
-                    type="submit"
-                    disabled={
-                      disabled ||
-                      busy ||
-                      pending ||
-                      uncertain ||
-                      !targetValid ||
-                      !providerBoundKnown(
-                        prepared.result.quote,
-                        feed?.configuration.provider !== 'mock',
-                      )
-                    }
-                  >
-                    {h('confirm')}
-                  </Button>
+              )}
+              {feed?.turns
+                .filter((turn) => turn.generationNeedsConfirmation)
+                .map((turn) => (
+                  <StoryReplyConfirmation
+                    key={turn.id}
+                    campaignId={campaignId}
+                    turnId={turn.id}
+                    scope={JSON.stringify([turnFence, feed.canonRevision, projection.map.id])}
+                    disabled={partyDisabled}
+                    onChanged={refresh}
+                  />
+                ))}
+              {uncertain && (
+                <p role="status" className={styles.status}>
+                  {h('unknown')}
                   <Button
                     type="button"
                     variant="secondary"
-                    disabled={busy}
-                    onClick={() => setPrepared(null)}
+                    disabled={busy || disabled}
+                    onClick={() => void submit(true)}
                   >
-                    {h('dismiss')}
+                    {h('retrySame')}
                   </Button>
+                </p>
+              )}
+              {pendingTurns.map((turn) => (
+                <div key={turn.id} className={styles.quote} data-story-pending={turn.status}>
+                  {turn.status === 'awaiting_confirmation' ? (
+                    <>
+                      <p>{h('actionHint')}</p>
+                      {actionsPreview(turn.actions || [])}
+                      <p className={styles.hint}>
+                        <SparkReceiptCost receipt={turn} />
+                      </p>
+                      <div className={styles.actions}>
+                        <Button
+                          type="button"
+                          disabled={disabled || busy}
+                          onClick={() => void confirmAction(turn, 'accept')}
+                        >
+                          {h('actionConfirm')}
+                        </Button>
+                        <Button
+                          type="button"
+                          variant="secondary"
+                          disabled={disabled || busy}
+                          onClick={() => void confirmAction(turn, 'decline')}
+                        >
+                          {h('decline')}
+                        </Button>
+                      </div>
+                    </>
+                  ) : (
+                    <p role="status">{h(turn.jobStatus === 'unknown' ? 'unknown' : 'pending')}</p>
+                  )}
                 </div>
-              </div>
-            )}
-            {(pending || uncertain) && (
-              <Button type="button" variant="secondary" onClick={() => void refresh()}>
-                {h('refresh')}
-              </Button>
-            )}
+              ))}
+              {prepared?.result.quote && (
+                <div className={styles.quote} data-testid="story-quote">
+                  {prepared.result.actionPreview.length > 0 && (
+                    <>
+                      <strong>{h('preview')}</strong>
+                      {actionsPreview(prepared.result.actionPreview)}
+                    </>
+                  )}
+                  <StoryCost quote={prepared.result.quote} />
+                  {prepared.input.replyLocale && (
+                    <p data-testid="story-reply-language">
+                      {h('replyLanguage', {
+                        language: { uk: 'Українська', en: 'English', ru: 'Русский' }[
+                          prepared.input.replyLocale
+                        ],
+                      })}
+                    </p>
+                  )}
+                  <div className={styles.actions}>
+                    <Button
+                      type="submit"
+                      disabled={
+                        disabled ||
+                        busy ||
+                        pending ||
+                        uncertain ||
+                        !targetValid ||
+                        !providerBoundKnown(
+                          prepared.result.quote,
+                          feed?.configuration.provider !== 'mock',
+                        )
+                      }
+                    >
+                      {h('confirm')}
+                    </Button>
+                    <Button
+                      type="button"
+                      variant="secondary"
+                      disabled={busy}
+                      onClick={() => setPrepared(null)}
+                    >
+                      {h('dismiss')}
+                    </Button>
+                  </div>
+                </div>
+              )}
+              {(pending || uncertain) && (
+                <Button type="button" variant="secondary" onClick={() => void refresh()}>
+                  {h('refresh')}
+                </Button>
+              )}
+            </div>
           </form>
-          <div className={styles.media}>
-            <SceneMedia
-              key={`${projection.map.id}:${feed?.canonRevision ?? 0}`}
-              campaignId={campaignId}
-              projection={projection}
-              disabled={disabled || busy}
-              onApplied={onWorldRefresh}
-            />
-          </div>
         </div>
       </div>
     </section>
