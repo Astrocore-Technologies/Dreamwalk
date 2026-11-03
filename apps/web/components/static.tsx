@@ -2,11 +2,13 @@
 import { ArrowUpRight, BookOpen, Feather, ShieldCheck, Sparkles } from 'lucide-react';
 import { ButtonLink, Empty, PageHeading, Panel } from './ui';
 import { useT } from '@/lib/i18n';
+import { LegalPage } from './legal-page';
 import { closedTestLegalCopy, closedTestDraftLabel } from './closed-test-legal-copy';
 export function StaticPage({ path }: { path: string }) {
   const { t, locale } = useT();
   const legalPath = path === '/content-policy' ? '/terms' : path;
-  if (legalPath === '/about' || legalPath === '/terms' || legalPath === '/privacy') {
+  if (legalPath === '/terms' || legalPath === '/privacy') return <LegalPage path={legalPath} />;
+  if (legalPath === '/about') {
     const page = closedTestLegalCopy[locale][legalPath];
     return (
       <div className={legalPath === '/about' ? 'about-page' : undefined}>
