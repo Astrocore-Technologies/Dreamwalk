@@ -497,7 +497,9 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
               reducedMotion={!!user?.settings.reducedMotion}
             />
           )}
-          <p className={styles.inspectionHelp}>{turnText('inspectHint')}</p>
+          {p.map.backgroundMode !== 'schematic' && (
+            <p className={styles.inspectionHelp}>{turnText('inspectHint')}</p>
+          )}
           <div className={styles.inspectionButtons}>
             {p.entities
               .filter((e) => e.kind === 'npc')
