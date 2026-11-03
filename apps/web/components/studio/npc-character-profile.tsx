@@ -1,7 +1,8 @@
 'use client';
+import { NpcTemplateField } from './npc-template-field';
 import type { Npc } from '@dreamwalk/contracts';
 import { useT } from '@/lib/i18n';
-import { Button, Field, Input, Select, Textarea } from '../ui';
+import { Button, Field, Input, Select } from '../ui';
 import { characterText, type CharacterCopyKey } from './npc-character-copy';
 
 type Profile = NonNullable<Npc['characterProfile']>;
@@ -426,21 +427,20 @@ export function NpcCharacterProfile({
                     {options(situations)}
                   </Select>
                 </Field>
-                <Field label={`${text('line')} ${index + 1}`}>
-                  <Textarea
-                    aria-label={`${text('line')} ${index + 1}`}
-                    maxLength={240}
-                    value={entry.text}
-                    onChange={(event) =>
-                      setCharacterization({
-                        ...c,
-                        dialogueExamples: c.dialogueExamples.map((v, i) =>
-                          i === index ? { ...v, text: event.target.value } : v,
-                        ),
-                      })
-                    }
-                  />
-                </Field>
+                <NpcTemplateField
+                  label={`${text('line')} ${index + 1}`}
+                  maxLength={240}
+                  value={entry.text}
+                  templates={['example']}
+                  onChange={(value) =>
+                    setCharacterization({
+                      ...c,
+                      dialogueExamples: c.dialogueExamples.map((v, i) =>
+                        i === index ? { ...v, text: value } : v,
+                      ),
+                    })
+                  }
+                />
                 <Button
                   type="button"
                   variant="ghost"

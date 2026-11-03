@@ -967,3 +967,23 @@ explicit selection/binding action. This does not enable providers or publish/dep
 - Local exact-geometry offscreen contact sheet inspected at token sizes; schema/compile/
   projection and deterministic-render-selection regressions added. Unique NPC image
   generation remains future work, not part of this change.
+
+## Editable NPC authoring examples (2026-11-03)
+
+Added compact, localized RU/EN/UK example buttons to the story and library NPC
+personality/greeting fields, the playable-map private speech-style field, and the
+existing character-profile dialogue field. The latter component is not mounted by
+main's story editor yet. Examples are ordinary editable prose, not mandatory syntax,
+and do not alter runtime behavior, schemas, provider settings or published stories.
+Insertion preserves the selection and all existing text, restores the caret, and
+rejects an over-limit insertion as a whole with localized feedback.
+
+Verification: full typecheck and lint passed; npm test passed (27 contracts and 205
+core tests); aggregate game checks passed 252/252 after the core suite;
+API/PostgreSQL integration passed 79/79; focused authoring/UI checks
+passed 23/23. Independent code review found no actionable defects. Three mobile
+browser cases cover RU/EN/UK insertion, selection preservation, keyboard activation,
+overflow and absence of network writes. Browser execution is blocked before page
+load by this executor's Chromium Unix-socket restriction; the permitted escalation
+could not start because of its restricted filesystem mount. These browser cases
+remain unverified locally and require CI. No paid calls, push, deployment or merge.
