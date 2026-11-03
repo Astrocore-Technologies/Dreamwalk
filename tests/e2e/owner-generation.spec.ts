@@ -414,16 +414,11 @@ async function openLocation(page: Page, f: Awaited<ReturnType<typeof fixture>>) 
 async function explicitlyOpenLibrary(
   page: Page,
   f: Awaited<ReturnType<typeof fixture>>,
-  generationMounts: number,
 ) {
   const dialog = page.getByTestId('location-image-dialog');
-  // ImageGeneration loads the owned-reference catalog on EACH mount, even before
-  // the free library picker opens. Success mounts it three times (initial,
-  // dismissed/reopened, reload/reopened); unknown outcomes mount it twice.
-  // useResource runs once in production, twice under Next dev StrictMode.
+  // Preparing images no longer opens the reference catalog implicitly.
   const before = f.calls.libraryReads;
-  expect(before).toBeGreaterThanOrEqual(generationMounts);
-  expect(before).toBeLessThanOrEqual(generationMounts * 2);
+  expect(before).toBe(0);
   const dispatches = f.calls.dispatch,
     quotes = f.calls.quote,
     bindings = f.calls.bind;
@@ -440,7 +435,7 @@ async function explicitlyOpenLibrary(
   // Both StrictMode mount effects have a chance to finish before the final delta.
   await page.waitForTimeout(2200);
   expect([1, 2]).toContain(f.calls.libraryReads - before);
-  expect(f.calls.libraryReads).toBeLessThanOrEqual((generationMounts + 1) * 2);
+  expect(f.calls.libraryReads).toBeLessThanOrEqual(2);
   expect(f.calls.dispatch).toBe(dispatches);
   expect(f.calls.quote).toBe(quotes);
   expect(f.calls.bind).toBe(bindings);
@@ -461,13 +456,17 @@ async function claim(page: Page) {
   await button.click();
   await expect(panel).toContainText('Owner authorization active');
 }
-async function prepare(page: Page) {
+async function prepare(page: Page, walletCharging = false) {
   const generation = page.getByRole('region', { name: 'Image preparation', exact: true });
   await generation.getByRole('button', { name: 'Estimate cost', exact: true }).click();
   await expect(generation).toContainText('Estimated Sparks equivalent');
   await expect(generation.locator('[data-image-quote-price]')).toHaveCount(1);
   await expect(generation).not.toContainText('Provider reserve in Sparks');
-  await expect(generation).toContainText('The estimate does not cap the provider invoice');
+  await expect(generation).toContainText(
+    walletCharging
+      ? 'The wallet charge will not exceed the displayed amount'
+      : 'The estimate does not cap the provider invoice',
+  );
   return generation;
 }
 for (const locale of ['uk', 'en', 'ru'] as const)
@@ -556,7 +555,7 @@ test('synthetic owner image has one explicit cost confirmation, then separate fr
   expect(f.calls.dispatch).toBe(1);
   expect(f.calls.bind).toBe(1);
   expect(f.calls.mapWrites).toBe(0);
-  await explicitlyOpenLibrary(page, f, 3);
+  await explicitlyOpenLibrary(page, f);
   expect(f.calls.dispatch).toBe(1);
   expect(f.calls.bind).toBe(1);
   expect(f.calls.unexpected, f.calls.unexpectedRequests.join('\n')).toBe(0);
@@ -596,7 +595,7 @@ for (const outcome of ['unknown', 'response-lost'] as const)
     ).toBeVisible();
     expect(f.calls.dispatch).toBe(1);
     expect(f.calls.bind).toBe(0);
-    await explicitlyOpenLibrary(page, f, 2);
+    await explicitlyOpenLibrary(page, f);
     expect(f.calls.dispatch).toBe(1);
     expect(f.calls.bind).toBe(0);
     await expect(page.getByTestId('live-test-panel')).toContainText('Generation stopped');
@@ -918,11 +917,11 @@ test('one image confirmation cancels cleanly, invalidates edited quotes and prev
 }) => {
   const f = await fixture(page, { release: true, adminPresentation: false });
   await openLocation(page, f);
-  const generation = await prepare(page);
+  const generation = await prepare(page, true);
   let confirmation = generation.locator('[data-image-confirmation]');
   await expect(confirmation).toBeVisible();
   await expect(confirmation.locator('input[type="checkbox"]')).toHaveCount(0);
-  await expect(confirmation).toContainText('actual usage may exceed the estimate and reserve');
+  await expect(confirmation).toContainText('The wallet charge will not exceed the displayed amount');
   expect(f.calls.dispatch).toBe(0);
   await confirmation.evaluate((element) => {
     const buttons = element.querySelectorAll('button');
@@ -931,14 +930,18 @@ test('one image confirmation cancels cleanly, invalidates edited quotes and prev
   });
   await expect(confirmation).toHaveCount(0);
   expect(f.calls.dispatch).toBe(0);
-  await prepare(page);
-  await generation.getByText('Advanced options', { exact: true }).click();
-  await generation
-    .getByLabel('License or terms name', { exact: true })
-    .fill('Updated owned artwork terms');
+  await prepare(page, true);
+  await page.getByRole('button', { name: 'Close', exact: true }).click();
+  await page
+    .getByRole('textbox', { name: 'Location description', exact: true })
+    .fill('Updated authored location details invalidate the previous image quote.');
+  await page
+    .locator(`[data-location-art="${f.locationId}"]`)
+    .getByRole('button', { name: 'Choose an image from library', exact: true })
+    .click();
   await expect(generation.locator('[data-image-confirmation]')).toHaveCount(0);
   expect(f.calls.dispatch).toBe(0);
-  await prepare(page);
+  await prepare(page, true);
   confirmation = generation.locator('[data-image-confirmation]');
   await confirmation
     .getByRole('button', { name: 'Confirm and generate', exact: true })
