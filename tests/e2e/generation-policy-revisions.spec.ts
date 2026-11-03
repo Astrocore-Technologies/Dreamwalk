@@ -10,6 +10,7 @@ import {
   providerMicrosToSparkSubunits,
   gameEnvelopeSchema,
 } from '@dreamwalk/contracts';
+import { defaultDirectorCatalog } from '@dreamwalk/contracts/dist/director-style';
 import { expect, test, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { settingsSchema } from '@dreamwalk/contracts';
@@ -1060,6 +1061,20 @@ async function preflightFixture(
     const path = new URL(route.request().url()).pathname,
       method = route.request().method();
     if (path.endsWith(`/game/campaigns/${id}/snapshot`)) return route.fulfill({ json: envelope });
+    // Director discovery is read-only. Keep the unexpected-route guard strict for writes.
+    if (method === 'GET' && path === '/api/v1/game/directors')
+      return route.fulfill({ json: defaultDirectorCatalog() });
+    if (method === 'GET' && path === `/api/v1/game/campaigns/${id}/director`) {
+      const catalog = defaultDirectorCatalog();
+      return route.fulfill({
+        json: {
+          profileId: catalog.defaultProfileId,
+          revision: 1,
+          profile: catalog.profiles.find((profile) => profile.id === catalog.defaultProfileId),
+          canChange: true,
+        },
+      });
+    }
     if (illustrated && method === 'POST' && path.endsWith(`/game/campaigns/${id}/move`)) {
       const body = route.request().postDataJSON();
       expect(body.turnFence).toEqual(turnFence);

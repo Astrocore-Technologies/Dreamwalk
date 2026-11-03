@@ -1,3 +1,5 @@
+import { directorProfileIdSchema } from '@dreamwalk/contracts/dist/director-style';
+import { readDirectorCatalog, directorProfile, transactionQueries } from '../ai/director-style';
 import { Inject, Injectable, Optional } from '@nestjs/common';
 import { randomUUID } from 'node:crypto';
 import type { PoolClient, QueryResultRow } from 'pg';
@@ -42,7 +44,11 @@ export class PaidStartService {
   }
   async prepare(actor: string, input: unknown) {
     const body = operation
-      .extend({ playableVersionId: z.uuid(), heroId: z.uuid().optional() })
+      .extend({
+        playableVersionId: z.uuid(),
+        heroId: z.uuid().optional(),
+        directorProfileId: directorProfileIdSchema.optional(),
+      })
       .parse(input);
     return this.db.tx(async (c) => {
       await this.lock(c, actor);
@@ -76,6 +82,12 @@ export class PaidStartService {
         }
         return this.dto(prior);
       }
+      const catalog = await readDirectorCatalog(transactionQueries(c));
+      const selectedDirector = directorProfile(
+        catalog,
+        body.directorProfileId ?? catalog.defaultProfileId,
+        true,
+      );
       const source = await this.playable.sourceForStart(c, actor, body.playableVersionId);
       const hero = await readOwnedHero(c, actor, body.heroId),
         id = randomUUID();
@@ -109,7 +121,7 @@ export class PaidStartService {
       );
       const row = (
         await c.query(
-          'INSERT INTO game_start_preparations(id,actor_id,operation_id,request_hash,source_version_id,source_checksum,hero_id,hero_snapshot,status,reused,compiled,reused_from_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12) RETURNING *',
+          'INSERT INTO game_start_preparations(id,actor_id,operation_id,request_hash,source_version_id,source_checksum,hero_id,hero_snapshot,status,reused,compiled,reused_from_id,director_profile_id) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13) RETURNING *',
           [
             id,
             actor,
@@ -123,6 +135,7 @@ export class PaidStartService {
             reused,
             cached ? JSON.stringify(cached.compiled) : null,
             cached?.id ?? null,
+            selectedDirector.id,
           ],
         )
       ).rows[0];
@@ -137,6 +150,7 @@ export class PaidStartService {
       preparationRequired: !row.reused,
       campaignId: row.campaign_id ?? null,
       playableVersionId: row.source_version_id,
+      directorProfileId: row.director_profile_id,
     };
   }
   async byOperation(actor: string, operationId: string) {

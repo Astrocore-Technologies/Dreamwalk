@@ -26,7 +26,7 @@ export async function extendContextHistory<T extends object>(
           (await transaction.query(sql, values)).rows,
       }
     : db;
-  context = await withDirectorStyle(settingsDb, context, purpose);
+  context = await withDirectorStyle(settingsDb, context, purpose, campaignId);
   const budget = ai.contextWindow();
   if (!budget) return context;
   const value = context as T & Record<string, unknown>;
