@@ -1,4 +1,5 @@
 'use client';
+import { NotificationsContent } from './notifications';
 import { DreamsWalletSection, useDreamsText } from './dreams-wallet';
 import { useSparksWallet } from '@/lib/use-sparks-wallet';
 import { sparksBalanceMessages } from './sparks-balance';
@@ -12,7 +13,7 @@ import { useT } from '@/lib/i18n';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useState } from 'react';
-import { ArrowUpRight, Bell, Feather, Plus, Sparkles, UserRound } from 'lucide-react';
+import { ArrowUpRight, Feather, Plus, Sparkles, UserRound } from 'lucide-react';
 import {
   api,
   useResource,
@@ -639,105 +640,5 @@ export function WalletPage() {
   );
 }
 export function NotificationsPage() {
-  const date = useDate();
-  const { t: tr, locale } = useT();
-  const resource = useResource<
-    {
-      id: string;
-      type: string;
-      payload: {
-        title?: string;
-        reason?: string;
-        decision?: string;
-        adventureId?: string;
-        adventureTitle?: string;
-        adventureMetadata?: Parameters<typeof selectAdventureText>[0];
-        inviter?: string;
-      };
-      title: string;
-      message: string;
-      read: boolean;
-      createdAt: string;
-    }[]
-  >('/notifications');
-  const { toast } = useClient();
-  return (
-    <>
-      <PageHeading
-        eyebrow={tr('ВЕСТИ ИЗ ТВОИХ МИРОВ')}
-        title={tr('Уведомления')}
-        description={tr('Публикации, важные изменения и новости твоих историй.')}
-      />
-      <ErrorBox message={resource.error} retry={resource.reload} />
-      {resource.loading ? (
-        <Loading />
-      ) : resource.data?.length ? (
-        <div className="stack">
-          {resource.data.map((n) => (
-            <Panel key={n.id}>
-              <div className="row">
-                <Bell size={20} />
-                <h3>
-                  {n.type === 'welcome'
-                    ? tr('Добро пожаловать в Dreamwalk')
-                    : n.type === 'moderation'
-                      ? tr('Результат модерации')
-                      : n.type === 'invitation'
-                        ? tr('Приглашение в частный мир')
-                        : n.title}
-                </h3>
-                {!n.read && <Badge>{tr('Новое')}</Badge>}
-              </div>
-              <p>
-                {n.type === 'welcome'
-                  ? tr('Твоя история начинается здесь. Создай героя или открой новый мир.')
-                  : n.type === 'moderation'
-                    ? `${n.payload.title || ''}: ${n.payload.reason || ''}`
-                    : n.type === 'invitation'
-                      ? tr('{name} приглашает тебя в мир «{title}».', {
-                          name: n.payload.inviter || '',
-                          title: n.payload.adventureMetadata
-                            ? selectAdventureText(n.payload.adventureMetadata, locale).title
-                            : n.payload.adventureTitle || '',
-                        })
-                      : n.message}
-              </p>
-              <div className="row">
-                <small className="muted">{date(n.createdAt)}</small>
-                {n.type === 'invitation' && (
-                  <ButtonLink href="/library?tab=invitations" variant="secondary">
-                    {tr('Посмотреть приглашения')}
-                  </ButtonLink>
-                )}
-                {!n.read && (
-                  <Button
-                    variant="ghost"
-                    onClick={async () => {
-                      try {
-                        await api(`/notifications/${n.id}`, {
-                          method: 'PATCH',
-                          body: JSON.stringify({ read: true }),
-                        });
-                        resource.reload();
-                      } catch (e) {
-                        toast(errorMessage(e));
-                      }
-                    }}
-                  >
-                    {tr('Прочитано')}
-                  </Button>
-                )}
-              </div>
-            </Panel>
-          ))}
-        </div>
-      ) : (
-        <Empty
-          title={tr('Всё спокойно')}
-          description={tr('Важные события появятся здесь. А пока можно открыть новый мир.')}
-          action={<ButtonLink href="/explore">{tr('Посмотреть приключения')}</ButtonLink>}
-        />
-      )}
-    </>
-  );
+  return <NotificationsContent />;
 }

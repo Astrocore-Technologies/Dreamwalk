@@ -1,6 +1,7 @@
 'use client';
-import { ArrowUpRight, BookOpen, Feather, ShieldCheck, Sparkles } from 'lucide-react';
+import { BookOpen, Feather, ShieldCheck, Sparkles } from 'lucide-react';
 import { ButtonLink, Empty, PageHeading, Panel } from './ui';
+import { MissingPage } from './missing-page';
 import { useT } from '@/lib/i18n';
 import { closedTestLegalCopy, closedTestDraftLabel } from './closed-test-legal-copy';
 export function StaticPage({ path }: { path: string }) {
@@ -108,16 +109,5 @@ export function StaticPage({ path }: { path: string }) {
         </div>
       </div>
     );
-  return (
-    <Empty
-      title={t('Кажется, мы свернули не туда')}
-      description={t('Такой страницы нет. Вернёмся к знакомой тропе?')}
-      action={
-        <ButtonLink href="/home">
-          {t('На главную')}
-          <ArrowUpRight size={16} />
-        </ButtonLink>
-      }
-    />
-  );
+  return <MissingPage />;
 }
