@@ -22,11 +22,7 @@ export function StaticPage({ path }: { path: string }) {
             >
               {legalPath === '/about' && (index === 2 || index === 3) && (
                 <img
-                  src={
-                    index === 2
-                      ? '/images/discovery-observatory.webp'
-                      : '/images/discovery-forest.webp'
-                  }
+                  src={index === 2 ? '/images/observatory.webp' : '/images/forest.webp'}
                   alt=""
                   loading="lazy"
                 />
