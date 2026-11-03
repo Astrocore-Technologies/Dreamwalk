@@ -372,7 +372,7 @@ test('new hero restoration resumes after an old selection request finishes', asy
   ]);
   let release;
   const h = await harness(
-    async (path, options = {}) => {
+    async (path) => {
       if (path.startsWith('/game/start-preparations/by-operation/')) {
         const hero = path.endsWith('op-a') ? 'a' : 'b';
         calls.push(hero);
