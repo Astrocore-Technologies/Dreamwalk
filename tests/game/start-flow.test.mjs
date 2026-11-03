@@ -150,6 +150,7 @@ async function harness(
     render,
     flush,
     paths,
+    dispose: () => gate.dispose(),
     saved,
     timers,
     nodes,
@@ -328,7 +329,7 @@ test('restore waits for saved hero loading then resumes without new dispatch', a
   selection.ready = true;
   h.render();
   await h.flush();
-  assert.deepEqual(calls, ['/game/start-preparations', '/game/start-preparations/prep']);
+  assert.deepEqual(calls, ['/game/start-preparations/by-operation/op']);
   assert.ok(h.nodes().some((n) => String(n.props.children).startsWith('Подготовка не удалась.')));
 });
 test('primary action stays disabled throughout auth and existing-operation restoration', async () => {
@@ -338,7 +339,7 @@ test('primary action stays disabled throughout auth and existing-operation resto
   const saved = new Map([['dreamwalk-start:u:v::prepare', 'op']]);
   const h = await harness(
     async (path) => {
-      if (path === '/game/start-preparations')
+      if (path === '/game/start-preparations/by-operation/op')
         return new Promise((resolve) => {
           release = resolve;
         });
@@ -371,9 +372,9 @@ test('new hero restoration resumes after an old selection request finishes', asy
   ]);
   let release;
   const h = await harness(
-    async (path, options = {}) => {
-      if (path === '/game/start-preparations') {
-        const hero = JSON.parse(options.body).heroId;
+    async (path) => {
+      if (path.startsWith('/game/start-preparations/by-operation/')) {
+        const hero = path.endsWith('op-a') ? 'a' : 'b';
         calls.push(hero);
         if (hero === 'a')
           return new Promise((resolve) => {
@@ -592,9 +593,98 @@ test('a stale never-dispatched preparation can be replaced with a fresh estimate
   }, saved);
   h.render();
   await h.flush();
+  assert.equal(saved.has('dreamwalk-start:u:v::prepare'), true);
+  assert.equal(attempts, 0);
+  await h.click('Начать прохождение');
   assert.equal(saved.has('dreamwalk-start:u:v::prepare'), false);
   await h.click('Начать прохождение');
   assert.equal(attempts, 2);
   assert.equal(quotes, 1);
   assert.equal(dispatches, 0);
+});
+
+for (const status of ['ready', 'started', 'queued', 'dispatched', 'unknown']) {
+  test(`revisit ${status} restores with GET only and never enters without a new click`, async () => {
+    const calls = [];
+    let current = {
+      ...prepared,
+      status: ['ready', 'started'].includes(status) ? status : 'prepared',
+      campaignId: status === 'started' ? 'existing' : null,
+      jobs: ['queued', 'dispatched', 'unknown'].includes(status) ? [{ status }] : [],
+    };
+    const h = await harness(
+      async (path, options = {}) => {
+        calls.push([path, options.method ?? 'GET']);
+        if (path === '/game/campaigns') return { campaignId: 'new' };
+        return current;
+      },
+      new Map([['dreamwalk-start:u:v::prepare', 'legacy-operation']]),
+    );
+    h.render();
+    await h.flush();
+    assert.deepEqual(calls, [['/game/start-preparations/by-operation/legacy-operation', 'GET']]);
+    assert.deepEqual(h.paths, []);
+    assert.equal(h.nodes().filter((n) => n.type === 'modal').length, 0);
+    if (['queued', 'dispatched'].includes(status)) {
+      current = { ...prepared, status: 'ready' };
+      await h.tick();
+      assert.deepEqual(h.paths, []);
+      assert.ok(calls.every(([, method]) => method === 'GET'));
+    }
+    if (status === 'unknown') {
+      assert.equal(h.timers.size, 0);
+      await h.click('Проверить состояние');
+      assert.deepEqual(h.paths, []);
+      assert.ok(calls.every(([, method]) => method === 'GET'));
+    } else {
+      await h.click('Открыть игру');
+      assert.deepEqual(h.paths, [status === 'started' ? '/game/existing' : '/game/new']);
+      assert.equal(
+        calls.filter(([, method]) => method === 'POST').length,
+        status === 'started' ? 0 : 1,
+      );
+    }
+  });
+}
+test('missing legacy operation and uncertain dispatch remain read-only on reload and polling', async () => {
+  const calls = [];
+  const h = await harness(
+    async (path, options = {}) => {
+      calls.push([path, options.method ?? 'GET']);
+      return null;
+    },
+    new Map([
+      ['dreamwalk-start:u:v::prepare', 'legacy-operation'],
+      ['dreamwalk-start:u:v::dispatch-pending', 'yes'],
+    ]),
+  );
+  h.render();
+  await h.flush();
+  await h.tick();
+  assert.ok(calls.every(([, method]) => method === 'GET'));
+  assert.deepEqual(h.paths, []);
+  assert.equal(h.saved.get('dreamwalk-start:u:v::dispatch-pending'), 'yes');
+  assert.equal(h.nodes().filter((n) => n.type === 'modal').length, 0);
+});
+
+test('leaving during a status read prevents campaign creation and navigation', async () => {
+  let release;
+  const calls = [];
+  const h = await harness(
+    async (path, options = {}) => {
+      calls.push([path, options.method ?? 'GET']);
+      if (path.startsWith('/game/start-preparations/by-operation/'))
+        return new Promise((resolve) => {
+          release = resolve;
+        });
+      assert.fail('No other request is allowed after leaving');
+    },
+    new Map([['dreamwalk-start:u:v::prepare', 'legacy-operation']]),
+  );
+  h.render();
+  h.dispose();
+  release({ ...prepared, status: 'ready' });
+  await h.flush();
+  assert.deepEqual(h.paths, []);
+  assert.equal(calls.length, 1);
 });

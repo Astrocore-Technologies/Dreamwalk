@@ -139,6 +139,16 @@ export class PaidStartService {
       playableVersionId: row.source_version_id,
     };
   }
+  async byOperation(actor: string, operationId: string) {
+    const row = (
+      await this.db.query(
+        'SELECT id FROM game_start_preparations WHERE actor_id=$1 AND operation_id=$2',
+        [actor, z.uuid().parse(operationId)],
+      )
+    )[0];
+    // A restore miss must not create a new preparation or replay a paid request.
+    return row ? this.state(actor, row.id) : null;
+  }
   async state(actor: string, id: string) {
     return this.db.tx(async (c) => {
       const row = await this.own(c, actor, id);
