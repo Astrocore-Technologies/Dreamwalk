@@ -206,6 +206,13 @@ export interface NpcMemorySummary {
   claims: { observationId: string; kind: NpcObservationKind }[];
 }
 export interface LivingNpcMemory {
+  /** Server-only, evidence-backed mechanics; never project private NPC memory. */
+  companionship?: {
+    actorId: string;
+    sourceObservationId: string;
+    utteranceId: string;
+    crossings: { mapId: string; exitId: string; destinationMapId: string }[];
+  };
   policyVersion: 1;
   personality: NpcPersonality;
   knowledgeRevision: number;

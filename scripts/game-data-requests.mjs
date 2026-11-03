@@ -146,6 +146,16 @@ export function purgeLivingNpcReferences(state, actorId, archivedRoots = [], arc
       return true;
     });
     let changed = memory.observations.length !== before || audienceChanged;
+    const companionship = memory.companionship;
+    if (
+      companionship &&
+      (companionship.actorId === actorId ||
+        erasedObservationIds.has(companionship.sourceObservationId) ||
+        roots.has(companionship.utteranceId))
+    ) {
+      delete memory.companionship;
+      changed = true;
+    }
     memory.beliefs = (memory.beliefs ?? []).filter((belief) => {
       const keep =
         belief.subjectId !== actorId && !(belief.evidenceIds ?? []).some((id) => removed.has(id));

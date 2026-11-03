@@ -107,6 +107,36 @@ function fixture() {
   };
 }
 
+test('erasure removes companionship and invalidates its path even in legacy campaigns and archived evidence', () => {
+  for (const agreement of [
+    {
+      actorId: 'erased-player',
+      sourceObservationId: 'unrelated',
+      utteranceId: 'unrelated-reply',
+      crossings: [],
+    },
+    {
+      actorId: 'other',
+      sourceObservationId: 'cold-observation',
+      utteranceId: 'unrelated-reply',
+      crossings: [],
+    },
+    { actorId: 'other', sourceObservationId: 'unrelated', utteranceId: 'cold-root', crossings: [] },
+  ]) {
+    const s = fixture();
+    s.npcBrains.keeper.living.companionship = agreement;
+    const cleaned = purgeLivingNpcReferences(
+      s,
+      'erased-player',
+      ['cold-root'],
+      ['cold-observation'],
+    );
+    assert.equal(cleaned.npcBrains.keeper.living.companionship, undefined);
+    assert.deepEqual(cleaned.npcBrains.keeper.plan, []);
+    assert.deepEqual(cleaned.entities.keeper.path, []);
+  }
+});
+
 test('erasure removes personal evidence and hearsay derivatives, retaining others commitments', () => {
   const state = purgeLivingNpcReferences(fixture(), 'erased-player');
   const brain = state.npcBrains.keeper,

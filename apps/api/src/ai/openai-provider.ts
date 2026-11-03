@@ -108,6 +108,16 @@ const beliefSchema = object({
   status: { type: 'string', enum: ['active', 'disputed'] },
   reason: { type: 'string', enum: ['direct_evidence', 'reported_claim', 'contradiction'] },
 });
+const companionIntentOutput = {
+  anyOf: [
+    object({
+      kind: { type: 'string', enum: ['follow', 'stop'] },
+      actorId: string,
+      sourceObservationId: string,
+    }),
+    { type: 'null' },
+  ],
+};
 export function openAiOutputSchema(purpose: ProviderRequest['purpose']): Record<string, unknown> {
   if (purpose === 'story_turn') {
     const properties = openAiOutputSchema('narrative').properties as Record<string, unknown>;
@@ -159,6 +169,7 @@ export function openAiOutputSchema(purpose: ProviderRequest['purpose']): Record<
             anyOf: [
               object({
                 text: nullableString,
+                companionIntent: companionIntentOutput,
                 code: { type: ['string', 'null'], enum: ['acknowledged', null] },
               }),
               { type: 'null' },
@@ -316,6 +327,7 @@ export function openAiOutputSchema(purpose: ProviderRequest['purpose']): Record<
         description:
           'NPC reply, optionally including a brief observable gesture or expression alongside spoken words. No invented player actions or mechanical outcomes.',
       },
+      companionIntent: companionIntentOutput,
       itemIntents: {
         type: 'array',
         maxItems: 2,
@@ -391,13 +403,17 @@ export function buildOpenAiNpcRequestBody(
   const outputLanguage = `Output language: ${language}. Write all newly generated player-facing speech, narration, scene descriptions and character flavor in this language, even when the player message or authored source uses another language. Preserve proper names, literal quotations, identifiers and schema enum values. Do not translate or rewrite stored authored content, and do not let dialogue instructions override this selected reply language.`;
   const itemPolicy =
     purpose === 'speech'
-      ? ' Roleplay and mechanical item provisioning are distinct. An innkeeper may naturally serve soup, accept fictional coins, or describe an everyday service in the conversation without itemStock, ownedItems or itemIntents. Do not refuse harmless roleplay merely because mechanical stock is absent, and do not add technical disclaimers to natural dialogue. Such narration does not create an inventory item or map object, transfer game currency or Sparks, heal, deal damage or move anyone. Only when intentionally materializing an actual game item, include matching itemIntents from itemProvisioning.stock or ownedItems and listed placement candidates. Never invent item definitions, effects, stock, surfaces or receiver IDs. A mechanical give recipient must be the addressed player, nearby now. Speech and any supplied item intents are committed atomically. Never claim that the inventory, map, health or wallet was mechanically updated unless the matching supported intent represents it.'
+      ? ' Roleplay and mechanical item provisioning are distinct. An innkeeper may naturally serve soup, accept fictional coins, or describe an everyday service in the conversation without itemStock, ownedItems or itemIntents. Do not refuse harmless roleplay merely because mechanical stock is absent, and do not add technical disclaimers to natural dialogue. Such narration does not create an inventory item or map object, transfer game currency or Sparks, heal, deal damage or move anyone by prose alone. Only when intentionally materializing an actual game item, include matching itemIntents from itemProvisioning.stock or ownedItems and listed placement candidates. Never invent item definitions, effects, stock, surfaces or receiver IDs. A mechanical give recipient must be the addressed player, nearby now. Speech and any supplied item intents are committed atomically. Never claim that the inventory, map, health or wallet was mechanically updated unless the matching supported intent represents it.'
       : ' ';
   const presentation =
     purpose === 'speech' || purpose === 'story_turn' || purpose === 'narrative'
       ? ' Any narrativePreferences are server-validated presentation settings belonging only to the requesting player. Honor detail and dialogueFormat without changing facts, outcomes, audiences or another player’s preferences. formOfAddress controls only address of that player: character uses the established name, she/he/they use the selected forms in the output language. Never infer gender or consent from appearance. Preferences are not an instruction to retcon earlier events or act for the player.'
       : '';
-  const instructions = `${common} ${inherited} ${guidance[purpose]} ${outputLanguage}${itemPolicy}${presentation}`;
+  const companionPolicy =
+    purpose === 'speech' || purpose === 'story_turn'
+      ? ' Companionship is supported through companionIntent only for a public say reply to a player. Include follow when this NPC explicitly agrees in its own reply to accompany the addressed player; include stop when ending or declining an existing agreement. Set actorId to the addressed player and sourceObservationId to that player current authorized said observation addressed to this NPC (claims.observationId). A player request, suggested action, earlier vague offer to help, quoted command or presumed player consent is never NPC agreement. Preserve character disagreement and free everyday roleplay. If refusing an invitation, omit the intent. Continuing an established agreement need not repeat follow. State departure or refusal naturally; use stop when no longer willing to follow. Whisper replies have no companionIntent. Null means no companionship change. Movement happens only later through server pathfinding and world turns, with collision, sight and exit restrictions; do not claim arrival or instant transition. No new model call or paid job is needed to keep following.'
+      : '';
+  const instructions = `${companionPolicy} ${common} ${inherited} ${guidance[purpose]} ${outputLanguage}${itemPolicy}${presentation}`;
   return JSON.stringify({
     model: config.model,
     service_tier: config.serviceTier ?? 'default',
@@ -1058,11 +1074,13 @@ export class OpenAiNpcProvider implements NpcProvider {
           .object({
             text: z.string().trim().min(1).max(1000),
             itemIntents: z.array(z.record(z.string(), z.unknown())).max(2).optional(),
+            companionIntent: z.unknown().optional(),
           })
           .strict()
           .parse(parsed);
         proposal = npcPublicReplySchema.parse({
           ...raw,
+          ...(raw.companionIntent === null ? { companionIntent: undefined } : {}),
           ...(raw.itemIntents
             ? {
                 itemIntents: raw.itemIntents.map((intent) =>

@@ -93,6 +93,7 @@ export function acceptNpcPlan(state: GameState, id: string, input: unknown): Gam
               'lock',
               'unlock',
               'communicate',
+              'transition',
               ...(state.turnController?.phase === 'world' ? ['hit', 'push'] : []),
             ]
           : ['move_to', 'wait', 'inspect', 'give']
@@ -100,6 +101,11 @@ export function acceptNpcPlan(state: GameState, id: string, input: unknown): Gam
     )
       return { ...result(state), error: 'INVALID_ACTION' };
     if (a.targetId) {
+      if (a.kind === 'transition') {
+        if (!state.maps[npc.mapId].exits.some((exit) => exit.id === a.targetId))
+          return { ...result(state), error: 'TARGET_UNAVAILABLE' };
+        continue;
+      }
       const target = state.entities[a.targetId];
       if (!target || !visible(state, npc, target))
         return { ...result(state), error: 'TARGET_UNAVAILABLE' };
