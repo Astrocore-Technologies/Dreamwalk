@@ -37,7 +37,12 @@ await test('homepage discovery always uses immutable approved snapshots, includi
     const data = {
       ...storyInput('public'),
       title: 'Approved public adventure',
-      content: { ...storyInput().content, npcIds: [npc.id] },
+      content: {
+        ...storyInput().content,
+        world: 'PRIVATE_AUTHOR_WORLD',
+        rules: 'PRIVATE_AUTHOR_RULES',
+        npcIds: [npc.id],
+      },
     };
     const story = await owner.request('/studio/adventures', data);
     await owner.request(`/studio/adventures/${story.id}/submit`, {});
@@ -49,16 +54,24 @@ await test('homepage discovery always uses immutable approved snapshots, includi
       ).versionId,
     });
     await t.test(
-      'published view returns public read-only approved NPCs and rejects private fields',
+      'published view returns catalog metadata without authored source or cast',
       async () => {
         for (const actor of [owner, reader, guest]) {
           const result = await actor.request(`/adventures/${story.slug}?view=published`);
           assert.equal(result.access, 'public');
           assert.equal(result.readOnly, true);
           assert.equal(result.title, data.title);
-          assert.equal(result.npcs[0].name, 'Approved Keeper');
-          assert.equal(result.npcs[0].portraitAssetId, approvedPortrait);
-          for (const secret of ['PRIVATE_NPC_SECRET', 'PRIVATE_NPC_BIOGRAPHY', 'editRevision'])
+          assert.deepEqual(result.npcs, []);
+          assert.equal(result.publicNpcs, undefined);
+          assert.equal(result.content.world, '');
+          assert.equal(result.content.rules, '');
+          for (const secret of [
+            'PRIVATE_NPC_SECRET',
+            'PRIVATE_NPC_BIOGRAPHY',
+            'PRIVATE_AUTHOR_WORLD',
+            'PRIVATE_AUTHOR_RULES',
+            'editRevision',
+          ])
             assert.ok(!JSON.stringify(result).includes(secret));
         }
       },
@@ -82,15 +95,22 @@ await test('homepage discovery always uses immutable approved snapshots, includi
       for (const actor of [owner, reader, guest]) {
         const result = await actor.request(`/adventures/${story.slug}?view=published`);
         assert.equal(result.title, data.title);
-        assert.equal(result.npcs[0].name, 'Approved Keeper');
-        assert.equal(result.npcs[0].portraitAssetId, approvedPortrait);
-        assert.equal(result.npcs[0].description, 'Approved public description');
+        assert.deepEqual(result.npcs, []);
+        assert.equal(result.publicNpcs, undefined);
+        assert.equal(result.content.world, '');
         assert.ok(!JSON.stringify(result).includes('UNAPPROVED'));
         const catalog = await actor.request('/adventures?sort=popular');
         assert.equal(catalog.find((item) => item.id === story.id).title, data.title);
       }
+      const stored = (
+        await db.query('SELECT published_snapshot FROM adventures WHERE id=$1', [story.id])
+      ).rows[0].published_snapshot;
+      assert.equal(stored.publicNpcs[0].name, 'Approved Keeper');
+      assert.equal(stored.publicNpcs[0].portraitAssetId, approvedPortrait);
+      assert.equal(stored.publicNpcs[0].description, 'Approved public description');
       const editable = await owner.request(`/adventures/${story.slug}`);
       assert.equal(editable.title, 'UNAPPROVED_DRAFT_TITLE');
+      assert.equal(editable.content.world, 'PRIVATE_AUTHOR_WORLD');
       assert.equal(editable.npcs[0].name, 'UNAPPROVED_DRAFT_NPC');
       assert.equal(editable.npcs[0].portraitAssetId, draftPortrait);
       const approvedFile = await fetch(
