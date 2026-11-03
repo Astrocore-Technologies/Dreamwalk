@@ -25,6 +25,10 @@ test(
     delete process.env.DATABASE_URL;
     const database = await startLocalPostgres();
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    const connectionEnds = [];
+    pool.on('connect', (client) => {
+      connectionEnds.push(new Promise((resolve) => client.once('end', resolve)));
+    });
     const db = {
       query: async (sql, params) => (await pool.query(sql, params)).rows,
       async tx(work) {
@@ -147,6 +151,10 @@ test(
       );
     } finally {
       await pool.end();
+      // pg-pool removes idle clients before their sockets finish closing. Wait
+      // for every connection before stopping PostgreSQL, so teardown cannot
+      // emit a late administrator-termination error into the test runner.
+      await Promise.all(connectionEnds);
       await database.stop();
     }
   },
