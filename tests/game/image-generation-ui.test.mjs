@@ -86,3 +86,59 @@ test('image confirmation is one explicit action; inline maps never auto-quote fr
   assert.match(generic, /ImageQuotePrice/);
   assert.match(generic, /!preparedRequest &&/);
 });
+
+test('actual confirmation distinguishes wallet holds from provider billing in every locale', async () => {
+  const { transformSync } = await import('esbuild');
+  const jsx = (type, props) => ({ type, props });
+  const compile = async (file, dependencies) => {
+    const module = { exports: {} };
+    const code = transformSync(await read(file), {
+      loader: file.endsWith('.tsx') ? 'tsx' : 'ts',
+      format: 'cjs',
+      jsx: 'automatic',
+    }).code;
+    new Function('require', 'module', 'exports', code)(
+      (name) => {
+        assert.ok(name in dependencies, `Unexpected dependency: ${name}`);
+        return dependencies[name];
+      },
+      module,
+      module.exports,
+    );
+    return module.exports;
+  };
+  const text = (node) =>
+    node == null
+      ? ''
+      : Array.isArray(node)
+        ? node.map(text).join(' ')
+        : typeof node === 'object'
+          ? text(node.props?.children)
+          : String(node);
+  for (const locale of ['ru', 'en', 'uk']) {
+    const labels = await compile('image-messages.ts', {
+      '@/lib/i18n': { useT: () => ({ locale }) },
+    });
+    const { ImageConfirmation } = await compile('image-confirmation.tsx', {
+      'react/jsx-runtime': { jsx, jsxs: jsx },
+      '../ui': { Button: 'button' },
+      './image-messages': labels,
+    });
+    const wallet = text(ImageConfirmation({ estimated: true, walletCharging: true }));
+    const provider = text(ImageConfirmation({ estimated: true, walletCharging: false }));
+    assert.match(
+      provider,
+      locale === 'en'
+        ? /provider invoice/
+        : locale === 'ru'
+          ? /счёт провайдера/
+          : /рахунок провайдера/,
+    );
+    assert.doesNotMatch(provider, /Dreams first|сначала Грёзы|спочатку Мрії/);
+    assert.match(
+      wallet,
+      locale === 'en' ? /wallet charge/ : locale === 'ru' ? /из кошелька/ : /з гаманця/,
+    );
+    assert.notEqual(wallet, provider);
+  }
+});

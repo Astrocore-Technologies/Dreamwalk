@@ -371,7 +371,9 @@ test('image authoring shows equivalents, keeps consent/caps, and separates admin
   const images = await readFile('apps/web/components/assets/image-generation.tsx', 'utf8');
   assert.match(images, /useLiveTestStatus\(\)/);
   assert.match(images, /user\?\.role === 'admin' &&/);
-  assert.match(images, /SparkQuoteNotice/);
+  assert.match(images, /ImageQuotePrice/);
+  assert.doesNotMatch(images, /SparkQuoteNotice/);
+  assert.match(images, /walletCharging=\{!!quote.sparks\?\.walletCharging\}/);
   assert.match(helper, /SparksEquivalentNotice/);
   assert.match(images, /quoteBudgetAvailable/);
   assert.match(images, /<ImageConfirmation/);
