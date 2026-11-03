@@ -3,6 +3,7 @@ import { randomUUID } from 'node:crypto';
 
 const labels = {
   ru: {
+    create: 'Создать героя',
     edit: 'Редактировать',
     save: 'Сохранить героя',
     cancel: 'Отмена',
@@ -12,6 +13,7 @@ const labels = {
     name: 'Имя героя',
   },
   en: {
+    create: 'Create hero',
     edit: 'Edit',
     save: 'Save hero',
     cancel: 'Cancel',
@@ -21,6 +23,7 @@ const labels = {
     name: 'Hero name',
   },
   uk: {
+    create: 'Створити героя',
     edit: 'Редагувати',
     save: 'Зберегти героя',
     cancel: 'Скасувати',
@@ -130,6 +133,23 @@ for (const variant of [
         },
       },
     ]);
+    await card.getByRole('button', { name: text.edit, exact: true }).click();
+    await name.fill('Unsaved change');
+    await page.keyboard.press('Escape');
+    await expect(dialog).toHaveCount(0);
+    await card.getByRole('button', { name: text.edit, exact: true }).click();
+    await expect(name).toHaveValue(hero.name);
+    await page.keyboard.press('Escape');
+    await page.getByRole('button', { name: text.create, exact: true }).click();
+    await expect(name).toHaveValue('');
+    await expect(dialog.locator('img.upload-preview')).toHaveCount(0);
+    await expect(save).toBeInViewport();
+    await page.screenshot({
+      path: testInfo.outputPath('hero-editor-empty-fixture.png'),
+      fullPage: true,
+    });
+    await page.keyboard.press('Escape');
+    expect(mutations).toHaveLength(1);
     expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
       true,
     );
