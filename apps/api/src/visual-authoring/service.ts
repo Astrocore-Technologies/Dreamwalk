@@ -64,6 +64,8 @@ function stageRequestDigest(input: GenerationRequest) {
   // validated independently at every financial boundary, not authored content.
   const content = { ...input };
   delete content.generationAuthorizationId;
+  // Server-selected quote policy is bound by the quote hash, not authored stage content.
+  delete content.requestPolicyVersion;
   return digest(content);
 }
 type Project = {

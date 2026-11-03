@@ -14,16 +14,23 @@ test('provider equivalents respect bound legacy/new versions and reject missing 
 });
 
 test('launch, builder and image quote estimates pass stored tariff while wallet fields stay unscaled', async () => {
+  for (const file of ['game/adventure-launch.tsx', 'visual-authoring/story-playable-builder.tsx']) {
+    const source = await readFile(`apps/web/components/${file}`, 'utf8');
+    assert.match(source, /sparks\.rateVersion \?\? null/);
+  }
   for (const file of [
-    'game/adventure-launch.tsx',
-    'visual-authoring/story-playable-builder.tsx',
     'assets/image-generation.tsx',
     'visual-authoring/location-image-inline.tsx',
     'visual-authoring/external-generation.tsx',
   ]) {
-    const source = await readFile(`apps/web/components/${file}`, 'utf8');
-    assert.match(source, /sparks\.rateVersion \?\? null/);
+    assert.match(await readFile(`apps/web/components/${file}`, 'utf8'), /<ImageQuotePrice/);
   }
+  const image = await readFile('apps/web/components/assets/image-quote-price.tsx', 'utf8');
+  assert.match(
+    image,
+    /quote.funding\?\.totalReservedSubunits \?\?\s*quote.sparks\?\.reserveSubunits/,
+  );
+  assert.match(image, /formatSparkSubunits\(total, locale, 'exact'\)/);
   const source = await readFile('apps/web/components/visual-authoring/sparks-cost.tsx', 'utf8');
   assert.match(source, /formatSparkSubunits\(reserved, locale\)/);
   assert.match(source, /formatSparkSubunits\(units, locale\)/);

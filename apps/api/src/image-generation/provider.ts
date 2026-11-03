@@ -1,3 +1,4 @@
+import { imageProviderRequest } from './request-policy';
 import { resolveOwnerImageProfile } from '../generation/config';
 import { estimateImageRequest } from '../generation/estimates';
 import sharp from 'sharp';
@@ -120,7 +121,7 @@ export class OpenAiImageProvider implements ImageProvider {
     dispatchId: string,
     refs: ImageReference[],
   ): Promise<ImageResult> {
-    request = generationRequestSchema.parse(request);
+    request = imageProviderRequest(generationRequestSchema.parse(request));
     if (
       Buffer.byteLength(request.prompt, 'utf8') > 8000 ||
       refs.length > 2 ||
@@ -222,7 +223,7 @@ export class OwnerOpenAiImageProvider implements ImageProvider {
     dispatchId: string,
     refs: ImageReference[],
   ): Promise<ImageResult> {
-    request = generationRequestSchema.parse(request);
+    request = imageProviderRequest(generationRequestSchema.parse(request));
     const p = resolveOwnerImageProfile(this.config.image, request.imageFraming);
     if (
       request.mode !== 'external' ||
@@ -271,7 +272,13 @@ export class OwnerOpenAiImageProvider implements ImageProvider {
       throw new Error('OWNER_GENERATION_CURRENT_PRICING_REQUIRED');
     if (!imageFramingMatchesProfile(request.imageFraming, p.size, p.framingPolicy))
       throw new Error('IMAGE_SIZE_POLICY_REVIEW_REQUIRED');
-    const requestEstimate = estimateImageRequest(request.prompt, referenceIds.length, p, this.id);
+    const requestEstimate = estimateImageRequest(
+      request.prompt,
+      referenceIds.length,
+      p,
+      this.id,
+      request.requestPolicyVersion === 2,
+    );
     if (
       !p.estimateRiskAccepted ||
       p.costBasis !== 'approved_estimate' ||

@@ -2,8 +2,8 @@
 import { useEffect, useRef, useState } from 'react';
 import { LocationImageInline } from './location-image-inline';
 import { api, ApiError, errorMessage, useResource, useClient } from '@/lib/client';
-import { useSparkCosts, SparksEquivalentNotice } from './sparks-cost';
-import { Button, ErrorBox, Field, Modal, Select, Textarea } from '../ui';
+import { useSparkCosts } from './sparks-cost';
+import { Button, ErrorBox, Field, Modal, Select } from '../ui';
 import { AssetLibrary } from '../assets/asset-library';
 import { ImageGeneration, type PreparedStudioLocationRequest } from '../assets/image-generation';
 import { artPreviewUrl, type ArtRevision } from '../assets/types';
@@ -36,7 +36,7 @@ const estimateAllowed = (settings: Configuration) =>
   ownerImageEstimateAvailable(settings.config);
 function LocationImageStatus({ settings, saved }: { settings: Configuration; saved: boolean }) {
   const m = useLocationImageText(),
-    { s, amount } = useSparkCosts(),
+    { s } = useSparkCosts(),
     { user } = useClient(),
     config = settings.config;
   return (
@@ -51,23 +51,6 @@ function LocationImageStatus({ settings, saved }: { settings: Configuration; sav
               {m('model')}: {config.requestProfile?.model ?? m('notConfigured')}
             </p>
           )}
-          {typeof config.estimatedTotalMicros === 'number' && (
-            <p>
-              {s('estimate')}: {amount(config.estimatedTotalMicros)}
-            </p>
-          )}
-          {typeof config.reserveMicros === 'number' && (
-            <p>
-              {s('reserve')}: {amount(config.reserveMicros)}
-            </p>
-          )}
-          {verified(config) ? (
-            <p>
-              {s('upper')}: {amount(config.verifiedUpperMicros)}
-            </p>
-          ) : (
-            <p role="status">{m(estimateAllowed(settings) ? 'estimateRisk' : 'unverified')}</p>
-          )}
           {!config.externalEnabled && <p>{m('unavailable')}</p>}
           {config.externalBlockReasons?.map((code) => (
             <small key={code}>
@@ -77,7 +60,6 @@ function LocationImageStatus({ settings, saved }: { settings: Configuration; sav
           {saved && !liveSessionActive(settings.live.status) && <p>{s('blocked')}</p>}
         </>
       )}
-      {settings.live.status?.mode !== 'release' && <SparksEquivalentNotice />}
       {!saved && <p>{m('saveFirst')}</p>}
       <ErrorBox message={settings.configError} />
     </div>
@@ -264,9 +246,6 @@ export function LocationImageDialog({
         {prepared && (
           <>
             <h3>{prepared.location.name}</h3>
-            <Field label={m('prompt')}>
-              <Textarea readOnly value={prepared.request.prompt} />
-            </Field>
             {bound && (
               <div className={styles.generationItem}>
                 <h4>{m('current')}</h4>

@@ -79,6 +79,7 @@ try {
     'tests/images/owner-config.test.mjs',
     'tests/images/release-runtime.test.mjs',
     'tests/images/request-estimates.test.mjs',
+    'tests/images/image-request-policy.test.mjs',
   ]);
   let files = [
     'integration-hero-portrait.test.mjs',

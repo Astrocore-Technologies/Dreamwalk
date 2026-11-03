@@ -13,6 +13,8 @@ const { Db } = require('../../apps/api/dist/db.js');
 const { AssetReuseService } = require('../../apps/api/dist/assets/reuse.service.js');
 const { ImageGenerationEngine } = require('../../apps/api/dist/image-generation/service.js');
 const { createOwnerImageRuntime } = require('../../apps/api/dist/image-generation/config.js');
+const { estimateImageRequest } = require('../../apps/api/dist/generation/estimates.js');
+const { imageProviderRequest } = require('../../apps/api/dist/image-generation/request-policy.js');
 const { readOwnerGenerationConfig } = require('../../apps/api/dist/generation/config.js');
 const {
   GenerationAuthority,
@@ -71,6 +73,7 @@ await test(
         } else {
           const body = JSON.parse(init.body);
           assert.equal(body.n, 1);
+          assert.match(body.prompt, /Default art: detailed drawn 2D anime/);
           assert.equal(body.size, '1536x1024');
           assert.match(url, /\/images\/generations$/);
         }
@@ -145,7 +148,16 @@ await test(
         async () => {
           const small = await a.engine.quote(owner.user.id, input()),
             large = await a.engine.quote(owner.user.id, input('x'.repeat(1024)));
-          assert.equal(small.quote.reserveMicros, 4797);
+          assert.equal(
+            small.quote.reserveMicros,
+            estimateImageRequest(
+              imageProviderRequest({ ...input(), requestPolicyVersion: 2 }).prompt,
+              0,
+              rawA.image,
+              a.runtime.provider.id,
+              true,
+            ).reserveMicros,
+          );
           assert.ok(large.quote.reserveMicros > small.quote.reserveMicros);
           assert.ok(large.quote.reserveMicros < cfgA.totalCapMicros);
           assert.equal(small.quote.estimateSnapshotHash, small.quote.estimateSnapshot.fingerprint);
@@ -403,7 +415,16 @@ await test(
           assert.equal((await b.engine.get(owner.user.id, known.id)).actualMicros, 4100);
           usageOutput = 100;
           const insufficient = await b.engine.quote(owner.user.id, input());
-          assert.equal(insufficient.quote.reserveMicros, 6047);
+          assert.equal(
+            insufficient.quote.reserveMicros,
+            estimateImageRequest(
+              imageProviderRequest({ ...input(), requestPolicyVersion: 2 }).prompt,
+              0,
+              rawB.image,
+              b.runtime.provider.id,
+              true,
+            ).reserveMicros,
+          );
           await assert.rejects(
             b.engine.enqueue(owner.user.id, consent(insufficient)),
             failureCode('GENERATION_BUDGET_EXCEEDED'),

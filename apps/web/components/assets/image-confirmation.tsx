@@ -7,6 +7,7 @@ export function ImageConfirmation({
   children,
   estimated,
   external = true,
+  walletCharging = false,
   disabled,
   busy,
   onConfirm,
@@ -15,6 +16,7 @@ export function ImageConfirmation({
   children?: ReactNode;
   estimated: boolean;
   external?: boolean;
+  walletCharging?: boolean;
   disabled?: boolean;
   busy?: boolean;
   onConfirm: () => void;
@@ -24,8 +26,10 @@ export function ImageConfirmation({
   return (
     <section role="group" aria-label={g('confirmTitle')} data-image-confirmation>
       {children}
-      <p>{g(external ? 'confirmNotice' : 'consent')}</p>
-      {estimated && <p>{g('confirmRisk')}</p>}
+      <p>
+        {g(external ? (walletCharging ? 'confirmNotice' : 'confirmProviderNotice') : 'consent')}
+      </p>
+      {estimated && <p>{g(walletCharging ? 'confirmRisk' : 'confirmProviderRisk')}</p>}
       <div className="row">
         <Button type="button" variant="secondary" disabled={busy} onClick={onCancel}>
           {g('cancelQuote')}
