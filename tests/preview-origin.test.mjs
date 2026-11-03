@@ -4,6 +4,7 @@ import { createRequire } from 'node:module';
 const require = createRequire(import.meta.url);
 const { NextRequest } = require('next/server');
 const { proxy } = require('../apps/web/proxy.ts');
+const { canonicalWebOrigin } = require('../apps/web/lib/hosted-origin.ts');
 const { socketRelayTarget } = require('../apps/web/lib/game-socket-relay.ts');
 const env = {
   VERCEL: '1',
@@ -23,6 +24,7 @@ test('preview and canonical mutations normalize only after exact same-origin adm
   const old = { ...process.env };
   try {
     Object.assign(process.env, env);
+    delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
     for (const origin of [
       env.WEB_ORIGIN,
       `https://${env.VERCEL_URL}`,
@@ -79,4 +81,37 @@ test('socket preview admission preserves canonical upstream, session and fixed d
   req.headers.set('origin', origin);
   req.headers.delete('cookie');
   assert.throws(() => socketRelayTarget(req, env));
+});
+
+test('platform production origin wins over stale manual origin and fails closed when malformed', () => {
+  const platform = {
+    ...env,
+    WEB_ORIGIN: 'https://obsolete.example',
+    VERCEL_PROJECT_PRODUCTION_URL: 'dreamwalk-rho.vercel.app',
+  };
+  assert.equal(canonicalWebOrigin(platform), 'https://dreamwalk-rho.vercel.app');
+  assert.equal(
+    canonicalWebOrigin({ ...platform, VERCEL_PROJECT_PRODUCTION_URL: 'play.example.com' }),
+    'https://play.example.com',
+  );
+  for (const value of [
+    '',
+    'https://evil.test',
+    'evil.test/path',
+    'u:p@evil.test',
+    'evil.test:443',
+    'evil.test?x=1',
+    'evil.test#fragment',
+    'evil..test',
+    '-evil.test',
+    '*.vercel.app',
+    'evil.test\n',
+  ])
+    assert.equal(canonicalWebOrigin({ ...platform, VERCEL_PROJECT_PRODUCTION_URL: value }), null);
+  const preview = `https://${env.VERCEL_URL}`;
+  const req = new Request(
+    preview + '/api/v1/game/socket?campaignId=12345678-1234-1234-1234-123456789012',
+    { headers: { origin: preview, cookie: `dreamwalk_session=${'b'.repeat(64)}` } },
+  );
+  assert.equal(socketRelayTarget(req, platform).headers.origin, 'https://dreamwalk-rho.vercel.app');
 });

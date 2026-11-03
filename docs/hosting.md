@@ -139,10 +139,15 @@ Vercel-provided `VERCEL_URL` / `VERCEL_BRANCH_URL` are admitted. Forwarded-host
 headers and arbitrary `*.vercel.app` domains are not trusted. Missing, null,
 foreign, or contradictory browser origins are rejected.
 
-Set the web service's server-only `WEB_ORIGIN` to the same stable canonical HTTPS
-origin as the API, including for preview deployments. After edge validation, the
-server-to-server hop uses this canonical Origin and the existing ingress secret.
-Do not change the API origin for each preview. Vercel deployment protection and
+On Vercel, the canonical origin comes from its server-provided
+`VERCEL_PROJECT_PRODUCTION_URL`, including previews, rather than stale manual
+`WEB_ORIGIN` settings. The manual value is a fallback only when the platform value
+is absent; a malformed supplied platform value fails closed. After edge validation,
+the server-to-server hop uses this canonical Origin and the existing ingress secret.
+Do not change the API origin for each preview. If the project's production domain
+changes (including adding a custom domain that Vercel selects), the API canonical
+origin must still match. A mismatch is rejected by the unchanged API guard; this
+is not permission to auto-change backend security settings. Vercel deployment protection and
 application authentication/authorization remain separate and unchanged.
 
 Previews using the production API share real accounts, stories, and balances;
