@@ -3,7 +3,10 @@ import { test, expect } from '@playwright/test';
 test('selected language refreshes saved story text and ignores a slower previous-language response', async ({
   page,
 }) => {
-  await page.addInitScript(() => localStorage.setItem('dreamwalk-language', 'ru'));
+  await page.addInitScript(() => {
+    if (!localStorage.getItem('dreamwalk-language'))
+      localStorage.setItem('dreamwalk-language', 'ru');
+  });
   const story = {
     id: '4b47eba7-e071-497e-b382-d250ecb51a41',
     slug: 'translation-fixture',
@@ -72,7 +75,9 @@ test('selected language refreshes saved story text and ignores a slower previous
   releaseEnglish?.();
   await completedEnglish;
   await expect(title).toHaveText('Тихий ліс');
+  expect(await page.evaluate(() => localStorage.getItem('dreamwalk-language'))).toBe('uk');
   await page.reload();
+  await expect(page.locator('.locale-select')).toHaveValue('uk');
   await expect(title).toHaveText('Тихий ліс');
   expect(requests).toContain('ru');
   expect(requests).toContain('en');
