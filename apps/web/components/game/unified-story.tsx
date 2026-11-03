@@ -66,6 +66,7 @@ export function UnifiedStory({
   disabled,
   partyDisabled = disabled,
   worldGenerationAllowed = false,
+  worldGenerationMembersStatus = 'ready',
   onWorldRefresh,
   onBusyChange,
 }: {
@@ -76,6 +77,7 @@ export function UnifiedStory({
   disabled: boolean;
   partyDisabled?: boolean;
   worldGenerationAllowed?: boolean;
+  worldGenerationMembersStatus?: 'ready' | 'loading' | 'error';
   onWorldRefresh: () => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
@@ -604,9 +606,20 @@ export function UnifiedStory({
               </p>
             )}
             {feed && !available && <p className={styles.status}>{h('unavailable')}</p>}
-            {worldGenerationAllowed && projection.turn?.phase === 'world' && (
+            {projection.turn?.phase === 'world' && (
               <WorldGenerationConfirmation
                 campaignId={campaignId}
+                access={
+                  worldGenerationAllowed
+                    ? 'owner'
+                    : worldGenerationMembersStatus === 'error'
+                      ? 'error'
+                      : worldGenerationMembersStatus === 'loading'
+                        ? 'loading'
+                        : 'member'
+                }
+                membershipError={worldGenerationMembersStatus === 'error'}
+                membershipPending={worldGenerationMembersStatus === 'loading'}
                 scope={JSON.stringify([turnFence, feed?.canonRevision, projection.map.id])}
                 disabled={partyDisabled}
               />
