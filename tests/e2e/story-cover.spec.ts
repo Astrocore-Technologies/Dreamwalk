@@ -11,6 +11,7 @@ test('story cover quotes once, cancels freely, recovers and selects without nest
   let quotes = 0,
     dispatches = 0,
     coverReads = 0;
+  let pending = true;
   let recovered = false,
     selectionFails = true;
   let selectionRelease: (() => void) | undefined;
@@ -72,7 +73,8 @@ test('story cover quotes once, cancels freely, recovers and selects without nest
         remainingMicros: 1000000,
         imagesEnabled: true,
       };
-    else if (path === '/image-generation/story-covers') json = { jobs: recovered ? [job] : [] };
+    else if (path === '/image-generation/story-covers')
+      json = { jobs: recovered ? [{ ...job, status: pending ? 'dispatched' : 'admitted' }] : [] };
     else if (path === '/image-generation/quotes') {
       quotes++;
       const request = route.request().postDataJSON();
@@ -103,7 +105,7 @@ test('story cover quotes once, cancels freely, recovers and selects without nest
       dispatches++;
       expect(route.request().postDataJSON().consent).toBe(true);
       recovered = true;
-      json = job;
+      json = { ...job, status: pending ? 'dispatched' : 'admitted' };
     } else if (path === `/asset-library/revisions/${revisionId}`) json = revision;
     else if (path === `/image-generation/story-covers/${revisionId}/asset`) {
       coverReads++;
@@ -140,7 +142,14 @@ test('story cover quotes once, cancels freely, recovers and selects without nest
   expect(dispatches).toBe(0);
   await dialog.getByRole('button', { name: 'Estimate cost', exact: true }).click();
   await dialog.getByRole('button', { name: 'Confirm and generate', exact: true }).dblclick();
+  const progress = dialog.locator('[data-generation-progress="dispatched"]');
+  await expect(progress).toBeVisible();
+  await expect(progress).toHaveAttribute('aria-busy', 'true');
+  await page.emulateMedia({ reducedMotion: 'reduce' });
+  await expect(progress.locator('[aria-hidden="true"]')).toHaveCSS('animation-name', 'none');
+  pending = false;
   await expect(dialog.getByRole('button', { name: 'Use revision', exact: true })).toBeVisible();
+  await expect(progress).toHaveCount(0);
   expect(dispatches).toBe(1);
   expect(quotes).toBe(2);
   await dialog.getByRole('button', { name: 'Close', exact: true }).click();

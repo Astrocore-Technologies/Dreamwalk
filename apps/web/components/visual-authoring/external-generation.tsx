@@ -20,8 +20,25 @@ import {
   type GenerationState,
 } from './generation-types';
 import styles from './workshop.module.css';
+import { CompactCharacterGeneration } from './compact-character-generation';
+import { GenerationProgress } from './generation-progress';
 
-export function ExternalGeneration({
+type ExternalGenerationProps = {
+  project: GenerationProject;
+  session: LiveTestStatus | null;
+  disabled: boolean;
+  onStateChange: (value: GenerationState | null) => void;
+  onBusyChange: (value: boolean) => void;
+  compactActions?: boolean;
+};
+export function ExternalGeneration(props: ExternalGenerationProps) {
+  return props.compactActions ? (
+    <CompactCharacterGeneration key={`${props.project.id}:${props.project.revision}`} {...props} />
+  ) : (
+    <FullExternalGeneration {...props} />
+  );
+}
+function FullExternalGeneration({
   project,
   session,
   disabled,
@@ -210,6 +227,7 @@ export function ExternalGeneration({
             )}
             {job && (
               <>
+                <GenerationProgress status={job.status} />
                 {job.sparkStatus && (
                   <p>
                     <SparkReceiptCost receipt={{ ...job, generationCost: null }} />

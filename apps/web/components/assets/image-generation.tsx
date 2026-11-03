@@ -5,6 +5,7 @@ import {
   type ImageFraming,
 } from '@dreamwalk/contracts';
 import { ImageConfirmation } from './image-confirmation';
+import { GenerationProgress } from '../visual-authoring/generation-progress';
 import { ImageFramingNotice } from '../visual-authoring/image-framing-notice';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, errorMessage, useResource, useClient } from '@/lib/client';
@@ -740,7 +741,11 @@ export function ImageGeneration({
           data-image-job-id={job.id}
           data-image-job-status={job.status}
         >
-          <p>{g(job.status)}</p>
+          {['queued', 'dispatched', 'generated'].includes(job.status) ? (
+            <GenerationProgress status={job.status} />
+          ) : (
+            <p>{g(job.status)}</p>
+          )}
           {job.sparkStatus && (
             <p>
               <SparkReceiptCost receipt={{ ...job, generationCost: null }} />

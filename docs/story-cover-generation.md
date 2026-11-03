@@ -25,3 +25,18 @@ Verification uses mocked providers and isolated PostgreSQL only. Browser regress
 source covers confirm/cancel, refresh recovery, selection retries, stale responses
 after dismissal, preview and upload retention. No provider/configuration activation,
 real paid calls or production mutation is part of this change.
+
+## Character actions and pending images
+
+The character's in-world appearance uses a compact generation view: **Estimate
+cost** becomes **Generate** only for a current valid quote, alongside **Take from
+library**. The displayed price and consent notice precede dispatch. Quote expiry,
+project revisions, unavailable authorization and uncertain outcomes prevent reuse
+of stale consent. Library selection uses owned compatible revisions and the
+existing free, idempotent reuse endpoint without creating a paid quote first.
+The full multi-stage workshop retains its separate controls.
+
+Cover, hero, character and location surfaces show an accessible animation only
+for queued, dispatched or generated-but-not-yet-admitted jobs. Unknown outcomes
+remain a reconciliation message, never simulated progress or automatic retry.
+The animation respects reduced-motion settings.
