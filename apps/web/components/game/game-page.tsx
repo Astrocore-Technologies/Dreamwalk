@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
+import { createPortal } from 'react-dom';
 import { useRouter } from 'next/navigation';
 import { ArrowLeft, Compass, Moon, Radio, UsersRound } from 'lucide-react';
 import {
@@ -29,6 +30,33 @@ import { UnifiedStory, type StoryRecipient } from './unified-story';
 import { LivingNotices } from './living-notices';
 import { useGame, type CampaignSummary } from './use-game';
 import styles from './game.module.css';
+
+function GameToolbar({ children }: { children: React.ReactNode }) {
+  const [host, setHost] = useState<HTMLElement | null>(null);
+  useEffect(() => setHost(document.getElementById('game-toolbar')), []);
+  return host ? createPortal(children, host) : children;
+}
+
+function fitPlaySurface(element: HTMLDivElement | null) {
+  if (!element) return;
+  const update = () => {
+    const top = element.getBoundingClientRect().top + window.scrollY;
+    element.style.setProperty(
+      '--game-play-height',
+      `${Math.max(420, window.innerHeight - top - 12)}px`,
+    );
+  };
+  const observer = new ResizeObserver(update);
+  const toolbar = document.querySelector('.game-shell .topbar');
+  if (toolbar) observer.observe(toolbar);
+  if (element.parentElement) observer.observe(element.parentElement);
+  window.addEventListener('resize', update);
+  update();
+  return () => {
+    observer.disconnect();
+    window.removeEventListener('resize', update);
+  };
+}
 
 const actionKeys: Partial<Record<GameAction['kind'], string>> = {
   consume: 'Поесть',
@@ -330,7 +358,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
   if (!p)
     return (
       <div className={styles.root}>
-        <Link href="/game" className={styles.back}>
+        <Link href="/game" className={`game-return ${styles.back}`}>
           <ArrowLeft size={16} />
           {t('К кампаниям')}
         </Link>
@@ -367,69 +395,51 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
   const inspectedPortraitUrl = inspectedPortrait ? artPreviewUrl(inspectedPortrait.url) : undefined;
   const selectedTarget = p.entities.find((entity) => entity.id === selected.targetId);
   return (
-    <div className={styles.root}>
-      <div className={styles.roomHeader}>
-        <div>
-          <Link href="/game" className={styles.back}>
-            <ArrowLeft size={16} />
-            {t('К кампаниям')}
-          </Link>
-          {game.campaign?.title && <p className={styles.kicker}>{game.campaign.title}</p>}
-          {game.campaign?.sourceRevision && (
-            <small>
-              {t('Игровая версия {version}', { version: game.campaign.sourceRevision })}
-            </small>
-          )}
-          <h1>
-            {p.map.label ||
-              t(
-                p.map.id === 'roof'
-                  ? 'Крыша'
-                  : p.map.id === 'observatory'
-                    ? 'Обсерватория'
-                    : 'Локация',
+    <div className={`${styles.root} ${styles.activeRoom}`} data-testid="game-room">
+      <GameToolbar>
+        <div className={styles.roomHeader} data-game-toolbar>
+          <div>
+            <Link href="/game" className={`game-return ${styles.back}`}>
+              <ArrowLeft size={16} />
+              <span className={styles.visuallyHidden}>{t('К кампаниям')}</span>
+            </Link>
+            <h1>
+              {p.map.label ||
+                t(
+                  p.map.id === 'roof'
+                    ? 'Крыша'
+                    : p.map.id === 'observatory'
+                      ? 'Обсерватория'
+                      : 'Локация',
+                )}
+            </h1>
+          </div>
+          <div className={styles.connection} data-connected={connected}>
+            <Radio size={15} />
+            <span role="status">
+              {t(
+                connected
+                  ? 'Подключено'
+                  : game.connection === 'connecting'
+                    ? 'Подключение'
+                    : game.connection === 'superseded'
+                      ? 'Управление в другой вкладке'
+                      : 'Переподключение',
               )}
-          </h1>
-          {own && (
-            <p
-              className={styles.position}
-              data-testid="game-position"
-              data-map-id={p.map.id}
-              data-x={own.x}
-              data-y={own.y}
-            >
-              {t('Твоя позиция: {x}, {y}', { x: own.x, y: own.y })}
-            </p>
-          )}
-          <span className={styles.mode}>
-            {t(encounter ? 'Планирование раунда' : 'Исследование')}
-          </span>
+            </span>
+          </div>
+          <TurnControls
+            projection={p}
+            connected={connected}
+            busy={game.busy || storyBusy}
+            activeName={
+              members.data?.members.find((m) => m.actorId === p.turn?.activeActorId)?.username
+            }
+            onEnd={() => void game.command({ type: 'turn.end' })}
+            onReaction={(decision) => void game.command({ type: 'turn.reaction', decision })}
+          />
         </div>
-        <div className={styles.connection} data-connected={connected}>
-          <Radio size={15} />
-          <span role="status">
-            {t(
-              connected
-                ? 'Подключено'
-                : game.connection === 'connecting'
-                  ? 'Подключение'
-                  : game.connection === 'superseded'
-                    ? 'Управление в другой вкладке'
-                    : 'Переподключение',
-            )}
-          </span>
-        </div>
-        <TurnControls
-          projection={p}
-          connected={connected}
-          busy={game.busy || storyBusy}
-          activeName={
-            members.data?.members.find((m) => m.actorId === p.turn?.activeActorId)?.username
-          }
-          onEnd={() => void game.command({ type: 'turn.end' })}
-          onReaction={(decision) => void game.command({ type: 'turn.reaction', decision })}
-        />
-      </div>
+      </GameToolbar>
       {game.error && (
         <ErrorBox
           message={
@@ -452,12 +462,37 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           )}
         </p>
       )}
-      <NarrativePreferences
-        key={campaignId}
-        campaignId={campaignId}
-        disabled={!connected || game.busy || storyBusy}
-      />
-      <div className={styles.playGrid}>
+      <div className={styles.roomOptions}>
+        <details className={styles.roomMetadata}>
+          <summary>{t(encounter ? 'Планирование раунда' : 'Исследование')}</summary>
+          {game.campaign?.title && <p className={styles.kicker}>{game.campaign.title}</p>}
+          {game.campaign?.sourceRevision && (
+            <small>
+              {t('Игровая версия {version}', { version: game.campaign.sourceRevision })}
+            </small>
+          )}
+          {own && (
+            <p
+              className={styles.position}
+              data-testid="game-position"
+              data-map-id={p.map.id}
+              data-x={own.x}
+              data-y={own.y}
+            >
+              {t('Твоя позиция: {x}, {y}', { x: own.x, y: own.y })}
+            </p>
+          )}
+          <span className={styles.mode}>
+            {t(encounter ? 'Планирование раунда' : 'Исследование')}
+          </span>
+        </details>
+        <NarrativePreferences
+          key={campaignId}
+          campaignId={campaignId}
+          disabled={!connected || game.busy || storyBusy}
+        />
+      </div>
+      <div className={styles.playGrid} data-testid="game-play-surface" ref={fitPlaySurface}>
         <div className={styles.sceneColumn}>
           <GameCanvas
             projection={p}

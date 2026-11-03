@@ -158,10 +158,12 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </button>
           )}
           {inGame ? (
-            <Link href="/game" className="game-return">
-              <ArrowLeft size={18} />
-              <span>Dreamwalk</span>
-            </Link>
+            <div id="game-toolbar" className="game-toolbar-slot">
+              <Link href="/game" className="game-return">
+                <ArrowLeft size={18} />
+                {tr('К кампаниям')}
+              </Link>
+            </div>
           ) : path === '/explore' ? (
             <span className="catalog-shell-label">{tr('Открыть миры')}</span>
           ) : (

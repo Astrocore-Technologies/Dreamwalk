@@ -441,7 +441,7 @@ export function UnifiedStory({
           </small>
         )}
       </div>
-      <div>
+      <div className={styles.body}>
         <div className={styles.story}>
           <div
             className={styles.feed}
