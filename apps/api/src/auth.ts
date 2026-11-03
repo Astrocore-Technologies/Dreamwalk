@@ -1,3 +1,4 @@
+import { readerInvitationPayload } from '@dreamwalk/contracts';
 import {
   Body,
   Controller,
@@ -500,7 +501,12 @@ export class AccountController {
         `SELECT n.id,n.title,n.message,n.type,CASE WHEN n.type='invitation' THEN jsonb_build_object('adventureId',a.id,'adventureTitle',pr.snapshot->>'title','adventureMetadata',pr.snapshot - 'content' - 'publicNpcs','inviter',n.payload->>'inviter') ELSE n.payload END AS payload,n.read,n.created_at FROM notifications n LEFT JOIN adventures a ON a.id::text=n.payload->>'adventureId' LEFT JOIN adventure_private_releases pr ON pr.id=a.private_release_id WHERE n.user_id=$1 AND (n.type<>'invitation' OR (a.visibility='private' AND a.status<>'archived' AND pr.id IS NOT NULL AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id AND i.recipient_id=$1 AND i.status IN ('pending','accepted')))) ORDER BY n.created_at DESC LIMIT 100`,
         [u.id],
       )
-    ).map(camel);
+    ).map((row) => {
+      const notification = camel(row);
+      if (notification.type === 'invitation')
+        notification.payload = readerInvitationPayload(notification.payload);
+      return notification;
+    });
   }
   @Patch('notifications/:id')
   async readNotification(

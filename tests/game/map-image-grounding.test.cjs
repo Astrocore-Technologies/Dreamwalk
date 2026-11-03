@@ -781,3 +781,116 @@ test('result diagnostics preserve bounded categories without leaking source or d
   );
   assert.equal(classify('STORY_SOURCE_MISMATCH', 'apply'), 'AUTHORING_APPLY_FAILED');
 });
+
+test('schematic illustration recovery uses only unique immutable current-map pins, without mutating state', async () => {
+  const { AssetReuseService } = require('../../apps/api/dist/assets/reuse.service');
+  const binding = {
+    slot: 'map:room:background',
+    revisionId: randomUUID(),
+    sha256: hash('art'),
+    mime: 'image/png',
+    width: 1024,
+    height: 1024,
+    rights_snapshot: { attribution: 'Artist', licenseLabel: 'Owned', private: 'never exposed' },
+  };
+  const state = {
+    maps: { room: { id: 'room', backgroundMode: 'schematic' }, other: { id: 'other' } },
+    entities: { hero: { id: 'hero', kind: 'player', mapId: 'room' } },
+    artBindings: [],
+  };
+  const before = structuredClone(state),
+    calls = [];
+  const service = new AssetReuseService({
+    query: async (sql, values) => {
+      calls.push({ sql, values });
+      return [binding];
+    },
+  });
+  const recovered = await service.sceneIllustrationBinding(state, 'hero', 'version');
+  assert.equal(recovered.mapId, 'room');
+  assert.equal(recovered.revisionId, binding.revisionId);
+  assert.equal(recovered.rights_snapshot, undefined);
+  assert.equal(recovered.private, undefined);
+  assert.deepEqual(calls[0].values, ['version', 'map:room:background']);
+  assert.match(calls[0].sql, /art_playable_pins/);
+  assert.match(calls[0].sql, /art_asset_takedowns/);
+  assert.match(calls[0].sql, /u.deleted_at IS NULL/);
+  assert.doesNotMatch(calls[0].sql, /art_story_asset_drafts|UPDATE|INSERT/);
+  assert.deepEqual(state, before);
+  for (const rows of [
+    [],
+    [binding, binding],
+    [{ ...binding, slot: 'map:other:background' }],
+    [{ ...binding, sha256: 'bad' }],
+  ]) {
+    assert.equal(
+      await service.sceneIllustrationBinding(state, 'hero', 'version', async () => rows),
+      null,
+    );
+  }
+  for (const changed of [
+    { ...state, entities: {} },
+    { ...state, entities: { hero: { kind: 'npc', mapId: 'room' } } },
+    { ...state, entities: { hero: { kind: 'player', mapId: 'other' } } },
+    { ...state, maps: { room: { ...state.maps.room, spatialGrounding: {} } } },
+  ])
+    assert.equal(await service.sceneIllustrationBinding(changed, 'hero', 'version'), null);
+  assert.equal(await service.sceneIllustrationBinding(state, 'hero', null), null);
+  assert.equal(calls.length, 1);
+});
+
+test('illustration file access recomputes the current map and still requires membership and exact pinned revision', async () => {
+  const { AssetReuseService } = require('../../apps/api/dist/assets/reuse.service');
+  const revisionId = randomUUID(),
+    campaignId = randomUUID();
+  const binding = {
+    slot: 'map:room:background',
+    revisionId,
+    sha256: hash('art'),
+    mime: 'image/png',
+    width: 1024,
+    height: 1024,
+  };
+  const state = {
+    maps: { room: { id: 'room', backgroundMode: 'schematic' }, other: { id: 'other' } },
+    entities: { hero: { id: 'hero', kind: 'player', mapId: 'room' } },
+    artBindings: [],
+  };
+  let member = true,
+    pinned = true,
+    takenDown = false;
+  const query = async (sql) => {
+    let rows = [];
+    if (sql.includes('FROM art_asset_revisions r') && sql.includes('WHERE r.id=$1'))
+      rows = [
+        {
+          id: revisionId,
+          upload_id: 'upload',
+          filename: 'image.png',
+          mime: 'image/png',
+          sha256: binding.sha256,
+          owner_id: 'owner',
+        },
+      ];
+    else if (sql.startsWith('SELECT 1 FROM art_asset_takedowns')) rows = takenDown ? [{}] : [];
+    else if (sql.includes('SELECT c.source_version_id,c.state'))
+      rows = member ? [{ source_version_id: 'version', state, actor_id: 'hero' }] : [];
+    else if (sql.includes('SELECT p.slot')) rows = pinned ? [binding] : [];
+    else if (sql.startsWith('SELECT 1 FROM art_playable_pins')) rows = pinned ? [{}] : [];
+    return { rows, rowCount: rows.length };
+  };
+  const service = new AssetReuseService({ tx: (fn) => fn({ query }) });
+  const read = () => service.fileDescriptor('viewer', revisionId, { campaignId });
+  assert.equal((await read()).filename, 'image.png');
+  state.entities.hero.mapId = 'other';
+  await assert.rejects(read);
+  state.entities.hero.mapId = 'room';
+  pinned = false;
+  await assert.rejects(read);
+  pinned = true;
+  member = false;
+  await assert.rejects(read);
+  member = true;
+  takenDown = true;
+  await assert.rejects(read);
+});

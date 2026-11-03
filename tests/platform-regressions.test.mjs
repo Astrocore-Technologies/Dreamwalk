@@ -11,6 +11,14 @@ for (const url of [base, process.env.DATABASE_URL])
     'Local services required',
   );
 const pool = new pg.Pool({ connectionString: process.env.DATABASE_URL });
+async function storedPrivateCast(id) {
+  return (
+    await pool.query(
+      'SELECT pr.snapshot FROM adventures a JOIN adventure_private_releases pr ON pr.id=a.private_release_id WHERE a.id=$1',
+      [id],
+    )
+  ).rows[0].snapshot.publicNpcs;
+}
 const suffix = randomUUID().replaceAll('-', '').slice(0, 12);
 let cookie = '';
 async function request(method, path, body, expected = 200, authenticated = true) {
@@ -155,8 +163,9 @@ await test('public snapshots, media visibility and taxonomy regressions', async 
         greeting: 'PRIVATE_GREETING',
       });
       const detail = await request('GET', `/adventures/${adventure.slug}`, undefined, 200, false);
-      assert.equal(detail.npcs[0].name, 'Approved NPC');
-      assert.equal(detail.npcs[0].greeting, 'Approved greeting');
+      assert.deepEqual(detail.npcs, []);
+      assert.equal(detail.publicNpcs, undefined);
+      assert.equal(detail.content.world, '');
       assert.ok(!JSON.stringify(detail).includes('SENSITIVE_NPC_SECRET'));
       assert.ok(!JSON.stringify(detail).includes('PRIVATE_GREETING'));
       assert.ok(!JSON.stringify(detail).includes('PRIVATE_BIO'));
@@ -412,20 +421,26 @@ await test('public snapshots, media visibility and taxonomy regressions', async 
         await request('PATCH', `/studio/adventures/${story.id}`, {
           title: `Private-draft-${suffix}`,
         });
-        const frozen = detail.npcs.find((n) => n.id === privateNpc.id);
+        assert.deepEqual(detail.npcs, []);
+        const frozen = (await storedPrivateCast(story.id)).find((n) => n.id === privateNpc.id);
         await request('PATCH', `/npcs/${privateNpc.id}`, { name: `Unreleased-NPC-${suffix}` });
         cookie = recipientCookie;
         const unchanged = await request('GET', `/adventures/${story.slug}`);
         assert.equal(unchanged.title, story.title);
-        assert.equal(unchanged.npcs.find((n) => n.id === privateNpc.id).name, frozen.name);
+        assert.deepEqual(unchanged.npcs, []);
+        assert.equal(
+          (await storedPrivateCast(story.id)).find((n) => n.id === privateNpc.id).name,
+          frozen.name,
+        );
         assert.ok(!JSON.stringify(unchanged).includes(`Unreleased-NPC-${suffix}`));
         cookie = ownerCookie;
         await publishPrivateFixture(request, story.id);
         cookie = recipientCookie;
         const republished = await request('GET', `/adventures/${story.slug}`);
         assert.equal(republished.title, `Private-draft-${suffix}`);
+        assert.deepEqual(republished.npcs, []);
         assert.equal(
-          republished.npcs.find((n) => n.id === privateNpc.id).name,
+          (await storedPrivateCast(story.id)).find((n) => n.id === privateNpc.id).name,
           `Unreleased-NPC-${suffix}`,
         );
         await request('GET', `/npcs/${privateNpc.id}`, undefined, 404);

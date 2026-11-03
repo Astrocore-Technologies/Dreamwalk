@@ -982,7 +982,13 @@ for (const locale of ['uk', 'en', 'ru'] as const) {
   });
 }
 
-async function preflightFixture(page: Page, locale: Locale, unreviewed = false, lost = false) {
+async function preflightFixture(
+  page: Page,
+  locale: Locale,
+  unreviewed = false,
+  lost = false,
+  illustrated = false,
+) {
   const f = await fixture(page, { locale }),
     id = randomUUID(),
     requestId = randomUUID(),
@@ -992,6 +998,8 @@ async function preflightFixture(page: Page, locale: Locale, unreviewed = false, 
     actor,
   ]).state;
   const projection = projectState(state, actor);
+  if (illustrated) projection.map.backgroundMode = 'schematic';
+  const imageId = randomUUID();
   projection.turn = {
     ...projection.turn!,
     phase: 'world',
@@ -1045,7 +1053,33 @@ async function preflightFixture(page: Page, locale: Locale, unreviewed = false, 
         },
       });
     if (path.endsWith(`/asset-library/campaigns/${id}/manifest`))
-      return route.fulfill({ json: { bindings: [] } });
+      return route.fulfill({
+        json: {
+          bindings: [],
+          sceneIllustration: illustrated
+            ? {
+                mapId: projection.map.id,
+                slot: `map:${projection.map.id}:background`,
+                revisionId: imageId,
+                sha256: 'a'.repeat(64),
+                mime: 'image/png',
+                width: 1024,
+                height: 1024,
+                url: `/api/v1/asset-library/revisions/${imageId}/file?campaignId=${id}`,
+                attribution: 'Synthetic scene',
+                licenseLabel: 'Test fixture',
+              }
+            : null,
+        },
+      });
+    if (illustrated && path.endsWith(`/asset-library/revisions/${imageId}/file`))
+      return route.fulfill({
+        contentType: 'image/png',
+        body: Buffer.from(
+          'iVBORw0KGgoAAAANSUhEUgAAAEAAAABACAIAAAAlC+aJAAAACXBIWXMAAAPoAAAD6AG1e1JrAAAAn0lEQVRoge2SQQkAQRDDqvYc1ERUr4h7hIFCBKSh6cdpoht0A9ArdhfiLtENugHoFbsLcZfoBt0A9IrdhbhLdINuAHrF7kLcJbpBNwC9Ynch7hLdoBuAXrG7EHeJbtANQK/YXYi7RDfoBqBX7C7EXaIbdAPQK3YX4i7RDboB6BW7C3GX6AbdAPSK3YW4S3SDbgB6xe5C3CW6QTcAveIfHmxYUUucLoCvAAAAAElFTkSuQmCC',
+          'base64',
+        ),
+      });
     if (path.endsWith(`/game/campaigns/${id}/turns/feed`))
       return route.fulfill({
         json: {
@@ -1148,3 +1182,37 @@ test('a known preflight price does not authorize counting or reconciliation in g
   expect(f.gets).toHaveLength(0);
   noPaidOrUnexpected(f);
 });
+
+for (const locale of ['uk', 'en', 'ru'] as const)
+  test(`saved location illustration replaces ungrounded tiles without false token positions (${locale})`, async ({
+    page,
+  }) => {
+    const f = await preflightFixture(page, locale, false, false, true);
+    const scene = page.locator('[data-location-illustration]');
+    await expect(scene).toBeVisible();
+    await expect(scene.locator('img')).toBeVisible();
+    await expect
+      .poll(() =>
+        scene
+          .locator('img')
+          .evaluate((img: HTMLImageElement) => img.complete && img.naturalWidth > 0),
+      )
+      .toBe(true);
+    await expect(page.locator('[data-battlemap-grid]')).toHaveCount(0);
+    await expect(scene.getByRole('button').first()).toBeVisible();
+    await page.screenshot({
+      path: test.info().outputPath(`location-illustration-${locale}-desktop.png`),
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(scene.locator('img')).toBeVisible();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({
+      path: test.info().outputPath(`location-illustration-${locale}-mobile.png`),
+    });
+    await page.reload();
+    await expect(scene.locator('img')).toBeVisible();
+    expect(f.counts).toHaveLength(0);
+    noPaidOrUnexpected(f);
+  });

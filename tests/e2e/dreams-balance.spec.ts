@@ -48,7 +48,8 @@ for (const locale of ['en', 'ru', 'uk']) {
             },
       });
     });
-    await page.goto('/auth/sign-up');
+    // Auth is intentionally chrome-free; balance belongs to the signed-in app shell.
+    await page.goto('/help');
     const balance = page.getByTestId('dreams-balance');
     await expect(balance).toHaveText(locale === 'en' ? '50.00' : '50,00');
     await expect(balance).toHaveCSS('font-size', '16px');

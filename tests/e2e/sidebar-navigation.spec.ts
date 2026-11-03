@@ -3,7 +3,8 @@ import { test, expect } from '@playwright/test';
 test('desktop and mobile sidebar keep studio/settings without duplicate creation or early-access footer', async ({
   page,
 }) => {
-  await page.goto('/auth/sign-up');
+  // Authentication is standalone; navigation is verified on a public application page.
+  await page.goto('/help');
   for (const width of [1440, 390]) {
     await page.setViewportSize({ width, height: 900 });
     if (width === 390) await page.locator('.mobile-menu').click();

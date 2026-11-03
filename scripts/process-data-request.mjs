@@ -1,3 +1,4 @@
+import { readerInvitationPayload } from '../packages/contracts/dist/index.js';
 import { exportManualLiveData, lockManualLiveData } from './manual-live-data-requests.mjs';
 import {
   eraseVisualAuthoring,
@@ -168,9 +169,14 @@ try {
           'SELECT id,adventure_id,reason,status,created_at FROM reports WHERE reporter_id=$1',
           [user.id],
         ),
-        notifications: await rows(
-          'SELECT type,payload,read,created_at FROM notifications WHERE user_id=$1',
-          [user.id],
+        notifications: (
+          await rows('SELECT type,payload,read,created_at FROM notifications WHERE user_id=$1', [
+            user.id,
+          ])
+        ).map((notification) =>
+          notification.type === 'invitation'
+            ? { ...notification, payload: readerInvitationPayload(notification.payload) }
+            : notification,
         ),
         invitations: await rows(
           'SELECT id,adventure_id,owner_id,recipient_id,status,created_at,updated_at FROM adventure_invitations WHERE owner_id=$1 OR recipient_id=$1',
