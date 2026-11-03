@@ -190,6 +190,16 @@ for (const locale of ['ru', 'uk', 'en']) {
       }
     }
     expect(writes).toEqual([]);
+    await page.goto('/library');
+    await page.locator('a.button[href="/explore"]').first().click();
+    await expect(page).toHaveURL(/\/explore$/);
+    await page.goBack();
+    await expect(page).toHaveURL(/\/library$/);
+    await expect(page.locator('button[aria-pressed]').first()).toHaveAttribute(
+      'aria-pressed',
+      'true',
+    );
+    expect(writes).toEqual([]);
     await page.goto('/library?tab=invitations');
     await page.locator('.invitation-list .button.primary').click();
     await expect(page.locator('button[aria-pressed]').nth(1)).toHaveAttribute(
