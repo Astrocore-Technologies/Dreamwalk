@@ -1,3 +1,8 @@
+import {
+  activateRegisteredReleaseDeployment,
+  releaseDeploymentId,
+  ReleaseDeploymentReadiness,
+} from './generation/release-deployment';
 import { PaidStartService } from './game/paid-start.service';
 import { PaidStartController } from './game/paid-start.controller';
 import { StoryAuthoringController } from './story-authoring/controller';
@@ -33,7 +38,7 @@ import { AssetReuseController } from './assets/reuse.controller';
 import { AssetReuseService } from './assets/reuse.service';
 import { InvitationsController } from './invitations';
 import { DataRequestsController } from './data-requests';
-import { Errors } from './errors';
+import { Errors, fail } from './errors';
 import { config } from './config';
 import { ingressAllowed } from './ingress';
 import { PlayableService } from './game/playable.service';
@@ -42,6 +47,7 @@ import { GameService } from './game/game.service';
 import { NpcAiService } from './ai/npc-ai.service';
 import { GameController } from './game/game.controller';
 import { attachGameSockets } from './game/game.socket';
+const releaseReadiness = new ReleaseDeploymentReadiness(process.env.GENERATION_MODE === 'release');
 @Controller('api/v1')
 class Health {
   constructor(
@@ -50,6 +56,8 @@ class Health {
   ) {}
   @Get('health')
   async health() {
+    if (!releaseReadiness.ready)
+      fail(503, 'GENERATION_RELEASE_STARTING', 'GENERATION_RELEASE_STARTING');
     await this.db.query('SELECT 1');
     return {
       status: 'ok',
@@ -139,6 +147,13 @@ async function bootstrap() {
     .setLiveAuthorizer((client, owner, sessionId, input) =>
       app.get(GenerationAuthority).authorizeImage(client, owner, sessionId, input),
     );
+  app
+    .get(ImageGenerationService)
+    .setReleaseResultAuthorizer((client, actor, authorizationId, revision, hash) =>
+      app
+        .get(GenerationAuthority)
+        .authorizeReleaseResult(client, actor, authorizationId, revision, hash),
+    );
   app.use((req: Request, res: Response, next: NextFunction) => {
     // Health exposes no private data; all other paths require the trusted web ingress.
     if (req.method === 'GET' && req.path === '/api/v1/health') return next();
@@ -216,5 +231,24 @@ async function bootstrap() {
   app.enableShutdownHooks();
   attachGameSockets(app.getHttpServer(), app.get(GameService));
   await app.listen(config.API_PORT, config.API_HOST);
+  const generation = readGenerationConfig(process.env);
+  if (generation.mode === 'release') {
+    try {
+      await releaseReadiness.activate(() =>
+        app
+          .get(Db)
+          .tx((c) =>
+            activateRegisteredReleaseDeployment(
+              c,
+              generation,
+              releaseDeploymentId(process.env.RAILWAY_DEPLOYMENT_ID),
+            ),
+          ),
+      );
+    } catch (error) {
+      await app.close();
+      throw error;
+    }
+  }
 }
 void bootstrap();

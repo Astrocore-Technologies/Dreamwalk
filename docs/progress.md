@@ -987,3 +987,15 @@ overflow and absence of network writes. Browser execution is blocked before page
 load by this executor's Chromium Unix-socket restriction; the permitted escalation
 could not start because of its restricted filesystem mount. These browser cases
 remain unverified locally and require CI. No paid calls, push, deployment or merge.
+
+## Remove story duration and public scope panel (2026-11-03)
+
+Removed fixed duration from story cards, public preparation details, the author input
+and author preview. Removed the public “story boundaries” panel. Stored duration and
+boundaries remain round-tripped unchanged for compatibility; the author's content
+warnings step, moderation notice and NPC behavioral boundaries are unchanged. This
+is a presentation change, not removal of safety rules or existing author data.
+
+Added source regression checks and a public mobile browser case that checks the
+panels are absent while API metadata remains unchanged. Browser verification uses CI;
+this executor cannot launch Chromium under its Unix-socket restrictions.

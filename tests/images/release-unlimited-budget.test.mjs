@@ -6,6 +6,9 @@ import { createRequire } from 'node:module';
 import { db } from '../game/support-runtime.mjs';
 import { requestEstimateOwnerProfile } from './owner-config-fixture.mjs';
 const require = createRequire(import.meta.url);
+const {
+  activateReleaseDeployment,
+} = require('../images/release-deployment-fixture.cjs');
 const { Db } = require('../../apps/api/dist/db.js');
 const { defaultImagePolicy } = require('../../apps/api/dist/image-generation/contracts.js');
 const {
@@ -144,6 +147,7 @@ await test(
             'INSERT INTO spark_wallets(owner_id,enabled,balance_subunits) VALUES($1,true,1000)',
             [id],
           );
+          await database.tx((c) => activateReleaseDeployment(c, config));
           const admission = new ReleaseAdmission(config);
           const policy = await database.tx((c) => admission.policy(c, id));
           assert.equal(policy.releaseUnlimitedAllowance, true);

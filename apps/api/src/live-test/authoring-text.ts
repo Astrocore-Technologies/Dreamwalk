@@ -610,7 +610,9 @@ export class AuthoringTextEngine {
         (response &&
           typeof response === 'object' &&
           'code' in response &&
-          response.code === 'GENERATION_POLICY_CHANGED')
+          ['GENERATION_POLICY_CHANGED', 'GENERATION_RELEASE_PROFILE_NOT_ACTIVE'].includes(
+            String(response.code),
+          ))
           ? 'GENERATION_POLICY_CHANGED'
           : 'AUTHORING_STALE';
       await this.failure(id, new ProviderFailure(policyCode, false), true, ownerId);
@@ -769,8 +771,17 @@ export class AuthoringTextEngine {
       await this.db.tx(async (c) => {
         await this.lockSource(c, current.actor_id);
         await assertBoundedTextSource(c, current.session_id, current.project_id);
-        await this.live.authorizeText(c, current.actor_id, current.session_id);
-        const activePolicy = await this.activePolicy(c, current.session_id);
+        if (this.live.mode === 'release')
+          await this.live.authorizeReleaseResult(
+            c,
+            current.actor_id,
+            current.session_id,
+            Number(current.generation_policy_revision),
+            current.generation_policy_hash ?? '',
+          );
+        else await this.live.authorizeText(c, current.actor_id, current.session_id);
+        const activePolicy =
+          this.live.mode === 'release' ? null : await this.activePolicy(c, current.session_id);
         await validateFence(c, this.binding(current));
         const row = (
           await c.query<AuthoringJob>(
@@ -779,10 +790,10 @@ export class AuthoringTextEngine {
           )
         ).rows[0];
         if (row.status !== 'generated' || row.cancel_requested) return;
-        if (!this.policyMatches(row, activePolicy))
+        if (this.live.mode !== 'release' && !this.policyMatches(row, activePolicy))
           throw new ProviderFailure('GENERATION_POLICY_CHANGED', false);
         if (
-          row.provider_version !== this.provider.version ||
+          (this.live.mode !== 'release' && row.provider_version !== this.provider.version) ||
           row.deadline_at === null ||
           row.completed_at === null ||
           row.completed_at.getTime() > row.deadline_at.getTime() ||
@@ -801,7 +812,14 @@ export class AuthoringTextEngine {
           Number(spend.actual_micros) !== Number(row.actual_micros)
         )
           throw new Error('cost not settled');
-        const applied = await commit(c, this.binding(row), row.proposal);
+        // Provider identity includes rates/model envelope. A restarted release process may
+        // complete an admitted result only after its current bounded parser and source
+        // validator accept it; the immutable old receipt still determines its cost.
+        const proposal =
+          this.live.mode === 'release'
+            ? this.definition.validateProposal(row.proposal)
+            : row.proposal;
+        const applied = await commit(c, this.binding(row), proposal);
         await settleReservationSparks(c, row.reservation_id, {
           outcome: 'success',
           actualMicros: String(row.actual_micros),

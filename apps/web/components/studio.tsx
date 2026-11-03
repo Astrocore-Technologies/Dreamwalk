@@ -762,13 +762,6 @@ function AdventureEditor({ id }: { id: string }) {
                       onChange={(e) => change('playersMax', Number(e.target.value))}
                     />
                   </Field>
-                  <Field label={t('Продолжительность')}>
-                    <Input
-                      maxLength={80}
-                      value={draft.duration}
-                      onChange={(e) => change('duration', e.target.value)}
-                    />
-                  </Field>
                   <fieldset className="stack">
                     <legend>{t('Теги')}</legend>
                     <ErrorBox message={tagDefinitions.error} retry={tagDefinitions.reload} />
@@ -1190,7 +1183,7 @@ function AdventureEditor({ id }: { id: string }) {
                   </p>
                   <span>
                     {draft.playersMin}–{draft.playersMax} {t(' игроков · ')}
-                    {taxonomy(draft.duration)} · {t(draft.difficulty)}
+                    {t(draft.difficulty)}
                   </span>
                 </div>
                 <h3>{t('Мир истории')}</h3>

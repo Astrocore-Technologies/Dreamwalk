@@ -2,7 +2,7 @@ import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { exposeDiscoveryFixtures } from './support/discovery-fixtures';
 
-for (const outcome of ['ready', 'failed'] as const)
+for (const outcome of ['ready', 'failed', 'stale'] as const)
   test(
     'start preparation ' + outcome + ': consent, reload and exactly-once dispatch',
     async ({ page }) => {
@@ -69,11 +69,13 @@ for (const outcome of ['ready', 'failed'] as const)
         if (path.endsWith('/dispatch')) {
           expect(req.postDataJSON().consent).toBe(true);
           dispatches++;
-          ready = outcome === 'ready';
+          if (outcome === 'stale' && dispatches === 1)
+            return route.fulfill({ status: 409, json: { code: 'GENERATION_POLICY_CHANGED' } });
+          ready = outcome !== 'failed';
           await new Promise((r) => setTimeout(r, 200));
           return route.fulfill({
             json:
-              outcome === 'ready'
+              outcome !== 'failed'
                 ? { ...state, status: 'ready' }
                 : {
                     ...state,
@@ -130,6 +132,21 @@ for (const outcome of ['ready', 'failed'] as const)
       await page
         .getByRole('button', { name: 'Подтвердить и начать', exact: true })
         .click({ clickCount: 2 });
+      if (outcome === 'stale') {
+        await expect(
+          page.getByText(
+            'Настройки генерации обновились. Получи новую оценку стоимости перед запуском.',
+          ),
+        ).toBeVisible();
+        await expect(page.getByRole('dialog')).toHaveCount(0);
+        expect(dispatches).toBe(1);
+        expect(starts).toBe(0);
+        await page.getByRole('button', { name: 'Начать прохождение', exact: true }).click();
+        await expect(page.getByRole('dialog')).toBeVisible();
+        expect(quotes).toBe(3);
+        expect(dispatches).toBe(1);
+        await page.getByRole('button', { name: 'Подтвердить и начать', exact: true }).click();
+      }
       if (outcome === 'failed') {
         await expect(
           page.getByRole('status').filter({ hasText: 'Подготовка не удалась.' }),
@@ -153,7 +170,7 @@ for (const outcome of ['ready', 'failed'] as const)
         return;
       }
       await expect(page).toHaveURL(new RegExp('/game/' + campaignId + '$'));
-      expect(dispatches).toBe(1);
+      expect(dispatches).toBe(outcome === 'stale' ? 2 : 1);
       expect(starts).toBe(1);
     },
   );

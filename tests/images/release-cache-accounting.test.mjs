@@ -6,6 +6,9 @@ import { createRequire } from 'node:module';
 import { db } from '../game/support-runtime.mjs';
 import { requestEstimateOwnerProfile } from './owner-config-fixture.mjs';
 const require = createRequire(import.meta.url);
+const {
+  activateReleaseDeployment,
+} = require('../images/release-deployment-fixture.cjs');
 const { GenerationAuthority } = require('../../apps/api/dist/generation/service.js');
 const { readGenerationConfig } = require('../../apps/api/dist/generation/config.js');
 const { ReleaseGenerationProvider } = require('../../apps/api/dist/generation/release-provider.js');
@@ -40,6 +43,7 @@ async function fixture(details, priced = true, forgedFlag = false) {
     GENERATION_MODE: 'release',
     GENERATION_CONFIG_JSON: JSON.stringify({ ...profile, aggregateCapMicros: 10000000 }),
   });
+  await database.tx((c) => activateReleaseDeployment(c, config));
   const authority = new GenerationAuthority(database, config);
   let calls = 0;
   const inner = new OpenAiNpcProvider(

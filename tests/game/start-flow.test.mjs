@@ -10,6 +10,13 @@ import {
 } from '../e2e/support/unpaid-fixture-campaign.ts';
 import { providerSparkSubunits } from '../../apps/web/components/visual-authoring/spark-equivalent.ts';
 import { LaunchGate } from '../../apps/web/components/home/launch-gate.ts';
+class ApiError extends Error {
+  constructor(message, status, code) {
+    super(message);
+    this.status = status;
+    this.code = code;
+  }
+}
 const prepared = { id: 'prep', status: 'prepared', reused: false, campaignId: null, jobs: [] };
 test('terminal jobs never suggest a new paid attempt before settlement', () => {
   for (const status of ['failed', 'rejected', 'stale', 'cancelled']) {
@@ -86,6 +93,7 @@ async function harness(
     'next/navigation': { useRouter: () => ({ push: (path) => paths.push(path) }) },
     '@dreamwalk/contracts': { formatSparkSubunits: String },
     '@/lib/client': {
+      ApiError,
       api: transport,
       errorMessage: (e) => e.message,
       useClient: () => client,
@@ -498,3 +506,56 @@ test('locale fixture recovery is restricted to settings and read-only campaign r
     if (resource === 'settings') assert.deepEqual(calls[0][1], { data: { language: 'uk' } });
   }
 });
+
+for (const code of [
+  'GENERATION_POLICY_CHANGED',
+  'AUTHORING_QUOTE_EXPIRED',
+  'GENERATION_RELEASE_PROFILE_NOT_ACTIVE',
+])
+  test(`definite stale quote rejection ${code} requires a fresh estimate and consent`, async () => {
+    let quotes = 0,
+      dispatches = 0;
+    const h = await harness(async (path) => {
+      if (path.endsWith('/quote')) return { ...quote, id: `quote-${++quotes}` };
+      if (path.endsWith('/dispatch')) {
+        dispatches++;
+        if (dispatches === 1) throw new ApiError('Get a new estimate', 409, code);
+        return { ...prepared, jobs: [{ status: 'queued' }] };
+      }
+      return prepared;
+    });
+    h.render();
+    await h.click('Начать прохождение');
+    await h.click('Подтвердить и начать');
+    assert.equal(h.saved.has('dreamwalk-start:u:v::dispatch-pending'), false);
+    assert.equal(dispatches, 1);
+    assert.equal(quotes, 1);
+    assert.equal(h.timers.size, 0);
+    await h.click('Начать прохождение');
+    assert.equal(quotes, 2);
+    assert.equal(dispatches, 1, 'fresh estimate must not dispatch without renewed consent');
+    await h.click('Подтвердить и начать');
+    assert.equal(dispatches, 2);
+  });
+for (const error of [
+  new ApiError('unknown outcome', 409, 'PROVIDER_OUTCOME_UNKNOWN'),
+  new ApiError('server failed', 500, 'GENERATION_POLICY_CHANGED'),
+  Object.assign(new Error('untrusted error shape'), {
+    status: 409,
+    code: 'GENERATION_POLICY_CHANGED',
+  }),
+])
+  test(`uncertain dispatch preserves guard: ${error.message}`, async () => {
+    const h = await harness(async (path) => {
+      if (path.endsWith('/quote')) return quote;
+      if (path.endsWith('/dispatch')) throw error;
+      return prepared;
+    });
+    h.render();
+    await h.click('Начать прохождение');
+    await h.click('Подтвердить и начать');
+    assert.equal(h.saved.get('dreamwalk-start:u:v::dispatch-pending'), 'yes');
+    assert.ok(
+      h.nodes().some((n) => n.type === 'button' && n.props.children === 'Проверить состояние'),
+    );
+  });
