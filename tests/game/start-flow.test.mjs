@@ -3,7 +3,11 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { transformSync } from 'esbuild';
 import { startState } from '../../apps/web/components/game/start-state.ts';
-import { createUnpaidFixtureCampaign } from '../e2e/support/unpaid-fixture-campaign.ts';
+import {
+  createUnpaidFixtureCampaign,
+  setUnpaidFixtureLocale,
+  readUnpaidFixtureCampaign,
+} from '../e2e/support/unpaid-fixture-campaign.ts';
 import { providerSparkSubunits } from '../../apps/web/components/visual-authoring/spark-equivalent.ts';
 import { LaunchGate } from '../../apps/web/components/home/launch-gate.ts';
 const prepared = { id: 'prep', status: 'prepared', reused: false, campaignId: null, jobs: [] };
@@ -462,4 +466,34 @@ test('unpaid fixture never retries uncertain failures, server errors, or nonretr
     /connection lost/,
   );
   assert.equal(calls, 1);
+});
+
+test('locale fixture recovery is restricted to settings and read-only campaign resources', async () => {
+  for (const resource of ['settings', 'snapshot', 'turns/feed']) {
+    const calls = [],
+      waits = [];
+    const accepted = { status: () => 200 };
+    const invoke = async (...args) => {
+      calls.push(args);
+      return calls.length === 1
+        ? { status: () => 429, json: async () => ({ code: 'RATE_LIMITED', retryable: true }) }
+        : accepted;
+    };
+    const wait = async (ms) => waits.push(ms);
+    const result =
+      resource === 'settings'
+        ? await setUnpaidFixtureLocale({ patch: invoke }, 'uk', wait)
+        : await readUnpaidFixtureCampaign({ get: invoke }, 'fixture', resource, wait);
+    assert.equal(result, accepted);
+    assert.equal(calls.length, 2);
+    assert.deepEqual(calls[0], calls[1]);
+    assert.deepEqual(waits, [61000]);
+    assert.equal(
+      calls[0][0],
+      resource === 'settings'
+        ? '/api/v1/account/settings'
+        : `/api/v1/game/campaigns/fixture/${resource}`,
+    );
+    if (resource === 'settings') assert.deepEqual(calls[0][1], { data: { language: 'uk' } });
+  }
 });

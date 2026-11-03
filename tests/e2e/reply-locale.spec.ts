@@ -1,6 +1,10 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
-import { createUnpaidFixtureCampaign } from './support/unpaid-fixture-campaign';
+import {
+  createUnpaidFixtureCampaign,
+  setUnpaidFixtureLocale,
+  readUnpaidFixtureCampaign,
+} from './support/unpaid-fixture-campaign';
 import {
   gameEnvelopeSchema,
   storyTurnInputSchema,
@@ -49,7 +53,7 @@ async function selectLocale(page: Page, locale: Locale) {
 }
 
 async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
-  test.setTimeout(90_000);
+  test.setTimeout(180_000);
   const handle = `locale_ui_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
   const registered = await page.request.post('/api/v1/auth/register', {
     data: {
@@ -60,8 +64,10 @@ async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
     },
   });
   expect(registered.ok()).toBeTruthy();
+  const settings = await setUnpaidFixtureLocale(page.request, locale);
   expect(
-    (await page.request.patch('/api/v1/account/settings', { data: { language: locale } })).ok(),
+    settings.ok(),
+    `Fixture settings returned ${settings.status()}: ${await settings.text()}`,
   ).toBeTruthy();
   await page.addInitScript((value) => localStorage.setItem('dreamwalk-language', value), locale);
   const started = await createUnpaidFixtureCampaign(page.request);
@@ -70,11 +76,13 @@ async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
     `Fixture creation returned ${started.status()}: ${await started.text()}`,
   ).toBeTruthy();
   const { campaignId } = await started.json();
-  const campaignPath = `/api/v1/game/campaigns/${campaignId}`;
   // Keep a real, schema-validated turn projection and socket. Only the story
   // transport is synthetic; never invent ownTurn to enable an otherwise locked UI.
-  const snapshotResponse = await page.request.get(`${campaignPath}/snapshot`);
-  expect(snapshotResponse.ok()).toBeTruthy();
+  const snapshotResponse = await readUnpaidFixtureCampaign(page.request, campaignId, 'snapshot');
+  expect(
+    snapshotResponse.ok(),
+    `Fixture snapshot returned ${snapshotResponse.status()}: ${await snapshotResponse.text()}`,
+  ).toBeTruthy();
   const { projection } = gameEnvelopeSchema.parse(await snapshotResponse.json());
   expect(projection.turn).toMatchObject({
     phase: 'player',
@@ -88,8 +96,11 @@ async function setup(page: Page, locale: Locale, loseFirstSubmission = false) {
     phaseEpoch: projection.turn.phaseEpoch,
     rulesetVersion: 1,
   };
-  const feedResponse = await page.request.get(`${campaignPath}/turns/feed`);
-  expect(feedResponse.ok()).toBeTruthy();
+  const feedResponse = await readUnpaidFixtureCampaign(page.request, campaignId, 'turns/feed');
+  expect(
+    feedResponse.ok(),
+    `Fixture feed returned ${feedResponse.status()}: ${await feedResponse.text()}`,
+  ).toBeTruthy();
   const initialFeed: StoryTurnFeed = await feedResponse.json();
   expect(initialFeed.canSubmit).toBe(true);
   expect(initialFeed.configuration).toMatchObject({
