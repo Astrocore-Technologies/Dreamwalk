@@ -129,6 +129,7 @@ export const storyTurnConfirmSchema = z
   .strict();
 export type StoryTurnConfirm = z.infer<typeof storyTurnConfirmSchema>;
 export interface StoryTurnReceipt {
+  generationNeedsConfirmation?: boolean;
   id: string;
   operationId: string;
   status:

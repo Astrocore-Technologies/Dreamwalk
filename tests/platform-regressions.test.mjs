@@ -111,7 +111,13 @@ await test('public snapshots, media visibility and taxonomy regressions', async 
     adventure = await request(
       'POST',
       `/admin/adventures/${adventure.id}/moderate`,
-      { decision: 'approve', reason: 'Regression approval' },
+      {
+        decision: 'approve',
+        reason: 'Regression approval',
+        reviewedPlayableVersionId: (
+          await request('GET', `/admin/adventures/${adventure.id}/playable-review`)
+        ).versionId,
+      },
       201,
     );
     await t.test(
@@ -128,7 +134,13 @@ await test('public snapshots, media visibility and taxonomy regressions', async 
         await request(
           'POST',
           `/admin/adventures/${adventure.id}/moderate`,
-          { decision: 'approve', reason: 'Restore after withdrawal test' },
+          {
+            decision: 'approve',
+            reason: 'Restore after withdrawal test',
+            reviewedPlayableVersionId: (
+              await request('GET', `/admin/adventures/${adventure.id}/playable-review`)
+            ).versionId,
+          },
           201,
         );
       },
@@ -197,7 +209,13 @@ await test('public snapshots, media visibility and taxonomy regressions', async 
         await request(
           'POST',
           `/admin/adventures/${adventure.id}/moderate`,
-          { decision: 'approve', reason: 'Approve explicit public visibility' },
+          {
+            decision: 'approve',
+            reason: 'Approve explicit public visibility',
+            reviewedPlayableVersionId: (
+              await request('GET', `/admin/adventures/${adventure.id}/playable-review`)
+            ).versionId,
+          },
           201,
         );
         const detail = await request('GET', `/adventures/${adventure.slug}`, undefined, 200, false);

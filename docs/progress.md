@@ -932,3 +932,26 @@ explicitly authored. No external card import, TTS, new emotional art or paid cal
 - Local exact-geometry offscreen contact sheet inspected at token sizes; schema/compile/
   projection and deterministic-render-selection regressions added. Unique NPC image
   generation remains future work, not part of this change.
+
+### Hero portrait creation (implementation, not production activation)
+
+The New Hero/edit-hero modal can prepare a drawn portrait from an editable prompt seeded
+with name, backstory and traits; private notes are not included. It reuses the image
+quote, explicit consent, Sparks reservation/settlement, durable job and private library
+pipeline. A draft context is scoped by authenticated actor, never used as a hero ID or
+ownership proof. No hero is silently created or modified: the owner previews/selects
+an owned portrait revision, then explicitly saves the hero. Closing the modal retains
+completed artwork in the private library and recovered portrait history, without retrying
+or charging for selection. Production availability still depends on the configured image
+generation policy; this change does not enable providers or make live requests.
+
+### Compact image cost confirmation (local preparation)
+
+Hero/library images, inline location images and character authoring image stages now
+use an explicit estimate button followed by one Confirm/Cancel decision. The decision
+shows approximate Sparks cost, held reserve and uncertainty; it authorizes only the
+current immutable quote. Rights are disclosed at estimate preparation, optional metadata
+and references remain under Advanced options, and server rights/expiry/policy/framing
+validation is unchanged. Editing inputs or cancellation discards the pending decision;
+no automatic re-quote, dispatch or retry is introduced. Saved outputs still require an
+explicit selection/binding action. This does not enable providers or publish/deploy code.

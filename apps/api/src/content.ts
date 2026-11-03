@@ -619,7 +619,12 @@ export class ContentController {
       const { manifest } = await this.db.tx((c) =>
         ownedCharacterPackage(c, u.id, String(data.characterPackageVersionId)),
       );
-      data.portraitAssetId = manifest.parts.find((p) => p.role === 'portrait')!.uploadId;
+      // An explicit portrait edit is independent of the existing in-world sprite package.
+      if (
+        Object.hasOwn(patch, 'characterPackageVersionId') &&
+        !Object.hasOwn(patch, 'portraitAssetId')
+      )
+        data.portraitAssetId = manifest.parts.find((p) => p.role === 'portrait')!.uploadId;
     }
     if (
       'modelProfileId' in data &&

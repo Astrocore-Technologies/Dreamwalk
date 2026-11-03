@@ -1,6 +1,7 @@
 'use client';
 import { useSparksWallet } from '@/lib/use-sparks-wallet';
 import { sparksBalanceMessages } from './sparks-balance';
+import { HeroPortraitControl } from './hero-portrait-control';
 import { CharacterSpriteControl } from './visual-authoring/character-sprite-control';
 import { useVisualText } from './visual-authoring/messages';
 import { readStoryReturn, storyWithHero } from './story-return';
@@ -396,6 +397,7 @@ export function HeroesPage() {
           onClose={() => setEditing(null)}
         >
           <form
+            id="hero-editor"
             method="post"
             className="stack"
             onSubmit={async (e) => {
@@ -472,13 +474,23 @@ export function HeroesPage() {
               />
             </Field>
             <ErrorBox message={error} />
-            <div className="form-actions">
-              <Button type="button" variant="secondary" onClick={() => setEditing(null)}>
-                {tr('Отмена')}
-              </Button>
-              <Button busy={busy}>{tr('Сохранить героя')}</Button>
-            </div>
           </form>
+          <HeroPortraitControl
+            name={editing.name || ''}
+            backstory={editing.backstory || ''}
+            traits={editing.traits || []}
+            onSelected={(assetId) =>
+              setEditing((current) => (current ? { ...current, portraitAssetId: assetId } : null))
+            }
+          />
+          <div className="form-actions">
+            <Button type="button" variant="secondary" onClick={() => setEditing(null)}>
+              {tr('Отмена')}
+            </Button>
+            <Button type="submit" form="hero-editor" busy={busy}>
+              {tr('Сохранить героя')}
+            </Button>
+          </div>
         </Modal>
       )}
       {remove && (

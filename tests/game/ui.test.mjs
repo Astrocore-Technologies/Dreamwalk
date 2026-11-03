@@ -168,8 +168,7 @@ test('Studio retains standalone editor safeguards and uses reviewed builder plus
   assert.doesNotMatch(editor, /dangerouslySetInnerHTML|JSON\.parse|<Textarea/);
   assert.match(studio, /useDirtyWarning\(dirty\)/);
   assert.match(studio, /dirty \? setConfirm\('leave'\)/);
-  assert.match(studio, /step === 2 \|\| step === 6/);
-  assert.match(studio, /<StoryPlayableBuilder[\s\S]*?beforePrepare=\{autosave.flush\}/);
+  assert.doesNotMatch(studio, /<StoryPlayableBuilder/);
   assert.match(studio, /<PrivateRelease[\s\S]*?beforePublish=\{autosave.flush\}/);
   assert.doesNotMatch(studio, /<PlayableMapEditor/);
 });
@@ -205,12 +204,10 @@ test('playable select labels stay exact independently of option text', async () 
   // A wrapping label also contains option text. Explicit names preserve precise
   // label queries even when user-authored map/NPC names change.
   const selects = [
-    ...editor.matchAll(
-      /<Field label=\{t\('([^']+)'\)\}>\s*<Select\s+aria-label=\{t\('([^']+)'\)\}/g,
-    ),
+    ...editor.matchAll(/<Field label=\{([^}\n]+)\}>\s*<Select\s+aria-label=\{([^}\n]+)\}/g),
   ];
   assert.equal(selects.length, [...editor.matchAll(/<Select\b/g)].length);
-  assert.ok(selects.some((match) => match[1] === 'Силуэт NPC'));
+  assert.ok(selects.some((match) => match[1] === "t('Силуэт NPC')"));
   for (const match of selects) assert.equal(match[1], match[2]);
 });
 

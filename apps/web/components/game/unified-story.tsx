@@ -1,10 +1,8 @@
 'use client';
-import {
-  SparkQuotePrice,
-  SparkQuoteNotice,
-  ProviderSparkReserve,
-  SparkReceiptCost,
-} from '../visual-authoring/sparks-cost';
+import { SparkReceiptCost } from '../visual-authoring/sparks-cost';
+import { StoryCost } from './story-cost';
+import { StoryReplyConfirmation } from './story-reply-confirmation';
+import { WorldGenerationConfirmation } from './world-generation-confirmation';
 import { useCallback, useEffect, useId, useRef, useState } from 'react';
 import type {
   GameProjection,
@@ -64,6 +62,8 @@ export function UnifiedStory({
   recipient,
   onClearRecipient,
   disabled,
+  partyDisabled = disabled,
+  worldGenerationAllowed = false,
   onWorldRefresh,
   onBusyChange,
 }: {
@@ -73,6 +73,7 @@ export function UnifiedStory({
   onClearRecipient: () => void;
   disabled: boolean;
   partyDisabled?: boolean;
+  worldGenerationAllowed?: boolean;
   onWorldRefresh: () => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
@@ -85,7 +86,12 @@ export function UnifiedStory({
   const [channel, setChannel] = useState<'say' | 'whisper'>('say');
   const [text, setText] = useState(''),
     [feed, setFeed] = useState<StoryTurnFeed | null>(null);
-  const [prepared, setPrepared] = useState<Prepared | null>(null);
+  const [prepared, setPreparedState] = useState<Prepared | null>(null);
+  const preparedCurrent = useRef<Prepared | null>(null);
+  const setPrepared = useCallback((value: Prepared | null) => {
+    preparedCurrent.current = value;
+    setPreparedState(value);
+  }, []);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState(''),
@@ -184,6 +190,21 @@ export function UnifiedStory({
       setNotice(h('changed'));
     }
   }, [draftKey, feed?.canonRevision, targetValid, prepared]);
+  useEffect(() => {
+    const expiresAt = prepared?.result.quote?.expiresAt;
+    if (!expiresAt) return;
+    const expire = () => {
+      setPrepared(null);
+      setNotice(copy.current('expired'));
+    };
+    const remaining = Date.parse(expiresAt) - Date.now();
+    if (!Number.isFinite(remaining) || remaining <= 0) {
+      expire();
+      return;
+    }
+    const timer = setTimeout(expire, remaining);
+    return () => clearTimeout(timer);
+  }, [prepared]);
   const lastEntry = feed?.entries.at(-1)?.id;
   useEffect(() => {
     const element = feedElement.current;
@@ -274,7 +295,8 @@ export function UnifiedStory({
       actionLock.current ||
       disabled ||
       (!recover &&
-        (!available ||
+        (sent !== preparedCurrent.current ||
+          !available ||
           !targetValid ||
           pending ||
           uncertain ||
@@ -287,7 +309,11 @@ export function UnifiedStory({
       setError(h('noBound'));
       return;
     }
-    if (!recover && Date.parse(quote.expiresAt) <= Date.now()) {
+    if (
+      !recover &&
+      (!Number.isFinite(Date.parse(quote.expiresAt)) || Date.parse(quote.expiresAt) <= Date.now())
+    ) {
+      setPrepared(null);
       setError(h('expired'));
       return;
     }
@@ -548,6 +574,25 @@ export function UnifiedStory({
               </p>
             )}
             {feed && !available && <p className={styles.status}>{h('unavailable')}</p>}
+            {worldGenerationAllowed && projection.turn?.phase === 'world' && (
+              <WorldGenerationConfirmation
+                campaignId={campaignId}
+                scope={JSON.stringify([turnFence, feed?.canonRevision, projection.map.id])}
+                disabled={partyDisabled}
+              />
+            )}
+            {feed?.turns
+              .filter((turn) => turn.generationNeedsConfirmation)
+              .map((turn) => (
+                <StoryReplyConfirmation
+                  key={turn.id}
+                  campaignId={campaignId}
+                  turnId={turn.id}
+                  scope={JSON.stringify([turnFence, feed.canonRevision, projection.map.id])}
+                  disabled={partyDisabled}
+                  onChanged={refresh}
+                />
+              ))}
             {uncertain && (
               <p role="status" className={styles.status}>
                 {h('unknown')}
@@ -601,8 +646,7 @@ export function UnifiedStory({
                     {actionsPreview(prepared.result.actionPreview)}
                   </>
                 )}
-                <SparkQuotePrice quote={prepared.result.quote} />
-                <SparkQuoteNotice quote={prepared.result.quote} />
+                <StoryCost quote={prepared.result.quote} />
                 {prepared.input.replyLocale && (
                   <p data-testid="story-reply-language">
                     {h('replyLanguage', {
@@ -612,9 +656,8 @@ export function UnifiedStory({
                     })}
                   </p>
                 )}
-                {prepared.result.quote.demo && <small>{h('demo')}</small>}
-                {prepared.result.quote.external && (
-                  <ProviderSparkReserve quote={prepared.result.quote} />
+                {prepared.result.quote.demo && prepared.result.quote.credits > 0 && (
+                  <small>{h('demo')}</small>
                 )}
                 <div className={styles.actions}>
                   <Button

@@ -3,7 +3,6 @@ import { AssetLibrary } from './assets/asset-library';
 import { useAssetText } from './assets/messages';
 import { AutosaveStatus } from './studio/autosave-status';
 import { useDraftAutosave } from '@/lib/use-draft-autosave';
-import { StoryPlayableBuilder } from './visual-authoring/story-playable-builder';
 import { LocationMapIntent } from './studio/location-map-intent';
 import { StoryLorebookEditor } from './studio/story-lorebook-editor';
 import { StoryNpcEditor } from './studio/story-npc-editor';
@@ -1370,13 +1369,6 @@ function AdventureEditor({ id }: { id: string }) {
           onChange={(value) => content('lorebook', value)}
           beforePreview={autosave.flush}
           disabled={busy}
-        />
-      )}
-      {!isNew && (step === 2 || step === 6) && (
-        <StoryPlayableBuilder
-          adventureId={id}
-          beforePrepare={autosave.flush}
-          onApplied={refreshArtModeration}
         />
       )}
       {!isNew && step === 7 && draft.visibility === 'private' && (

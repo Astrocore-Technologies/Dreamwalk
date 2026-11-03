@@ -86,9 +86,9 @@ export const locationImageMessages = {
   ],
   refresh: ['Обновить сохранённые данные', 'Refresh saved data', 'Оновити збережені дані'],
   review: [
-    'Я проверил соответствие изображения сохранённому описанию локации и хочу использовать эту версию.',
-    'I reviewed this image against the saved location description and want to use this revision.',
-    'Я перевірив відповідність зображення збереженому опису локації та хочу використати цю версію.',
+    'Проверь изображение перед сохранением выбранной ревизии для локации.',
+    'Review the preview, then save this image to use it for the location.',
+    'Перевір зображення перед збереженням вибраної ревізії для локації.',
   ],
   bind: [
     'Сохранить изображение для локации',

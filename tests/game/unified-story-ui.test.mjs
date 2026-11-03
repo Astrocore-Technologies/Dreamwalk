@@ -164,3 +164,34 @@ test('every unified interface message has explicit RU, EN and UK strings', async
     );
   }
 });
+
+test('ordinary gameplay offers one compact composer estimate instead of diagnostic generation controls', async () => {
+  const page = await readFile(
+    new URL('../../apps/web/components/game/game-page.tsx', import.meta.url),
+    'utf8',
+  );
+  const composer = await readFile(
+    new URL('../../apps/web/components/game/unified-story.tsx', import.meta.url),
+    'utf8',
+  );
+  const cost = await readFile(
+    new URL('../../apps/web/components/game/story-cost.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.doesNotMatch(page, /LiveTestPanel/);
+  assert.match(composer, /<StoryCost quote=/);
+  assert.doesNotMatch(composer, /ProviderSparkReserve|SparkQuoteNotice|type="checkbox"/);
+  assert.match(cost, /estimatedTotalMicros/);
+  assert.match(cost, /estimatedHold/);
+  assert.match(cost, /providerEstimateOnly/);
+  assert.doesNotMatch(cost, /USD|formatUsd/);
+  assert.match(composer, /setTimeout\(expire, remaining\)/);
+  assert.match(composer, /actionLock.current = true/);
+  assert.match(composer, /sent.key !== draftKey/);
+  assert.match(composer, /prepared\.result\.quote\.demo && prepared\.result\.quote\.credits > 0/);
+  const messages = await readFile(
+    new URL('../../apps/web/components/game/story-messages.ts', import.meta.url),
+    'utf8',
+  );
+  assert.match(messages, /Искры не списываются/);
+});

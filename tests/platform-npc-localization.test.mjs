@@ -123,7 +123,13 @@ await test('NPC original metadata translations stay revision-bound, owned and sn
     await author.call(
       'POST',
       `/admin/adventures/${story.id}/moderate`,
-      { decision: 'approve', reason: 'Synthetic test' },
+      {
+        decision: 'approve',
+        reason: 'Synthetic test',
+        reviewedPlayableVersionId: (
+          await author.call('GET', `/admin/adventures/${story.id}/playable-review`)
+        ).versionId,
+      },
       201,
     );
     await t.test(
@@ -164,7 +170,13 @@ await test('NPC original metadata translations stay revision-bound, owned and sn
         await author.call(
           'POST',
           `/admin/adventures/${story.id}/moderate`,
-          { decision: 'approve', reason: 'Synthetic second approval' },
+          {
+            decision: 'approve',
+            reason: 'Synthetic second approval',
+            reviewedPlayableVersionId: (
+              await author.call('GET', `/admin/adventures/${story.id}/playable-review`)
+            ).versionId,
+          },
           201,
         );
         const published = await anon.call('GET', `/adventures/${story.slug}`);

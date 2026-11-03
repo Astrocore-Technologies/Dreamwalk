@@ -12,7 +12,10 @@ test('hero choice travels through every campaign launch and membership acceptanc
   ]) {
     const text = await source(file);
     assert.match(text, /HeroSelection/);
-    assert.match(text, /heroSelection\.body/);
+    if (file === 'home/home-page.tsx') {
+      assert.match(text, /storyReturnPath\(active\.slug, heroSelection\.heroId\)/);
+      assert.doesNotMatch(text, /api\('\/game\/campaigns'/);
+    } else assert.match(text, /heroSelection\.body/);
     assert.match(text, /heroSelection\.ready/);
     assert.match(text, /\.accepts\(lease\)/);
   }
@@ -33,4 +36,21 @@ test('hero cards have a gameplay entry and private pinned data is fetched only f
     'Герой для цього проходження',
   ])
     assert.ok(selection.includes(text));
+});
+
+test('hero portrait uses the shared paid-image flow outside the hero form and excludes notes', async () => {
+  const personal = await source('personal.tsx');
+  const control = await source('hero-portrait-control.tsx');
+  assert.match(personal, /<\/form>\s*<HeroPortraitControl/);
+  assert.match(personal, /form="hero-editor"/);
+  assert.match(control, /<ImageGeneration/);
+  assert.match(control, /externalOnly/);
+  assert.doesNotMatch(control, /\.notes|notes:/);
+  assert.match(control, /active\.current/);
+  assert.match(control, /lock\.current/);
+  assert.match(control, /!revision\.owned/);
+  assert.match(control, /hero-portraits\/\$\{revision\.id\}\/asset/);
+  assert.doesNotMatch(control, /api\([^\n]*['"]\/heroes/);
+  for (const value of ['Сгенерировать арт героя', 'Generate hero art', 'Згенерувати арт героя'])
+    assert.ok(control.includes(value));
 });

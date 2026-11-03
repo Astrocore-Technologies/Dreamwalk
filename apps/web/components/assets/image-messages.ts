@@ -1,6 +1,26 @@
 'use client';
 import { useT } from '@/lib/i18n';
 const rows = {
+  advanced: ['Дополнительные настройки', 'Advanced options', 'Додаткові налаштування'],
+  confirmTitle: ['Подтверждение генерации', 'Confirm image generation', 'Підтвердження генерації'],
+  confirm: ['Подтвердить и создать', 'Confirm and generate', 'Підтвердити й створити'],
+  cancelQuote: ['Отмена', 'Cancel', 'Скасувати'],
+  quoteRights: [
+    'Запрашивая оценку, вы подтверждаете права на описание и выбранные референсы. Сам запрос оценки не запускает генерацию.',
+    'By requesting an estimate, you confirm rights to the description and selected references. Requesting an estimate does not start generation.',
+    'Запитуючи оцінку, ви підтверджуєте права на опис і вибрані референси. Запит оцінки не запускає генерацію.',
+  ],
+  confirmNotice: [
+    'Подтверждение разрешает один запрос и передачу выбранных референсов. Искры резервируются сейчас; итоговое списание — по фактическому расходу. Автоматического повтора не будет.',
+    'Confirming authorizes one request and transfer of the selected references. Sparks are reserved now; the final charge follows actual usage. There is no automatic retry.',
+    'Підтвердження дозволяє один запит і передавання вибраних референсів. Іскри резервуються зараз; остаточне списання — за фактичними витратами. Автоматичного повтору не буде.',
+  ],
+  confirmRisk: [
+    'Цена приблизительная: фактический расход может быть выше оценки и резерва. Подтверждая, вы принимаете этот риск только для данного запроса. При неизвестном результате резерв сохраняется.',
+    'The price is approximate: actual usage may exceed the estimate and reserve. Confirming accepts this risk for this request only. An unknown outcome keeps the reserve held.',
+    'Ціна приблизна: фактичні витрати можуть перевищити оцінку й резерв. Підтверджуючи, ви приймаєте цей ризик лише для цього запиту. За невідомого результату резерв зберігається.',
+  ],
+
   referencesUnavailable: [
     'Референсы недоступны в настроенном профиле. Сними их выбор для запроса только по тексту; автоматически они не удаляются.',
     'References are unavailable in the configured profile. Deselect them for a text-only request; they are never removed automatically.',
@@ -95,11 +115,7 @@ const rows = {
     'Another author’s reuse grant does not authorize sending their art to a generator for editing.',
     'Чужий дозвіл на повторне використання не дозволяє надсилати малюнок генератору для переробки.',
   ],
-  quote: [
-    'Проверить библиотеку и подготовить цену',
-    'Check library and prepare quote',
-    'Перевірити бібліотеку й підготувати ціну',
-  ],
+  quote: ['Узнать стоимость', 'Estimate cost', 'Дізнатися вартість'],
   matches: [
     'Найдены совместимые материалы. Можно использовать их без генерации.',
     'Compatible art exists. You can reuse it without generating.',

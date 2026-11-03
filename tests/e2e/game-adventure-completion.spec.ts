@@ -101,6 +101,8 @@ test('four players retain the legacy realtime Observatory ending with owned hero
     await expect(featured).toHaveAttribute('data-featured-slug', 'old-observatory');
     await owner.getByLabel('Герой для этого прохождения').selectOption(accounts[0].heroId);
     await owner.getByTestId('home-start-adventure').click();
+    await expect(owner).toHaveURL(/\/adventures\/old-observatory/);
+    await owner.getByRole('button', { name: 'Начать прохождение', exact: true }).click();
     await expect(owner).toHaveURL(/\/game\/[a-f0-9-]+$/);
     const id = new URL(owner.url()).pathname.split('/').at(-1)!;
     await expect(owner.getByText('Подключено', { exact: true })).toBeVisible();
