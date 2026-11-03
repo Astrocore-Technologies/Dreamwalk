@@ -303,7 +303,7 @@ test('synthetic external stages require one image confirmation and explicit save
   const concept = page.locator('[data-generation-role="concept"]');
   await concept.getByRole('button', { name: 'Estimate cost', exact: true }).click();
   await expect(
-    concept.getByText('Upper estimate in Sparks: 10.00 Sparks', { exact: true }),
+    concept.getByText('Upper estimate in Sparks: 20.00 Sparks', { exact: true }),
   ).toBeVisible();
   const dispatch = concept.getByRole('button', { name: 'Confirm and generate', exact: true });
   await expect(dispatch).toBeEnabled();
@@ -353,12 +353,12 @@ test('synthetic planning estimate is never shown as a free hard cap and cannot d
   const concept = page.locator('[data-generation-role="concept"]');
   await concept.getByRole('button', { name: 'Estimate cost', exact: true }).click();
   await expect(
-    concept.getByText('Estimated Sparks equivalent: 4.59 Sparks', { exact: true }),
+    concept.getByText('Estimated Sparks equivalent: 9.18 Sparks', { exact: true }),
   ).toBeVisible();
   await expect(
-    concept.getByText('Provider reserve in Sparks: 10.00 Sparks', { exact: true }),
+    concept.getByText('Provider reserve in Sparks: 20.00 Sparks', { exact: true }),
   ).toBeVisible();
-  await expect(concept.getByTitle('4.5880 Sparks', { exact: true })).toBeVisible();
+  await expect(concept.getByTitle('9.1760 Sparks', { exact: true })).toBeVisible();
   await expect(concept.locator('[data-sparks-equivalent-only]')).toContainText(
     'not wallet charges or wallet holds',
   );

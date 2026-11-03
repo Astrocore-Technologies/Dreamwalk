@@ -43,6 +43,11 @@ await test(
     try {
       await startApi();
       owner = await client().register();
+      // Test-only funding: the 264036-micro spatial reserve is 528072 subunits
+      // at the current debit rate, above the unchanged 500000 starter grant.
+      await db.query('UPDATE spark_wallets SET balance_subunits=1000000 WHERE owner_id=$1', [
+        owner.user.id,
+      ]);
       outsider = await client().register();
       story = await createStory(owner);
       await db.query(
@@ -129,6 +134,7 @@ await test(
             sessionId,
           });
           assert.equal(quote.upperMicros, 264036);
+          assert.equal(quote.sparks.reserveSubunits, '528072');
           assert.equal((await calls()).length, 0);
           const intent = { ...mutation(project), quoteId: quote.id, consent: true };
           const results = await Promise.all([

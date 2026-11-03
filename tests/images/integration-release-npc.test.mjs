@@ -146,7 +146,7 @@ await test(
           assert.equal(calls, 1);
           await database.tx((c) => engine.finalize(c, job.id, 'committed'));
           await database.tx((c) => engine.finalize(c, job.id, 'committed'));
-          assert.deepEqual(await wallet(a), { balance_subunits: '499970', held_subunits: '0' });
+          assert.deepEqual(await wallet(a), { balance_subunits: '499940', held_subunits: '0' });
           const record = (
             await db.query(
               'SELECT r.actual_micros,r.spark_quote_id,j.spark_hold_id FROM npc_ai_jobs j JOIN generation_budget_reservations r ON r.id=j.generation_reservation_id WHERE j.id=$1',
@@ -193,7 +193,7 @@ await test(
           await engine.run(job.id, async () => true);
           assert.equal(calls, beforeCalls + 1);
           await database.tx((c) => engine.finalize(c, job.id, 'committed'));
-          assert.deepEqual(await wallet(a), { balance_subunits: '499970', held_subunits: '0' });
+          assert.deepEqual(await wallet(a), { balance_subunits: '499940', held_subunits: '0' });
         },
       );
       await t.test('disabled and insufficient wallets cannot admit a paid request', async () => {
@@ -483,7 +483,7 @@ await test(
             spent_micros: '1000000000030',
             reserved_micros: '0',
           });
-          assert.deepEqual(await wallet(a), { balance_subunits: '499940', held_subunits: '0' });
+          assert.deepEqual(await wallet(a), { balance_subunits: '499880', held_subunits: '0' });
           await db.query('UPDATE spark_wallets SET balance_subunits=0 WHERE owner_id=$1', [a.id]);
           await assert.rejects(
             async () => {
