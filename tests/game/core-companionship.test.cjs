@@ -279,7 +279,7 @@ test('deferred world speech uses the same intent admission, rejects wrong actor/
   }
 });
 
-test('multiple speech segments retain their exact source fence when an earlier NPC reply changes companionship', () => {
+test('mixed director speech retains exact source fences when its one reply changes companionship', () => {
   const s = fixture(),
     id = randomUUID();
   const input = {
@@ -288,21 +288,59 @@ test('multiple speech segments retain their exact source fence when an earlier N
     channel: 'say',
     targetNpcId: 'keeper',
     expectedCanonRevision: 0,
+    turnFence: g.turnFence(s),
   };
   const context = g.buildStoryTurnContext(s, 'alice', input, id);
+  assert.equal(context.mode, 'director');
+  const first = context.sceneSpeakers.find(
+    (voice) => voice.npcId === 'keeper' && voice.segmentIndex === 0,
+  );
+  const last = context.sceneSpeakers.find(
+    (voice) => voice.npcId === 'keeper' && voice.segmentIndex === 2,
+  );
+  assert.ok(first && last);
+  assert.notEqual(first.replyToObservationId, last.replyToObservationId);
   const proposal = g.createMockStoryTurnProposal(s, 'alice', input, id);
-  proposal.steps[0].reply = {
-    text: 'Yes, let us go together.',
-    companionIntent: {
-      kind: 'follow',
-      actorId: 'alice',
-      sourceObservationId: context.dialogues[0].replyToObservationId,
+  for (const step of proposal.steps) {
+    step.reply = null;
+    step.replyNpcId = null;
+    step.replyContextHash = null;
+  }
+  Object.assign(proposal.steps[0], {
+    replyNpcId: 'keeper',
+    replyContextHash: first.speechHash,
+    reply: {
+      text: 'Yes, let us go together.',
+      companionIntent: {
+        kind: 'follow',
+        actorId: 'alice',
+        sourceObservationId: first.replyToObservationId,
+      },
     },
-  };
+  });
   const r = g.applyStoryTurnProposal(s, 'alice', input, id, proposal);
   assert.equal(r.error, undefined);
   assert.equal(r.state.npcBrains.keeper.living.companionship.actorId, 'alice');
-  assert.equal(r.entries.filter((e) => e.kind === 'npc_reply').length, 2);
+  assert.equal(
+    r.state.npcBrains.keeper.living.companionship.sourceObservationId,
+    first.replyToObservationId,
+  );
+  assert.equal(r.entries.filter((e) => e.kind === 'npc_reply').length, 1);
+  const speech = r.entries.filter((entry) => entry.kind === 'speech');
+  assert.deepEqual(
+    speech.map((entry) => entry.text),
+    ['Will you come?', 'Thank you.'],
+  );
+  assert.equal(new Set(speech.map((entry) => entry.sourceId)).size, 2);
+  const remembered = r.state.npcBrains.keeper.living.observations;
+  assert.equal(
+    remembered.find((entry) => entry.id === first.replyToObservationId).text,
+    'Will you come?',
+  );
+  assert.equal(
+    remembered.find((entry) => entry.id === last.replyToObservationId).text,
+    'Thank you.',
+  );
 });
 
 test('queued real-time companion movement rechecks occupancy; an ordinary RP invitation remains inert', () => {

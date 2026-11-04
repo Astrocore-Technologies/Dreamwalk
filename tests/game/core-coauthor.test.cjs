@@ -104,8 +104,22 @@ test('speech alone cannot carry a movement action', () => {
   ];
   assert.equal(apply(f).error, 'INVALID_ACTION');
 });
-test('distant reply is rejected rather than claiming an unperformed arrival', () => {
+test('audible reply at distance three needs no unperformed approach', () => {
   const f = fixture('Профессор, Мира сказала, что пропуска нет.');
+  const actor = f.state.entities.alice;
+  const spawn = f.context.director.availableConnections.find(
+    (point) =>
+      Math.abs(point.x - actor.x) + Math.abs(point.y - actor.y) === 3 &&
+      g.canNpcHear(
+        f.state,
+        { id: 'candidate', kind: 'npc', mapId: actor.mapId, ...point, revision: 0 },
+        actor,
+        3,
+      ),
+  );
+  assert.ok(spawn, 'fixture has an audible permitted spawn three cells away');
+  f.proposal.narrative.newNpc.spawn = spawn;
+  f.proposal.narrative.narration = 'Профессор отвечает со своего места.';
   f.proposal.steps = [
     {
       segmentIndex: 0,
@@ -115,8 +129,41 @@ test('distant reply is rejected rather than claiming an unperformed arrival', ()
     },
   ];
   const result = apply(f);
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.state.entities.alice, actor);
+  assert.equal(
+    result.events.some((event) => event.kind === 'actor.moved'),
+    false,
+  );
+  assert.equal(g.footprintDistance(actor, result.state.entities[`support-${f.turnId}`]), 3);
+  assert.equal(result.entries.filter((entry) => entry.kind === 'npc_reply').length, 1);
+});
+test('reply beyond hearing rejects the whole new scene beat without a prior committed effect', () => {
+  const f = fixture('Профессор, Мира сказала, что пропуска нет.');
+  const actor = f.state.entities.alice;
+  const spawn = f.context.director.availableConnections.find(
+    (point) => Math.abs(point.x - actor.x) + Math.abs(point.y - actor.y) === 4,
+  );
+  assert.ok(spawn, 'fixture has a visible permitted spawn beyond normal speech range');
+  assert.equal(g.npcSpeechHearingRange({ channel: 'say', text: f.input.text }), 3);
+  f.proposal.narrative.newNpc.spawn = spawn;
+  f.proposal.narrative.narration = 'Профессор отвечает со своего места.';
+  f.proposal.steps = [
+    {
+      segmentIndex: 0,
+      action: null,
+      replyNpcId: 'new_npc',
+      reply: { text: 'Что именно она сказала?' },
+    },
+  ];
+  const before = JSON.stringify(f.state),
+    result = apply(f);
   assert.equal(result.error, 'OUT_OF_RANGE');
-  assert.equal(result.state, f.state);
+  assert.strictEqual(result.state, f.state);
+  assert.equal(JSON.stringify(result.state), before);
+  assert.deepEqual(result.events, []);
+  assert.deepEqual(result.entries, []);
+  assert.equal(result.state.entities[`support-${f.turnId}`], undefined);
 });
 test('protected identity and invalid spawn cannot be made real by prose', () => {
   for (const change of [
@@ -224,8 +271,8 @@ test('descriptive director emote has no mechanical outcome or fabricated spoken 
   );
   assert.equal(result.state.npcUtterances?.length ?? 0, f.state.npcUtterances?.length ?? 0);
 });
-test('deferred director cannot smuggle any mechanical action through an emote', () => {
-  const f = fixture('*wait*');
+function deferredFixture(text) {
+  const f = fixture(text);
   f.state = g.initializeTurnController(f.state, ['alice', 'bob']).state;
   while (f.state.turnController.phase === 'player')
     f.state = g.endPlayerTurn(
@@ -233,11 +280,47 @@ test('deferred director cannot smuggle any mechanical action through an emote', 
       f.state.turnController.activeActorId,
       g.turnFence(f.state),
     ).state;
-  f.proposal.contextHash = g.buildStoryTurnContext(f.state, 'alice', f.input, f.turnId).contextHash;
+  f.input.turnFence = g.turnFence(f.state);
+  f.context = g.buildStoryTurnContext(f.state, 'alice', f.input, f.turnId);
+  f.proposal.contextHash = f.context.contextHash;
+  f.proposal.narrative = {
+    narration: 'Игрок делает паузу.',
+    newScene: null,
+    newNpc: null,
+    evidenceIds: [],
+  };
   f.proposal.steps = [{ segmentIndex: 0, action: { kind: 'wait' }, reply: null }];
+  return f;
+}
+test('deferred director admits an exact parsed wait with its original player budget once', () => {
+  const f = deferredFixture('*wait*');
+  assert.deepEqual(f.context.actionPreview[0].action, { kind: 'wait' });
+  const resources = structuredClone(f.state.turnController.resources),
+    before = JSON.stringify(f.state);
   const result = apply(f);
+  assert.equal(result.error, undefined);
+  assert.equal(result.clarification, undefined);
+  assert.equal(result.state.turnController.resources.alice.main, resources.alice.main - 1);
+  assert.deepEqual(result.state.turnController.resources.bob, resources.bob);
+  assert.equal(result.state.turnController.phase, 'world');
+  assert.equal(result.state.turnController.worldActions, f.state.turnController.worldActions);
+  assert.equal(result.entries.find((entry) => entry.kind === 'outcome').code, 'ACTION_SUCCEEDED');
+  assert.equal(JSON.stringify(f.state), before);
+  const replay = g.applyStoryTurnProposal(result.state, 'alice', f.input, f.turnId, f.proposal);
+  assert.ok(replay.error);
+  assert.strictEqual(replay.state, result.state);
+  assert.equal(replay.state.turnController.resources.alice.main, resources.alice.main - 1);
+});
+test('deferred director cannot invent a mechanical wait absent from the current parsed preview', () => {
+  const f = deferredFixture('*pauses thoughtfully*');
+  assert.deepEqual(f.context.actionPreview, []);
+  const before = JSON.stringify(f.state),
+    result = apply(f);
   assert.equal(result.error, 'FORBIDDEN');
-  assert.equal(result.state, f.state);
+  assert.strictEqual(result.state, f.state);
+  assert.equal(JSON.stringify(result.state), before);
+  assert.deepEqual(result.events, []);
+  assert.deepEqual(result.entries, []);
 });
 test('shared narrator voice previews exclude locally permitted whispers and private provisioning', () => {
   const f = fixture('Question');

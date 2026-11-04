@@ -157,6 +157,9 @@ await test(
           const waitingBefore = await requests(id);
           assert.deepEqual(await manualBatch.status(owner.user.id, id, live.state), {
             available: false,
+            generatedLocationImages: 0,
+            pendingLocationIds: [],
+            estimateRiskConsentRequired: false,
             pending: false,
             unknown: false,
             reason: 'manual_authorization_required',
@@ -172,6 +175,9 @@ await test(
             operationId = randomUUID();
           assert.deepEqual(await batch.status(owner.user.id, id, live.state), {
             available: true,
+            generatedLocationImages: 0,
+            pendingLocationIds: [],
+            estimateRiskConsentRequired: false,
             pending: false,
             unknown: false,
             reason: 'awaiting_consent',
@@ -709,6 +715,9 @@ await test(
           assert.equal((await requests(id)).find((r) => r.id === second.id).status, 'queued');
           assert.deepEqual(await batch.status(owner.user.id, id, live.state), {
             available: false,
+            generatedLocationImages: 0,
+            pendingLocationIds: [],
+            estimateRiskConsentRequired: false,
             pending: true,
             unknown: true,
             reason: 'outcome_unknown',
@@ -718,6 +727,9 @@ await test(
             await nonRelease.status(owner.user.id, id, live.state),
             {
               available: false,
+              generatedLocationImages: 0,
+              pendingLocationIds: [],
+              estimateRiskConsentRequired: false,
               pending: true,
               unknown: true,
               reason: 'outcome_unknown',

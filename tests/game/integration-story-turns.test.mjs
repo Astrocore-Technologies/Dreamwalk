@@ -19,8 +19,12 @@ const { GameController } = require('../../apps/api/dist/game/game.controller.js'
 const { NpcAiEngine } = require('../../apps/api/dist/ai/npc-ai.service.js');
 const { InvitationsController } = require('../../apps/api/dist/invitations.js');
 const { Content } = require('../../apps/api/dist/content.js');
+const { extendContextHistory } = require('../../apps/api/dist/game/context-history.js');
 const {
   applyNpcSpeech,
+  buildNarrativeContext,
+  buildStoryTurnContext,
+  projectState,
   createCompleteObservatoryDraft,
 } = require('../../packages/game-core/dist/index.js');
 const database = new Db();
@@ -172,16 +176,37 @@ await test(
         return turn(q.id);
       }
       const feed = (id, user = req) => controller.storyFeed(user, id);
-      async function interpreted(id) {
-        const q = await queued(id, await quoted(id, input(id, '*consider the key* Hello')));
-        const proposal = structuredClone(q.p.request.context.mockProposal);
+      function inferredDirectorProposal(q, action, replyText, narration) {
+        const context = q.p.request.context;
+        assert.equal(context.mode, 'director');
+        const voice = context.sceneSpeakers.find(
+          (entry) => entry.npcId === 'keeper' && entry.segmentIndex === 1,
+        );
+        assert.ok(voice, 'The fixture reply uses its exact audience-safe director voice');
+        const proposal = structuredClone(context.mockProposal);
         proposal.status = 'ready';
         proposal.code = null;
-        proposal.narrative = null;
+        proposal.narrative = { narration, newScene: null, newNpc: null, evidenceIds: [] };
         proposal.steps = [
-          { segmentIndex: 0, action: { kind: 'inspect', targetId: 'key' }, reply: null },
-          { segmentIndex: 1, action: null, reply: { text: 'We can inspect the key.' } },
+          { segmentIndex: 0, action, reply: null },
+          {
+            segmentIndex: 1,
+            action: null,
+            replyNpcId: voice.npcId,
+            replyContextHash: voice.speechHash,
+            reply: { text: replyText },
+          },
         ];
+        return proposal;
+      }
+      async function interpreted(id) {
+        const q = await queued(id, await quoted(id, input(id, '*consider the key* Hello')));
+        const proposal = inferredDirectorProposal(
+          q,
+          { kind: 'inspect', targetId: 'key' },
+          'We can inspect the key.',
+          'The player examines the key and the keeper responds.',
+        );
         const r = await complete(id, q, proposal);
         assert.equal(r.status, 'awaiting_confirmation');
         return { ...q, proposalHash: r.proposal_hash };
@@ -379,7 +404,7 @@ await test(
             theirs = await feed(id, other);
           assert.deepEqual(
             mine.entries.filter((e) => e.turnId === run.id).map((e) => e.kind),
-            ['attempt', 'outcome', 'speech', 'npc_reply'],
+            ['attempt', 'outcome', 'speech', 'npc_reply', 'narration'],
           );
           assert.equal(theirs.turns.length, 0);
           assert.ok(theirs.entries.some((e) => e.turnId === run.id));
@@ -395,7 +420,7 @@ await test(
                 run.id,
               ])
             ).rows[0].n,
-            4,
+            5,
           );
         },
       );
@@ -412,12 +437,75 @@ await test(
           await assert.rejects(() => feed(id, foreign));
           const proposal = structuredClone(q.p.request.context.mockProposal);
           proposal.steps[1].reply = { text: 'PRIVATE_REPLY_CANARY' };
+          proposal.narrative.narration = 'PRIVATE_NARRATION_CANARY';
           assert.equal((await complete(id, q, proposal)).status, 'committed');
           const visible = JSON.stringify(await feed(id, other));
           assert.ok(!visible.includes('PRIVATE_UNIFIED_CANARY'));
           assert.ok(!visible.includes('PRIVATE_REPLY_CANARY'));
           assert.ok(JSON.stringify(await feed(id)).includes('PRIVATE_REPLY_CANARY'));
-          assert.equal(game.live.get(id).state.narrativeCanon?.revision ?? 0, 0);
+          const state = game.live.get(id).state;
+          assert.equal(state.narrativeCanon.revision, 1);
+          const canon = state.narrativeCanon.turns.find((entry) => entry.id === q.id);
+          assert.equal(canon.channel, 'whisper');
+          assert.deepEqual([...canon.audienceIds].sort(), [actor, 'keeper'].sort());
+          assert.equal(canon.narration, 'PRIVATE_NARRATION_CANARY');
+          assert.equal(JSON.stringify(projectState(state, otherActor)).includes('PRIVATE_'), false);
+          const historyAi = {
+            contextWindow: () => ({ effectiveContextTokens: 2000 }),
+            packContext: (value) => value,
+          };
+          for (const readerId of [actor, otherActor]) {
+            const shared = buildNarrativeContext(state, readerId, 'Continue the public scene.');
+            assert.equal(shared.evidenceIds.includes(q.id), false);
+            assert.equal(
+              shared.confirmedTurns.some((entry) => entry.id === q.id),
+              false,
+            );
+            assert.equal(JSON.stringify(shared).includes('PRIVATE_'), false);
+            const publicInput = {
+              operationId: randomUUID(),
+              text: 'Continue the public scene.',
+              channel: 'say',
+              expectedCanonRevision: state.narrativeCanon.revision,
+            };
+            const context = buildStoryTurnContext(state, readerId, publicInput, randomUUID());
+            const history = await extendContextHistory(
+              database,
+              historyAi,
+              id,
+              state,
+              readerId,
+              context,
+              'story_turn',
+            );
+            assert.equal(
+              JSON.stringify(history).includes('PRIVATE_'),
+              false,
+              'SQL history excludes private words even for their author',
+            );
+          }
+          const privateContext = buildStoryTurnContext(
+            state,
+            actor,
+            {
+              operationId: randomUUID(),
+              text: '*wait* Continue privately.',
+              channel: 'whisper',
+              targetNpcId: 'keeper',
+              expectedCanonRevision: state.narrativeCanon.revision,
+            },
+            randomUUID(),
+          );
+          const ownHistory = await extendContextHistory(
+            database,
+            historyAi,
+            id,
+            state,
+            actor,
+            privateContext,
+            'story_turn',
+          );
+          assert.ok(JSON.stringify(ownHistory.history).includes('PRIVATE_NARRATION_CANARY'));
         },
       );
       await t.test(
@@ -491,7 +579,7 @@ await test(
           assert.equal(
             (await db.query('SELECT count(*)::int n FROM game_story_feed WHERE turn_id=$1', [q.id]))
               .rows[0].n,
-            4,
+            5,
           );
         },
       );
@@ -721,14 +809,12 @@ await test(
           Object.assign(live.state.entities.keeper, { x: 9, y: 4 });
           await game.persist(id, live, live.state, 'test.locked.door');
           const q = await queued(id, await quoted(id, input(id, '*make a way* Hello')));
-          const p = structuredClone(q.p.request.context.mockProposal);
-          p.status = 'ready';
-          p.code = null;
-          p.narrative = null;
-          p.steps = [
-            { segmentIndex: 0, action: { kind: 'open', targetId: 'door' }, reply: null },
-            { segmentIndex: 1, action: null, reply: { text: 'The door is open now.' } },
-          ];
+          const p = inferredDirectorProposal(
+            q,
+            { kind: 'open', targetId: 'door' },
+            'The door is open now.',
+            'The door opens and the keeper answers.',
+          );
           assert.equal((await complete(id, q, p)).status, 'clarification');
           assert.equal(live.state.entities.door.locked, true);
           const clarification = (await feed(id)).entries.filter((e) => e.turnId === q.id);

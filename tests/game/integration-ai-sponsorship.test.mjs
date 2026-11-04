@@ -346,13 +346,38 @@ await test(
           };
           // Packing reserves the largest complete request envelope across purposes,
           // including story-turn schemas and safety/character guidance, not just speech.
-          // Leave room for a substantial escaped UTF-8 history after that fixed overhead;
-          // the transport below still enforces the complete-body ceiling at dispatch.
-          const upper = 24000;
+          // Derive this synthetic allowance from the current fixed envelope, then leave
+          // 4 KiB for escaped UTF-8 history. This is not a production budget increase.
+          const { buildOpenAiNpcRequestBody } = require('../../apps/api/dist/ai/openai-provider');
+          const envelopeBytes = Math.max(
+            ...[
+              'plan',
+              'summary',
+              'speech',
+              'intent',
+              'supporting_npc',
+              'narrative',
+              'story_turn',
+            ].flatMap((purpose) =>
+              ['en', 'uk', 'ru'].flatMap((replyLocale) =>
+                (purpose === 'story_turn' ? ['npc', 'director'] : [undefined]).map((mode) =>
+                  Buffer.byteLength(
+                    buildOpenAiNpcRequestBody(config, purpose, {
+                      ...(mode ? { mode } : {}),
+                      replyLocale,
+                    }),
+                  ),
+                ),
+              ),
+            ),
+          );
+          const fixedReserve = envelopeBytes + 4096 + 200;
+          const upper = fixedReserve + 2 * 4096;
           let calls = 0;
           const p = new OpenAiNpcProvider(config, async (_url, init) => {
             calls++;
             const bytes = Buffer.byteLength(init.body);
+            assert.ok(bytes <= config.maxInputBytes);
             assert.ok(bytes + 4096 + 200 <= upper);
             return new Response(
               JSON.stringify({
@@ -367,8 +392,9 @@ await test(
             );
           });
           const context = { contextHash: 'safe', question: 'Почему?', claims: [] };
+          assert.equal(p.contextBudgetBytes(fixedReserve), 0);
           const allowance = p.contextBudgetBytes(upper);
-          assert.ok(allowance > 100);
+          assert.equal(allowance, 4096);
           while (Buffer.byteLength(JSON.stringify(context)) + 32 < allowance)
             context.claims.push('Привет "мир" \\');
           const req = {
