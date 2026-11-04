@@ -227,6 +227,7 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
     page,
   }, testInfo) => {
     test.setTimeout(120000);
+    if (locale === 'en') await page.clock.install();
     await register(page, locale);
     const id = await campaign(page);
     await publicCatalog(page);
@@ -237,12 +238,14 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
       canChange: true,
     };
     const changes: Record<string, unknown>[] = [];
+    let directorReads = 0;
+    let holdDirectorReads: Promise<void> | null = null;
     let generationRequests = 0;
     await page.route('**/api/v1/game/start-preparations**', (route) => {
       generationRequests++;
       return route.abort();
     });
-    await page.route(`**/api/v1/game/campaigns/${id}/director`, (route) => {
+    await page.route(`**/api/v1/game/campaigns/${id}/director`, async (route) => {
       if (route.request().method() === 'POST') {
         const body = route.request().postDataJSON();
         expect(body).toEqual({ profileId: 'storyteller', expectedRevision: saved.revision });
@@ -253,6 +256,9 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
           profileId: 'storyteller',
           profile: catalog().profiles[1],
         };
+      } else {
+        directorReads++;
+        if (holdDirectorReads) await holdDirectorReads;
       }
       return route.fulfill({ json: saved });
     });
@@ -267,9 +273,45 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
     await expect(select).toBeEnabled();
     await expect(director.getByRole('button', { name: text.change, exact: true })).toBeDisabled();
     await select.selectOption('storyteller');
-    await director.getByRole('button', { name: text.change, exact: true }).click();
+    const change = director.getByRole('button', { name: text.change, exact: true });
+    if (locale === 'en') {
+      // Reselecting the saved value resumes polling without saving anything.
+      await select.selectOption('coauthor');
+      const readsBeforeCancel = directorReads;
+      await page.clock.runFor(5100);
+      await expect.poll(() => directorReads).toBeGreaterThan(readsBeforeCancel);
+      await expect(select).toBeEnabled();
+      await select.selectOption('storyteller');
+      await expect(change).toBeEnabled();
+      const readsBeforeSave = directorReads;
+      const held = deferred();
+      holdDirectorReads = held.promise;
+      try {
+        const box = await change.boundingBox();
+        expect(box).not.toBeNull();
+        await page.mouse.move(box!.x + box!.width / 2, box!.y + box!.height / 2);
+        await page.mouse.down();
+        // Both automatic refresh paths must leave an unsaved owner's click intact.
+        await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
+        await page.clock.runFor(5100);
+        await expect(change).toBeEnabled();
+        expect(directorReads).toBe(readsBeforeSave);
+        await page.mouse.up();
+      } finally {
+        holdDirectorReads = null;
+        held.resolve();
+        await page.mouse.up();
+      }
+    } else {
+      await change.click();
+    }
     await expect(director.locator(':scope > summary')).toContainText('Patient storyteller');
     expect(changes).toHaveLength(1);
+    if (locale === 'en') {
+      const readsAfterSave = directorReads;
+      await page.clock.runFor(5100);
+      await expect.poll(() => directorReads).toBeGreaterThan(readsAfterSave);
+    }
     await page.reload();
     await expect(director.locator(':scope > summary')).toContainText('Patient storyteller');
     await director.locator(':scope > summary').click();
@@ -285,6 +327,11 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
     await expect(director.getByText(text.readonly, { exact: true })).toBeVisible();
     await expect(director.getByRole('combobox')).toHaveCount(0);
     await expect(director.getByRole('button', { name: text.change, exact: true })).toHaveCount(0);
+    if (locale === 'en') {
+      const memberReads = directorReads;
+      await page.clock.runFor(5100);
+      await expect.poll(() => directorReads).toBeGreaterThan(memberReads);
+    }
     expect(changes).toHaveLength(1);
     expect(generationRequests).toBe(0);
     if (locale === 'en') {
