@@ -115,7 +115,8 @@ test('one primary story surface replaces competing forms and guards private reci
 test('private target loss is blocked and every consent-relevant draft change invalidates its identity', () => {
   const p = { entities: [{ id: 'keeper', kind: 'npc' }] };
   assert.equal(storyTargetValid(p, 'whisper', 'keeper'), true);
-  assert.equal(storyTargetValid(p, 'whisper'), false);
+  assert.equal(storyTargetValid(p, 'whisper'), true);
+  assert.equal(storyTargetValid({ entities: [] }, 'whisper'), true);
   assert.equal(storyTargetValid({ entities: [] }, 'whisper', 'keeper'), false);
   assert.equal(storyTargetValid(p, 'say', 'missing'), false);
   assert.equal(storyTargetValid(p, 'say'), true);

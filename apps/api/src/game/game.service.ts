@@ -54,6 +54,7 @@ import {
   worldTurnCompanionContinuation,
   companionAction,
   stepWorldNpcPlan,
+  npcConditionsMet,
   turnFence,
   matchesTurnFence,
   createStateFromPlayable,
@@ -1760,15 +1761,51 @@ export class GameService implements OnModuleDestroy {
       const urgent = brain.living!.causes.some(
         (cause) => cause.priority >= 2 && cause.notBeforeTick <= state.tick,
       );
-      const prior = brain.living!.cognition;
+      const memory = brain.living!;
+      const prior = memory.cognition;
+      const outcome = memory.lastActionOutcome;
+      const pendingPlan =
+        brain.cursor < brain.plan.length &&
+        (!brain.planMapId || brain.planMapId === npc.mapId) &&
+        (brain.movementGeneration === undefined ||
+          brain.movementGeneration === (npc.movementGeneration ?? 0));
+      const source =
+        brain.planSource &&
+        memory.observations.find(
+          (observation) => observation.id === brain.planSource!.sourceObservationId,
+        );
+      const newCommitment = (tick: number) =>
+        (!outcome || tick >= outcome.tick) && (!prior || tick >= prior.tick);
+      const obligation = memory.obligations.find(
+        (item) =>
+          item.status === 'accepted' &&
+          item.dueTick > state.tick &&
+          npcConditionsMet(state, npcId, item.conditions ?? [], item.toActorId, item.createdTick) &&
+          newCommitment(item.acceptedTick ?? item.createdTick),
+      );
+      const firstKey =
+        pendingPlan && ((!prior && !outcome) || (!!source && newCommitment(source.tick)))
+          ? `plan:${brain.generation}:${brain.planSource?.sourceObservationId ?? 'existing'}`
+          : obligation
+            ? `obligation:${obligation.id}:${obligation.acceptedTick ?? obligation.createdTick}`
+            : undefined;
+      // A persisted identity, rather than wall-clock/game ticks, gives each new
+      // commitment one opportunity. Same-tick later rounds cannot renew this lease.
+      const firstOpportunity = !!firstKey && memory.continuationOpportunity?.key !== firstKey;
       const continuation =
         !urgent &&
-        !!prior &&
-        prior.roundNumber !== undefined &&
-        turn.roundNumber < prior.roundNumber + prior.reconsiderAfterRounds &&
-        prior.knowledgeRevision === brain.living!.knowledgeRevision &&
-        brain.living!.lastActionOutcome?.status !== 'blocked' &&
-        (brain.cursor < brain.plan.length || !!npc.path?.length || !!brain.living!.companionship);
+        (firstOpportunity ||
+          (outcome?.status !== 'blocked' &&
+            !!prior &&
+            prior.roundNumber !== undefined &&
+            turn.roundNumber < prior.roundNumber + prior.reconsiderAfterRounds &&
+            prior.knowledgeRevision === memory.knowledgeRevision &&
+            (pendingPlan || !!npc.path?.length || !!memory.companionship)));
+      if (continuation && firstOpportunity)
+        state.npcBrains![npcId].living!.continuationOpportunity = {
+          key: firstKey!,
+          roundId: turn.roundId,
+        };
       const requestId = randomUUID();
       requests.push({
         id: requestId,
@@ -1981,6 +2018,19 @@ export class GameService implements OnModuleDestroy {
       [id],
     );
     for (let r of requests) {
+      if (r.purpose === 'speech' && r.context.deferredSpeechId) {
+        // Preserve the player's chronological conversation across different NPCs.
+        // A queued reply must not overtake an earlier scheduled/busy reply merely
+        // because the later NPC has a free provider slot. Terminal refs drain in
+        // advanceTurnWorld; private NPC planning remains independently eligible.
+        const first = live.state.turnController?.deferredSpeech.reduce<
+          { id: string; sequence: number } | undefined
+        >(
+          (earliest, entry) => (!earliest || entry.sequence < earliest.sequence ? entry : earliest),
+          undefined,
+        );
+        if (first && first.id !== r.context.deferredSpeechId) continue;
+      }
       const allowed = r.requester_user_id
         ? await this.db.query(
             `SELECT c.id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.user_id=$2 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('$2')}`,

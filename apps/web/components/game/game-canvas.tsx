@@ -549,7 +549,15 @@ export function GameCanvas({
             : null,
         );
       };
-      world.on('pointermove', (event) => pointToCell(world.toLocal(event.global)));
+      world.on('pointermove', (event) => {
+        // Pixi observes document-wide movement, including HTML controls above
+        // the canvas. Do not describe a covered cell as the hovered target.
+        if (event.nativeEvent.target !== app.canvas) {
+          clearPointedCell(event);
+          return;
+        }
+        pointToCell(world.toLocal(event.global));
+      });
       world.on('pointerleave', clearPointedCell);
       world.on('pointertap', (event) => {
         if (event.button !== 0) return;

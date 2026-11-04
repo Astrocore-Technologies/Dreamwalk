@@ -791,13 +791,7 @@ export class NpcAiEngine {
         j.requester_user_id !== (scope.requesterUserId ?? null) ||
         j.purpose !== (scope.purpose ?? 'plan') ||
         digest(publicRequestMeta(j.request_meta)) !==
-          digest({
-            quoteId: quoteId ?? null,
-            consent,
-            requestKey,
-            sponsorId: sponsorId ?? null,
-            runtimeRequestId: runtimeRequestId ?? null,
-          })
+          digest(publicRequestMeta({ quoteId, consent, requestKey, sponsorId, runtimeRequestId }))
       )
         fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
       return this.dto(c, j);

@@ -99,11 +99,15 @@ await test(
         foreign = { headers: { cookie: outsider.cookie } };
       const actor = `player-${owner.user.id}`,
         otherActor = `player-${guest.user.id}`;
-      async function prepare(id) {
+      async function prepare(id, { privateConversation = false } = {}) {
         await controller.snapshot(req, id);
         const live = game.live.get(id);
         Object.assign(live.state.entities[actor], { x: 5, y: 4 });
-        Object.assign(live.state.entities[otherActor], { x: 6, y: 5 });
+        // A private reply needs an audience containing only its authorized participants.
+        Object.assign(
+          live.state.entities[otherActor],
+          privateConversation ? { x: 8, y: 6 } : { x: 6, y: 5 },
+        );
         Object.assign(live.state.entities.key, { x: 5, y: 5 });
         for (const brain of Object.values(live.state.npcBrains)) {
           brain.plan = [];
@@ -345,7 +349,7 @@ await test(
         'whisper input, replies and pending proposal never reach another member or outsider',
         async () => {
           const id = ids[1];
-          await prepare(id);
+          await prepare(id, { privateConversation: true });
           const q = await queued(
             id,
             await quoted(id, input(id, '*wait* PRIVATE_UNIFIED_CANARY', { channel: 'whisper' })),
@@ -464,7 +468,7 @@ await test(
         'a provider cannot extend shared narrative from a targeted private whisper',
         async () => {
           const id = ids[5];
-          await prepare(id);
+          await prepare(id, { privateConversation: true });
           const q = await queued(
             id,
             await quoted(id, input(id, 'PRIVATE_EXTENSION_CANARY', { channel: 'whisper' })),

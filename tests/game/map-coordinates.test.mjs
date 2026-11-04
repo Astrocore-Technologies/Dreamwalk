@@ -203,3 +203,46 @@ test('coordinate overlay is passive, scoped to current map, and preserves render
   assert.match(css, /\.mapCoordinateReadout\s*\{[^}]*font: 11px/s);
   assert.doesNotMatch(source, /showCoordinates|setShowCoordinates|coordinateMenu/);
 });
+
+test('document-wide Pixi pointer movement over HTML controls cannot masquerade as a canvas hover', () => {
+  const source = readFileSync(
+    new URL('../../apps/web/components/game/game-canvas.tsx', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf("      world.on('pointermove', (event) => {");
+  const end = source.indexOf("      world.on('pointerleave'", start);
+  assert.ok(start > 0 && end > start);
+  let pointerMove;
+  const world = {
+    on: (name, callback) => {
+      assert.equal(name, 'pointermove');
+      pointerMove = callback;
+    },
+    toLocal: (point) => point,
+  };
+  const canvas = {},
+    button = {};
+  const calls = [];
+  new Function('world', 'app', 'pointToCell', 'clearPointedCell', source.slice(start, end))(
+    world,
+    { canvas },
+    (point) => calls.push(['cell', point]),
+    (event) => calls.push(['leave', event.pointerType]),
+  );
+  const global = { x: 120, y: 168 };
+  pointerMove({ nativeEvent: { target: button }, pointerType: 'mouse', global });
+  assert.deepEqual(calls, [['leave', 'mouse']]);
+  calls.length = 0;
+  pointerMove({ nativeEvent: { target: canvas }, pointerType: 'mouse', global });
+  assert.deepEqual(calls, [['cell', global]]);
+  calls.length = 0;
+  pointerMove({ nativeEvent: { target: canvas }, pointerType: 'touch', global });
+  assert.deepEqual(calls, [['cell', global]]);
+  calls.length = 0;
+  pointerMove({ nativeEvent: { target: button }, pointerType: 'touch', global });
+  assert.deepEqual(
+    calls,
+    [['leave', 'touch']],
+    'Touch persistence remains with the existing leave handler',
+  );
+});

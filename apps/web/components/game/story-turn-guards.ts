@@ -1,5 +1,5 @@
 import type { GameProjection } from '@dreamwalk/contracts';
-/** Missing private recipients never silently become public narration. */
+/** A stale selected recipient fails closed; no selection is intentional area speech. */
 export function storyTargetVisible(projection: GameProjection, targetNpcId?: string) {
   return (
     !targetNpcId ||
@@ -11,7 +11,9 @@ export function storyTargetValid(
   channel: 'say' | 'whisper',
   targetNpcId?: string,
 ) {
-  return storyTargetVisible(projection, targetNpcId) && (channel !== 'whisper' || !!targetNpcId);
+  return (
+    (channel === 'say' || channel === 'whisper') && storyTargetVisible(projection, targetNpcId)
+  );
 }
 /** Selection keeps identity; its display name follows the current localized projection. */
 export function storyRecipientLabel(

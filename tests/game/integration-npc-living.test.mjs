@@ -651,7 +651,8 @@ await test(
           await owner.request(path(cid, 'invitations'), { username: speaker.handle });
           await speaker.request(path(cid, 'accept'), {});
           await moveTo(speaker, cid, { x: 4, y: 3 });
-          const text = 'ERASE_MEMBER_PERSONAL_TEXT_871';
+          // Explicit shouting preserves the distant, occluded-but-audible speaker fixture.
+          const text = 'ERASE_MEMBER_PERSONAL_TEXT_871!';
           assert.equal(
             (
               await command(speaker, cid, {

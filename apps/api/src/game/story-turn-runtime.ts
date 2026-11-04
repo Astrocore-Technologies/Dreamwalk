@@ -369,6 +369,9 @@ export class StoryTurnRuntime {
           authorLabel: next.entities[actorId].label,
           text: segment.text,
           audienceIds: spoken.audienceIds,
+          speakerKnownToIds: [
+            ...(next.npcUtterances?.find((u) => u.id === spoken.sourceId)?.speakerKnownToIds ?? []),
+          ],
           ...(spoken.sourceId ? { sourceId: spoken.sourceId } : {}),
         });
       } else if (input.targetNpcId) {
@@ -394,6 +397,9 @@ export class StoryTurnRuntime {
           authorLabel: next.entities[actorId].label,
           text: segment.text,
           audienceIds: spoken.audienceIds,
+          speakerKnownToIds: [
+            ...(next.npcUtterances?.find((u) => u.id === spoken.sourceId)?.speakerKnownToIds ?? []),
+          ],
           ...(spoken.sourceId ? { sourceId: spoken.sourceId } : {}),
         });
       } else
@@ -1064,6 +1070,16 @@ export class StoryTurnRuntime {
       if (!turn || turn.erased_at || turn.status !== 'committed') continue;
       let context: DecisionContext;
       if (request.purpose === 'speech') {
+        const speaker = live.state.entities[turn.actor_id];
+        const recipient = live.state.entities[request.npc_id];
+        if (!speaker || !recipient || speaker.mapId !== recipient.mapId) {
+          // Keep the original heard memory, but do not generate a reply across maps
+          // or construct a raster spanning the departed speaker and this NPC.
+          // The financial-evidence guard refuses to terminalize already-paid work;
+          // advanceTurnWorld drains only terminal request markers afterwards.
+          await this.port.failWorldRequest(id, request.id, 'SPEECH_PARTICIPANT_DEPARTED');
+          continue;
+        }
         let base: DecisionContext;
         try {
           base = this.port.deferredSpeechContext(live.state, {
@@ -1438,6 +1454,7 @@ export class StoryTurnRuntime {
         ...(source.code ? { code: source.code } : {}),
         sourceId: source.id,
         audienceIds: source.audienceIds,
+        speakerKnownToIds: [...(source.speakerKnownToIds ?? [])],
       },
     ]);
     await c.query(
@@ -1694,8 +1711,19 @@ export class StoryTurnRuntime {
         tick: Number(r.tick),
         createdAt: date(r.created_at),
       }));
-      for (const entry of entries)
-        delete (entry as StoryFeedEntry & { sourceId?: string }).sourceId;
+      for (const entry of entries) {
+        const stored = entry as StoryFeedEntry & { sourceId?: string; speakerKnownToIds?: unknown };
+        if (
+          ['speech', 'npc_reply'].includes(entry.kind) &&
+          (!Array.isArray(stored.speakerKnownToIds) ||
+            !stored.speakerKnownToIds.includes(a.actorId))
+        ) {
+          delete entry.authorId;
+          delete entry.authorLabel;
+        }
+        delete stored.sourceId;
+        delete stored.speakerKnownToIds;
+      }
       const turnIds = new Set(entries.map((e) => e.turnId));
       const view = projectState(live.state, a.actorId);
       const legacy: StoryFeedEntry[] = [];
@@ -1757,8 +1785,7 @@ export class StoryTurnRuntime {
             id: `legacy-narrative-input:${t.id}`,
             ordinal: 0,
             kind: 'speech',
-            authorId: t.actor_id,
-            authorLabel: view.entities.find((e) => e.id === t.actor_id)?.label,
+            // Legacy narrative rows have no immutable speaker-recognition evidence.
             text: t.input_text,
           });
         if (typeof t.result?.narration === 'string' && t.result.narration)

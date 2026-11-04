@@ -229,6 +229,8 @@ export interface NpcMemorySummary {
   claims: { observationId: string; kind: NpcObservationKind }[];
 }
 export interface LivingNpcMemory {
+  /** Server-private first mechanical opportunity for an already admitted commitment. */
+  continuationOpportunity?: { key: string; roundId: string };
   /** Server-private authored RP. Exposed only by a separately authorized reader. */
   cognition?: NpcCognitionState;
   lastActionOutcome?: {

@@ -33,6 +33,9 @@ test('map coordinates stay legible and cell-aligned on mobile, zoom and resize w
   const id = await launchPrivateFixture(page, story.id, false);
   const host = page.locator('[data-renderer-active]');
   const readout = page.getByTestId('map-coordinate-readout');
+  const map = page.getByRole('group', { name: 'Карта приключения', exact: true });
+  const inventoryToggle = map.getByRole('button', { name: /^Инвентарь/ });
+  const inventory = map.getByRole('dialog', { name: 'Инвентарь', exact: true });
   await host.scrollIntoViewIfNeeded();
   await expect(host).toHaveAttribute('data-renderer-active', 'true');
   const before = await authoringRequest(page, `/game/campaigns/${id}/snapshot`);
@@ -99,13 +102,27 @@ test('map coordinates stay legible and cell-aligned on mobile, zoom and resize w
     );
 
   await verifyRulers();
-  const point = await cellPoint(2, 3);
+  // At mobile fit, (2,3) lies under the inventory toolbar. A Pixi hover alone
+  // does not prove a canvas hit: Pixi also observes document pointer movement.
+  const target = { x: 7, y: 12 };
+  const point = await cellPoint(target.x, target.y);
+  expect(
+    await host.evaluate(
+      (element, point) =>
+        document.elementFromPoint(point.x, point.y) === element.querySelector('canvas'),
+      point,
+    ),
+    'The touch target must hit the canvas, not an overlaid control',
+  ).toBe(true);
+  await expect(inventoryToggle).toHaveAttribute('aria-expanded', 'false');
   await page.mouse.move(point.x, point.y);
-  await expect(readout).toHaveAttribute('data-x', '2');
-  await expect(readout).toHaveAttribute('data-y', '3');
+  await expect(readout).toHaveAttribute('data-x', String(target.x));
+  await expect(readout).toHaveAttribute('data-y', String(target.y));
   await page.touchscreen.tap(point.x, point.y);
-  await expect(readout).toHaveAttribute('data-x', '2');
-  await expect(readout).toHaveAttribute('data-y', '3');
+  await expect(readout).toHaveAttribute('data-x', String(target.x));
+  await expect(readout).toHaveAttribute('data-y', String(target.y));
+  await expect(inventoryToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(inventory).toHaveCount(0);
 
   await page.getByRole('button', { name: 'Увеличить карту', exact: true }).click();
   await expect(host).toHaveAttribute('data-camera-zoom', '1.200');
@@ -128,9 +145,20 @@ test('map coordinates stay legible and cell-aligned on mobile, zoom and resize w
   });
 
   // Rulers never become another toolbar/menu or a pointer interception layer.
-  await page.getByRole('button', { name: /^Инвентарь/ }).click();
-  await expect(page.getByRole('button', { name: 'Закрыть', exact: true })).toBeVisible();
-  await page.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await expect(inventoryToggle).toHaveAttribute('aria-expanded', 'false');
+  await inventoryToggle.click();
+  await expect(inventoryToggle).toHaveAttribute('aria-expanded', 'true');
+  await expect(inventory).toBeVisible();
+  await inventory.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await expect(inventory).toHaveCount(0);
+  await expect(inventoryToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(inventoryToggle).toBeFocused();
+  await inventoryToggle.click();
+  await expect(inventory).toBeVisible();
+  await inventory.press('Escape');
+  await expect(inventory).toHaveCount(0);
+  await expect(inventoryToggle).toHaveAttribute('aria-expanded', 'false');
+  await expect(inventoryToggle).toBeFocused();
   await expect(page.locator('[data-coordinate-x]')).toHaveCount(before.projection.map.width);
   await expect(page.locator('[data-coordinate-y]')).toHaveCount(before.projection.map.height);
 });

@@ -421,3 +421,394 @@ test('unsafe outgoing whisper becomes a free no-safe-response instead of blockin
   );
   assert.equal(stopped.length, 1);
 });
+
+test('durable speech feed preserves emission-time recognition across pruning, restart and later visibility', async () => {
+  const { state, game, runtime } = speechFixture();
+  const turnId = require('node:crypto').randomUUID();
+  Object.assign(state.entities.alice, { x: 7, y: 5, label: 'Hidden player identity' });
+  Object.assign(state.entities.keeper, { x: 5, y: 5, label: 'Hidden keeper identity' });
+  state.entities.bob = { ...structuredClone(state.entities.alice), id: 'bob', x: 4, y: 5 };
+  state.maps.courtyard.blocked = [{ x: 6, y: 5 }];
+  game.ai = { contextBudgetBytes: () => 64000 };
+  const posted = runtime.simulateTurnPost(
+    state,
+    'alice',
+    {
+      operationId: turnId,
+      text: 'Who is there!',
+      channel: 'say',
+      expectedCanonRevision: state.narrativeCanon?.revision ?? 0,
+      turnFence: g.turnFence(state),
+    },
+    turnId,
+    'owner',
+  );
+  const playerEntry = posted.entries.find((e) => e.kind === 'speech');
+  assert.ok(playerEntry.speakerKnownToIds.includes('alice'));
+  assert.ok(!playerEntry.speakerKnownToIds.includes('bob'));
+  const world = g.endPlayerTurn(posted.state, 'alice', g.turnFence(posted.state)).state;
+  const request = posted.requests.find((r) => r.npcId === 'keeper');
+  const context = game.deferredSpeechContext(world, request);
+  const result = await game.evaluateDecision('campaign', world, {
+    id: request.id,
+    npcId: 'keeper',
+    purpose: 'speech',
+    context,
+    contextHash: context.contextHash,
+    proposal: { text: 'You can hear me!' },
+  });
+  assert.equal(result.accepted, true);
+  const source = result.next.npcUtterances.find(
+    (u) => u.speakerId === 'keeper' && !world.npcUtterances.some((old) => old.id === u.id),
+  );
+  assert.ok(source.speakerKnownToIds.includes('bob'));
+  assert.ok(!source.speakerKnownToIds.includes('alice'));
+  const stored = [];
+  const client = {
+    query: async (sql, values) => {
+      if (sql.startsWith('INSERT INTO game_story_feed'))
+        stored.push({
+          id: values[0],
+          turn_id: values[1],
+          sequence: values[3],
+          ordinal: values[4],
+          tick: values[5],
+          audience_ids: values[7],
+          entry: JSON.parse(values[8]),
+          created_at: new Date(),
+        });
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  await runtime.writeFeed(client, 'campaign', turnId, 1, [playerEntry]);
+  await runtime.writeDeferredReply(
+    client,
+    'campaign',
+    world,
+    result.next,
+    { ...context, storyTurnId: turnId },
+    2,
+  );
+  assert.equal(stored.length, 2);
+  assert.deepEqual(stored[1].entry.speakerKnownToIds, source.speakerKnownToIds);
+  // Legacy identity has no trustworthy historical evidence, even if visible now.
+  stored.push({
+    ...stored[1],
+    id: 'legacy-row',
+    entry: { ...stored[1].entry, speakerKnownToIds: undefined, text: 'Old words' },
+  });
+  stored.push({
+    ...stored[1],
+    id: 'mechanical-row',
+    entry: {
+      kind: 'outcome',
+      channel: 'say',
+      authorId: 'keeper',
+      authorLabel: 'Mechanical attribution',
+      code: 'ACTION_SUCCEEDED',
+    },
+  });
+  const restored = JSON.parse(JSON.stringify(result.next));
+  restored.npcUtterances = [];
+  restored.maps.courtyard.blocked = [];
+  const { StoryTurnRuntime } = require('../../apps/api/dist/game/story-turn-runtime');
+  const restarted = Object.create(StoryTurnRuntime.prototype);
+  restarted.reconcile = async () => {};
+  restarted.db = {
+    query: async (sql) => (sql.startsWith('SELECT f.*') ? structuredClone(stored) : []),
+  };
+  for (const viewer of ['alice', 'bob']) {
+    restarted.port = {
+      serial: async (id, run) => run(),
+      access: async () => ({ actorId: viewer, user: { id: viewer } }),
+      load: async () => ({ state: restored }),
+    };
+    const feed = await restarted.feed({}, 'campaign');
+    const npc = feed.entries.find((e) => e.text === 'You can hear me!');
+    const player = feed.entries.find((e) => e.text === 'Who is there!');
+    assert.equal(npc.authorId, viewer === 'bob' ? 'keeper' : undefined);
+    assert.equal(npc.authorLabel, viewer === 'bob' ? 'Hidden keeper identity' : undefined);
+    assert.equal(player.authorId, viewer === 'alice' ? 'alice' : undefined);
+    assert.equal(feed.entries.find((e) => e.text === 'Old words').authorId, undefined);
+    assert.equal(feed.entries.find((e) => e.id === 'mechanical-row').authorId, 'keeper');
+    assert.ok(feed.entries.every((e) => !('speakerKnownToIds' in e) && !('sourceId' in e)));
+  }
+});
+
+test('departed-speaker replies stay unpaid and drain after a real exit, including split parties and restart', async () => {
+  for (const split of [false, true]) {
+    const draft = g.createCompleteObservatoryDraft();
+    draft.turnRules = g.turnRulesSchema.parse({});
+    let state = g.createStateFromPlayable(
+      g.compilePlayableDraft(draft).playable,
+      split ? ['alice', 'bob'] : ['alice'],
+    );
+    state.entities.door.open = true;
+    Object.assign(state.entities.alice, { x: 12, y: 5 });
+    Object.assign(state.entities.keeper, { x: 11, y: 5 });
+    if (split) Object.assign(state.entities.bob, { x: 10, y: 5 });
+    const { game, requests, rosters } = service();
+    const turnId = require('node:crypto').randomUUID();
+    const spoken = game.prepareAreaTurnSpeech(
+      state,
+      'alice',
+      { channel: 'say', text: 'Hello' },
+      'owner',
+      { turnId, segmentIndex: 0 },
+    );
+    const request = spoken.requests.find((r) => r.npcId === 'keeper');
+    assert.ok(request);
+    const crossed = g.applyTurnAction(
+      spoken.state,
+      'alice',
+      { kind: 'transition', targetId: 'roof-exit' },
+      g.turnFence(spoken.state),
+    );
+    assert.equal(crossed.error, undefined);
+    state = g.endPlayerTurn(crossed.state, 'alice', g.turnFence(crossed.state)).state;
+    if (split) state = g.endPlayerTurn(state, 'bob', g.turnFence(state)).state;
+    assert.equal(state.turnController.phase, 'world');
+    const observationIds = state.npcBrains.keeper.living.observations.map((o) => o.id);
+    const { StoryTurnRuntime } = require('../../apps/api/dist/game/story-turn-runtime');
+    let status = 'queued',
+      contextCalls = 0,
+      failures = 0;
+    const makeRuntime = () => {
+      const runtime = Object.create(StoryTurnRuntime.prototype);
+      runtime.db = {
+        query: async () =>
+          status === 'queued'
+            ? [
+                {
+                  ...request,
+                  npc_id: request.npcId,
+                  purpose: 'speech',
+                  context: { ...request.context, generationPolicy: 'world-batch-v1' },
+                },
+              ]
+            : [],
+      };
+      runtime.row = async () => ({
+        id: turnId,
+        actor_id: 'alice',
+        requester_user_id: 'owner',
+        status: 'committed',
+      });
+      runtime.port = {
+        deferredSpeechContext: () => {
+          contextCalls++;
+          throw new Error('must not prepare a cross-map image/context');
+        },
+        failWorldRequest: async (id, requestId, code) => {
+          assert.equal(requestId, request.id);
+          assert.equal(code, 'SPEECH_PARTICIPANT_DEPARTED');
+          status = 'failed';
+          failures++;
+        },
+      };
+      return runtime;
+    };
+    await makeRuntime().prepareWorldRequests('campaign', { state });
+    await makeRuntime().prepareWorldRequests('campaign', {
+      state: JSON.parse(JSON.stringify(state)),
+    });
+    assert.equal(contextCalls, 0);
+    assert.equal(failures, 1);
+    assert.deepEqual(
+      state.npcBrains.keeper.living.observations.map((o) => o.id),
+      observationIds,
+    );
+    const live = { state };
+    await game.scheduleRoundRequests('campaign', live);
+    assert.equal(requests.length, split ? 1 : 0);
+    assert.equal(rosters[0].roster.length, split ? 1 : 0);
+    // Exercise the production terminal-marker drain without any paid work remaining.
+    game.reconcileWorldOrphans =
+      game.scheduleAutonomousRequests =
+      game.processDecisionRequests =
+        async () => {};
+    game.db.query = async (sql) => {
+      if (sql.includes('SELECT r.id FROM game_npc_decision_requests')) return [{ id: request.id }];
+      if (sql.startsWith('SELECT roster')) return [{ roster: [] }];
+      return [];
+    };
+    game.persist = async (id, current, next) => {
+      current.state = next;
+    };
+    await game.advanceTurnWorld('campaign', live);
+    assert.equal(live.state.turnController.phase, 'player');
+    assert.equal(live.state.turnController.deferredSpeech.length, 0);
+    assert.equal(contextCalls, 0);
+  }
+});
+
+test('existing commitments get one bounded opportunity before private reconsideration', async () => {
+  for (const intent of ['plan', 'public-plan', 'obligation']) {
+    const { game, requests, rosters } = service();
+    const live = { state: world(1) };
+    const brain = live.state.npcBrains.keeper;
+    if (intent === 'obligation')
+      brain.living.obligations = [
+        {
+          id: 'promise',
+          toActorId: 'alice',
+          createdTick: live.state.tick,
+          dueTick: live.state.tick + 100,
+          status: 'accepted',
+          evidenceIds: [],
+          promisedAction: { kind: 'inspect', targetId: 'key' },
+          conditions: [],
+        },
+      ];
+    else {
+      brain.plan = [{ kind: 'move_to', target: { x: 3, y: 6 } }];
+      brain.planMapId = live.state.entities.keeper.mapId;
+      brain.movementGeneration = live.state.entities.keeper.movementGeneration ?? 0;
+      if (intent === 'public-plan') {
+        brain.planSource = { actorId: 'alice', sourceObservationId: 'accepted-source' };
+        brain.living.observations.push({
+          id: 'accepted-source',
+          eventId: 'source',
+          rootId: 'source',
+          kind: 'said',
+          tick: live.state.tick,
+          mapId: live.state.entities.keeper.mapId,
+          channel: 'report',
+          confidence: 'reported',
+          actorId: 'alice',
+          depth: 0,
+          disclosure: 'public',
+          audienceIds: ['alice', 'keeper'],
+          text: 'Please come here.',
+        });
+      }
+    }
+    await game.scheduleRoundRequests('campaign', live);
+    assert.equal(requests[0].status, 'fallback', intent);
+    assert.equal(rosters[0].roster[0].consideration, 'continue', intent);
+    const completed = structuredClone(live.state);
+    completed.npcBrains.keeper.living.lastActionOutcome = {
+      actionKind: 'move_to',
+      status: 'progressed',
+      tick: completed.tick + 1,
+      roundId: completed.turnController.roundId,
+    };
+    completed.tick++;
+    completed.turnController.roundNumber++;
+    completed.turnController.roundId = 'round-2';
+    delete completed.turnController.worldActorIds;
+    const next = service();
+    await next.game.scheduleRoundRequests('campaign', { state: completed });
+    assert.equal(next.requests[0].status, 'queued', `${intent} reconsiders after first action`);
+  }
+});
+
+test('same-tick continuation cannot renew, but a new accepted source can recover after a block', async () => {
+  const live = { state: world(1) };
+  const brain = live.state.npcBrains.keeper;
+  brain.plan = [{ kind: 'move_to', target: { x: 3, y: 6 } }];
+  brain.planSource = { actorId: 'alice', sourceObservationId: 'source-a' };
+  brain.living.observations.push({
+    id: 'source-a',
+    eventId: 'a',
+    rootId: 'a',
+    kind: 'said',
+    tick: live.state.tick,
+    mapId: 'observatory',
+    channel: 'report',
+    confidence: 'reported',
+    actorId: 'alice',
+    depth: 0,
+    disclosure: 'public',
+    audienceIds: ['alice', 'keeper'],
+    text: 'Come here.',
+  });
+  const initial = service();
+  await initial.game.scheduleRoundRequests('campaign', live);
+  assert.equal(initial.requests[0].status, 'fallback');
+  // Round advancement is not a tick advance, and serialization retains the consumed opportunity.
+  live.state = JSON.parse(JSON.stringify(live.state));
+  live.state.turnController.roundNumber = 2;
+  live.state.turnController.roundId = 'round-2';
+  delete live.state.turnController.worldActorIds;
+  const sameTick = service();
+  await sameTick.game.scheduleRoundRequests('campaign', live);
+  assert.equal(sameTick.requests[0].status, 'queued');
+  live.state.npcBrains.keeper.living.lastActionOutcome = {
+    actionKind: 'move_to',
+    status: 'blocked',
+    tick: live.state.tick,
+    roundId: 'round-2',
+  };
+  live.state.turnController.roundNumber = 3;
+  live.state.turnController.roundId = 'round-3';
+  delete live.state.turnController.worldActorIds;
+  const renewedBrain = live.state.npcBrains.keeper;
+  renewedBrain.planSource.sourceObservationId = 'source-b';
+  renewedBrain.generation++;
+  renewedBrain.living.observations.push({
+    ...renewedBrain.living.observations.find((o) => o.id === 'source-a'),
+    id: 'source-b',
+    eventId: 'b',
+    rootId: 'b',
+    text: 'Try the other way.',
+  });
+  const renewed = service();
+  await renewed.game.scheduleRoundRequests('campaign', live);
+  assert.equal(renewed.requests[0].status, 'fallback');
+});
+
+test('a busy earlier reply blocks later NPC replies without blocking private round decisions', async () => {
+  const state = world(2);
+  const replies = [
+    { id: 'second', sequence: 2 },
+    { id: 'third', sequence: 3 },
+    { id: 'first', sequence: 1 },
+  ];
+  state.turnController.deferredSpeech = replies;
+  const game = Object.create(GameService.prototype);
+  const visited = [];
+  game.reconcileIntents = async () => {};
+  game.db = {
+    query: async (sql) => {
+      if (
+        sql.startsWith('SELECT 1 FROM game_npc_decision_requests') ||
+        sql.startsWith('SELECT npc_id FROM game_npc_decision_requests')
+      )
+        return [];
+      assert.ok(sql.startsWith('SELECT * FROM game_npc_decision_requests'));
+      return [
+        {
+          id: 'private-plan',
+          npc_id: 'keeper',
+          purpose: 'plan',
+          context: { turnFence: g.turnFence(state) },
+        },
+        {
+          id: 'second',
+          npc_id: 'keeper',
+          purpose: 'speech',
+          context: { deferredSpeechId: 'second' },
+        },
+        { id: 'third', npc_id: 'npc-1', purpose: 'speech', context: { deferredSpeechId: 'third' } },
+      ];
+    },
+  };
+  game.story = {
+    requireLegacyReplyConsent: async (_id, request) => {
+      visited.push(request.id);
+      return true;
+    },
+  };
+  await game.processDecisionRequests('campaign', { state });
+  assert.deepEqual(visited, ['private-plan']);
+  // The prior scheduled request has committed or been safely terminally drained.
+  state.turnController.deferredSpeech = replies.filter((entry) => entry.id !== 'first');
+  visited.length = 0;
+  await game.processDecisionRequests('campaign', { state });
+  assert.deepEqual(visited, ['private-plan', 'second']);
+  // Restarting with the same persisted markers must not admit the third early.
+  visited.length = 0;
+  await game.processDecisionRequests('campaign', { state: JSON.parse(JSON.stringify(state)) });
+  assert.deepEqual(visited, ['private-plan', 'second']);
+});

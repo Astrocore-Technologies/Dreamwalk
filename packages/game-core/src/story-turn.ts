@@ -1,3 +1,4 @@
+import { observedVisible } from './observation-visibility';
 import {
   footprintDistance,
   occupiedCells,
@@ -70,7 +71,7 @@ export function parseStorySegments(text: string): { segments: StorySegment[]; co
 export type StorySafeEntry = Omit<
   StoryFeedEntry,
   'id' | 'sequence' | 'createdAt' | 'turnId' | 'legacy'
-> & { audienceIds: string[]; sourceId?: string };
+> & { audienceIds: string[]; sourceId?: string; speakerKnownToIds?: string[] };
 const normalize = (s: string) =>
   s
     .trim()
@@ -549,8 +550,25 @@ export function applyStoryTurnProposal(
   const entries: StorySafeEntry[] = [];
   let next = structuredClone(state);
   const events: GameResult['events'] = [];
-  const push = (entry: Omit<StorySafeEntry, 'ordinal' | 'tick'>) =>
-    entries.push({ ...entry, ordinal: entries.length, tick: state.tick });
+  const push = (entry: Omit<StorySafeEntry, 'ordinal' | 'tick'>) => {
+    // Capture recognition at emission, never from the reader's later visibility.
+    const speaker = entry.authorId && next.entities[entry.authorId];
+    const source = entry.sourceId && next.npcUtterances?.find((u) => u.id === entry.sourceId);
+    const identity = ['speech', 'npc_reply'].includes(entry.kind)
+      ? {
+          speakerKnownToIds: source
+            ? [...(source.speakerKnownToIds ?? [])]
+            : speaker
+              ? entry.audienceIds.filter(
+                  (id) =>
+                    id === speaker.id ||
+                    (!!next.entities[id] && observedVisible(next, next.entities[id], speaker)),
+                )
+              : [],
+        }
+      : {};
+    entries.push({ ...entry, ...identity, ordinal: entries.length, tick: state.tick });
+  };
   if (context.mode === 'director') {
     // Materialize the typed scene before resolving its ordered interactions. All mutations
     // remain in this local proposal until every action and speech admission succeeds.

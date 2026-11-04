@@ -28,10 +28,16 @@ export const storyMessages = {
     'Recipient unavailable. Choose a visible NPC; a whisper will never become public speech.',
     'Співрозмовник недоступний. Обери видимого NPC; шепіт не стане публічною реплікою.',
   ],
-  chooseWhisper: [
-    'Для шёпота выбери NPC на сцене.',
-    'Select an NPC in the scene to whisper.',
-    'Для шепоту обери NPC на сцені.',
+  nearbyWhisper: ['Шёпот рядом', 'Nearby whisper', 'Шепіт поруч'],
+  areaSpeech: [
+    'Собеседник необязателен: обычную речь слышно в пределах 3 клеток, речь с ! — 6, шёпот — 1. Стены и закрытые двери мешают слышимости.',
+    'A recipient is optional: normal speech reaches 3 cells, speech with ! reaches 6, and whispers reach 1. Walls and closed doors block hearing.',
+    'Співрозмовник необов’язковий: звичайну мову чути в межах 3 клітинок, мову з ! — 6, шепіт — 1. Стіни й зачинені двері заважають чутності.',
+  ],
+  areaWhisper: [
+    'Шёпот без выбранного собеседника услышат только те, кто рядом: до 1 клетки с учётом препятствий.',
+    'Without a selected recipient, only nearby listeners can hear your whisper: within 1 cell, subject to obstacles.',
+    'Шепіт без обраного співрозмовника почують лише ті, хто поруч: до 1 клітинки з урахуванням перешкод.',
   ],
   send: ['Отправить', 'Send', 'Надіслати'],
   confirm: ['Подтвердить ход', 'Confirm turn', 'Підтвердити хід'],

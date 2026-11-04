@@ -89,3 +89,15 @@ a paid provider request or changes an existing player's campaign or balance. Moc
 tests prove admission, privacy, billing and engine behavior, not the literary
 quality of live model roleplay. Production quality evaluation needs separately
 authorized spending and a defined scenario.
+
+## Deployment order
+
+Vercel Git deployment creation is disabled for every branch, including main.
+Do not enable automatic Git builds or trigger a deployment for a pending or failed
+GitHub check suite. The connected deployment operator must first verify all
+non-Vercel checks, including every browser shard and the aggregate gate, are green
+for the exact candidate SHA. Then create one manual preview for that SHA, verify
+its build and readback, and merge only after review. After merge, wait for all
+checks on the exact main SHA before creating a production deployment. Verify the
+canonical production alias and API release before reporting deployment complete.
+No new access token is needed for the existing connected deployment operator.

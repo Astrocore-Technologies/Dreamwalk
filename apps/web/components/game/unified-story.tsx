@@ -522,7 +522,7 @@ export function UnifiedStory({
               <span>
                 {recipient
                   ? `${h('target')}: ${storyRecipientLabel(projection, recipient)}`
-                  : h('scene')}
+                  : h(channel === 'whisper' ? 'nearbyWhisper' : 'scene')}
               </span>
               {recipient && (
                 <button
@@ -553,7 +553,7 @@ export function UnifiedStory({
             )}
             {channel === 'whisper' && !recipient && (
               <p className={styles.status} role="status">
-                {h('chooseWhisper')}
+                {h('areaWhisper')}
               </p>
             )}
             <div className={styles.composerInput}>
@@ -585,7 +585,7 @@ export function UnifiedStory({
               )}
             </div>
             <p id={hintId} className={styles.hint}>
-              {h('hint')}
+              {h('hint')} {h('areaSpeech')}
             </p>
             <div className={styles.composerFeedback}>
               {projection.turn ? (
