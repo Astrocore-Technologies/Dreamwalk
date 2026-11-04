@@ -25,6 +25,7 @@ import { localizedProjection } from './localized-projection';
 import { NarrativePreferences } from './narrative-preferences';
 import { GameCanvas } from './game-canvas';
 import { TurnControls } from './turn-controls';
+import { GameWallet } from './game-wallet';
 import { useTurnText } from './turn-messages';
 import { playerControlsAvailable } from './turn-ui';
 import { UnifiedStory, type StoryRecipient } from './unified-story';
@@ -420,6 +421,12 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
               )}
             </span>
           </div>
+          {user && (
+            <GameWallet
+              ownerId={user.id}
+              scope={`${campaignId}:${p.turn?.roundId ?? ''}:${p.turn?.phase ?? ''}`}
+            />
+          )}
           <TurnControls
             projection={p}
             connected={connected}
@@ -500,6 +507,10 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             onAction={act}
             onApproach={approach}
             onSelectNpc={(npcId) => {
+              if (p.turn) {
+                setInspectedNpcId(npcId);
+                return;
+              }
               const npc = p.entities.find((entity) => entity.id === npcId && entity.kind === 'npc');
               if (npc) setRecipient({ id: npc.id, label: npc.label || t('NPC') });
             }}
@@ -545,7 +556,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                   const npc = p.entities.find(
                     (entity) => entity.kind === 'npc' && entity.id === inspectedNpcId,
                   );
-                  if (npc && !controlsDisabled && !storyBusy)
+                  if (!p.turn && npc && !controlsDisabled && !storyBusy)
                     setRecipient({ id: npc.id, label: npc.label || t('NPC') });
                 }}
               />

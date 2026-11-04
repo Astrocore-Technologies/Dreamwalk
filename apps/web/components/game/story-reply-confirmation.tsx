@@ -40,6 +40,9 @@ export function StoryReplyConfirmation({
   const [busy, setBusy] = useState(false);
   const [unknown, setUnknown] = useState(false);
   const [error, setError] = useState('');
+  const [refreshVersion, setRefreshVersion] = useState(0);
+  const quoteOperation = useRef<{ path: string; scope: string; id: string } | null>(null);
+  const confirmed = useRef(false);
   const flight = useRef(false);
   const submitted = useRef<typeof prepared>(null);
   const epoch = useRef(0);
@@ -53,27 +56,53 @@ export function StoryReplyConfirmation({
     };
   }, [path]);
   useEffect(() => {
-    if (!unknown) setPrepared(null);
-  }, [scope, unknown]);
+    if (!unknown) {
+      setPrepared(null);
+      setError('');
+      quoteOperation.current = null;
+      confirmed.current = false;
+    }
+  }, [path, scope]);
   useEffect(() => {
     const expiry = prepared?.result.quote?.expiresAt;
     if (!expiry || unknown) return;
     const timer = setTimeout(
       () => {
         setPrepared(null);
-        setError(h('expired'));
+        quoteOperation.current = null;
+        if (worldBatch) setRefreshVersion((value) => value + 1);
+        else setError(h('expired'));
       },
       Math.max(0, Date.parse(expiry) - Date.now()),
     );
     return () => clearTimeout(timer);
   }, [prepared, unknown]);
+  // A quote prepares pricing only. Consent remains an explicit, separate action.
+  // Debounce changing world scopes and never restart an uncertain/accepted dispatch.
+  useEffect(() => {
+    if (!worldBatch || disabled || unknown || confirmed.current) return;
+    let active = true;
+    let timer: ReturnType<typeof setTimeout>;
+    const start = () => {
+      if (!active) return;
+      if (flight.current) timer = setTimeout(start, 150);
+      else if (!preparedCurrent.current) void estimate();
+    };
+    timer = setTimeout(start, 350);
+    return () => {
+      active = false;
+      clearTimeout(timer);
+    };
+  }, [worldBatch, path, scope, disabled, unknown, refreshVersion]);
   async function estimate() {
-    if (flight.current || disabled || unknown) return;
+    if (flight.current || disabled || unknown || confirmed.current) return;
     flight.current = true;
     setBusy(true);
     setError('');
     const stamp = epoch.current;
-    const operationId = crypto.randomUUID();
+    if (quoteOperation.current?.path !== path || quoteOperation.current.scope !== scope)
+      quoteOperation.current = { path, scope, id: crypto.randomUUID() };
+    const operationId = quoteOperation.current.id;
     try {
       const result = await api<Pick<StoryTurnQuoteResponse, 'quote'>>(`${path}/quote`, {
         method: 'POST',
@@ -81,12 +110,25 @@ export function StoryReplyConfirmation({
       });
       if (stamp !== epoch.current || currentScope.current !== scope) return;
       if (!result.quote || !providerBoundKnown(result.quote, result.quote.external)) {
+        quoteOperation.current = null;
         setError(h('noBound'));
+        return;
+      }
+      const expiry = Date.parse(result.quote.expiresAt);
+      if (!Number.isFinite(expiry) || expiry <= Date.now()) {
+        quoteOperation.current = null;
+        setError(h('expired'));
         return;
       }
       setPrepared({ result, operationId, scope });
     } catch (err) {
-      if (stamp === epoch.current) setError(errorMessage(err));
+      if (stamp === epoch.current && currentScope.current === scope) {
+        setError(errorMessage(err));
+        // Definitive rejection can be recalculated. An uncertain quote read retries
+        // its operation rather than leaving duplicate native quotes behind.
+        if (err instanceof ApiError && err.status && err.status < 500 && err.status !== 408)
+          quoteOperation.current = null;
+      }
     } finally {
       flight.current = false;
       if (stamp === epoch.current) setBusy(false);
@@ -106,9 +148,12 @@ export function StoryReplyConfirmation({
     const expiresAt = Date.parse(quote.expiresAt);
     if (
       !unknown &&
-      (sent.scope !== scope || !Number.isFinite(expiresAt) || expiresAt <= Date.now())
+      (sent.scope !== currentScope.current ||
+        !Number.isFinite(expiresAt) ||
+        expiresAt <= Date.now())
     ) {
       setPrepared(null);
+      quoteOperation.current = null;
       setError(h('expired'));
       return;
     }
@@ -128,6 +173,7 @@ export function StoryReplyConfirmation({
         }),
       });
       accepted = true;
+      confirmed.current = true;
       if (stamp !== epoch.current) return;
       setUnknown(false);
       submitted.current = null;
@@ -143,6 +189,7 @@ export function StoryReplyConfirmation({
         setUnknown(false);
         submitted.current = null;
         setPrepared(null);
+        quoteOperation.current = null;
         await onChanged();
       }
     } finally {
@@ -151,8 +198,12 @@ export function StoryReplyConfirmation({
     }
   }
   return (
-    <div className={styles.quote} data-testid="story-reply-confirmation">
-      <p>{h(worldBatch ? 'worldEstimate' : 'replyEstimateChanged')}</p>
+    <div
+      className={worldBatch ? styles.liveCost : styles.quote}
+      data-testid="story-reply-confirmation"
+      data-live-world-cost={worldBatch || undefined}
+    >
+      <p>{h(worldBatch ? 'worldCostTitle' : 'replyEstimateChanged')}</p>
       <RuntimeMapQuoteNotice />
       <ErrorBox message={error} />
       {unknown ? (
@@ -169,16 +220,25 @@ export function StoryReplyConfirmation({
             <Button type="button" disabled={busy || disabled} onClick={() => void confirm()}>
               {h('confirm')}
             </Button>
-            <Button
-              type="button"
-              variant="secondary"
-              disabled={busy}
-              onClick={() => setPrepared(null)}
-            >
-              {h('dismiss')}
-            </Button>
+            {!worldBatch && (
+              <Button
+                type="button"
+                variant="secondary"
+                disabled={busy}
+                onClick={() => {
+                  setPrepared(null);
+                  quoteOperation.current = null;
+                }}
+              >
+                {h('dismiss')}
+              </Button>
+            )}
           </div>
         </>
+      ) : confirmed.current ? (
+        <p role="status">{h('worldPending')}</p>
+      ) : worldBatch && !error ? (
+        <p role="status">{h('worldCostCalculating')}</p>
       ) : (
         <Button
           type="button"
@@ -186,7 +246,7 @@ export function StoryReplyConfirmation({
           disabled={busy || disabled}
           onClick={() => void estimate()}
         >
-          {h(worldBatch ? 'estimateWorld' : 'refreshEstimate')}
+          {h(worldBatch ? 'retryEstimate' : 'refreshEstimate')}
         </Button>
       )}
     </div>

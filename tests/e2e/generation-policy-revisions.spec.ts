@@ -1288,15 +1288,33 @@ for (const locale of ['uk', 'en', 'ru'] as const)
       name: { ru: 'Сказать', en: 'Say', uk: 'Сказати' }[locale],
       exact: true,
     });
-    await say.focus();
-    await say.press('Enter');
+    await expect(say).toHaveCount(0);
+    const inspect = npcActions.getByRole('button', {
+      name: { ru: 'Осмотреть', en: 'Inspect', uk: 'Оглянути' }[locale],
+      exact: true,
+    });
+    await inspect.focus();
+    await inspect.press('Enter');
     await expect(menu).toHaveCount(0);
-    await expect(actions).toBeFocused();
-    await expect(page.getByTestId('unified-story')).toContainText(
-      `${{ ru: 'Собеседник', en: 'Recipient', uk: 'Співрозмовник' }[locale]}: ${npcLabel}`,
+    const inspection = page.getByTestId('npc-public-inspection');
+    await expect(inspection.getByRole('heading')).toHaveText(npcLabel);
+    const closeInspection = inspection.getByRole('button', {
+      name: { ru: 'Закрыть осмотр', en: 'Close inspection', uk: 'Закрити огляд' }[locale],
+      exact: true,
+    });
+    await expect(closeInspection).toBeFocused();
+    await inspection.getByTestId('npc-inspection-talk').click();
+    await expect(page.getByTestId('unified-story').locator('textarea')).toBeFocused();
+    await expect(page.getByTestId('story-audience')).toHaveText(
+      { ru: 'Речь рядом', en: 'Speech nearby', uk: 'Мова поруч' }[locale],
     );
+    await closeInspection.click();
 
     const npcPoint = await cellPoint(npc.x, npc.y);
+    await page.mouse.click(npcPoint.x, npcPoint.y);
+    await expect(inspection.getByRole('heading')).toHaveText(npcLabel);
+    expect(f.moves).toHaveLength(0);
+    await closeInspection.click();
     await page.mouse.click(npcPoint.x, npcPoint.y, { button: 'right' });
     await expect(page.locator(`[data-map-target="${npc.id}"]`)).toBeVisible();
     await menu.press('Escape');
@@ -1340,5 +1358,136 @@ for (const locale of ['uk', 'en', 'ru'] as const)
     await expect(scene).toHaveAttribute('data-battlemap-grid', '24x24');
     await expect(scene).toHaveAttribute('data-rendered-players', '1');
     expect(f.counts).toHaveLength(0);
+    noPaidOrUnexpected(f);
+  });
+
+for (const locale of ['ru', 'en', 'uk'] as const)
+  test(`live round cost and both balances stay visible without automatic consent (${locale})`, async ({
+    page,
+  }) => {
+    const f = await preflightFixture(page, locale, false, false, true);
+    const quotes: Record<string, unknown>[] = [];
+    const consents: Record<string, unknown>[] = [];
+    let pending = false;
+    let unknown = false;
+    let estimate = '12500';
+    await page.route(`**/api/v1/game/campaigns/${f.id}/world-generation`, (route) =>
+      route.fulfill({
+        json: {
+          available: f.projection.turn!.phase === 'world' && !pending,
+          pending,
+          unknown,
+          forecast: {
+            estimatedSparkSubunits: estimate,
+            estimatedTotalMicros: 6250,
+            requestCount: 2,
+            basis: 'local_round_forecast',
+            includesMapAnalysis: false,
+            finalQuoteRequired: true,
+          },
+        },
+      }),
+    );
+    await page.route(`**/api/v1/game/campaigns/${f.id}/world-generation/quote`, (route) => {
+      quotes.push(route.request().postDataJSON());
+      return route.fulfill({
+        json: {
+          quote: {
+            id: 'synthetic-live-world-quote',
+            external: true,
+            requiresConsent: true,
+            provider: 'synthetic-no-dispatch',
+            providerUpperMicros: 12500,
+            credits: 0,
+            chargeUnit: 'sparks',
+            sparkReservedSubunits: '12500',
+            expiresAt: new Date(Date.now() + 60000).toISOString(),
+            funding: {
+              policyVersion: 'dreams-first-v1',
+              dreamsReservedSubunits: '12500',
+              sparksReservedSubunits: '0',
+              totalReservedSubunits: '12500',
+              maxSparksSubunits: '12500',
+              allocation: 'estimate',
+            },
+          },
+        },
+      });
+    });
+    await page.route(`**/api/v1/game/campaigns/${f.id}/world-generation/consent`, (route) => {
+      consents.push(route.request().postDataJSON());
+      pending = true;
+      return route.fulfill({ json: { accepted: true, pending: true } });
+    });
+    const wallet = page.getByTestId('game-wallet');
+    await expect(wallet).toBeVisible();
+    await expect(wallet.getByTestId('sparks-balance')).toHaveText(
+      formatSparkSubunits('500000', locale),
+    );
+    await expect(wallet.getByTestId('dreams-balance')).toHaveText(
+      formatSparkSubunits('500000', locale),
+    );
+    const forecast = page.getByTestId('world-cost-forecast');
+    await expect(forecast).toContainText(formatSparkSubunits(estimate, locale));
+    estimate = '25000';
+    await expect(forecast).toContainText(formatSparkSubunits(estimate, locale));
+    expect(quotes).toHaveLength(0);
+    expect(consents).toHaveLength(0);
+    await page.screenshot({
+      path: test.info().outputPath(`live-round-cost-${locale}-desktop.png`),
+    });
+    await page.setViewportSize({ width: 390, height: 844 });
+    await expect(wallet).toBeVisible();
+    await expect(wallet.getByTestId('sparks-balance')).toBeInViewport();
+    await expect(wallet.getByTestId('dreams-balance')).toBeInViewport();
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.screenshot({ path: test.info().outputPath(`live-round-cost-${locale}-mobile.png`) });
+
+    // Prior unknown billing remains visible even while the player has input control.
+    pending = true;
+    unknown = true;
+    const reconciliation = {
+      ru: 'Стоимость прошлого запроса ещё на сверке.',
+      en: 'The previous request’s cost is still being reconciled.',
+      uk: 'Вартість попереднього запиту ще на звірці.',
+    }[locale];
+    await expect(page.getByTestId('world-generation-confirmation')).toContainText(reconciliation);
+    await expect(forecast).toHaveCount(0);
+    expect(quotes).toHaveLength(0);
+    expect(consents).toHaveLength(0);
+
+    // A complete world roster is auto-priced; only the explicit click admits it.
+    pending = false;
+    unknown = false;
+    f.projection.turn = {
+      ...f.projection.turn!,
+      phase: 'world',
+      activeActorId: null,
+      ownTurn: false,
+      phaseEpoch: f.projection.turn!.phaseEpoch + 1,
+    };
+    await page.reload();
+    const confirmation = page.getByTestId('story-reply-confirmation');
+    const confirm = confirmation.getByRole('button', {
+      name: { ru: 'Подтвердить ход', en: 'Confirm turn', uk: 'Підтвердити хід' }[locale],
+      exact: true,
+    });
+    await expect(confirm).toBeEnabled();
+    expect(quotes).toHaveLength(1);
+    expect(consents).toHaveLength(0);
+    await expect(confirmation.locator('[data-wallet-funding]')).toBeVisible();
+    await confirmation.screenshot({
+      path: test.info().outputPath(`live-round-approval-${locale}.png`),
+    });
+    await confirm.click();
+    await expect.poll(() => consents.length).toBe(1);
+    expect(consents[0]).toEqual({
+      operationId: quotes[0].operationId,
+      quoteId: 'synthetic-live-world-quote',
+      consent: true,
+    });
+    expect(quotes).toHaveLength(1);
     noPaidOrUnexpected(f);
   });

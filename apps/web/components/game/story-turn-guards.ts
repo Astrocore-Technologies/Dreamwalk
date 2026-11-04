@@ -1,4 +1,11 @@
 import type { GameProjection } from '@dreamwalk/contracts';
+/** Grid speech has listeners, not a selected addressee. Keep old saves compatible. */
+export function storyRecipientForProjection(
+  projection: Pick<GameProjection, 'turn'>,
+  recipient: { id: string; label: string } | null,
+) {
+  return projection.turn ? null : recipient;
+}
 /** A stale selected recipient fails closed; area whispers require turn-based play. */
 export function storyTargetVisible(projection: GameProjection, targetNpcId?: string) {
   return (

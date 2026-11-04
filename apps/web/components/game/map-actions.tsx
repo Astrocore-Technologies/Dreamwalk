@@ -105,16 +105,18 @@ export function MapActions({
             <div className={styles.menuActions}>
               {e.kind === 'npc' && (
                 <>
-                  <button
-                    type="button"
-                    disabled={disabled}
-                    onClick={() => {
-                      onClose();
-                      onSay(e.id);
-                    }}
-                  >
-                    {text('say')}
-                  </button>
+                  {!projection.turn && (
+                    <button
+                      type="button"
+                      disabled={disabled}
+                      onClick={() => {
+                        onClose();
+                        onSay(e.id);
+                      }}
+                    >
+                      {text('say')}
+                    </button>
+                  )}
                   <button
                     type="button"
                     onClick={() => {

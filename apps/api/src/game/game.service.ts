@@ -1,3 +1,4 @@
+import { forecastWorldRound } from './round-cost-forecast';
 import { stampNpcThoughtAudience, projectNpcInnerThought } from './npc-thought-access';
 import {
   campaignDirectorUpdateSchema,
@@ -34,6 +35,7 @@ import {
   gameIntentSchema,
   gameMoveSchema,
   npcSpeechSchema,
+  npcPlanProposalSchema,
   type GameState,
   type GameResult,
   type GameProjection,
@@ -54,7 +56,6 @@ import {
   worldTurnCompanionContinuation,
   companionAction,
   stepWorldNpcPlan,
-  npcConditionsMet,
   turnFence,
   matchesTurnFence,
   createStateFromPlayable,
@@ -93,6 +94,7 @@ import {
   npcReplyObservation,
   commitNpcPublicUtterance,
   npcSpeechListenerIds,
+  npcRoleplayObserverIds,
   npcSpeechProspectiveListenerIds,
   npcContextFingerprint,
   recordNpcEvents,
@@ -197,6 +199,32 @@ const digest = (v: unknown) =>
   createHash('sha256')
     .update(JSON.stringify(canonical(v)))
     .digest('hex');
+/** RP prose uses the same complete-audience authorization as ordinary claims. */
+function safeRoleplayExtras(source: DecisionContext, current: DecisionContext) {
+  const claims = Array.isArray(current.claims) ? (current.claims as Record<string, unknown>[]) : [];
+  const roleplay = Array.isArray(source.untrustedRoleplay)
+    ? source.untrustedRoleplay.filter((value: unknown) => {
+        if (!value || typeof value !== 'object') return false;
+        const entry = value as Record<string, unknown>;
+        return claims.some(
+          (claim) =>
+            claim.kind === 'attempted' &&
+            claim.actorId === entry.actorId &&
+            claim.untrustedAttempt === entry.text &&
+            (entry.observationId === undefined || claim.observationId === entry.observationId),
+        );
+      })
+    : [];
+  return roleplay.length
+    ? { untrustedRoleplay: roleplay, roleplayPolicy: source.roleplayPolicy }
+    : {};
+}
+export function roleplayExtrasRemainSafe(source: DecisionContext, current: DecisionContext) {
+  return (
+    digest(source.untrustedRoleplay ?? []) ===
+    digest(safeRoleplayExtras(source, current).untrustedRoleplay ?? [])
+  );
+}
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === 'object')
@@ -513,7 +541,16 @@ export class GameService implements OnModuleDestroy {
     return this.serial(id, async () => {
       const a = await this.access(req, id),
         live = await this.load(id);
-      return this.worldGeneration.status(a.user.id, id, live.state);
+      const status = await this.worldGeneration.status(a.user.id, id, live.state);
+      // Owner authorization above precedes private context inspection. Reading
+      // this forecast must not schedule, preflight, quote, or settle a request.
+      const forecast =
+        status.pending || status.unknown || !live.state.turnController
+          ? null
+          : await forecastWorldRound(this.db, this.ai, id, live.state, (state, request) =>
+              this.deferredSpeechContext(state, request),
+            );
+      return { ...status, forecast };
     });
   }
   worldGenerationQuote(req: Request, id: string, body: unknown) {
@@ -1369,6 +1406,7 @@ export class GameService implements OnModuleDestroy {
     let next = state,
       accepted = false;
     let cognitionCommitted = false;
+    let decisionCode: string | undefined;
     let intentOutcome:
       | {
           id: string;
@@ -1385,7 +1423,7 @@ export class GameService implements OnModuleDestroy {
         !matchesTurnFence(state, job.context.turnFence as TurnFence) ||
         state.turnController.phase !== 'world')
     )
-      return { next, accepted, intentOutcome, narrativeOutcome };
+      return { next, accepted, intentOutcome, narrativeOutcome, decisionCode };
     const memory = state.npcBrains?.[job.npcId]?.living;
     if (job.purpose === 'narrative') {
       const metadata = z
@@ -1527,6 +1565,7 @@ export class GameService implements OnModuleDestroy {
         }
         if (
           context &&
+          roleplayExtrasRemainSafe(job.context, context) &&
           (context.contextHash === job.contextHash ||
             this.frozenSpeechContext(state, job.npcId, job.context, context))
         ) {
@@ -1584,7 +1623,37 @@ export class GameService implements OnModuleDestroy {
           job.contextHash)
     ) {
       if (job.purpose === 'plan') {
-        const result = acceptNpcPlan(state, job.npcId, job.proposal);
+        let result = acceptNpcPlan(state, job.npcId, job.proposal);
+        if (result.error && this.frozenRoundContext(state, job.npcId, job.context)) {
+          const proposal = npcPlanProposalSchema.safeParse(job.proposal);
+          if (proposal.success && proposal.data.turnFence) {
+            // The model completed a valid deliberation; an impossible or forbidden
+            // intention is an in-world blocked outcome, not an unknown provider bill.
+            // Re-run the SAME core envelope/cognition checks with no executable intent.
+            // Stale actor/map/brain/round/deadline and malformed proposals still fail.
+            const blocked = result.error;
+            const considered = acceptNpcPlan(state, job.npcId, {
+              ...proposal.data,
+              actions: [{ kind: 'wait' }],
+              targetRevisions: {},
+              beliefRevisions: undefined,
+            });
+            if (!considered.error) {
+              const brain = considered.state.npcBrains![job.npcId];
+              brain.plan = [];
+              brain.cursor = 0;
+              brain.living!.lastActionOutcome = {
+                actionKind: proposal.data.actions[0]?.kind ?? 'wait',
+                status: 'blocked',
+                code: blocked,
+                tick: state.tick,
+                roundId: state.turnController!.roundId,
+              };
+              result = considered;
+              decisionCode = `NPC_INTENTION_BLOCKED:${blocked}`;
+            }
+          }
+        }
         if (!result.error) {
           cognitionCommitted = !!(job.proposal as { cognition?: unknown } | null)?.cognition;
           next = recordNpcEvents(state, result.state, result.events, `ai-${job.id}`).state;
@@ -1627,7 +1696,7 @@ export class GameService implements OnModuleDestroy {
       const resolved = markTurnSpeechResolved(next, job.context.deferredSpeechId, turnFence(next)!);
       if (!resolved.error) next = resolved.state;
     }
-    return { next, accepted, intentOutcome, narrativeOutcome };
+    return { next, accepted, intentOutcome, narrativeOutcome, decisionCode };
   }
   private async saveNarrativeOutcome(
     c: import('pg').PoolClient,
@@ -1758,54 +1827,10 @@ export class GameService implements OnModuleDestroy {
         continue;
       }
       const context = await this.decisionContext(id, state, npcId, 'plan');
-      const urgent = brain.living!.causes.some(
-        (cause) => cause.priority >= 2 && cause.notBeforeTick <= state.tick,
-      );
-      const memory = brain.living!;
-      const prior = memory.cognition;
-      const outcome = memory.lastActionOutcome;
-      const pendingPlan =
-        brain.cursor < brain.plan.length &&
-        (!brain.planMapId || brain.planMapId === npc.mapId) &&
-        (brain.movementGeneration === undefined ||
-          brain.movementGeneration === (npc.movementGeneration ?? 0));
-      const source =
-        brain.planSource &&
-        memory.observations.find(
-          (observation) => observation.id === brain.planSource!.sourceObservationId,
-        );
-      const newCommitment = (tick: number) =>
-        (!outcome || tick >= outcome.tick) && (!prior || tick >= prior.tick);
-      const obligation = memory.obligations.find(
-        (item) =>
-          item.status === 'accepted' &&
-          item.dueTick > state.tick &&
-          npcConditionsMet(state, npcId, item.conditions ?? [], item.toActorId, item.createdTick) &&
-          newCommitment(item.acceptedTick ?? item.createdTick),
-      );
-      const firstKey =
-        pendingPlan && ((!prior && !outcome) || (!!source && newCommitment(source.tick)))
-          ? `plan:${brain.generation}:${brain.planSource?.sourceObservationId ?? 'existing'}`
-          : obligation
-            ? `obligation:${obligation.id}:${obligation.acceptedTick ?? obligation.createdTick}`
-            : undefined;
-      // A persisted identity, rather than wall-clock/game ticks, gives each new
-      // commitment one opportunity. Same-tick later rounds cannot renew this lease.
-      const firstOpportunity = !!firstKey && memory.continuationOpportunity?.key !== firstKey;
-      const continuation =
-        !urgent &&
-        (firstOpportunity ||
-          (outcome?.status !== 'blocked' &&
-            !!prior &&
-            prior.roundNumber !== undefined &&
-            turn.roundNumber < prior.roundNumber + prior.reconsiderAfterRounds &&
-            prior.knowledgeRevision === memory.knowledgeRevision &&
-            (pendingPlan || !!npc.path?.length || !!memory.companionship)));
-      if (continuation && firstOpportunity)
-        state.npcBrains![npcId].living!.continuationOpportunity = {
-          key: firstKey!,
-          roundId: turn.roundId,
-        };
+      // Every active-scene NPC deliberates once per player round, including empty
+      // turns. Existing plans, obligations and thoughts are context, not permission
+      // to silently skip this round's model decision. Off-map agreed crossings above
+      // remain mechanical continuation and never wake dormant NPC minds.
       const requestId = randomUUID();
       requests.push({
         id: requestId,
@@ -1825,7 +1850,6 @@ export class GameService implements OnModuleDestroy {
           mockProposal: createMockNpcPlan(state, npcId),
         },
       });
-      if (continuation) continuing.push(requestId);
     }
     await this.persist(id, live, state, 'npc.round.considered', undefined, async (c) => {
       await c.query(
@@ -1837,11 +1861,7 @@ export class GameService implements OnModuleDestroy {
           JSON.stringify(
             roster.map(([npcId]) => ({
               npcId,
-              consideration: offmapCompanions.has(npcId)
-                ? 'companion'
-                : requests.some((r) => r.npcId === npcId && continuing.includes(r.id))
-                  ? 'continue'
-                  : 'plan',
+              consideration: offmapCompanions.has(npcId) ? 'companion' : 'plan',
             })),
           ),
         ],
@@ -2124,6 +2144,7 @@ export class GameService implements OnModuleDestroy {
             quotedReply &&
             ((current.contextHash !== r.context.contextHash &&
               !this.frozenSpeechContext(live.state, String(r.npc_id), r.context, current)) ||
+              !roleplayExtrasRemainSafe(r.context, current) ||
               !matchesTurnFence(live.state, r.context.turnFence))
           ) {
             if (worldReply && r.context.generationPolicy === 'world-batch-v1')
@@ -2147,12 +2168,8 @@ export class GameService implements OnModuleDestroy {
                   knowledgeRevision: r.context.knowledgeRevision,
                   deferredSpeechId: r.context.deferredSpeechId,
                   turnOrder: r.context.turnOrder,
-                  ...(r.context.untrustedRoleplay
-                    ? {
-                        untrustedRoleplay: r.context.untrustedRoleplay,
-                        roleplayPolicy: r.context.roleplayPolicy,
-                      }
-                    : {}),
+                  ...(r.context.responseOptional ? { responseOptional: true } : {}),
+                  ...safeRoleplayExtras(r.context, current),
                   mockProposal: createMockNpcPublicResponse(current),
                 },
                 Boolean(this.ai.contextWindow()),
@@ -2480,11 +2497,8 @@ export class GameService implements OnModuleDestroy {
         await this.story.complete(id, live, job);
         continue;
       }
-      const { next, accepted, intentOutcome, narrativeOutcome } = await this.evaluateDecision(
-        id,
-        live.state,
-        job,
-      );
+      const { next, accepted, intentOutcome, narrativeOutcome, decisionCode } =
+        await this.evaluateDecision(id, live.state, job);
       await this.persist(
         id,
         live,
@@ -2493,6 +2507,11 @@ export class GameService implements OnModuleDestroy {
         undefined,
         async (c) => {
           await this.ai.finalize(c, job.id, accepted ? 'committed' : 'stale');
+          if (decisionCode)
+            await c.query('UPDATE npc_ai_jobs SET result_code=$2 WHERE id=$1', [
+              job.id,
+              decisionCode,
+            ]);
           if (accepted && job.purpose === 'speech' && job.context.deferredSpeechId)
             await this.story.writeDeferredReply(
               c,
@@ -3523,9 +3542,7 @@ export class GameService implements OnModuleDestroy {
       deferredSpeechId: r.deferredSpeechId,
       turnOrder: r.turnOrder,
       ...(r.responseOptional ? { responseOptional: true } : {}),
-      ...(r.untrustedRoleplay
-        ? { untrustedRoleplay: r.untrustedRoleplay, roleplayPolicy: r.roleplayPolicy }
-        : {}),
+      ...safeRoleplayExtras(r, current),
       mockProposal: createMockNpcPublicResponse(current),
     };
   }
@@ -3533,15 +3550,24 @@ export class GameService implements OnModuleDestroy {
   private prepareAreaTurnSpeech(
     state: GameState,
     actorId: string,
-    speech: z.infer<typeof npcSpeechSchema>,
+    speech: z.infer<typeof npcSpeechSchema> & {
+      presentationKind?: 'attempt';
+      observeOnly?: boolean;
+    },
     userId: string,
     identity: { turnId: string; segmentIndex: number },
-    targetNpcId?: string,
+    _legacyTargetNpcId?: string,
   ) {
-    const audienceIds = npcSpeechListenerIds(state, actorId, speech);
-    const applied = applyNpcSpeech(state, actorId, targetNpcId, speech, {
+    const { presentationKind, observeOnly, ...utterance } = speech;
+    const audienceIds =
+      presentationKind === 'attempt'
+        ? npcRoleplayObserverIds(state, actorId, utterance)
+        : npcSpeechListenerIds(state, actorId, utterance);
+    // Spatial speech has no selected recipient, including requests from older clients.
+    const applied = applyNpcSpeech(state, actorId, undefined, utterance, {
       suppressReply: true,
       identity,
+      presentationKind,
     });
     if (applied.error) fail(409, applied.error, applied.error);
     let next = recordNpcEvents(
@@ -3552,9 +3578,9 @@ export class GameService implements OnModuleDestroy {
     ).state;
     const requests: NpcDecisionRequest[] = [];
     for (const npcId of audienceIds.filter(
-      (id) => next.entities[id]?.kind === 'npc' && next.npcBrains?.[id]?.living,
+      (id) => !observeOnly && next.entities[id]?.kind === 'npc' && next.npcBrains?.[id]?.living,
     )) {
-      const marker = admittedNpcSpeechObservationId(next, actorId, npcId, speech, identity);
+      const marker = admittedNpcSpeechObservationId(next, actorId, npcId, utterance, identity);
       if (!marker) continue; // E.g. an encounter participant could not admit this utterance.
       const hash = digest({ ...identity, npcId });
       const requestId = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
@@ -3590,7 +3616,7 @@ export class GameService implements OnModuleDestroy {
           segmentIndex: identity.segmentIndex,
           deferredSpeechId: requestId,
           turnOrder: ref.sequence,
-          responseOptional: npcId !== targetNpcId,
+          responseOptional: true,
           knowledgeRevision: next.npcBrains![npcId].living!.knowledgeRevision,
         },
       });
@@ -3765,6 +3791,14 @@ export class GameService implements OnModuleDestroy {
       roundRoster?.map((entry) => entry.npcId) ?? Object.keys(state.npcBrains ?? {})
     ).sort()) {
       const brain = state.npcBrains![npcId];
+      // A rejected round intention remains blocked feedback for the next decision.
+      // Do not replace it with an old companion action or a fabricated successful wait.
+      if (
+        !brain.plan.length &&
+        brain.living?.lastActionOutcome?.status === 'blocked' &&
+        brain.living.lastActionOutcome.roundId === state.turnController!.roundId
+      )
+        continue;
       const companion =
         worldTurnCompanionContinuation(state, npcId) ??
         (brain.cursor >= brain.plan.length ? companionAction(state, npcId) : undefined);

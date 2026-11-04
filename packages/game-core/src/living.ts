@@ -35,7 +35,7 @@ import {
   npcConditionSchema,
 } from '@dreamwalk/contracts';
 import { findPath, visible, walkable } from './index';
-import { acceptNpcPlan } from './npc';
+import { acceptNpcPlan, currentNpcPlan } from './npc';
 import {
   npcConditionsMet,
   npcActionAllowed,
@@ -170,6 +170,24 @@ export function npcSpeechListenerIds(
       (e) =>
         ['npc', 'player'].includes(e.kind) &&
         canNpcHear(state, e, speaker, npcSpeechHearingRange(input)),
+    )
+    .map((e) => e.id)
+    .sort();
+}
+/** Authored gestures require sight. A private emote never expands the whisper audience. */
+export function npcRoleplayObserverIds(
+  state: GameState,
+  speakerId: string,
+  input: { channel: 'say' | 'whisper' },
+): string[] {
+  const speaker = state.entities[speakerId];
+  if (!speaker) return [];
+  return Object.values(state.entities)
+    .filter(
+      (e) =>
+        ['npc', 'player'].includes(e.kind) &&
+        observedVisible(state, e, speaker) &&
+        (input.channel !== 'whisper' || canNpcHear(state, e, speaker, 1)),
     )
     .map((e) => e.id)
     .sort();
@@ -715,10 +733,7 @@ export function applyNpcSpeech(
     root = speechRoot(speakerId, s.tick, p.data, options.identity)!;
   const listeners =
     options.presentationKind === 'attempt'
-      ? Object.values(s.entities)
-          .filter((e) => ['player', 'npc'].includes(e.kind) && observedVisible(state, e, speaker))
-          .map((e) => e.id)
-          .sort()
+      ? npcRoleplayObserverIds(s, speakerId, p.data)
       : npcSpeechListenerIds(s, speakerId, p.data);
   const recipients = listeners.filter((id) => s.entities[id].kind === 'npc');
   for (const id of recipients) {
@@ -1215,11 +1230,13 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
     brain = state.npcBrains?.[npcId],
     m = brain?.living;
   if (!npc || !m) throw new Error('TARGET_UNAVAILABLE');
+  const currentPlan = currentNpcPlan(state, npcId);
   const query =
     [...m.observations]
       .reverse()
       .find((o) => (o.kind === 'addressed' || o.kind === 'said') && o.text)?.text ?? '';
   const pinned = new Set([
+    ...(currentPlan?.source ? [currentPlan.source.sourceObservationId] : []),
     ...m.goal.evidenceIds,
     ...m.obligations
       .filter((o) => ['accepted', 'proposed'].includes(o.status))
@@ -1244,6 +1261,8 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
     )
     .sort(
       (a, b) =>
+        Number(b.id === currentPlan?.source?.sourceObservationId) -
+          Number(a.id === currentPlan?.source?.sourceObservationId) ||
         npcObservationImportance(m, b) - npcObservationImportance(m, a) ||
         relevance(b) - relevance(a) ||
         b.tick - a.tick ||
@@ -1263,6 +1282,7 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
         }
       : {}),
     actionContext: npcActionContext(state, npcId, []),
+    currentPlan,
     previousCognition: m.cognition ? clone(m.cognition) : null,
     lastActionOutcome: m.lastActionOutcome ? clone(m.lastActionOutcome) : null,
     ...(state.turnController
@@ -1283,7 +1303,19 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
       mood: m.affect?.mood ?? 'calm',
     },
     communicationPolicy: {
-      publicAudienceIds: npcSpeechListenerIds(state, npcId, { channel: 'say' }),
+      adjacentRecipientIds: Object.values(state.entities)
+        .filter(
+          (entity) =>
+            entity.id !== npcId &&
+            ['player', 'npc'].includes(entity.kind) &&
+            !entity.encounterId &&
+            near(npc, entity) &&
+            observedVisible(state, npc, entity),
+        )
+        .map((entity) => entity.id)
+        .sort(),
+      publicAudienceIds: npcSpeechProspectiveListenerIds(state, npcId, 'say'),
+      whisperAudienceIds: npcSpeechProspectiveListenerIds(state, npcId, 'whisper'),
       privateEvidenceRequiresOriginalAudience: true,
       plannerCannotGrantDisclosure: true,
     },

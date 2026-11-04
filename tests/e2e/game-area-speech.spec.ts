@@ -9,43 +9,94 @@ import {
 } from './support/private-authoring';
 
 for (const locale of ['ru', 'en', 'uk'] as const) {
-  test(`all speech modes can post without selecting an NPC (${locale})`, async ({ page }) => {
-    const handle = `area_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
-    const account = await page.request.post('/api/v1/auth/register', {
-      data: {
-        handle,
-        name: 'Synthetic area speech',
-        email: `${handle}@example.test`,
-        password: `Speech-${randomUUID()}!`,
-      },
-    });
-    expect(account.ok()).toBeTruthy();
-    expect(
-      (await page.request.patch('/api/v1/account/settings', { data: { language: locale } })).ok(),
-    ).toBeTruthy();
-    await page.addInitScript(
-      (language) => localStorage.setItem('dreamwalk-language', language),
-      locale,
-    );
-    const created = await page.request.post('/api/v1/game/campaigns', {
-      data: { template: 'observatory-v1', turnBased: true },
-    });
-    expect(created.ok()).toBeTruthy();
-    const id = (await created.json()).campaignId;
-    const copy = {
-      ru: { send: 'Отправить', confirm: 'Подтвердить ход', whisper: 'Шёпот' },
-      en: { send: 'Send', confirm: 'Confirm turn', whisper: 'Whisper' },
-      uk: { send: 'Надіслати', confirm: 'Підтвердити хід', whisper: 'Шепіт' },
-    }[locale];
-    await page.goto(`/game/${id}`);
-    const composer = page.getByTestId('unified-story').locator('form');
-    const input = composer.locator('textarea');
-    const whisper = composer.getByRole('button', { name: copy.whisper, exact: true });
-    for (const speech of [
-      { text: 'Good morning', channel: 'say' },
-      { text: 'Can anyone hear me!', channel: 'say' },
-      { text: 'Quiet words!', channel: 'whisper' },
-    ]) {
+  // Isolate each request/confirmation journey so a slow channel cannot consume the
+  // next channel's test deadline or leave it with an earlier post's state.
+  for (const speech of [
+    { mode: 'normal speech', text: 'Good morning', channel: 'say' },
+    { mode: 'shouted speech', text: 'Can anyone hear me!', channel: 'say' },
+    { mode: 'whispered speech', text: 'Quiet words!', channel: 'whisper' },
+  ] as const) {
+    test(`${speech.mode} can post without selecting an NPC (${locale})`, async ({ page }) => {
+      const handle = `area_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
+      const account = await page.request.post('/api/v1/auth/register', {
+        data: {
+          handle,
+          name: 'Synthetic area speech',
+          email: `${handle}@example.test`,
+          password: `Speech-${randomUUID()}!`,
+        },
+      });
+      expect(account.ok()).toBeTruthy();
+      expect(
+        (await page.request.patch('/api/v1/account/settings', { data: { language: locale } })).ok(),
+      ).toBeTruthy();
+      await page.addInitScript(
+        (language) => localStorage.setItem('dreamwalk-language', language),
+        locale,
+      );
+      const created = await page.request.post('/api/v1/game/campaigns', {
+        data: { template: 'observatory-v1', turnBased: true },
+      });
+      expect(created.ok()).toBeTruthy();
+      const id = (await created.json()).campaignId;
+      const copy = {
+        ru: {
+          send: 'Отправить',
+          confirm: 'Подтвердить ход',
+          whisper: 'Шёпот',
+          actions: 'Действия',
+          inspect: 'Осмотреть',
+          close: 'Закрыть осмотр',
+          say: 'Сказать',
+          nearby: 'Речь рядом',
+          nearbyWhisper: 'Шёпот рядом',
+          clear: 'Обратиться к ведущему',
+        },
+        en: {
+          send: 'Send',
+          confirm: 'Confirm turn',
+          whisper: 'Whisper',
+          actions: 'Actions',
+          inspect: 'Inspect',
+          close: 'Close inspection',
+          say: 'Say',
+          nearby: 'Speech nearby',
+          nearbyWhisper: 'Nearby whisper',
+          clear: 'Address the director',
+        },
+        uk: {
+          send: 'Надіслати',
+          confirm: 'Підтвердити хід',
+          whisper: 'Шепіт',
+          actions: 'Дії',
+          inspect: 'Оглянути',
+          close: 'Закрити огляд',
+          say: 'Сказати',
+          nearby: 'Мова поруч',
+          nearbyWhisper: 'Шепіт поруч',
+          clear: 'Звернутися до ведучого',
+        },
+      }[locale];
+      await page.goto(`/game/${id}`);
+      const composer = page.getByTestId('unified-story').locator('form');
+      const input = composer.locator('textarea');
+      const whisper = composer.getByRole('button', { name: copy.whisper, exact: true });
+      // Inspection stays available, but neither the map nor Talk selects a speech target.
+      await page.getByRole('button', { name: copy.actions, exact: true }).click();
+      const npcActions = page
+        .getByRole('dialog', { name: copy.actions, exact: true })
+        .locator('[data-map-target="keeper"]');
+      await expect(npcActions.getByRole('button', { name: copy.say, exact: true })).toHaveCount(0);
+      await npcActions.getByRole('button', { name: copy.inspect, exact: true }).click();
+      const inspection = page.getByTestId('npc-public-inspection');
+      await expect(inspection).toBeVisible();
+      // The card intentionally takes focus after the map menu's dismissal cleanup.
+      // Wait for that frame before Talk moves it to the composer.
+      await expect(inspection.getByRole('button', { name: copy.close, exact: true })).toBeFocused();
+      await inspection.getByTestId('npc-inspection-talk').click();
+      await expect(input).toBeFocused();
+      await expect(composer.getByTestId('story-audience')).toHaveText(copy.nearby);
+      await expect(composer.getByRole('button', { name: copy.clear, exact: true })).toHaveCount(0);
       if (speech.channel === 'whisper') await whisper.click();
       await expect(whisper).toHaveAttribute('aria-pressed', String(speech.channel === 'whisper'));
       await input.fill(speech.text);
@@ -61,6 +112,18 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
       expect(quoteInput.targetNpcId).toBeUndefined();
       expect(quoteInput.channel).toBe(speech.channel);
       expect(quoteInput.text).toBe(speech.text);
+      await expect(composer.getByTestId('story-quote')).toBeVisible();
+      // Even after a quote is prepared, repeated inspection actions preserve the draft,
+      // channel and authorization instead of binding the post to that NPC.
+      for (let click = 0; click < 2; click++) {
+        await inspection.getByTestId('npc-inspection-talk').click();
+        await expect(input).toBeFocused();
+        await expect(input).toHaveValue(speech.text);
+        await expect(composer.getByTestId('story-audience')).toHaveText(
+          speech.channel === 'whisper' ? copy.nearbyWhisper : copy.nearby,
+        );
+        await expect(composer.getByTestId('story-quote')).toBeVisible();
+      }
       const submitResponse = page.waitForResponse(
         (response) =>
           response.request().method() === 'POST' &&
@@ -74,9 +137,9 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
       expect(submittedInput.targetNpcId).toBeUndefined();
       expect(submittedInput.channel).toBe(speech.channel);
       await expect(input).toHaveValue('');
-    }
-    // Nothing ends the player turn here: no world generation or paid provider call is needed.
-  });
+      // Nothing ends the player turn here: no world generation or paid provider call is needed.
+    });
+  }
 }
 
 for (const locale of ['ru', 'en', 'uk'] as const) {

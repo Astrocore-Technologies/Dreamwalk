@@ -38,8 +38,7 @@ async function clickCell(page: Page, x: number, y: number, button: 'left' | 'rig
     position: { x: offsetX + (x + 0.5) * 48 * scale, y: offsetY + (y + 0.5) * 48 * scale },
   });
 }
-async function say(page: Page, npcId: string, text: string) {
-  await mapAction(page, new URL(page.url()).pathname.split('/').at(-1)!, npcId, 'Сказать');
+async function say(page: Page, text: string) {
   const composer = page.getByTestId('unified-story');
   await composer.getByLabel('Твой ход', { exact: true }).fill(text);
   await composer.getByRole('button', { name: 'Отправить', exact: true }).click();
@@ -51,12 +50,13 @@ async function say(page: Page, npcId: string, text: string) {
   await composer.getByRole('button', { name: 'Подтвердить ход', exact: true }).click();
   const response = await submitted;
   expect(response.ok()).toBeTruthy();
+  expect(response.request().postDataJSON().targetNpcId).toBeUndefined();
   const receipt = await response.json();
   await expect(composer.getByLabel('Твой ход', { exact: true })).toHaveValue('');
   return receipt.id as string;
 }
 
-test('sequential turns retain two addressed posts, freeze NPCs, and reply only after all player turns', async ({
+test('sequential turns retain two area posts, freeze NPCs, and reply only after all player turns', async ({
   browser,
 }) => {
   test.setTimeout(180000);
@@ -206,15 +206,15 @@ test('sequential turns retain two addressed posts, freeze NPCs, and reply only a
     await expect(owner.getByTestId('npc-public-inspection')).toContainText('patient alchemist');
     await expect(owner.getByText('TURN_PRIVATE_NPC_SECRET', { exact: true })).toHaveCount(0);
     const spokenTurns = [
-      await say(owner, 'mira', 'Мира, что ты заметила в комнате?'),
-      await say(owner, 'borin', 'Борин, а ты что думаешь?'),
+      await say(owner, 'Мира, что ты заметила в комнате?'),
+      await say(owner, 'Борин, а ты что думаешь?'),
     ];
     await expect(
       owner.getByTestId('story-feed').locator('[data-story-kind="npc_reply"]'),
     ).toHaveCount(0);
     const before = await snapshot(owner, id);
     expect(before.turn?.pendingNpcReplies).toHaveLength(2);
-    // Selecting a recipient does not suppress nearby listeners: each NPC hears both posts.
+    // Both posts reach every nearby listener without selecting a recipient.
     expect(
       before.turn?.pendingNpcReplies.map((entry) => [entry.npcId, entry.count]).sort(),
     ).toEqual([

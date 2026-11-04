@@ -27,6 +27,8 @@ test('fresh autonomous decision uses own character and scene, not automatic obed
   assert.match(body.instructions, /even if nobody addressed it/);
   assert.match(body.instructions, /Do not automatically obey or help/);
   assert.match(body.instructions, /previousCognition, lastActionOutcome/);
+  assert.match(body.instructions, /currentPlan, accepted obligations/);
+  assert.match(body.instructions, /remaining accepted intent/);
   assert.match(body.instructions, /communicate is the supported talk action/);
   assert.match(body.instructions, /Never select private observations/);
 });

@@ -1291,3 +1291,16 @@ Independent source review completed.70 focused hero/start/return/metadata/NPC/au
 checks passed, changed source lint/format and whitespace checks passed. Full types,
 build, isolated DB and browser execution were not rerun locally because resources are
 constrained. Fresh exact-head remote checks and rendered evidence still gate merge.
+
+## NPC round response regression — 2026-11-04
+
+- Every active-scene NPC now receives a model consideration on each completed player round, including empty turns; only bounded agreed off-map companion crossings stay mechanical.
+- A valid, correctly fenced decision with an impossible action is retained as private cognition plus a blocked intention, with no action or belief mutation. The same known-usage job completes normally instead of creating an unresolved failure-policy hold. Malformed/stale results and unknown financial liability remain protected.
+- Added explicit adjacent communication targets and full whisper-bystander guidance. The regression exercises a distant whisper, the subsequent player reply, fences and exact one-job settlement.
+- Added live player-phase cost forecasts, automatic exact world-quote preparation without consent, own-account Sparks/Dreams visibility and persistent unresolved-cost messaging. Local mock tests do not establish live provider roleplay quality.
+- Added a narrow owner-confirmed known-cost settlement route with exact amounts, original tariff/cache-usage proof, append-only capture/refund, concurrent replay and restart safety. It never retries a provider or rewrites historical gameplay.
+- Full CI exposed deterministic planning overwriting unfinished public action plans and obligations. The follow-up retains these as private current-plan context and reconsiders them in the free mock provider without skipping the mandatory round decision or weakening action/reaction assertions.
+
+- Turn-based speech selection is removed without losing NPC inspection or legacy real-time compatibility. Cell-based hearing remains authoritative, stale selected-recipient metadata cannot block speech, and pure emotes reach visible observers with strict whisper privacy.
+- RP extras now derive from the complete reply-audience-authorized claims at freeze, dispatch and commit; new observation identities remain pinned. Mixed emote/speech does not add duplicate NPC reply jobs. Existing targetless coauthor continuation is preserved in the explicit combined quote.
+- Definitive Cancel/rejection/expiry retires quote identity; uncertain transport and consent retain the same immutable retry. Browser layout assertions remain intact; only the full journey budget changes from60s to90s after measured runner-wide slowdown.

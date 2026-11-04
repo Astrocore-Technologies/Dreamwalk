@@ -25,6 +25,7 @@ import {
   storyTargetValid,
   storyDraftKey,
   storyRecipientLabel,
+  storyRecipientForProjection,
 } from './story-turn-guards';
 import { useStoryText, type StoryMessageKey } from './story-messages';
 import { projectionTurnFence } from './turn-ui';
@@ -115,7 +116,8 @@ export function UnifiedStory({
   const copy = useRef(h);
   copy.current = h;
   const confirmOperations = useRef(new Map<string, string>());
-  const targetNpcId = recipient?.id;
+  const activeRecipient = storyRecipientForProjection(projection, recipient);
+  const targetNpcId = activeRecipient?.id;
   const targetVisible = storyTargetVisible(projection, targetNpcId);
   const targetValid = storyTargetValid(projection, channel, targetNpcId);
   const turnFence = projectionTurnFence(projection);
@@ -519,18 +521,20 @@ export function UnifiedStory({
             }}
           >
             <div className={styles.recipient}>
-              <span>
-                {recipient
-                  ? `${h('target')}: ${storyRecipientLabel(projection, recipient)}`
+              <span data-testid="story-audience">
+                {activeRecipient
+                  ? `${h('target')}: ${storyRecipientLabel(projection, activeRecipient)}`
                   : h(
                       channel === 'whisper'
                         ? projection.turn
                           ? 'nearbyWhisper'
                           : 'legacyWhisper'
-                        : 'scene',
+                        : projection.turn
+                          ? 'nearbySpeech'
+                          : 'scene',
                     )}
               </span>
-              {recipient && (
+              {activeRecipient && (
                 <button
                   type="button"
                   aria-label={h('clear')}
@@ -557,7 +561,7 @@ export function UnifiedStory({
                 {h('missingTarget')}
               </p>
             )}
-            {channel === 'whisper' && !recipient && (
+            {channel === 'whisper' && !activeRecipient && (
               <p className={styles.status} role="status">
                 {h(projection.turn ? 'areaWhisper' : 'legacyChooseWhisper')}
               </p>
@@ -609,9 +613,10 @@ export function UnifiedStory({
                 </p>
               )}
               {feed && !available && <p className={styles.status}>{h('unavailable')}</p>}
-              {projection.turn?.phase === 'world' && (
+              {projection.turn && (
                 <WorldGenerationConfirmation
                   campaignId={campaignId}
+                  phase={projection.turn.phase}
                   access={
                     worldGenerationAllowed
                       ? 'owner'

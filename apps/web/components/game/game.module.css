@@ -1179,3 +1179,34 @@
     box-shadow: 0 12px 32px #0005;
   }
 }
+
+/* Compact balances remain visible inside the game-only toolbar. */
+.gameWallet {
+  display: flex;
+  flex-wrap: wrap;
+  align-items: center;
+  gap: 4px 12px;
+  min-width: 0;
+  color: var(--muted);
+  font-size: 11px;
+  line-height: 1.4;
+  text-decoration: none;
+}
+.gameWallet > span {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+.gameWallet strong {
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+  overflow-wrap: anywhere;
+}
+.gameWallet svg {
+  flex-shrink: 0;
+  color: var(--accent);
+}
+.gameWallet:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}

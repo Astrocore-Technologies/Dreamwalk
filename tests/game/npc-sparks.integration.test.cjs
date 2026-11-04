@@ -873,3 +873,71 @@ test('NPC replay displays the persisted legacy hold rather than repricing provid
     f.restore();
   }
 });
+
+test('a valid round consideration with blocked remote whisper settles known usage and does not poison later replies', async () => {
+  const f = fixture();
+  try {
+    const { job } = await f.admit();
+    await f.engine.run(job.id, async () => true);
+    const g = require('../../packages/game-core/dist');
+    const { GameService } = require('../../apps/api/dist/game/game.service');
+    const draft = g.createAuthoredDraft('courtyard');
+    draft.npcBehavior = 'reactive-v1';
+    draft.turnRules = g.turnRulesSchema.parse({});
+    let state = g.createStateFromPlayable(g.compilePlayableDraft(draft).playable, ['alice']);
+    state.maps.courtyard.blocked = [];
+    Object.assign(state.entities.keeper, { x: 13, y: 10 });
+    Object.assign(state.entities.alice, { x: 9, y: 9 });
+    state = g.endPlayerTurn(state, 'alice', g.turnFence(state)).state;
+    const npc = state.entities.keeper,
+      brain = state.npcBrains.keeper;
+    const context = {
+      ...g.buildNpcDecisionContext(state, 'keeper'),
+      turnFence: g.turnFence(state),
+      worldRoundDecision: {
+        ...g.turnFence(state),
+        npcId: 'keeper',
+        entityRevision: npc.revision,
+        brainGeneration: brain.generation,
+        mapId: npc.mapId,
+        mapRevision: state.maps[npc.mapId].revision,
+      },
+    };
+    const proposal = {
+      ...g.createMockNpcPlan(state, 'keeper'),
+      actions: [
+        { kind: 'communicate', channel: 'whisper', targetId: 'alice', observationIds: ['missing'] },
+      ],
+      targetRevisions: { alice: state.entities.alice.revision },
+      cognition: {
+        motive: 'Ask quietly.',
+        belief: 'The visitor may know.',
+        intent: 'Talk.',
+        innerThought: 'I should ask.',
+        reconsiderAfterRounds: 1,
+      },
+      knowledgeRevision: brain.living.knowledgeRevision,
+    };
+    const game = Object.create(GameService.prototype);
+    const considered = await game.evaluateDecision('synthetic', state, {
+      id: job.id,
+      npcId: 'keeper',
+      purpose: 'plan',
+      context,
+      contextHash: context.contextHash,
+      proposal,
+    });
+    assert.equal(considered.accepted, true);
+    assert.equal(considered.decisionCode, 'NPC_INTENTION_BLOCKED:TARGET_UNAVAILABLE');
+    await f.db.tx((c) => f.engine.finalize(c, job.id, considered.accepted ? 'committed' : 'stale'));
+    assert.equal(f.state.jobs[0].status, 'committed');
+    assert.equal(f.state.holds[0].status, 'settled');
+    assert.equal(f.state.held, 0n);
+    assert.equal(f.state.balance, 940n);
+    assert.equal(f.state.calls, 1);
+    assert.deepEqual(considered.next.npcUtterances, state.npcUtterances);
+    assert.deepEqual(considered.next.npcBrains.keeper.plan, []);
+  } finally {
+    f.restore();
+  }
+});

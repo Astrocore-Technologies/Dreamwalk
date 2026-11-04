@@ -29,6 +29,7 @@ import {
   turnFence,
   matchesTurnFence,
   canNpcHear,
+  npcRoleplayObserverIds,
   buildStoryTurnContext,
   createMockStoryTurnProposal,
   applyStoryTurnProposal,
@@ -78,7 +79,13 @@ interface Port {
   prepareAreaTurnSpeech?(
     state: GameState,
     actorId: string,
-    speech: { channel: 'say' | 'whisper'; text: string; replyLocale?: Locale },
+    speech: {
+      channel: 'say' | 'whisper';
+      text: string;
+      replyLocale?: Locale;
+      presentationKind?: 'attempt';
+      observeOnly?: boolean;
+    },
     userId: string,
     identity: { turnId: string; segmentIndex: number },
     targetNpcId?: string,
@@ -289,6 +296,8 @@ export class StoryTurnRuntime {
       text: string;
       verified: false;
     }[] = [];
+    const roleplayAudiences = new Map<number, string[]>();
+    const hasSpeech = parsed.segments.some((segment) => segment.kind === 'speech');
     const listeners = (s: GameState) =>
       Object.values(s.entities)
         .filter((e) => ['npc', 'player'].includes(e.kind) && canNpcHear(s, e, s.entities[actorId]))
@@ -306,6 +315,27 @@ export class StoryTurnRuntime {
             text: segment.text,
             verified: false,
           });
+          const audienceIds = npcRoleplayObserverIds(next, actorId, input);
+          roleplayAudiences.set(segment.index, audienceIds);
+          const observed = this.port.prepareAreaTurnSpeech?.(
+            next,
+            actorId,
+            {
+              channel: input.channel,
+              text: segment.text,
+              replyLocale: input.replyLocale,
+              presentationKind: 'attempt',
+              // Mixed prose already has reply jobs. Admit the gesture to actual
+              // observers without charging a second reply for each emote.
+              observeOnly: hasSpeech,
+            },
+            userId,
+            { turnId, segmentIndex: segment.index },
+          );
+          if (observed) {
+            next = observed.state;
+            requests.push(...observed.requests);
+          }
           entries.push({
             ordinal: entries.length,
             tick: next.tick,
@@ -314,7 +344,8 @@ export class StoryTurnRuntime {
             authorId: actorId,
             authorLabel: next.entities[actorId].label,
             text: segment.text,
-            audienceIds: input.channel === 'whisper' ? [actorId] : listeners(next),
+            audienceIds,
+            ...(observed?.sourceId ? { sourceId: observed.sourceId } : {}),
           });
           continue;
         }
@@ -356,7 +387,6 @@ export class StoryTurnRuntime {
           { channel: input.channel, text: segment.text, replyLocale: input.replyLocale },
           userId,
           { turnId, segmentIndex: segment.index },
-          input.targetNpcId,
         );
         next = spoken.state;
         requests.push(...spoken.requests);
@@ -414,7 +444,12 @@ export class StoryTurnRuntime {
           audienceIds: listeners(next),
         });
     }
-    if (untrustedRoleplay.length && input.targetNpcId && !requests.length) {
+    if (
+      untrustedRoleplay.length &&
+      !this.port?.prepareAreaTurnSpeech &&
+      input.targetNpcId &&
+      !requests.length
+    ) {
       // An emote-only post may invite one NPC reply. It is recorded explicitly as
       // unverified attributed narrative, not as a completed physical event.
       const hash = digest({ turnId, roleplay: true });
@@ -442,9 +477,22 @@ export class StoryTurnRuntime {
     }
     if (untrustedRoleplay.length)
       for (const request of requests) {
+        const observedRoleplay = untrustedRoleplay.filter((entry) =>
+          roleplayAudiences.get(entry.segmentIndex)?.includes(request.npcId),
+        );
+        if (!observedRoleplay.length) continue;
         request.context = {
           ...request.context,
-          untrustedRoleplay,
+          untrustedRoleplay: observedRoleplay.map((entry) => {
+            const observation = next.npcBrains?.[request.npcId]?.living?.observations.find(
+              (o) =>
+                o.kind === 'attempted' &&
+                o.text === entry.text &&
+                o.speechIdentity?.turnId === turnId &&
+                o.speechIdentity.segmentIndex === entry.segmentIndex,
+            );
+            return { ...entry, ...(observation ? { observationId: observation.id } : {}) };
+          }),
           roleplayPolicy:
             'Attributed player roleplay, in segment order. Respond naturally to harmless gestures, meals and services without requiring mechanical stock. These emotes alone do not mutate actual inventory, money, health or location; do not treat claimed damage or powers as validated mechanics.',
         };
@@ -459,7 +507,7 @@ export class StoryTurnRuntime {
       directorText:
         !input.targetNpcId &&
         input.channel !== 'whisper' &&
-        (!this.port.prepareAreaTurnSpeech || untrustedRoleplay.length > 0)
+        (!this.port?.prepareAreaTurnSpeech || untrustedRoleplay.length > 0)
           ? parsed.segments
               .flatMap((segment) =>
                 segment.kind === 'speech'

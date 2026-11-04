@@ -7,6 +7,7 @@ import {
   storyTargetValid,
   storyDraftKey,
   storyRecipientLabel,
+  storyRecipientForProjection,
 } from '../../apps/web/components/game/story-turn-guards.ts';
 test('API sends the selected default locale without dropping headers, cookies or upload boundaries', async (t) => {
   const calls = [];
@@ -110,6 +111,41 @@ test('one primary story surface replaces competing forms and guards private reci
   // The single story composer no longer exposes a competing OOC surface.
   assert.doesNotMatch(source, /<PartyChat|tab === 'ooc'|tab !== 'ooc'|setTab/);
   assert.match(source, /aria-label=\{h\('composer'\)\}/);
+});
+
+test('grid speech ignores any selected NPC and inspection never chooses a recipient', async () => {
+  const recipient = { id: 'keeper', label: 'Keeper' };
+  const turnBased = { entities: [], turn: { phase: 'player' } };
+  const effectiveRecipient = storyRecipientForProjection(turnBased, recipient);
+  assert.equal(effectiveRecipient, null);
+  assert.equal(storyRecipientForProjection(turnBased, null), null);
+  assert.equal(storyRecipientForProjection({ entities: [] }, recipient), recipient);
+  for (const channel of ['say', 'whisper']) {
+    assert.equal(storyTargetValid(turnBased, channel, effectiveRecipient?.id), true);
+    assert.equal(
+      storyDraftKey('Keep this draft', channel, effectiveRecipient?.id, 'room'),
+      storyDraftKey('Keep this draft', channel, undefined, 'room'),
+    );
+  }
+  const composer = await readFile(
+    new URL('../../apps/web/components/game/unified-story.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(composer, /storyRecipientForProjection\(projection, recipient\)/);
+  assert.match(composer, /const targetNpcId = activeRecipient\?\.id/);
+  assert.match(composer, /\{activeRecipient && \(/);
+  assert.match(composer, /'nearbySpeech'/);
+  const page = await readFile(
+    new URL('../../apps/web/components/game/game-page.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(page, /if \(p.turn\) \{\s*setInspectedNpcId\(npcId\);\s*return;/);
+  assert.match(page, /if \(!p.turn && npc && !controlsDisabled && !storyBusy\)/);
+  const actions = await readFile(
+    new URL('../../apps/web/components/game/map-actions.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(actions, /!projection.turn && \([\s\S]*?onSay\(e.id\)/);
 });
 
 test('private target loss is blocked and every consent-relevant draft change invalidates its identity', () => {
@@ -264,7 +300,7 @@ test('public NPC inspection occupies history without replacing the composer or i
   assert.match(page, /inspection=\{/);
   assert.match(page, /publicProfile\?\.role \|\| inspectedNpc\.supportingNpc\?\.roleLabel/);
   assert.match(page, /portraitUrl=\{inspectedPortraitUrl\}/);
-  assert.match(page, /if \(npc && !controlsDisabled && !storyBusy\)/);
+  assert.match(page, /if \(!p.turn && npc && !controlsDisabled && !storyBusy\)/);
   assert.match(story, /data-inspecting=\{!!inspection\}/);
   assert.match(story, /aria-hidden=\{!!inspection\}/);
   assert.match(story, /tabIndex=\{inspection \? -1 : 0\}/);
