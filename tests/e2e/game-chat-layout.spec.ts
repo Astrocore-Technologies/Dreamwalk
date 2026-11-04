@@ -173,7 +173,8 @@ for (const locale of ['ru', 'en', 'uk']) {
     }
     fixture.entries.push(entry(48));
     await expect(feed.locator('[data-story-entry]')).toHaveCount(49);
-    await page.setViewportSize({ width: 1024, height: 600 });
+    // Keep inspection-only anchor checks at the same viewport. The existing resize matrix
+    // below separately exercises reflow rounding with inspection and confirmation both open.
     await expect(input).toBeInViewport();
     expect((await bounds(page)).height).toBeLessThanOrEqual(1);
     expect((await bounds(page)).width).toBeLessThanOrEqual(1);
@@ -181,7 +182,6 @@ for (const locale of ['ru', 'en', 'uk']) {
     const inputBounds = await input.boundingBox();
     expect(cardBounds!.x).toBeGreaterThanOrEqual((await panel.boundingBox())!.x);
     expect(inputBounds!.y).toBeGreaterThan((await panel.boundingBox())!.y);
-    await page.setViewportSize({ width: 1440, height: 900 });
     await page.evaluate(() => document.fonts.ready);
     await info.attach(`game-npc-inspection-${locale}-desktop`, {
       body: await page.screenshot(),
