@@ -399,6 +399,19 @@ test('expanded owned hero cards only select and close, restore focus and keep la
   await expect(dialog).toContainText('Solo / with friends (1–4)');
   await expect(dialog).not.toContainText('PRIVATE_HERO_NOTE');
   await expect(dialog).not.toContainText('PRIVATE_HERO_BACKSTORY');
+  // The native control covers the visible card for pointer and touch activation.
+  const heroCard = hero.locator('..');
+  const inputBounds = await hero.boundingBox();
+  const cardBounds = await heroCard.boundingBox();
+  expect(inputBounds).not.toBeNull();
+  expect(cardBounds).not.toBeNull();
+  expect(inputBounds!.width).toBeGreaterThan(cardBounds!.width - 4);
+  expect(inputBounds!.height).toBeGreaterThan(cardBounds!.height - 4);
+  await hero.check();
+  await expect(hero).toBeChecked();
+  const traveler = dialog.getByRole('radio', { name: 'Traveler without a saved hero' });
+  await traveler.check();
+  await expect(traveler).toBeChecked();
   await hero.focus();
   await page.keyboard.press('Space');
   await expect(hero).toBeChecked();

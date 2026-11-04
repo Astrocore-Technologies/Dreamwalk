@@ -1,4 +1,4 @@
-import { test, expect, type Page } from '@playwright/test';
+import { test, expect, type Locator, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
 async function preferences(page: Page, locale: string, theme: string) {
@@ -9,6 +9,15 @@ async function preferences(page: Page, locale: string, theme: string) {
     await page.locator('.theme-button').click();
   if (hidden) await page.locator('.mobile-close').click();
   await expect(page.locator('html')).toHaveAttribute('lang', locale);
+}
+
+// Shared buttons stay disabled until their mount effect completes. Focus alone does not
+// wait for actionability, so verify the actual keyboard target before pressing Enter.
+async function activateWithKeyboard(page: Page, control: Locator) {
+  await expect(control).toBeEnabled();
+  await control.focus();
+  await expect(control).toBeFocused();
+  await page.keyboard.press('Enter');
 }
 
 test('inner story workspace preserves complete drafts while selecting locations and scenes', async ({
@@ -162,13 +171,17 @@ test('inner story workspace preserves complete drafts while selecting locations 
   await page.unroute(endpoint);
 
   // Keyboard addition/removal selects the new item and restores focus after deletion.
-  await locationEditor.getByRole('button', { name: 'Add location', exact: true }).focus();
-  await page.keyboard.press('Enter');
+  await activateWithKeyboard(
+    page,
+    locationEditor.getByRole('button', { name: 'Add location', exact: true }),
+  );
   await expect(locationName).toHaveValue('Location 3');
-  await locationEditor
-    .getByRole('button', { name: 'Delete location Location 3', exact: true })
-    .focus();
-  await page.keyboard.press('Enter');
+  const deleteLocation = locationEditor.getByRole('button', {
+    name: 'Delete location Location 3',
+    exact: true,
+  });
+  await activateWithKeyboard(page, deleteLocation);
+  await expect(deleteLocation).toHaveCount(0);
   await expect(
     locationEditor.getByRole('button', { name: 'Synthetic retry hall', exact: true }),
   ).toBeFocused();
@@ -203,17 +216,21 @@ test('inner story workspace preserves complete drafts while selecting locations 
   await page.setViewportSize({ width: 1536, height: 1024 });
   await preferences(page, 'en', 'dark');
   await nav.getByRole('button').nth(4).click();
-  await sceneEditor
-    .getByRole('button', { name: 'Delete scene Synthetic scene 1', exact: true })
-    .focus();
-  await page.keyboard.press('Enter');
+  const deleteFirstScene = sceneEditor.getByRole('button', {
+    name: 'Delete scene Synthetic scene 1',
+    exact: true,
+  });
+  await activateWithKeyboard(page, deleteFirstScene);
+  await expect(deleteFirstScene).toHaveCount(0);
   await expect(
     sceneEditor.getByRole('button', { name: 'Synthetic scene revised', exact: true }),
   ).toBeFocused();
-  await sceneEditor
-    .getByRole('button', { name: 'Delete scene Synthetic scene revised', exact: true })
-    .focus();
-  await page.keyboard.press('Enter');
+  const deleteLastScene = sceneEditor.getByRole('button', {
+    name: 'Delete scene Synthetic scene revised',
+    exact: true,
+  });
+  await activateWithKeyboard(page, deleteLastScene);
+  await expect(deleteLastScene).toHaveCount(0);
   await expect(sceneEditor.getByRole('button', { name: 'Add scene', exact: true })).toBeFocused();
   await expect(page.locator('[data-autosave-status="saved"]').first()).toBeVisible();
   const empty = await (await page.request.get(`/api/v1/studio/adventures/${story.id}`)).json();

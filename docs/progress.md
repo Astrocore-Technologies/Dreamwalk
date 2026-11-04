@@ -1215,6 +1215,7 @@ Direct no-emit web typecheck reached only the base public.tsx missing Badge impo
 head. This scoped patch does not alter public.tsx. No build, install, API/database run,
 publication, merge, deploy or paid/provider action was performed for this slice. This is
 not 1:1 acceptance; integrated CI and actual rendered review are still required.
+
 ## Ref59 owned hero choice presentation — 2026-11-03
 
 Added a full-width, native-modal hero picker to the compact story selector. Cards use
@@ -1244,3 +1245,27 @@ case that selects a hero with an existing ready preparation, verifies locked car
 and checks fallback focus without navigation or mutation. The same 41 focused tests and
 targeted ESLint passed again; controller source remains byte-identical. No build or browser
 execution was performed, and the changes remain unpublished pending independent review.
+
+## Integrated design browser corrections — 2026-11-04
+
+Exact PR88 head4516b428 run387 passed production build/types/lint/source checks and
+browser shards1/3, but shard2 and isolated PostgreSQL failed. Two shard2 failures
+and the isolated authoring assertion were diagnosed from exact-head logs and traces:
+
+- The visually hidden native hero radio was a 1px target intercepted by its fieldset.
+  It now covers its own visible card, retaining native keyboard and disabled behavior.
+  Browser coverage checks card-sized bounds, pointer selection for hero/traveler,
+  keyboard reselection, unchanged launch identity, and restored locked-focus fallback.
+- The Studio keyboard test focused a button while shared hydration protection still
+  disabled it; Enter therefore never deleted a scene. Both traces retained both scenes.
+  The test now waits for enabled state, verifies focus before Enter and verifies actual
+  deletion, retaining all original focus restoration and persisted-empty assertions.
+  No Studio application behavior, timeout, retry count or production safeguard changed.
+- The isolated authoring journey used obsolete NPC row markup after presentation
+  extraction. Scoped named selection/edit controls now replace structural selectors;
+  persistence, private-template and duplicate-save assertions remain unchanged.
+
+Independent source review completed.70 focused hero/start/return/metadata/NPC/autosave
+checks passed, changed source lint/format and whitespace checks passed. Full types,
+build, isolated DB and browser execution were not rerun locally because resources are
+constrained. Fresh exact-head remote checks and rendered evidence still gate merge.

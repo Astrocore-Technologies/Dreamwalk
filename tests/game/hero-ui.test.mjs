@@ -218,3 +218,20 @@ test('hero dialog keeps the authoritative selection when reopened and reacts to 
     true,
   );
 });
+
+test('native hero radios cover their cards without changing keyboard or disabled semantics', async () => {
+  const css = await source('game/hero-choice.module.css');
+  const radioRule = css.match(/\.card input \{([^}]+)\}/)?.[1];
+  assert.ok(radioRule);
+  for (const declaration of [
+    'position: absolute',
+    'inset: 0',
+    'z-index: 1',
+    'width: 100%',
+    'height: 100%',
+    'margin: 0',
+  ])
+    assert.ok(radioRule.includes(declaration), declaration);
+  assert.doesNotMatch(radioRule, /pointer-events:\s*none|display:\s*none|visibility:\s*hidden/);
+  assert.match(css, /\.card:has\(input:focus-visible\)/);
+});

@@ -269,8 +269,10 @@ test(
         .click();
       await expect(discard).not.toBeVisible();
       await npcEditor
-        .locator('.row')
-        .filter({ has: page.locator('strong').filter({ hasText: /^Локальный хранитель$/ }) })
+        .locator('[data-selected]')
+        .filter({
+          has: page.getByRole('button', { name: 'Локальный хранитель', exact: true }),
+        })
         .getByRole('button', { name: 'Редактировать', exact: true })
         .click();
       await expect(page.getByLabel('Имя NPC', { exact: true })).toHaveValue('Локальный хранитель');
@@ -294,9 +296,9 @@ test(
       locals = await owner.request(`/studio/adventures/${storyId}/npcs`);
       assert.equal(locals.npcs.length, 2);
       assert.ok(locals.npcs.some((n) => n.id === localId));
-      // Assert the actual scoped NPC row, not a duplicate lore-preview option.
+      // Assert the scoped character-selection control, not a duplicate lore-preview option.
       await expect(
-        npcEditor.locator('.row > strong').filter({ hasText: /^Копия для этой истории$/ }),
+        npcEditor.getByRole('button', { name: 'Копия для этой истории', exact: true }),
       ).toBeVisible();
       await page.getByRole('button', { name: /Локации$/ }).click();
       await expect(page.getByRole('button', { name: 'Подготовить план', exact: true })).toHaveCount(
