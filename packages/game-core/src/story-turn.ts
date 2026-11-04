@@ -486,6 +486,16 @@ export function applyStoryTurnProposal(
   const actions: StoryActionPreview[] = [];
   for (const [i, segment] of context.segments.entries()) {
     const step = p.steps[i];
+    if (context.mode === 'director' && step.reply && 'text' in step.reply) {
+      // Director voices carry public speech evidence, not private action targets.
+      // A newborn has no provider-visible current observation before admission.
+      if (
+        (step.replyNpcId === 'new_npc' &&
+          (step.reply.companionIntent || step.reply.actionIntent)) ||
+        step.reply.actionIntent?.actions.some((action) => action.kind !== 'wait')
+      )
+        return reject('FORBIDDEN');
+    }
     if (segment.kind === 'attempt') {
       if (
         (context.mode === 'npc' && !step.action) ||
@@ -648,6 +658,7 @@ export function applyStoryTurnProposal(
           observationIds: spoken.context.observationIds,
           requestedFactIds: spoken.context.requestedFactIds,
           contextHash: spoken.context.speechHash,
+          replyToObservationId: spoken.context.replyToObservationId,
         });
         if (response.error) return reject(response.error);
         const sourceId = response.state.npcUtterances?.find(
