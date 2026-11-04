@@ -82,6 +82,12 @@ test('actual turn-post route materializes and speaks as a professor with one syn
       const request = JSON.parse(init.body);
       assert.ok(request.text.format.schema.properties.steps.items.properties.replyContextHash);
       assert.match(request.instructions, /no inherited memory/);
+      assert.match(
+        request.instructions,
+        /newborn reply.*companionIntent=null and actionIntent=null/i,
+      );
+      assert.match(request.instructions, /only wait actions/);
+      assert.match(request.instructions, /Never invent or infer a source observation ID/);
       assert.match(request.instructions, /does not prove Mira said it/);
       assert.match(request.instructions, /Russian/);
       return new Response(
@@ -129,4 +135,117 @@ test('approach is scoped to story proposals, not arbitrary actor actions', () =>
     g.gameActionSchema.safeParse({ kind: 'approach', targetId: 'keeper' }).success,
     false,
   );
+});
+
+test('director existing-speaker intents survive synthetic provider transport and atomic core admission', async () => {
+  for (const kind of ['follow', 'wait']) {
+    const state = g.createStateFromPlayable(
+      g.compilePlayableDraft(g.createCompleteObservatoryDraft()).playable,
+      ['alice'],
+    );
+    Object.assign(state.entities.alice, { x: 5, y: 4 });
+    const input = {
+      operationId: randomUUID(),
+      text: kind === 'follow' ? 'Will you accompany me?' : 'Please wait here.',
+      channel: 'say',
+      expectedCanonRevision: 0,
+      replyLocale: 'en',
+    };
+    const turnId = randomUUID();
+    const context = g.buildStoryTurnContext(state, 'alice', input, turnId);
+    const voice = context.sceneSpeakers.find(
+      (entry) => entry.npcId === 'keeper' && entry.segmentIndex === 0,
+    );
+    assert.ok(voice?.replyToObservationId);
+    assert.equal(voice.actionContext, undefined);
+    const answer = {
+      status: 'ready',
+      code: null,
+      narrative: {
+        narration: 'The keeper answers.',
+        newScene: null,
+        newNpc: null,
+        evidenceIds: [],
+      },
+      steps: [
+        {
+          segmentIndex: 0,
+          action: null,
+          replyNpcId: 'keeper',
+          replyContextHash: voice.speechHash,
+          reply: {
+            text: kind === 'follow' ? 'I will accompany you.' : 'I will wait here.',
+            code: null,
+            companionIntent:
+              kind === 'follow'
+                ? {
+                    kind: 'follow',
+                    actorId: 'alice',
+                    sourceObservationId: voice.replyToObservationId,
+                  }
+                : null,
+            actionIntent:
+              kind === 'wait'
+                ? {
+                    sourceObservationId: voice.replyToObservationId,
+                    actions: [{ kind: 'wait', targetId: null, target: null }],
+                  }
+                : null,
+          },
+        },
+      ],
+    };
+    let calls = 0;
+    const provider = new OpenAiNpcProvider(
+      {
+        enabled: true,
+        apiKey: 'synthetic-fixture-key',
+        model: 'synthetic-model',
+        version: 'director-binding-test',
+        maxInputBytes: 64000,
+        maxOutputTokens: 1000,
+        maxResponseBytes: 1000000,
+        inputMicrosPerMillion: 1,
+        outputMicrosPerMillion: 1,
+      },
+      async (_url, init) => {
+        calls++;
+        const request = JSON.parse(init.body);
+        assert.match(request.instructions, /only wait actions/);
+        assert.match(
+          request.instructions,
+          /Copy sourceObservationId exactly from that voice replyToObservationId/,
+        );
+        return new Response(
+          JSON.stringify({
+            id: 'synthetic-director-intent',
+            status: 'completed',
+            service_tier: 'default',
+            output: [
+              { type: 'message', content: [{ type: 'output_text', text: JSON.stringify(answer) }] },
+            ],
+            usage: { input_tokens: 50, output_tokens: 100 },
+          }),
+          { status: 200, headers: { 'content-type': 'application/json' } },
+        );
+      },
+    );
+    const generated = await provider.generate({
+      jobId: randomUUID(),
+      purpose: 'story_turn',
+      context,
+      signal: new AbortController().signal,
+      maxCostMicros: 100,
+    });
+    assert.equal(generated.failureCode, undefined);
+    assert.equal(calls, 1);
+    const applied = g.applyStoryTurnProposal(state, 'alice', input, turnId, generated.proposal);
+    assert.equal(applied.error, undefined);
+    assert.equal(applied.state.narrativeCanon.revision, 1);
+    assert.equal(applied.entries.filter((entry) => entry.kind === 'npc_reply').length, 1);
+    if (kind === 'follow')
+      assert.equal(applied.state.npcBrains.keeper.living.companionship.actorId, 'alice');
+    else assert.deepEqual(applied.state.npcBrains.keeper.plan, [{ kind: 'wait' }]);
+    assert.deepEqual(applied.state.entities.alice, state.entities.alice);
+  }
 });
