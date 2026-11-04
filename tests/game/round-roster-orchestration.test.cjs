@@ -795,6 +795,7 @@ test('a busy earlier reply blocks later NPC replies without blocking private rou
     },
   };
   game.story = {
+    reconcileTerminalTravel: async () => {},
     requireLegacyReplyConsent: async (_id, request) => {
       visited.push(request.id);
       return true;
