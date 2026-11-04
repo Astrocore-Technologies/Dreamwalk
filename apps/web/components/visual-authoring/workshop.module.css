@@ -1,11 +1,11 @@
 .workshop {
   display: grid;
-  gap: 24px;
+  gap: 20px;
 }
 .layout {
   display: grid;
-  grid-template-columns: minmax(260px, 0.7fr) minmax(0, 1.3fr);
-  gap: 24px;
+  grid-template-columns: minmax(300px, 0.82fr) minmax(0, 1.18fr);
+  gap: 20px;
   align-items: start;
 }
 .layout > *,
@@ -18,7 +18,7 @@
   padding: 24px;
   border: 1px solid var(--border);
   border-radius: 20px;
-  background: var(--panel);
+  background: var(--surface);
 }
 .note {
   padding: 16px 20px;
@@ -33,11 +33,17 @@
   place-items: center;
   border: 1px solid var(--border);
   border-radius: 22px;
-  background: radial-gradient(ellipse at 50% 20%, #718d8060, transparent 70%), #242936;
+  background:
+    radial-gradient(
+      ellipse at 50% 30%,
+      color-mix(in srgb, var(--accent) 10%, transparent),
+      transparent 70%
+    ),
+    var(--surface);
   overflow: hidden;
 }
 .concept img {
-  max-height: 560px;
+  max-height: 740px;
   max-width: 100%;
   object-fit: contain;
   filter: drop-shadow(0 18px 18px #10122270);
@@ -84,8 +90,13 @@
 }
 .preview {
   display: grid;
-  gap: 14px;
+  gap: 18px;
   min-width: 0;
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  background: linear-gradient(135deg, var(--surface-soft), var(--surface));
+  overflow-wrap: anywhere;
 }
 .preview :global(canvas) {
   touch-action: manipulation;
@@ -219,4 +230,111 @@
 }
 .locationImageStatus small {
   display: block;
+}
+
+/* Reference 29/55 composition. Only owned project output occupies the preview. */
+.workshop > :global(.page-heading) {
+  margin-bottom: 0;
+}
+.workshop > :global(.page-heading) h1 {
+  font-size: clamp(30px, 3.3vw, 48px);
+  letter-spacing: -1.4px;
+}
+.workshop > .note {
+  margin: 0;
+}
+.kindSwitch {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  width: min(100%, 510px);
+  padding: 3px;
+  gap: 4px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: var(--surface);
+}
+.kindSwitch button {
+  min-width: 0;
+  min-height: 52px;
+  padding: 10px 14px;
+  border-radius: 14px;
+  font-size: 17px;
+  white-space: normal;
+}
+.kindSwitch button[aria-pressed='true'] {
+  color: var(--accent);
+  border-color: var(--accent);
+  background: color-mix(in srgb, var(--accent) 16%, var(--surface-soft));
+  box-shadow: inset 0 -2px var(--accent);
+}
+.brief {
+  background: linear-gradient(150deg, var(--surface-soft), var(--surface));
+}
+.brief :global(.field) > span {
+  color: var(--text);
+  font-size: 17px;
+  font-weight: 700;
+}
+.brief textarea {
+  min-height: 110px;
+}
+.brief input:not([type='checkbox']),
+.brief select,
+.brief textarea {
+  background: color-mix(in srgb, var(--surface-soft) 75%, var(--surface));
+  border-color: color-mix(in srgb, var(--line) 70%, var(--muted));
+}
+.brief button[type='submit'] {
+  width: 100%;
+  min-height: 58px;
+  margin-top: 6px;
+}
+.brief .check {
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.emptyPreview {
+  display: flex;
+  min-height: 560px;
+  padding: 36px;
+  flex-direction: column;
+  justify-content: center;
+  align-items: center;
+  text-align: center;
+  color: var(--muted);
+}
+.emptyPreview svg {
+  color: var(--accent);
+  margin-bottom: 24px;
+}
+.emptyPreview h2 {
+  color: var(--text);
+}
+.emptyPreview p {
+  max-width: 40ch;
+  margin: 0;
+}
+.workshop[data-workshop-kind='location'] .layout {
+  grid-template-columns: minmax(280px, 0.65fr) minmax(0, 1.35fr);
+}
+@media (max-width: 1000px) {
+  .layout,
+  .workshop[data-workshop-kind='location'] .layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .emptyPreview {
+    min-height: 320px;
+  }
+}
+@media (max-width: 540px) {
+  .preview {
+    padding: 14px;
+  }
+  .emptyPreview {
+    padding: 20px 6px;
+  }
+  .kindSwitch button {
+    font-size: 15px;
+    padding: 10px;
+  }
 }
