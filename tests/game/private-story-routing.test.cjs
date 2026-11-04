@@ -89,13 +89,23 @@ test('targeted say and whisper attempts go to the director, including help for a
 });
 
 test('private physical state is visible while private words stay out of third-player canon, evidence, and feed fallback', async () => {
-  const s = world(),
-    p = proposal(s, {
-      channel: 'whisper',
-      effect: 'death',
-      text: '*I act toward Orin with PRIVATE_INTENT*',
-      narration: 'PRIVATE_NARRATION',
-    });
+  const s = world();
+  s.entities.bystander = {
+    ...structuredClone(s.entities.keeper),
+    id: 'bystander',
+    x: 5,
+    y: 5,
+  };
+  s.npcBrains.bystander = structuredClone(s.npcBrains.keeper);
+  assert.ok(g.npcRoleplayObserverIds(s, 'alice', { channel: 'whisper' }).includes('bystander'));
+  assert.ok(g.canNpcHear(s, s.entities.bystander, s.entities.alice, 1));
+  assert.equal(s.entities.keeper.lifeState ?? 'conscious', 'conscious');
+  const p = proposal(s, {
+    channel: 'whisper',
+    effect: 'death',
+    text: '*I act toward Orin with PRIVATE_INTENT*',
+    narration: 'PRIVATE_NARRATION',
+  });
   const r = apply(s, p);
   assert.equal(r.error, undefined);
   assert.deepEqual(r.state.narrativeCanon.turns.at(-1).audienceIds, ['alice', 'keeper']);
@@ -119,10 +129,29 @@ test('private physical state is visible while private words stay out of third-pl
     g.buildNarrativeContext(r.state, 'alice', 'Continue').evidenceIds.includes(p.id),
     false,
   );
-  assert.equal(
-    JSON.stringify(r.state.npcBrains.keeper.living.observations).includes('PRIVATE_INTENT'),
-    false,
+  // The explicitly addressed observer perceives this reported intent before death.
+  // It is not a successful action claim or knowledge granted to nearby bystanders.
+  const attempts = r.state.npcBrains.keeper.living.observations.filter((observation) =>
+    observation.text?.includes('PRIVATE_INTENT'),
   );
+  assert.equal(attempts.length, 1);
+  const attempt = attempts[0];
+  assert.equal(attempt.kind, 'attempted');
+  assert.equal(attempt.confidence, 'reported');
+  assert.equal(attempt.channel, 'report');
+  assert.equal(attempt.disclosure, 'participants');
+  assert.equal(attempt.actorId, 'alice');
+  assert.deepEqual(attempt.audienceIds, ['alice', 'keeper']);
+  assert.deepEqual(attempt.speechIdentity, { turnId: p.id, segmentIndex: 0 });
+  assert.equal(g.npcReplyObservation(r.state, 'alice', 'keeper', attempt.id)?.id, attempt.id);
+  const sources = r.state.npcUtterances.filter((source) => source.presentationKind === 'attempt');
+  assert.equal(sources.length, 1);
+  assert.equal(sources[0].text, attempt.text);
+  assert.deepEqual(sources[0].audienceIds, ['alice', 'keeper']);
+  assert.equal(r.entries.find((entry) => entry.kind === 'attempt').sourceId, sources[0].id);
+  for (const [npcId, brain] of Object.entries(r.state.npcBrains))
+    if (npcId !== 'keeper')
+      assert.equal(JSON.stringify(brain.living.observations).includes('PRIVATE_'), false);
   for (const actor of ['alice', 'bob']) {
     const runtime = Object.create(StoryTurnRuntime.prototype);
     runtime.db = { query: async () => [] };
@@ -135,6 +164,7 @@ test('private physical state is visible while private words stay out of third-pl
     const feed = await runtime.feed({}, 'fixture');
     const text = JSON.stringify(feed);
     assert.equal(text.includes('PRIVATE_NARRATION'), actor === 'alice');
+    if (actor === 'bob') assert.equal(text.includes('PRIVATE_'), false);
     if (actor === 'alice')
       assert.equal(feed.entries.find((e) => e.text === 'PRIVATE_NARRATION').channel, 'whisper');
   }
