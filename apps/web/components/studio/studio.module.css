@@ -500,3 +500,506 @@
     aspect-ratio: 2;
   }
 }
+
+/* Author workspace: real story artwork and a compact, complete editing toolbar. */
+.dashboard > h1 {
+  margin: 0 0 22px;
+  font: 700 clamp(30px, 3vw, 48px) var(--font-display);
+}
+.dashboardActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  margin-bottom: 24px;
+}
+.recentStory {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  background: #21182d;
+  color: #fff;
+}
+.recentStory > img {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  z-index: -2;
+}
+.recentStory::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(
+    90deg,
+    rgba(26, 17, 38, 0.96),
+    rgba(26, 17, 38, 0.77) 40%,
+    rgba(26, 17, 38, 0.05)
+  );
+}
+.recentContent {
+  padding: 26px;
+  min-height: 270px;
+  max-width: 65%;
+}
+.recentContent h2 {
+  font-size: clamp(24px, 2.5vw, 36px);
+  line-height: 1.2;
+  margin: 14px 0;
+  overflow-wrap: anywhere;
+}
+.recentContent p {
+  color: #e3d4eb;
+  margin: 0 0 16px;
+}
+.recentContent > p:last-of-type {
+  margin-top: 14px;
+}
+.collectionTitle {
+  font-size: 28px;
+  margin: 26px 0 18px;
+}
+.storyGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.storyCard {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 17px;
+  background: var(--surface);
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+}
+.storyCard > img {
+  width: 100%;
+  aspect-ratio: 1.65;
+  object-fit: cover;
+}
+.storyCardContent {
+  padding: 20px;
+  display: flex;
+  flex-direction: column;
+  align-items: flex-start;
+  flex: 1;
+  gap: 12px;
+}
+.storyCardContent h3 {
+  font-size: 23px;
+  line-height: 1.25;
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.storyCardContent p,
+.storyCardContent small {
+  color: var(--muted);
+  margin: 0;
+}
+.storyCardContent a {
+  width: 100%;
+  margin-top: auto;
+}
+.editorHeader {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.editorIdentity {
+  min-width: 0;
+  flex: 1 1 320px;
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  flex-wrap: wrap;
+}
+.editorIdentity h1 {
+  margin: 0;
+  font: 700 clamp(24px, 2.2vw, 34px)/1.2 var(--font-display);
+  overflow-wrap: anywhere;
+}
+.editorActions {
+  display: flex;
+  gap: 8px;
+  flex-wrap: wrap;
+}
+.editorSaveStatus {
+  margin: 10px 0;
+}
+.editorSaveStatus > [data-autosave-status] {
+  padding: 7px 0;
+  margin: 0;
+  border: 0;
+  background: none;
+  font-size: 13px;
+}
+.editorSaveStatus > [data-autosave-status='error'],
+.editorSaveStatus > [data-autosave-status='conflict'],
+.editorSaveStatus > [data-autosave-status='invalid'] {
+  padding: 12px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+}
+.steps {
+  margin: 16px 0 20px;
+  display: grid;
+  grid-template-columns: repeat(8, minmax(0, 1fr));
+  overflow: visible;
+}
+.steps button {
+  min-width: 0;
+  padding: 10px 6px;
+  white-space: normal;
+  text-align: center;
+  font-size: 13px;
+}
+.steps button:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 2px;
+}
+.editorTitle {
+  margin-bottom: 20px;
+  gap: 12px;
+}
+.editorTitle h2 {
+  margin-bottom: 4px;
+}
+.editorTitle > span {
+  font-size: 16px;
+}
+.worldGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 2fr) minmax(220px, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.worldContext {
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  padding: 14px;
+  background: var(--surface);
+  min-width: 0;
+}
+.worldContext img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1;
+  object-fit: cover;
+  border-radius: 10px;
+}
+.worldContext h3 {
+  overflow-wrap: anywhere;
+}
+.worldContext p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+@media (max-width: 1150px) {
+  .storyGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .steps {
+    grid-template-columns: repeat(4, minmax(0, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  .storyGrid,
+  .worldGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .recentContent {
+    max-width: 100%;
+    padding: 22px;
+    min-height: 300px;
+  }
+  .recentStory::after {
+    background: linear-gradient(90deg, rgba(26, 17, 38, 0.95), rgba(26, 17, 38, 0.65));
+  }
+  .editorIdentity {
+    flex-basis: 200px;
+  }
+  .editorActions {
+    width: 100%;
+  }
+  .editorActions > button {
+    flex: 1 1 auto;
+  }
+  .steps {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    gap: 3px;
+  }
+  .worldContext img {
+    aspect-ratio: 2;
+  }
+}
+
+.storyCard > img {
+  aspect-ratio: 1.4;
+  margin-bottom: -52px;
+  mask-image: linear-gradient(#000 65%, transparent);
+}
+.storyCardContent {
+  position: relative;
+}
+.steps button.stepActive {
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--accent) 22%, var(--surface)),
+    var(--surface-raised)
+  );
+  border: 1px solid color-mix(in srgb, var(--accent) 45%, var(--line));
+  box-shadow: inset 0 -2px var(--accent);
+  border-radius: 9px;
+}
+
+/* Inner authoring workspace: a persistent item index beside focused draft fields. */
+.collectionEditor {
+  display: grid;
+  grid-template-columns: minmax(190px, 0.7fr) minmax(0, 2.4fr);
+  gap: 20px;
+  align-items: start;
+}
+.collectionRail {
+  display: grid;
+  gap: 18px;
+  padding: 18px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+  min-width: 0;
+}
+.collectionRail h3 {
+  margin: 0;
+  font-size: 22px;
+  overflow-wrap: anywhere;
+}
+.collectionRail h3 span {
+  color: var(--muted);
+}
+.collectionChoices {
+  display: grid;
+  gap: 12px;
+}
+.collectionChoices button {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  min-width: 0;
+  width: 100%;
+  min-height: 76px;
+  border: 1px solid var(--line);
+  border-radius: 13px;
+  padding: 10px;
+  background: var(--surface-raised);
+  color: var(--text);
+  font: 600 16px/1.4 var(--font);
+  text-align: left;
+  overflow-wrap: anywhere;
+  cursor: pointer;
+}
+.collectionChoices button[aria-pressed='true'] {
+  border-color: var(--accent);
+  box-shadow: inset 0 0 0 1px var(--accent);
+  background: color-mix(in srgb, var(--accent) 13%, var(--surface));
+}
+.collectionChoices button:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 3px;
+}
+.collectionIcon {
+  width: 46px;
+  height: 50px;
+  flex-shrink: 0;
+  display: grid;
+  place-items: center;
+  border-radius: 9px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--accent);
+}
+.collectionDetails {
+  min-width: 0;
+}
+.collectionPage {
+  border: 0;
+  padding: 0;
+  margin: 0;
+  min-width: 0;
+}
+.collectionPage[hidden] {
+  display: none;
+}
+.collectionPage > .nestedCard {
+  margin: 0;
+  padding: 24px;
+  gap: 22px;
+}
+.collectionPage .nestedCard h3 {
+  font-size: 24px;
+}
+.collectionRail > button {
+  width: 100%;
+  white-space: normal;
+}
+.collectionRail :global(.field) {
+  min-width: 0;
+}
+.boundariesGrid {
+  display: grid;
+  grid-template-columns: minmax(0, 1.3fr) minmax(240px, 1fr);
+  gap: 24px;
+  align-items: start;
+}
+.boundariesGrid .checkRow {
+  padding: 18px 8px;
+  font-size: 17px;
+  font-weight: 600;
+}
+.boundariesGrid .checkRow input {
+  width: 24px;
+  height: 24px;
+}
+.boundariesContext {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+}
+.boundariesContext > img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 1.15;
+  object-fit: cover;
+}
+.boundariesContext > div {
+  padding: 22px;
+}
+.boundariesContext h3 {
+  font-size: 24px;
+  overflow-wrap: anywhere;
+}
+.boundariesContext svg {
+  color: var(--accent);
+}
+.boundariesContext p {
+  color: var(--muted);
+  line-height: 1.6;
+}
+.publicationGrid {
+  display: grid;
+  grid-template-columns: minmax(230px, 0.9fr) minmax(0, 1.3fr);
+  gap: 24px;
+  align-items: start;
+}
+.publicationChecklist {
+  padding: 20px;
+  border: 1px solid var(--line);
+  border-radius: 16px;
+  background: var(--surface);
+}
+.publicationChecklist .readiness {
+  grid-template-columns: minmax(0, 1fr);
+}
+.publicationChecklist .readiness > div {
+  padding: 16px;
+  min-height: 64px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface-raised);
+}
+.publicationChecklist .ready,
+.publicationChecklist .notReady {
+  flex-shrink: 0;
+  border-radius: 7px;
+}
+.publicationChecklist p {
+  margin-bottom: 0;
+  line-height: 1.6;
+}
+@media (max-width: 900px) {
+  .collectionEditor,
+  .boundariesGrid,
+  .publicationGrid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .collectionChoices {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .boundariesContext > img {
+    aspect-ratio: 2;
+  }
+}
+@media (max-width: 540px) {
+  .collectionChoices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .collectionPage > .nestedCard,
+  .collectionRail,
+  .publicationChecklist {
+    padding: 15px;
+  }
+  .collectionPage :global(.field-grid) {
+    grid-template-columns: minmax(0, 1fr);
+  }
+}
+.sceneWorkspace {
+  display: grid;
+  grid-template-columns: minmax(0, 1.15fr) minmax(220px, 1fr);
+  gap: 22px;
+  align-items: start;
+}
+.sceneWorkspace :global(.field-grid) {
+  grid-template-columns: minmax(0, 1fr);
+}
+.sceneContext {
+  overflow: hidden;
+  border: 1px solid var(--line);
+  border-radius: 14px;
+  min-width: 0;
+}
+.sceneContext img {
+  display: block;
+  width: 100%;
+  aspect-ratio: 0.7;
+  object-fit: cover;
+}
+.sceneContext > div {
+  padding: 16px;
+}
+.sceneContext span {
+  color: var(--muted);
+  font-size: 13px;
+}
+.sceneContext h3 {
+  margin: 8px 0 0;
+  overflow-wrap: anywhere;
+}
+@media (max-width: 1200px) {
+  .sceneWorkspace {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .sceneContext img {
+    aspect-ratio: 2;
+  }
+}
+.collectionActions {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+.collectionActions > button {
+  width: 100%;
+  white-space: normal;
+}
+.collectionChoices button[aria-invalid='true'] {
+  border-style: dashed;
+}
+.collectionChoices button > svg {
+  flex-shrink: 0;
+  color: var(--accent);
+  margin-left: auto;
+}

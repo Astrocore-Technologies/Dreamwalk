@@ -1,6 +1,7 @@
 import type { Metadata } from 'next';
 import './globals.css';
 import './design-system.css';
+import './auth-design.css';
 import { LocaleProvider } from '@/lib/i18n';
 import { ClientProvider } from '@/lib/client';
 import { Shell } from '@/components/shell';

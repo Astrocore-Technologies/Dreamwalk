@@ -1,0 +1,253 @@
+/* Selected desktop compositions: a quiet rail and uninterrupted page canvas.
+   Auth and gameplay own their layouts and are deliberately excluded. */
+.app-shell:not(.game-shell):not(.auth-shell)::before {
+  content: none;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .sidebar {
+  width: 240px;
+  padding: 28px 16px 20px;
+  background: var(--sidebar);
+  backdrop-filter: none;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .brand {
+  gap: 10px;
+  margin: 0 8px 28px;
+  font-size: 25px;
+  letter-spacing: -0.7px;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .brand-mark {
+  width: 46px;
+  height: 48px;
+  flex-shrink: 0;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .nav-item {
+  font-size: 16px;
+  font-weight: 500;
+  line-height: 1.4;
+  min-height: 50px;
+  gap: 20px;
+  padding: 11px 15px;
+  margin: 2px 0;
+  color: var(--text);
+  border-radius: 10px;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .nav-item svg {
+  flex-shrink: 0;
+  width: 24px;
+  height: 24px;
+  stroke-width: 1.5;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .nav-item.active {
+  color: var(--accent);
+  background: var(--surface-hover);
+  box-shadow: none;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .sidebar-bottom {
+  padding-top: 14px;
+  border-top: 1px solid var(--line);
+}
+.app-shell:not(.game-shell):not(.auth-shell) .rail-search {
+  display: flex;
+  flex: none;
+  width: 100%;
+  max-width: none;
+  margin: 18px 0 24px;
+  padding: 4px 6px 4px 12px;
+  min-height: 44px;
+  gap: 6px;
+  border-radius: 999px;
+}
+.rail-search > svg {
+  flex-shrink: 0;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .rail-search input {
+  min-width: 0;
+  width: 100%;
+  font-size: 14px;
+}
+.rail-search:focus-within {
+  outline: 2px solid var(--accent);
+  outline-offset: 3px;
+}
+.rail-search .icon-button {
+  min-width: 30px;
+  min-height: 32px;
+  width: 30px;
+}
+.rail-preferences {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  border-top: 1px solid var(--line);
+  padding: 18px 4px 0;
+  margin-top: 14px;
+}
+.rail-preferences .locale-select {
+  width: 100px;
+  border-radius: 999px;
+  font-size: 14px;
+  padding-inline: 16px;
+}
+.rail-preferences .theme-button {
+  display: inline-flex;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  width: 64px;
+  color: var(--accent);
+}
+.rail-profile > svg:last-child {
+  margin-left: auto;
+  width: 18px !important;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .workspace {
+  margin-left: 240px;
+  min-width: 0;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .topbar {
+  min-height: 64px;
+  height: auto;
+  padding: 12px 26px 4px;
+  background: transparent;
+  border: 0;
+  backdrop-filter: none;
+  justify-content: flex-end;
+  gap: 12px;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .main-content {
+  width: 100%;
+  max-width: none;
+  margin: 0;
+  border-radius: 0;
+  background: transparent;
+  padding: 12px 26px 44px;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .top-actions {
+  gap: 10px;
+  min-width: 0;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .wallet-chip {
+  font-size: 14px;
+  min-height: 44px;
+  flex-wrap: wrap;
+  justify-content: center;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .profile-chip {
+  font-size: 14px;
+  max-width: 180px;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .profile-chip > span:last-child {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .profile-chip .avatar {
+  width: 48px;
+  height: 48px;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .avatar img {
+  object-fit: cover;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .page-heading h1 {
+  font-size: clamp(30px, 3.2vw, 48px);
+  letter-spacing: -0.035em;
+  line-height: 1.2;
+}
+/* At spacious desktop sizes the utilities share the heading's vertical band.
+   Padding reserves actual space, so long translated headings wrap rather than overlap. */
+@media (min-width: 1400px) {
+  .app-shell:not(.game-shell):not(.auth-shell)
+    .workspace:has(
+      :is(.main-content > [data-locale], .main-content > [data-locale] > :is(div, section, article))
+        > :is(.page-heading, .catalog-heading, header:first-child)
+        h1
+    ) {
+    position: relative;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell)
+    .workspace:has(
+      :is(.main-content > [data-locale], .main-content > [data-locale] > :is(div, section, article))
+        > :is(.page-heading, .catalog-heading, header:first-child)
+        h1
+    )
+    > .topbar {
+    position: absolute;
+    right: 0;
+    top: 10px;
+    max-width: 510px;
+    z-index: 2;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell) .main-content {
+    padding-top: 24px;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell)
+    :is(.main-content > [data-locale], .main-content > [data-locale] > :is(div, section, article))
+    > :is(.page-heading, .catalog-heading, header:first-child):has(h1) {
+    padding-right: 500px;
+    min-height: 66px;
+    flex-wrap: wrap;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell) .profile-chip > span:last-child {
+    display: none;
+  }
+}
+@media (max-width: 900px) {
+  .app-shell:not(.game-shell):not(.auth-shell) .sidebar {
+    width: min(300px, calc(100vw - 32px));
+    padding: 24px 16px;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell) .brand {
+    margin-right: 32px;
+    font-size: 23px;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell) .workspace {
+    margin-left: 0;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell) .topbar {
+    padding: 12px 16px;
+    justify-content: space-between;
+    align-items: flex-start;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell) .main-content {
+    padding: 12px 16px 88px;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell) .top-actions {
+    flex-wrap: wrap;
+    justify-content: flex-end;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell) .profile-chip > span:last-child {
+    display: none;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell) .profile-chip .avatar {
+    width: 36px;
+    height: 36px;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell) .wallet-chip {
+    font-size: 12px;
+    padding: 6px 10px;
+    max-width: 100%;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell) .wallet-chip > span:first-of-type,
+  .app-shell:not(.game-shell):not(.auth-shell) .wallet-currency-name {
+    display: inline;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell) .mobile-menu {
+    flex-shrink: 0;
+  }
+  .app-shell:not(.game-shell):not(.auth-shell) .main-footer {
+    padding-inline: 16px;
+  }
+}
+/* Do not inherit the old compact-header hiding rules for supported actions. */
+.app-shell:not(.game-shell):not(.auth-shell) .topbar .logout {
+  display: inline-flex;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .topbar .login-link {
+  display: inline-flex;
+  align-items: center;
+  min-height: 44px;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .topbar .profile-chip {
+  display: flex;
+}

@@ -54,28 +54,53 @@ test('browser partitions preserve every test file exactly once and balance long 
   const files = readdirSync('tests/e2e', { recursive: true }).filter((file) =>
     file.endsWith('.spec.ts'),
   );
-  const groups = partitionBrowserFiles(files);
+  const groups = partitionBrowserFiles(files, 3);
   assert.deepEqual(groups.flatMap((group) => group.files).sort(), [...files].sort());
-  assert.deepEqual(partitionBrowserFiles([...files].reverse()), groups);
+  assert.deepEqual(partitionBrowserFiles([...files].reverse(), 3), groups);
   assert.notEqual(
     groups.findIndex((group) => group.files.includes('game-adventure-completion.spec.ts')),
     groups.findIndex((group) => group.files.includes('game-director.spec.ts')),
   );
-  assert.ok(Math.abs(groups[0].seconds - groups[1].seconds) <= 20);
+  assert.equal(groups.length, 3);
+  assert.ok(
+    Math.max(...groups.map((g) => g.seconds)) - Math.min(...groups.map((g) => g.seconds)) <= 60,
+  );
   assert.throws(() => partitionBrowserFiles(['same', 'same']));
   const workflow = readFileSync('.github/workflows/platform.yml', 'utf8');
-  for (const index of [1, 2])
-    assert.ok(workflow.includes(`node scripts/browser-shard.mjs ${index}/2`));
-  assert.equal((workflow.match(/runner.temp \}\}\/dreamwalk-web.log/g) ?? []).length, 2);
+  for (const index of [1, 2, 3])
+    assert.ok(workflow.includes(`node scripts/browser-shard.mjs ${index}/3`));
+  assert.equal((workflow.match(/runner.temp \}\}\/dreamwalk-web.log/g) ?? []).length, 3);
 });
 
-test('prebuilt browser CI keeps both complete shards and the API test environment', () => {
+test('all browser shards retain isolation, bounded jobs and an all-success aggregate', () => {
+  const workflow = readFileSync('.github/workflows/platform.yml', 'utf8');
+  for (const index of [1, 2, 3]) {
+    const block = workflow
+      .split(`  browser_${index}:\n`)[1]
+      .split(/\n {2}(?:browser_\d|platform):/)[0];
+    assert.match(block, /timeout-minutes: 20/);
+    assert.match(block, /runs-on: ubuntu-latest/);
+    assert.match(block, /postgres:17\.10-alpine/);
+    assert.equal((block.match(new RegExp(`browser-${index}-ephemeral`, 'g')) ?? []).length, 2);
+    assert.ok(block.includes(`dreamwalk-browser-${index}-assets`));
+    assert.ok(block.includes(`node scripts/browser-shard.mjs ${index}/3`));
+    assert.doesNotMatch(block, /continue-on-error|--grep|--max-failures/);
+  }
+  const gate = workflow.split('  platform:\n')[1];
+  assert.match(gate, /needs: \[static, integration, browser_1, browser_2, browser_3\]/);
+  assert.ok(gate.includes("['static', 'integration', 'browser_1', 'browser_2', 'browser_3']"));
+  assert.ok(gate.includes("results[name]?.result !== 'success'"));
+  assert.match(gate, /Object\.keys\(results\)\.length !== expected\.length/);
+  assert.match(gate, /process\.exit\(1\)/);
+});
+
+test('prebuilt browser CI keeps all three complete shards and the API test environment', () => {
   const workflow = readFileSync('.github/workflows/platform.yml', 'utf8');
   const launcher = readFileSync('scripts/dev.mjs', 'utf8');
-  assert.equal((workflow.match(/NODE_ENV=production npm run build:web/g) ?? []).length, 2);
+  assert.equal((workflow.match(/NODE_ENV=production npm run build:web/g) ?? []).length, 3);
   assert.equal(
     (workflow.match(/NODE_ENV=development npm run dev -- --prebuilt-web/g) ?? []).length,
-    2,
+    3,
   );
   assert.match(launcher, /prebuiltWeb \? 'start' : 'dev'/);
   assert.match(

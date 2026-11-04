@@ -1,0 +1,297 @@
+.dialog {
+  width: min(1240px, calc(100vw - 32px));
+  max-width: 1240px;
+  max-height: 94dvh;
+  padding: 0;
+  overflow: auto;
+  color: var(--text);
+  background: var(--surface);
+}
+.dialog > :first-child {
+  padding: 22px 30px 0;
+}
+.scene {
+  position: relative;
+  isolation: isolate;
+  padding: 0 30px 28px;
+  overflow: hidden;
+}
+.backdrop {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  object-fit: cover;
+  height: 760px;
+  max-height: 100%;
+  opacity: 0.8;
+  z-index: -2;
+  object-position: center top;
+  mask-image: linear-gradient(#000 50%, transparent);
+}
+.storyTitle {
+  font-size: clamp(24px, 3vw, 38px);
+  font-weight: 800;
+  margin: 18px 0 8px;
+}
+.choices {
+  border: 0;
+  margin: 24px 0;
+  padding: 0;
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(210px, 1fr));
+  gap: 18px;
+  min-width: 0;
+}
+.legend {
+  font-size: 18px;
+  margin-bottom: 14px;
+}
+.card {
+  position: relative;
+  display: flex;
+  flex-direction: column;
+  min-width: 0;
+  border: 1px solid var(--line);
+  border-radius: 22px;
+  overflow: hidden;
+  color: var(--text);
+  background: var(--surface-raised);
+  cursor: pointer;
+}
+.card:has(input:checked) {
+  border-color: #c58ae5;
+  box-shadow: 0 0 0 3px #c58ae5;
+}
+.card:has(input:focus-visible) {
+  outline: 3px solid var(--text);
+  outline-offset: 5px;
+}
+.card:has(input:disabled),
+.card[aria-disabled='true'] {
+  cursor: default;
+  opacity: 0.65;
+}
+.card input {
+  position: absolute;
+  inset: 0;
+  z-index: 1;
+  opacity: 0;
+  width: 100%;
+  height: 100%;
+  margin: 0;
+  cursor: inherit;
+}
+.portrait {
+  display: grid;
+  place-items: center;
+  aspect-ratio: 1.1;
+  background: linear-gradient(145deg, var(--surface-raised), var(--surface));
+}
+.portrait img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 25%;
+  min-height: 0;
+}
+.portrait svg {
+  width: 42%;
+  height: 42%;
+  color: var(--muted);
+}
+.cardBody {
+  display: flex;
+  flex-direction: column;
+  padding: 16px 18px 20px;
+  gap: 8px;
+  overflow-wrap: anywhere;
+}
+.cardBody strong {
+  font-size: 27px;
+  line-height: 1.15;
+}
+.cardBody span {
+  color: var(--muted);
+  font-size: 17px;
+}
+.check {
+  position: absolute;
+  top: 12px;
+  right: 12px;
+  width: 36px;
+  height: 36px;
+  padding: 6px;
+  border-radius: 50%;
+  background: var(--gold);
+  color: #24162e;
+}
+.create {
+  align-items: center;
+  justify-content: center;
+  text-align: center;
+  padding: 26px;
+  gap: 18px;
+  min-height: 260px;
+}
+.create svg {
+  width: 60px;
+  height: 60px;
+  color: var(--gold);
+}
+.create strong {
+  font-size: 26px;
+}
+.create span {
+  color: var(--muted);
+}
+.summary {
+  display: flex;
+  align-items: center;
+  gap: 26px;
+  border: 1px solid var(--line);
+  border-radius: 18px;
+  padding: 14px;
+  margin-top: 24px;
+  background: var(--surface);
+  overflow-wrap: anywhere;
+}
+.summary img {
+  width: 29%;
+  aspect-ratio: 2.4;
+  object-fit: cover;
+  border-radius: 12px;
+}
+.summary strong {
+  font-size: clamp(22px, 3vw, 34px);
+  min-width: 0;
+}
+.actions {
+  display: flex;
+  justify-content: center;
+  flex-wrap: wrap;
+  gap: 20px;
+  margin-top: 28px;
+}
+.actions button {
+  min-width: 200px;
+  min-height: 54px;
+}
+@media (max-width: 600px) {
+  .dialog {
+    width: calc(100vw - 16px);
+  }
+  .dialog > :first-child {
+    padding: 16px 16px 0;
+  }
+  .scene {
+    padding: 0 16px 20px;
+  }
+  .choices {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .actions button {
+    width: 100%;
+  }
+  .summary {
+    gap: 12px;
+  }
+}
+.traveler {
+  grid-column: 1 / -1;
+  order: 2;
+  flex-direction: row;
+  align-items: center;
+}
+.traveler .portrait {
+  width: 70px;
+  flex: 0 0 70px;
+}
+.traveler .cardBody {
+  padding-right: 58px;
+}
+.traveler .cardBody strong {
+  font-size: 18px;
+}
+
+/* Ref59: visible landscape, readable foreground and an unmistakably empty create card. */
+.dialog > :first-child h2 {
+  font-size: clamp(28px, 3.5vw, 46px);
+  line-height: 1.15;
+}
+.scene::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background:
+    linear-gradient(
+      90deg,
+      color-mix(in srgb, var(--surface) 88%, transparent),
+      color-mix(in srgb, var(--surface) 30%, transparent)
+    ),
+    linear-gradient(0deg, var(--surface) 12%, transparent 86%);
+  pointer-events: none;
+}
+
+.summaryText {
+  flex: 1;
+  min-width: 0;
+}
+.summaryText p {
+  margin: 8px 0 0;
+  font-size: clamp(16px, 1.6vw, 21px);
+  line-height: 1.4;
+}
+.metadata {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 8px;
+  color: var(--muted);
+}
+.create .createArt {
+  position: relative;
+  display: block;
+  width: 160px;
+  height: 160px;
+  color: #b18bc7;
+}
+.createArt .createSilhouette {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  stroke-width: 0.6;
+  fill: currentColor;
+  color: inherit;
+  mask-image: linear-gradient(#000 65%, transparent);
+}
+.createArt .createSpark {
+  position: absolute;
+  right: 0;
+  top: 45%;
+  width: 32px;
+  height: 32px;
+  color: var(--gold);
+  fill: var(--gold);
+}
+.createArt .createPlus {
+  position: absolute;
+  bottom: 0;
+  left: 58px;
+  width: 44px;
+  height: 44px;
+  padding: 9px;
+  border-radius: 50%;
+  background: var(--gold);
+  color: #24162e;
+}
+@media (max-width: 600px) {
+  .summary {
+    align-items: flex-start;
+  }
+  .summary img {
+    width: 30%;
+    aspect-ratio: 1;
+  }
+}

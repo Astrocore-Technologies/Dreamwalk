@@ -112,48 +112,50 @@ export function EmailVerification() {
   const [message, setMessage] = useState('');
   const [error, setError] = useState('');
   return (
-    <Panel>
-      <h2>{t('Подтверждение email')}</h2>
-      <p>{user?.emailVerified ? t('Email подтверждён') : t('Email пока не подтверждён')}</p>
-      {user?.emailVerificationRequired && !user.emailVerified && (
-        <p>
-          {t(
-            'Подтверди почту, чтобы начать игру и получить стартовый подарок. Проверь письмо или запроси новую ссылку.',
-          )}
-        </p>
-      )}
-      {!user?.emailVerified && (
-        <Button
-          variant="secondary"
-          busy={busy}
-          onClick={async () => {
-            setBusy(true);
-            setError('');
-            setMessage('');
-            try {
-              const result = await api<{ code: string }>('/account/email-verification/request', {
-                method: 'POST',
-                body: '{}',
-              });
-              setMessage(
-                result.code === 'EMAIL_DELIVERY_UNAVAILABLE'
-                  ? t('Почтовая доставка пока не настроена.')
-                  : t(
-                      'Проверь почту. Если доставка доступна, письмо со ссылкой придёт в ближайшее время.',
-                    ),
-              );
-            } catch (e) {
-              setError(errorMessage(e));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {t('Отправить ссылку подтверждения')}
-        </Button>
-      )}
-      {message && <p role="status">{message}</p>}
-      <ErrorBox message={error} />
+    <Panel className="account-email-banner">
+      <div className="account-email-copy">
+        <h2>{t('Подтверждение email')}</h2>
+        <p>{user?.emailVerified ? t('Email подтверждён') : t('Email пока не подтверждён')}</p>
+        {user?.emailVerificationRequired && !user.emailVerified && (
+          <p>
+            {t(
+              'Подтверди почту, чтобы начать игру и получить стартовый подарок. Проверь письмо или запроси новую ссылку.',
+            )}
+          </p>
+        )}
+        {!user?.emailVerified && (
+          <Button
+            variant="secondary"
+            busy={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError('');
+              setMessage('');
+              try {
+                const result = await api<{ code: string }>('/account/email-verification/request', {
+                  method: 'POST',
+                  body: '{}',
+                });
+                setMessage(
+                  result.code === 'EMAIL_DELIVERY_UNAVAILABLE'
+                    ? t('Почтовая доставка пока не настроена.')
+                    : t(
+                        'Проверь почту. Если доставка доступна, письмо со ссылкой придёт в ближайшее время.',
+                      ),
+                );
+              } catch (e) {
+                setError(errorMessage(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {t('Отправить ссылку подтверждения')}
+          </Button>
+        )}
+        {message && <p role="status">{message}</p>}
+        <ErrorBox message={error} />
+      </div>
     </Panel>
   );
 }

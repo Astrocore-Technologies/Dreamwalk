@@ -97,3 +97,31 @@ test('public cards and auth retain real content in the art-first layout', async 
   assert.match(shell, /auth-brand/);
   assert.match(css, /character-orb:not\(:has\(img\)\)/);
 });
+
+// Shared-rail reference and preserved interaction invariants.
+import './shared-shell-design.test.mjs';
+test('notification and missing-page composition keeps authorized content and explicit read actions', async () => {
+  const notifications = await read('components/notifications.tsx');
+  const missing = await read('components/missing-page.tsx');
+  const css = await read('components/notification-pages.css');
+  assert.match(notifications, /useResource<Notification\[\]>\('\/notifications'\)/);
+  assert.match(notifications, /pending\.current\.has\(id\)/);
+  assert.match(notifications, /method: 'PATCH'/);
+  assert.match(notifications, /JSON\.stringify\(\{ read: true \}\)/);
+  assert.match(notifications, /selectAdventureText\(n.payload.adventureMetadata, locale\)/);
+  assert.match(notifications, /href="\/library\?tab=invitations"/);
+  assert.match(notifications, /dateTime=\{n.createdAt\}/);
+  assert.doesNotMatch(notifications, /assetUrl|dangerouslySetInnerHTML|Math.random|Promise.all/);
+  assert.match(missing, /href="\/home"/);
+  assert.match(missing, /aria-labelledby="missing-page-heading"/);
+  assert.match(css, /minmax\(0, 1fr\)/);
+  assert.doesNotMatch(css, /\.sidebar|\.topbar|\.app-shell|\.game-shell/);
+  for (const name of ['missing-path', 'notification-observatory']) {
+    const asset = await readFile(
+      new URL(`../../apps/web/public/images/${name}.webp`, import.meta.url),
+    );
+    assert.equal(asset.toString('ascii', 0, 4), 'RIFF');
+    assert.equal(asset.toString('ascii', 8, 12), 'WEBP');
+    assert.ok(asset.length < 300_000);
+  }
+});

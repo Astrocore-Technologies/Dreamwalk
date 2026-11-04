@@ -1,5 +1,8 @@
 'use client';
+import walletStyles from './library-wallet.module.css';
+import { NotificationsContent } from './notifications';
 import { DreamsWalletSection, useDreamsText } from './dreams-wallet';
+import { useDreamsWallet } from '@/lib/use-dreams-wallet';
 import { useSparksWallet } from '@/lib/use-sparks-wallet';
 import { sparksBalanceMessages } from './sparks-balance';
 import { HeroPortraitControl } from './hero-portrait-control';
@@ -12,7 +15,18 @@ import { useT } from '@/lib/i18n';
 import Link from 'next/link';
 import { useSearchParams } from 'next/navigation';
 import { useState } from 'react';
-import { ArrowUpRight, Bell, Feather, Plus, Sparkles, UserRound } from 'lucide-react';
+import styles from './heroes.module.css';
+import {
+  ArrowUpRight,
+  Feather,
+  ImageIcon,
+  Pencil,
+  Play,
+  Plus,
+  Sparkles,
+  UserRound,
+  X,
+} from 'lucide-react';
 import {
   api,
   useResource,
@@ -86,21 +100,14 @@ export function LibraryPage() {
     }
   }
   return (
-    <>
+    <div className={walletStyles.library}>
       <PageHeading
-        eyebrow={tr('СОХРАНЕНО ДЛЯ ТЕБЯ')}
         title={tr('Моя библиотека')}
         description={tr(
           'Миры, к которым хочется вернуться. И истории, которым ещё предстоит случиться.',
         )}
-        action={
-          <ButtonLink href="/explore" variant="secondary">
-            {tr('Найти новый мир')}
-            <ArrowUpRight size={16} />
-          </ButtonLink>
-        }
       />
-      <div className="filter-chips library-tabs">
+      <div className={walletStyles.tabs} aria-label={tr('Моя библиотека')}>
         {[
           ['favorites', tr('Избранные миры'), data?.favorites.length],
           ['shared', tr('Приглашённые миры'), data?.shared?.length],
@@ -123,13 +130,22 @@ export function LibraryPage() {
         ].map(([key, label, count]) => (
           <button
             key={key}
-            className={tab === key ? 'active' : ''}
+            type="button"
+            aria-pressed={tab === key}
+            className={tab === key ? walletStyles.active : ''}
             onClick={() => setTab(String(key))}
           >
             {label}
             <span>{count || 0}</span>
           </button>
         ))}
+      </div>
+      <div className={walletStyles.actionBand}>
+        <ButtonLink href="/explore">
+          <Plus size={20} />
+          {tr('Найти новый мир')}
+          <ArrowUpRight size={20} />
+        </ButtonLink>
       </div>
       <ErrorBox message={error} retry={reload} />
       {tab === 'invitations' ? (
@@ -143,7 +159,7 @@ export function LibraryPage() {
           {invitations.loading ? (
             <Loading />
           ) : invitations.data?.length ? (
-            <div className="stack invitation-list">
+            <div className={`stack invitation-list ${walletStyles.invitations}`}>
               {invitations.data.map((invite) => (
                 <Panel key={invite.id}>
                   <div className="section-heading invitation-heading">
@@ -267,10 +283,18 @@ export function LibraryPage() {
           />
         )
       ) : data?.drafts.length ? (
-        <div className="stack">
+        <div className={walletStyles.drafts}>
           {data.drafts.map((a) => (
-            <Link className="draft-row panel" key={a.id} href={`/studio/adventures/${a.id}`}>
-              <Feather size={22} />
+            <Link
+              className={`panel ${walletStyles.draft}`}
+              key={a.id}
+              href={`/studio/adventures/${a.id}`}
+            >
+              {a.coverAssetId ? (
+                <img className={walletStyles.draftCover} src={assetUrl(a.coverAssetId)} alt="" />
+              ) : (
+                <Feather size={28} aria-hidden="true" />
+              )}
               <span>
                 <strong>{selectAdventureText(a, locale).title}</strong>
                 <small>{tr('Обновлено {date}', { date: date(a.updatedAt) })}</small>
@@ -288,14 +312,17 @@ export function LibraryPage() {
           action={<ButtonLink href="/studio/adventures/new">{tr('Создать историю')}</ButtonLink>}
         />
       )}
-    </>
+    </div>
   );
 }
 export function HeroesPage() {
   const visualText = useVisualText();
   const returnTo = readStoryReturn(useSearchParams());
   const heroText = useHeroText();
-  const { t: tr } = useT();
+  const { t: tr, locale } = useT();
+  const appearanceLabel =
+    locale === 'ru' ? 'Образ героя' : locale === 'uk' ? 'Образ героя' : 'Hero appearance';
+  const [traitsText, setTraitsText] = useState('');
   const { toast } = useClient();
   const resource = useResource<Hero[]>('/heroes');
   const [editing, setEditing] = useState<Partial<Hero> | null>(null),
@@ -303,17 +330,14 @@ export function HeroesPage() {
     [busy, setBusy] = useState(false),
     [remove, setRemove] = useState<Hero | null>(null);
   return (
-    <>
+    <section className={styles.page}>
       <PageHeading
-        eyebrow={tr('ТВОИ ДРУГИЕ Я')}
         title={tr('Мои герои')}
-        description={tr(
-          'Храбрец, мечтатель или тот, кто всегда задаёт неудобные вопросы. Кем будешь ты?',
-        )}
         action={
           <Button
             onClick={() => {
               setError('');
+              setTraitsText('');
               setEditing({ name: '', backstory: '', notes: '', traits: [] });
             }}
           >
@@ -322,16 +346,15 @@ export function HeroesPage() {
           </Button>
         }
       />
-      <ButtonLink href="/studio/visuals">{visualText('title')}</ButtonLink>
       <StoryReturnLink intent={returnTo} />
       <ErrorBox message={resource.error} retry={resource.reload} />
       {resource.loading ? (
         <Loading />
       ) : resource.data?.length ? (
-        <div className="hero-grid">
+        <div className={`hero-grid ${styles.grid}`}>
           {resource.data.map((hero) => (
-            <Panel key={hero.id} className="hero-card">
-              <div className="hero-portrait">
+            <Panel key={hero.id} className={`hero-card ${styles.card}`}>
+              <div className={`hero-portrait ${styles.portrait}`}>
                 {hero.portraitAssetId ? (
                   <img src={assetUrl(hero.portraitAssetId)} alt={hero.name} />
                 ) : (
@@ -339,35 +362,52 @@ export function HeroesPage() {
                 )}
                 <span className="portrait-star">✧</span>
               </div>
-              <h2>{hero.name}</h2>
-              <ButtonLink
-                href={
-                  storyWithHero(returnTo, hero.id) || `/game?heroId=${encodeURIComponent(hero.id)}`
-                }
-              >
-                {heroText('play')}
-              </ButtonLink>
-              <CharacterSpriteControl
-                target={{ kind: 'hero', id: hero.id }}
-                onSaved={resource.reload}
-              />
-              <p>{hero.backstory || tr('История этого героя ещё не рассказана.')}</p>
-              <div className="filter-chips">
-                {hero.traits.map((t) => (
-                  <Badge key={t}>{t}</Badge>
-                ))}
-              </div>
-              <div className="row">
-                <Button
-                  variant="secondary"
-                  onClick={() => {
-                    setError('');
-                    setEditing(hero);
-                  }}
-                >
-                  {tr('Редактировать')}
-                </Button>
-                <Button variant="ghost" onClick={() => setRemove(hero)}>
+              <div className={styles.cardBody}>
+                <h2>{hero.name}</h2>
+                <div className={`filter-chips ${styles.traits}`}>
+                  {hero.traits.map((trait, index) => (
+                    <Badge key={`${trait}-${index}`}>
+                      <Sparkles size={15} aria-hidden="true" />
+                      {trait}
+                    </Badge>
+                  ))}
+                </div>
+                <p className={styles.backstory}>
+                  {hero.backstory || tr('История этого героя ещё не рассказана.')}
+                </p>
+                <details className={styles.appearance}>
+                  <summary>
+                    <ImageIcon size={18} aria-hidden="true" />
+                    {appearanceLabel}
+                  </summary>
+                  <CharacterSpriteControl
+                    target={{ kind: 'hero', id: hero.id }}
+                    onSaved={resource.reload}
+                  />
+                </details>
+                <div className={styles.cardActions}>
+                  <ButtonLink
+                    href={
+                      storyWithHero(returnTo, hero.id) ||
+                      `/game?heroId=${encodeURIComponent(hero.id)}`
+                    }
+                  >
+                    <Play size={17} aria-hidden="true" />
+                    {heroText('play')}
+                  </ButtonLink>
+                  <Button
+                    variant="secondary"
+                    onClick={() => {
+                      setError('');
+                      setTraitsText(hero.traits.join(', '));
+                      setEditing(hero);
+                    }}
+                  >
+                    <Pencil size={17} aria-hidden="true" />
+                    {tr('Редактировать')}
+                  </Button>
+                </div>
+                <Button variant="ghost" className={styles.remove} onClick={() => setRemove(hero)}>
                   {tr('Удалить')}
                 </Button>
               </div>
@@ -381,110 +421,161 @@ export function HeroesPage() {
             'Герой — твоя персона внутри приключения. Дай ему имя, характер и маленькую тайну.',
           )}
           action={
-            <Button onClick={() => setEditing({ name: '', backstory: '', notes: '', traits: [] })}>
+            <Button
+              onClick={() => {
+                setError('');
+                setTraitsText('');
+                setEditing({ name: '', backstory: '', notes: '', traits: [] });
+              }}
+            >
               <Plus size={17} />
               {tr('Создать первого героя')}
             </Button>
           }
         />
       )}
+      <div className={styles.workshop}>
+        <ButtonLink href="/studio/visuals" variant="ghost">
+          {visualText('title')}
+        </ButtonLink>
+      </div>
       <div className="platform-note">
         <UserRound size={16} />
         {tr('Герои принадлежат игрокам. Персонажи мира (NPC) создаются отдельно в студии автора.')}
       </div>
       {editing && (
         <Modal
+          className={styles.editor}
           title={editing.id ? tr('История твоего героя') : tr('Новый герой')}
           onClose={() => setEditing(null)}
         >
-          <form
-            id="hero-editor"
-            method="post"
-            className="stack"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setBusy(true);
-              setError('');
-              const { id, ...fields } = editing;
-              try {
-                await api(id ? `/heroes/${id}` : '/heroes', {
-                  method: id ? 'PATCH' : 'POST',
-                  body: JSON.stringify({
-                    name: fields.name,
-                    backstory: fields.backstory || '',
-                    notes: fields.notes || '',
-                    traits: fields.traits || [],
-                    portraitAssetId: fields.portraitAssetId || null,
-                  }),
-                });
-                setEditing(null);
-                resource.reload();
-                toast(tr('Герой сохранён'));
-              } catch (e) {
-                setError(errorMessage(e));
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            <Field label={tr('Имя героя')}>
-              <Input
-                required
-                minLength={2}
-                maxLength={80}
-                value={editing.name || ''}
-                onChange={(e) => setEditing({ ...editing, name: e.target.value })}
-              />
-            </Field>
-            <UploadField
-              label={tr('Загрузить портрет')}
-              onUploaded={(a) => setEditing({ ...editing, portraitAssetId: a.id })}
-            />
-            {editing.portraitAssetId && (
-              <img
-                className="upload-preview"
-                src={assetUrl(editing.portraitAssetId)}
-                alt={tr('Портрет героя')}
-              />
-            )}
-            <Field label={tr('Предыстория')}>
-              <Textarea
-                maxLength={6000}
-                value={editing.backstory || ''}
-                onChange={(e) => setEditing({ ...editing, backstory: e.target.value })}
-                placeholder={tr('Откуда герой пришёл? Что оставил позади?')}
-              />
-            </Field>
-            <Field label={tr('Черты характера')} hint={tr('Через запятую, до 12 черт')}>
-              <Input
-                value={editing.traits?.join(', ') || ''}
-                onChange={(e) =>
-                  setEditing({
-                    ...editing,
-                    traits: e.target.value.split(',').map((s) => s.trim()),
-                  })
+          <div className={styles.editorScroll}>
+            <form
+              id="hero-editor"
+              method="post"
+              className={styles.editorForm}
+              onSubmit={async (e) => {
+                e.preventDefault();
+                setBusy(true);
+                setError('');
+                const { id, ...fields } = editing;
+                try {
+                  await api(id ? `/heroes/${id}` : '/heroes', {
+                    method: id ? 'PATCH' : 'POST',
+                    body: JSON.stringify({
+                      name: fields.name,
+                      backstory: fields.backstory || '',
+                      notes: fields.notes || '',
+                      traits: fields.traits || [],
+                      portraitAssetId: fields.portraitAssetId || null,
+                    }),
+                  });
+                  setEditing(null);
+                  resource.reload();
+                  toast(tr('Герой сохранён'));
+                } catch (e) {
+                  setError(errorMessage(e));
+                } finally {
+                  setBusy(false);
                 }
-                placeholder={tr('Любопытный, упрямый, добрый')}
-              />
-            </Field>
-            <Field label={tr('Личные заметки')}>
-              <Textarea
-                value={editing.notes || ''}
-                maxLength={6000}
-                onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
-              />
-            </Field>
-            <ErrorBox message={error} />
-          </form>
-          <HeroPortraitControl
-            name={editing.name || ''}
-            backstory={editing.backstory || ''}
-            traits={editing.traits || []}
-            onSelected={(assetId) =>
-              setEditing((current) => (current ? { ...current, portraitAssetId: assetId } : null))
-            }
-          />
-          <div className="form-actions">
+              }}
+            >
+              <div className={styles.portraitColumn}>
+                <div className={styles.editorPortrait}>
+                  {editing.portraitAssetId ? (
+                    <img
+                      className="upload-preview"
+                      src={assetUrl(editing.portraitAssetId)}
+                      alt={tr('Портрет героя')}
+                    />
+                  ) : (
+                    <UserRound size={100} aria-hidden="true" />
+                  )}
+                </div>
+                <UploadField
+                  label={tr('Загрузить портрет')}
+                  onUploaded={(asset) =>
+                    setEditing((current) =>
+                      current ? { ...current, portraitAssetId: asset.id } : null,
+                    )
+                  }
+                />
+              </div>
+              <div className={styles.fields}>
+                <Field label={tr('Имя героя')}>
+                  <Input
+                    required
+                    minLength={2}
+                    maxLength={80}
+                    value={editing.name || ''}
+                    onChange={(e) => setEditing({ ...editing, name: e.target.value })}
+                  />
+                </Field>
+                <Field label={tr('Предыстория')}>
+                  <Textarea
+                    maxLength={6000}
+                    value={editing.backstory || ''}
+                    onChange={(e) => setEditing({ ...editing, backstory: e.target.value })}
+                    placeholder={tr('Откуда герой пришёл? Что оставил позади?')}
+                  />
+                </Field>
+                <div className={styles.traitEditor}>
+                  <Field label={tr('Черты характера')} hint={tr('Через запятую, до 12 черт')}>
+                    <Input
+                      value={traitsText}
+                      onChange={(e) => {
+                        setTraitsText(e.target.value);
+                        setEditing({
+                          ...editing,
+                          traits: e.target.value
+                            .split(',')
+                            .map((trait) => trait.trim())
+                            .filter(Boolean),
+                        });
+                      }}
+                      placeholder={tr('Любопытный, упрямый, добрый')}
+                    />
+                  </Field>
+                  <div className={styles.traits}>
+                    {editing.traits?.map((trait, index) => (
+                      <button
+                        type="button"
+                        key={`${trait}-${index}`}
+                        className={styles.traitChip}
+                        aria-label={`${tr('Удалить')}: ${trait}`}
+                        onClick={() => {
+                          const traits = editing.traits!.filter((_, at) => at !== index);
+                          setEditing({ ...editing, traits });
+                          setTraitsText(traits.join(', '));
+                        }}
+                      >
+                        <Sparkles size={14} aria-hidden="true" />
+                        {trait}
+                        <X size={14} aria-hidden="true" />
+                      </button>
+                    ))}
+                  </div>
+                </div>
+                <Field label={tr('Личные заметки')}>
+                  <Textarea
+                    value={editing.notes || ''}
+                    maxLength={6000}
+                    onChange={(e) => setEditing({ ...editing, notes: e.target.value })}
+                  />
+                </Field>
+                <ErrorBox message={error} />
+              </div>
+            </form>
+            <HeroPortraitControl
+              name={editing.name || ''}
+              backstory={editing.backstory || ''}
+              traits={editing.traits || []}
+              onSelected={(assetId) =>
+                setEditing((current) => (current ? { ...current, portraitAssetId: assetId } : null))
+              }
+            />
+          </div>
+          <div className={`form-actions ${styles.editorActions}`}>
             <Button type="button" variant="secondary" onClick={() => setEditing(null)}>
               {tr('Отмена')}
             </Button>
@@ -529,7 +620,7 @@ export function HeroesPage() {
           </div>
         </Modal>
       )}
-    </>
+    </section>
   );
 }
 export function WalletPage() {
@@ -538,6 +629,7 @@ export function WalletPage() {
   const { t: tr, locale } = useT();
   const { user } = useClient();
   const sparks = useSparksWallet(user?.id);
+  const dreams = useDreamsWallet(user?.id);
   const text = sparksBalanceMessages[locale];
   const labels =
     locale === 'ru'
@@ -571,33 +663,33 @@ export function WalletPage() {
           };
   const kinds: Record<string, string> = { ...labels, starter_grant: text.starter };
   return (
-    <>
-      <PageHeading
-        eyebrow={tr('НЕМНОГО МАГИИ НА БУДУЩЕЕ')}
-        title={dreamsText.title}
-        description={dreamsText.description}
-      />
-      <DreamsWalletSection />
-      <section className="balance-card" aria-label={text.available}>
-        <Sparkles size={24} />
-        <p>{text.available}</p>
-        <h2 aria-live="polite" data-testid="wallet-sparks-balance">
-          {sparks.data
-            ? formatSparkSubunits(sparks.data.availableSubunits, locale)
-            : sparks.unavailable
-              ? '—'
-              : '…'}
-          <span>✦</span>
-        </h2>
-        {sparks.data && (
-          <small>
-            {dreamsText.held}: {formatSparkSubunits(sparks.data.heldSubunits, locale, 'exact')}
-          </small>
-        )}
-      </section>
+    <div className={walletStyles.wallet}>
+      <PageHeading title={dreamsText.title} description={dreamsText.description} />
+      <div className={walletStyles.balanceBanner}>
+        <DreamsWalletSection part="balance" wallet={dreams} />
+        <section className="balance-card" aria-label={text.available}>
+          <Sparkles size={24} />
+          <p>{text.available}</p>
+          <h2 aria-live="polite" data-testid="wallet-sparks-balance">
+            {sparks.data
+              ? formatSparkSubunits(sparks.data.availableSubunits, locale)
+              : sparks.unavailable
+                ? '—'
+                : '…'}
+            <span>✦</span>
+          </h2>
+          {sparks.data && (
+            <small>
+              {dreamsText.held}: {formatSparkSubunits(sparks.data.heldSubunits, locale, 'exact')}
+            </small>
+          )}
+        </section>
+      </div>
       <ErrorBox message={sparks.unavailable ? text.unavailable : ''} retry={sparks.reload} />
       <Panel>
-        <h2>{tr('История операций')}</h2>
+        <h2>
+          {tr('Искры')} · {tr('История операций')}
+        </h2>
         {!sparks.data && !sparks.unavailable ? (
           <Loading />
         ) : sparks.data?.ledger.length ? (
@@ -617,7 +709,10 @@ export function WalletPage() {
                   return (
                     <tr key={entry.id}>
                       <td>
-                        {kinds[entry.kind]}
+                        <span className={walletStyles.operation}>
+                          <Sparkles size={18} aria-hidden="true" />
+                          {kinds[entry.kind]}
+                        </span>
                         {entry.reason && <small className="cell-subtitle">{entry.reason}</small>}
                       </td>
                       <td>{date(entry.createdAt)}</td>
@@ -635,109 +730,10 @@ export function WalletPage() {
           <Empty title={tr('Здесь пока тихо')} description={labels.empty} />
         ) : null}
       </Panel>
-    </>
+      <DreamsWalletSection part="history" wallet={dreams} />
+    </div>
   );
 }
 export function NotificationsPage() {
-  const date = useDate();
-  const { t: tr, locale } = useT();
-  const resource = useResource<
-    {
-      id: string;
-      type: string;
-      payload: {
-        title?: string;
-        reason?: string;
-        decision?: string;
-        adventureId?: string;
-        adventureTitle?: string;
-        adventureMetadata?: Parameters<typeof selectAdventureText>[0];
-        inviter?: string;
-      };
-      title: string;
-      message: string;
-      read: boolean;
-      createdAt: string;
-    }[]
-  >('/notifications');
-  const { toast } = useClient();
-  return (
-    <>
-      <PageHeading
-        eyebrow={tr('ВЕСТИ ИЗ ТВОИХ МИРОВ')}
-        title={tr('Уведомления')}
-        description={tr('Публикации, важные изменения и новости твоих историй.')}
-      />
-      <ErrorBox message={resource.error} retry={resource.reload} />
-      {resource.loading ? (
-        <Loading />
-      ) : resource.data?.length ? (
-        <div className="stack">
-          {resource.data.map((n) => (
-            <Panel key={n.id}>
-              <div className="row">
-                <Bell size={20} />
-                <h3>
-                  {n.type === 'welcome'
-                    ? tr('Добро пожаловать в Dreamwalk')
-                    : n.type === 'moderation'
-                      ? tr('Результат модерации')
-                      : n.type === 'invitation'
-                        ? tr('Приглашение в частный мир')
-                        : n.title}
-                </h3>
-                {!n.read && <Badge>{tr('Новое')}</Badge>}
-              </div>
-              <p>
-                {n.type === 'welcome'
-                  ? tr('Твоя история начинается здесь. Создай героя или открой новый мир.')
-                  : n.type === 'moderation'
-                    ? `${n.payload.title || ''}: ${n.payload.reason || ''}`
-                    : n.type === 'invitation'
-                      ? tr('{name} приглашает тебя в мир «{title}».', {
-                          name: n.payload.inviter || '',
-                          title: n.payload.adventureMetadata
-                            ? selectAdventureText(n.payload.adventureMetadata, locale).title
-                            : n.payload.adventureTitle || '',
-                        })
-                      : n.message}
-              </p>
-              <div className="row">
-                <small className="muted">{date(n.createdAt)}</small>
-                {n.type === 'invitation' && (
-                  <ButtonLink href="/library?tab=invitations" variant="secondary">
-                    {tr('Посмотреть приглашения')}
-                  </ButtonLink>
-                )}
-                {!n.read && (
-                  <Button
-                    variant="ghost"
-                    onClick={async () => {
-                      try {
-                        await api(`/notifications/${n.id}`, {
-                          method: 'PATCH',
-                          body: JSON.stringify({ read: true }),
-                        });
-                        resource.reload();
-                      } catch (e) {
-                        toast(errorMessage(e));
-                      }
-                    }}
-                  >
-                    {tr('Прочитано')}
-                  </Button>
-                )}
-              </div>
-            </Panel>
-          ))}
-        </div>
-      ) : (
-        <Empty
-          title={tr('Всё спокойно')}
-          description={tr('Важные события появятся здесь. А пока можно открыть новый мир.')}
-          action={<ButtonLink href="/explore">{tr('Посмотреть приключения')}</ButtonLink>}
-        />
-      )}
-    </>
-  );
+  return <NotificationsContent />;
 }

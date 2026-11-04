@@ -85,3 +85,33 @@ test('taxonomy language field labels exist in every UI locale', async () => {
     }
   }
 });
+
+test('catalog and creator composition uses readable covers and identities without altering shared cards', async () => {
+  const publicSource = await readFile(
+    new URL('../../apps/web/components/public.tsx', import.meta.url),
+    'utf8',
+  );
+  const card = await readFile(
+    new URL('../../apps/web/components/public-discovery.tsx', import.meta.url),
+    'utf8',
+  );
+  const css = await readFile(
+    new URL('../../apps/web/components/public-discovery.css', import.meta.url),
+    'utf8',
+  );
+  assert.match(publicSource, /catalog\?\.filter\(isDiscoveryStory\)/);
+  assert.match(publicSource, /<DiscoveryWorldCard key=\{a.id\} adventure=\{a\}/);
+  assert.match(publicSource, /<DiscoveryWorldCard adventure=\{a\} key=\{a.id\} portrait/);
+  assert.match(publicSource, /data\.creator\.avatarAssetId/);
+  assert.match(publicSource, /data\.creator\.bio \|\|/);
+  assert.match(card, /src=\{coverUrl\(adventure\)\}/);
+  assert.match(card, /selectAdventureText\(adventure, locale\)/);
+  assert.match(card, /encodeURIComponent\(heroId\)/);
+  assert.match(card, /adventure\.author\.handle/);
+  assert.match(card, /<StoryMetrics adventure=\{adventure\}/);
+  assert.doesNotMatch(card, /discoveryCover|Math\.random|favoriteCount|avatarAssetId|api\(/);
+  assert.match(css, /repeat\(3, minmax\(0, 1fr\)\)/);
+  assert.match(css, /prefers-reduced-motion/);
+  assert.match(css, /world-card:focus-visible/);
+  assert.doesNotMatch(css, /\.sidebar|\.topbar|\.app-shell|\.workspace/);
+});

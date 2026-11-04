@@ -1063,6 +1063,16 @@ content-sharing decision. This is not a claim of live automatic translation.
   escalation fails before launch due to the environment mount. Browser acceptance must
   run in CI. No paid calls, merge or production deployment were performed.
 
+## Account/admin selected-design alignment (2026-11-03)
+
+Authenticated visual audit found missing account/overview artwork and small generic
+form hierarchy. Added five bundled decorative illustrations, scoped account layouts,
+icon tabs, readable session browser/platform labels and illustrated admin overview.
+All account/export/security/admin mutations retain their existing guards and behavior.
+No fake portraits, production changes, paid external calls, merge or deployment.
+See account-admin-design.md. Screenshot coverage added; local tests intentionally
+not run per owner's instruction. Full1:1 acceptance remains pending actual CI images.
+
 ## Runtime image-aware map context (KAN-5, 2026-11-03)
 
 Added real current-map image input with server-position markers to the existing
@@ -1089,3 +1099,195 @@ restart; source ACLs, erasure and immutable body checks remain enforced.
 The API service was checked read-only through Railway. OAuth hides its variable
 values, so the live model/profile is not confirmed. No live calls or deployment were
 performed. Real visual accuracy remains unverified. See docs/runtime-map-vision.md.
+
+## Studio dashboard and editor composition (2026-11-03)
+
+Aligned the author workspace with references 14–22 using only each owned story's
+actual cover, title, status and updated time: latest-edit feature, cover-card grid,
+compact editor title/actions, all eight wrapped steps and a World cover context panel.
+Title and synopsis now lead the Basics form. Preview and Publication toolbar buttons
+only select their existing steps; save, moderation, private release, consent, lore,
+NPC, location/map, scene, boundaries and autosave conflict/error controls remain.
+No reference-only story, character, cover replacement or global-shell change was added.
+
+Added a synthetic-account browser journey for 1536/390 screenshots, RU/UK/EN,
+light/dark, all eight steps, persisted title/world, invalid-title Back/Stay and media
+Cancel. It checks that Preview/Publication navigation sends no mutation. Browser
+execution/screenshots and full API/database gates remain CI-only, not locally passed.
+Focused cover/metadata/autosave tests: 17 passed; focused lint and format passed.
+Current contracts and game-core builds passed; local web typecheck was killed twice
+by executor resource limits. Final remote-base synchronization preserves main's
+runtime-vision locale/progress additions; no local tests during synchronization.
+
+## Catalog and creator reference composition (2026-11-03)
+
+- Scoped public discovery cards now place readable world covers behind the title,
+  synopsis, genuine author handle/initial, genre and persisted metrics/player range.
+  Desktop uses three columns and mobile one. Creator profiles have a separate page
+  heading, large actual avatar or honest initial, biography and portrait-format worlds.
+- Reuses the original decorative world illustration in the creator banner only;
+  it is not an author-uploaded image or a story cover. No new authored content,
+  invented avatar, biography, popularity, publication or backend metadata is added.
+- Catalog query/filter/sort, editorial hiding, direct story/hero links, readable
+  creator API data and empty/error states remain. Shared AdventureCard, library,
+  launch, shell and backend access behavior are unchanged. Current APIs provide
+  arrays, not pagination; this visual slice does not invent pagination controls.
+- Added source contracts and browser-only synthetic RU/UK/EN × light/dark ×
+  desktop/mobile captures, font/image decoding, search/filter/sort/reset, query
+  navigation, error retry, long content and empty publication coverage.
+- Local focused source/unit checks: 11 passed; focused lint is clean. All 240 game
+  core tests passed, but the npm-test contracts rebuild was killed (exit 137).
+  Repository-wide typecheck and lint
+  were attempted but killed by the executor (exit 137); no full-pass claim.
+  Web typecheck retry also exited 137. Local Playwright Chromium is absent after
+  executor restart; browser execution is not claimed. Exact-head CI and rendered
+  review remain acceptance gates. Existing
+  shared-shell draft owns surrounding chrome. Real story/author content differs
+  from the reference; no complete sitewide 1:1 claim is made.
+
+## 2026-11-03 — Story-detail reference composition (scoped, review pending)
+
+Extracted `AdventurePage` into `components/story/story-detail-page.tsx`, with independent
+scoped styles and an unchanged public export. The landscape banner uses the actual story
+cover, including authenticated authored assets. The intro and NPC content share a left
+column beside the preparation panel; real portrait cards retain public descriptions and
+greetings, missing portraits use initials, and the synopsis is available in a native
+accordion. Private-access warnings, versions, metrics, author links, reports, favorites,
+hero return links and all existing launch controls remain. No invented players/difficulty
+controls, NPCs, heroes or art. Ref59's stateful expanded picker is explicitly deferred.
+
+`AdventureLaunch`, hero/director hooks, backend, provider, paid consent, operation storage,
+and shared shell/catalog behavior are unchanged. Reading the page or using Back/Cancel
+must not create a campaign or dispatch generation.
+
+Verification: focused ESLint and Prettier passed; 45 source/controller tests passed
+(story metadata/return, hero UI, start flow and Spark equivalents). Playwright successfully
+listed seven new browser cases: 18 locale/theme/viewport captures plus authored/private/
+empty/loading/error states, report dismissal, guest return, duplicate-start guard and
+invalid hero recovery. Browser cases were not executed locally. Web TypeScript was
+attempted without emitting/incremental output and killed with exit137 by this constrained
+executor; it did not pass. No install/build, database/provider calls, screenshots, merge,
+or deployment ran. Fresh CI and rendered review remain required, including existing paid
+start, auth-return and director suites. Scoped source review is pending.
+
+Independent source review found no privacy/access/launch blocker. Its legacy browser
+selector findings were corrected: existing story metadata/art/layout tests now use the
+stable `story-detail` root and scoped selectors, preserving their mobile width/button
+assertions. The metadata test opens the native synopsis summary and checks visible
+nonempty content. Focused lint/format and the same45 source/controller tests passed again;
+Playwright listed12 cases across the four affected browser files. No browser execution
+or rendered acceptance is claimed.
+
+## Inner Studio composition follow-on (2026-11-03)
+
+Viewed reference pixels 17–22. This bounded follow-on adds a selectable location/scene
+index, focused editors with every draft field retained, actual story-cover context for
+scenes and boundaries, and separate readiness/publication columns. Collection selection
+is local UI state only. Inactive editors stay mounted but hidden and disabled to avoid
+unfocusable native required-field errors; the unchanged complete adventure schema still
+validates every draft field before any save. Adding selects the new item; deleting the
+selected item falls back to the first remaining item. Original image preparation,
+24×24 policy, CAS, save, moderation, private release and invitation actions remain.
+
+No generated reference content, fabricated map preview or new safety option is included.
+NPC/lore inner layouts (references 18–19) remain a follow-on gap; neither the independent
+NPC library extraction nor story-NPC/lore handlers are changed. This is not 1:1 completion.
+18 focused metadata/cover/autosave tests and focused ESLint passed. New browser source
+covers two-item selection/edit persistence and 24 RU/UK/EN desktop-dark/mobile-light
+captures across locations, scenes, boundaries and publication, with drawer-aware prefs.
+Browser execution, actual new rendered review and full type/API/database/build gates
+remain unrun locally and are required in integration CI. No production/provider calls.
+
+Independent source review follow-up: selected-item deletion restores focus to the
+remaining selected rail button or Add button only when the removed control left focus
+on the document body. Normal typing never triggers this focus recovery. Invalid item
+buttons are marked from the existing location/scene schemas, with a localized warning;
+selection opens the original retained fields. No alternate or weaker validator added.
+Browser source now also covers keyboard add/delete/last-scene focus, a hidden invalid
+item blocking save, HTTP save failure/retry, CAS conflict input retention and cancelled
+versus confirmed server reload. 26 focused source/controller checks, ESLint and format
+passed; browser execution remains unrun. The separate confirmation-safety test requires
+contracts/dist and was dependency-blocked, not passed; no build was run for this slice.
+
+## Story-character and lore composition follow-on (2026-11-03)
+
+Inspected actual pixels of desktop references 18 (story characters) and 19 (story lore).
+The story-scoped NPC list now uses selectable portrait/name/role cards, explicit create,
+copy and edit controls, and a separate public-description preview. Existing authored
+portraits are used; absent portraits get a neutral icon, never invented story content.
+The NPC schema round-trip, private profile/knowledge/secrets, CAS revisions, replay
+identity, dirty confirmation, library export and explicit appearance actions remain.
+
+Lore uses the existing persistent CollectionEditor for a left entry index and focused
+fields; inactive entries remain mounted. Shared lore schema and source-reference checks
+mark invalid entries in the index, while the unchanged full adventure validator blocks
+invalid saves. All disclosure, question, knower, location and topic fields remain.
+Preview stays explicit, save/revision/fingerprint-bound, with separate included/excluded
+columns; excluded content is not rendered. No fabricated illustrations or lore added.
+
+Checks: 33 focused source/controller tests passed (NPC templates, character UI, story
+metadata, autosave), focused ESLint and formatting passed, and Playwright listed four
+cases across the existing character-authoring file and the two new synthetic cases.
+New browser source covers selection, private-field preservation, invalid/hidden entries,
+save failure/retry, add/delete/last-delete focus, preview staleness, reload, empty/loading/
+read-error retry, and RU/UK/EN desktop-dark/mobile-light screenshots with drawer-aware
+preferences. Browser execution and actual rendered comparison remain unrun locally.
+Direct no-emit web typecheck reached only the base public.tsx missing Badge import errors
+(two TS2304 errors at line 63); parent reports that defect fixed in the later integration
+head. This scoped patch does not alter public.tsx. No build, install, API/database run,
+publication, merge, deploy or paid/provider action was performed for this slice. This is
+not 1:1 acceptance; integrated CI and actual rendered review are still required.
+
+## Ref59 owned hero choice presentation — 2026-11-03
+
+Added a full-width, native-modal hero picker to the compact story selector. Cards use
+only owned `/heroes` records and their authorized portrait assets, with neutral missing-art
+fallbacks, an explicit traveler, loading/error/empty states, and a validated hero-management
+return. Selection is immediate; Done, Close and Escape only dismiss the picker and return
+focus. Preparing heroes is an ordinary management detour, not automatic creation.
+
+The existing compact select remains compatible. AdventureLaunch receives only presentation
+metadata; its controller, selection hook, disabled guard, restoration, director, quote,
+consent and dispatch handlers remain unchanged. No generated or reference heroes are seeded.
+
+Verification: 41 focused hero/start/return tests passed; targeted ESLint and diff whitespace
+checks passed. Web typecheck finds the existing missing Badge import in public.tsx on the
+33a2d055 base (the integration's separate Badge fix is not duplicated here). Added CI browser
+cases for owned cards, keyboard/Close/Escape focus, no mutations/navigation, unchanged launch
+DOM identity, unavailable/empty/error states, loading and restored locked preparation.
+Browser screenshots and visual fidelity are pending CI; no local build, install, provider,
+payment or deployment action was performed.
+
+Ref59 presentation refinement: the landscape now has a readable foreground gradient rather
+than a barely visible wash; the create card uses a neutral silhouette and plus badge. The
+summary displays localized authored synopsis, genre and the actual supported player range,
+without invented mode metadata. Close focus falls back to the programmatically focusable
+hero-selection group if the trigger became disabled during restoration. Added a CI browser
+case that selects a hero with an existing ready preparation, verifies locked cards, closes,
+and checks fallback focus without navigation or mutation. The same 41 focused tests and
+targeted ESLint passed again; controller source remains byte-identical. No build or browser
+execution was performed, and the changes remain unpublished pending independent review.
+
+## Integrated design browser corrections — 2026-11-04
+
+Exact PR88 head4516b428 run387 passed production build/types/lint/source checks and
+browser shards1/3, but shard2 and isolated PostgreSQL failed. Two shard2 failures
+and the isolated authoring assertion were diagnosed from exact-head logs and traces:
+
+- The visually hidden native hero radio was a 1px target intercepted by its fieldset.
+  It now covers its own visible card, retaining native keyboard and disabled behavior.
+  Browser coverage checks card-sized bounds, pointer selection for hero/traveler,
+  keyboard reselection, unchanged launch identity, and restored locked-focus fallback.
+- The Studio keyboard test focused a button while shared hydration protection still
+  disabled it; Enter therefore never deleted a scene. Both traces retained both scenes.
+  The test now waits for enabled state, verifies focus before Enter and verifies actual
+  deletion, retaining all original focus restoration and persisted-empty assertions.
+  No Studio application behavior, timeout, retry count or production safeguard changed.
+- The isolated authoring journey used obsolete NPC row markup after presentation
+  extraction. Scoped named selection/edit controls now replace structural selectors;
+  persistence, private-template and duplicate-save assertions remain unchanged.
+
+Independent source review completed.70 focused hero/start/return/metadata/NPC/autosave
+checks passed, changed source lint/format and whitespace checks passed. Full types,
+build, isolated DB and browser execution were not rerun locally because resources are
+constrained. Fresh exact-head remote checks and rendered evidence still gate merge.
