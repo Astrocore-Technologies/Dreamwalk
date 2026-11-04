@@ -7,6 +7,22 @@ import type { NpcAiEngine } from '../ai/npc-ai.service';
 import type { AiPurpose } from '../ai/types';
 import { recallNpcEpisodes } from './npc-memory';
 import { digest } from '../ai/context';
+/** Historical speech attribution is immutable perception, never current visibility. */
+export function directorHistoryEntry(
+  row: Record<string, unknown>,
+  audienceIds: string[],
+): Record<string, unknown> {
+  const { speakerKnownToIds, ...entry } = row;
+  if (entry.kind !== 'speech' && entry.kind !== 'npc_reply') return entry;
+  const known =
+    Array.isArray(speakerKnownToIds) && speakerKnownToIds.every((id) => typeof id === 'string');
+  if (!known || !audienceIds.length || !audienceIds.every((id) => speakerKnownToIds.includes(id))) {
+    delete entry.authorId;
+    delete entry.authorLabel;
+  }
+  return entry;
+}
+
 /** Reuse archived knowledge and committed, audience-safe history. Never reads OOC chat or writes a summary. */
 export async function extendContextHistory<T extends object>(
   db: Db,
@@ -87,7 +103,8 @@ export async function extendContextHistory<T extends object>(
     const director = (value.director ?? value) as { sharedAudience?: { id: string }[] };
     const audience = [...new Set([actorId, ...(director.sharedAudience ?? []).map((a) => a.id)])];
     const rows = await db.query(
-      `SELECT f.id,f.sequence,f.ordinal,f.entry->>'kind' AS kind,f.entry->>'authorId' AS "authorId",f.entry->>'text' AS text
+      `SELECT f.id,f.sequence,f.ordinal,f.entry->>'kind' AS kind,f.entry->>'authorId' AS "authorId",f.entry->>'text' AS text,
+      f.entry->'speakerKnownToIds' AS "speakerKnownToIds"
       FROM game_story_feed f JOIN game_story_turns t ON t.id=f.turn_id
       WHERE f.campaign_id=$1 AND t.erased_at IS NULL AND t.status='committed' AND f.channel='say'
       AND ('*'=ANY(f.audience_ids) OR f.audience_ids @> $2::text[])
@@ -103,7 +120,7 @@ export async function extendContextHistory<T extends object>(
     );
     history = [
       ...legacy.map((r) => ({ id: r.id, input: r.input_text, narration: r.narration })),
-      ...rows.reverse(),
+      ...rows.reverse().map((row) => directorHistoryEntry(row, audience)),
     ];
   }
   const {

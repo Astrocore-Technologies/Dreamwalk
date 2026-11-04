@@ -113,9 +113,10 @@ test('one primary story surface replaces competing forms and guards private reci
 });
 
 test('private target loss is blocked and every consent-relevant draft change invalidates its identity', () => {
-  const p = { entities: [{ id: 'keeper', kind: 'npc' }] };
+  const p = { entities: [{ id: 'keeper', kind: 'npc' }], turn: { phase: 'player' } };
   assert.equal(storyTargetValid(p, 'whisper', 'keeper'), true);
-  assert.equal(storyTargetValid(p, 'whisper'), false);
+  assert.equal(storyTargetValid(p, 'whisper'), true);
+  assert.equal(storyTargetValid({ entities: [], turn: { phase: 'player' } }, 'whisper'), true);
   assert.equal(storyTargetValid({ entities: [] }, 'whisper', 'keeper'), false);
   assert.equal(storyTargetValid(p, 'say', 'missing'), false);
   assert.equal(storyTargetValid(p, 'say'), true);
@@ -129,6 +130,24 @@ test('private target loss is blocked and every consent-relevant draft change inv
     assert.notEqual(original, altered);
   assert.equal(original, storyDraftKey(' secret ', 'whisper', 'keeper', 'room'));
 });
+test('legacy whispers require a recipient without blocking turn-based area speech', async () => {
+  const legacy = { entities: [{ id: 'keeper', kind: 'npc' }] };
+  assert.equal(storyTargetValid(legacy, 'say'), true);
+  assert.equal(storyTargetValid(legacy, 'whisper'), false);
+  assert.equal(storyTargetValid(legacy, 'whisper', 'keeper'), true);
+  assert.equal(storyTargetValid(legacy, 'whisper', 'missing'), false);
+  const turnBased = { ...legacy, turn: { phase: 'player' } };
+  assert.equal(storyTargetValid(turnBased, 'say'), true);
+  assert.equal(storyTargetValid(turnBased, 'whisper'), true);
+  assert.equal(storyTargetValid(turnBased, 'whisper', 'missing'), false);
+  const composer = await readFile(
+    new URL('../../apps/web/components/game/unified-story.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(composer, /h\(projection.turn \? 'areaSpeech' : 'legacySpeech'\)/);
+  assert.match(composer, /h\(projection.turn \? 'areaWhisper' : 'legacyChooseWhisper'\)/);
+});
+
 test('selected NPC display label updates with locale without changing the selected identity', () => {
   const recipient = { id: 'keeper', label: 'Доглядач' };
   for (const label of ['Доглядач', 'Keeper', 'Смотритель']) {
@@ -215,6 +234,16 @@ test('viewport layout separates history from stable composer and removes the sce
   assert.match(css, /scrollbar-gutter: stable/);
   assert.match(css, /overflow-anchor: none/);
   assert.match(css, /resize: none/);
+  assert.match(css, /\.history\s*\{[^}]*flex: 1 1 0;[^}]*min-height: 72px/s);
+  assert.match(
+    css,
+    /:global\(\.game-shell\) \.composer\s*\{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*max-height: none/s,
+  );
+  assert.match(css, /\.composer > :not\(\.composerFeedback\)\s*\{[^}]*flex-shrink: 0/s);
+  assert.match(
+    css,
+    /\.composerFeedback\s*\{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto/s,
+  );
   const shell = await read('app/design-system.css');
   assert.match(shell, /height: 100dvh/);
   assert.match(shell, /\.main-content > \[data-locale\]/);
@@ -244,6 +273,8 @@ test('public NPC inspection occupies history without replacing the composer or i
     /inspection && <div className=\{styles\.inspectionLayer\}>\{inspection\}<\/div>/,
   );
   assert.match(css, /visibility: hidden/);
+  assert.match(css, /\.inspectionLayer\s*\{[^}]*container-type: size/s);
+  assert.match(await read('npc-public-inspection.module.css'), /max-height: min\(240px, 35cqh\)/);
   assert.match(
     css,
     /\.inspectionLayer\s*\{[^}]*position: absolute;[^}]*inset: 0;[^}]*overflow-y: auto;/s,

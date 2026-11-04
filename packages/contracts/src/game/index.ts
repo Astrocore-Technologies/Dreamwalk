@@ -51,6 +51,7 @@ export * from './supporting';
 import { frozenArtBindingsSchema, type FrozenArtBinding } from './art';
 export * from './art';
 import {
+  npcCognitionSchema,
   npcPersonalitySchema,
   npcNoticeSchema,
   npcUtteranceSchema,
@@ -944,6 +945,8 @@ export interface PlayablePackage {
 
 export const npcPlanProposalSchema = z
   .object({
+    cognition: npcCognitionSchema.optional(),
+    turnFence: turnFenceSchema.optional(),
     contextRevision: z.number().int().nonnegative(),
     mapRevision: z.number().int().nonnegative(),
     entityRevision: z.number().int().nonnegative(),

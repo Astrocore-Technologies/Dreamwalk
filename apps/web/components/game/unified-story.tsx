@@ -522,7 +522,13 @@ export function UnifiedStory({
               <span>
                 {recipient
                   ? `${h('target')}: ${storyRecipientLabel(projection, recipient)}`
-                  : h('scene')}
+                  : h(
+                      channel === 'whisper'
+                        ? projection.turn
+                          ? 'nearbyWhisper'
+                          : 'legacyWhisper'
+                        : 'scene',
+                    )}
               </span>
               {recipient && (
                 <button
@@ -553,7 +559,7 @@ export function UnifiedStory({
             )}
             {channel === 'whisper' && !recipient && (
               <p className={styles.status} role="status">
-                {h('chooseWhisper')}
+                {h(projection.turn ? 'areaWhisper' : 'legacyChooseWhisper')}
               </p>
             )}
             <div className={styles.composerInput}>
@@ -585,10 +591,17 @@ export function UnifiedStory({
               )}
             </div>
             <p id={hintId} className={styles.hint}>
-              {h('hint')}
+              {h('hint')}{' '}
+              <span data-testid={projection.turn ? 'area-speech-hint' : 'legacy-speech-hint'}>
+                {h(projection.turn ? 'areaSpeech' : 'legacySpeech')}
+              </span>
             </p>
             <div className={styles.composerFeedback}>
-              <RuntimeMapQuoteNotice />
+              {projection.turn ? (
+                <small data-testid="world-batch-posting">{h('worldBatchPosting')}</small>
+              ) : (
+                <RuntimeMapQuoteNotice />
+              )}
               <ErrorBox message={error} />
               {notice && (
                 <p className={styles.status} role="status">

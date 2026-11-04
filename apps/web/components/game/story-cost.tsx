@@ -9,6 +9,12 @@ import { useStoryText } from './story-messages';
 export function StoryCost({ quote }: { quote: StoryQuote & { funding?: WalletFunding } }) {
   const { locale } = useT();
   const h = useStoryText();
+  if (quote.provider === 'local-turn-resolver' && !quote.external && quote.credits === 0)
+    return (
+      <div data-testid="story-cost">
+        <p data-spark-quote-price>{h('worldBatchCost')}</p>
+      </div>
+    );
   const reserve = quote.chargeUnit === 'sparks' ? (quote.sparkReservedSubunits ?? null) : null;
   const estimate = quote.estimateSnapshot?.estimatedTotalMicros ?? quote.estimatedTotalMicros;
   const providerEstimate = estimate ?? quote.providerReserveMicros ?? quote.providerUpperMicros;

@@ -174,6 +174,27 @@ test('observed exits, doors and destination occupancy gate following across scen
   assert.equal(s.entities.keeper.mapId, 'observatory');
   const action = g.companionAction(s, 'keeper');
   assert.deepEqual(action, { kind: 'transition', targetId: 'roof-exit' });
+  // This is continuation of an agreed, witnessed departure, not off-map simulation.
+  assert.deepEqual(g.worldTurnCompanionContinuation(s, 'keeper'), action);
+  const admitted = g.admitWorldTurnActors(s, ['keeper'], g.turnFence(s));
+  assert.equal(admitted.error, undefined);
+  s = admitted.state;
+  assert.equal(
+    g.applyWorldTurnAction(s, 'keeper', { kind: 'wait' }, g.turnFence(s)).error,
+    'FORBIDDEN',
+  );
+  assert.equal(
+    g.applyWorldTurnAction(
+      s,
+      'keeper',
+      {
+        kind: 'move_to',
+        target: { x: 5, y: 4 },
+      },
+      g.turnFence(s),
+    ).error,
+    'FORBIDDEN',
+  );
   assert.equal(g.applyWorldTurnAction(s, 'keeper', action, g.turnFence(s)).error, 'PATH_BLOCKED');
   Object.assign(s.entities.alice, { x: 4, y: 3 });
   s.entities.door.open = false;
@@ -187,6 +208,17 @@ test('observed exits, doors and destination occupancy gate following across scen
   const unseen = world(story(fixture()).state);
   Object.assign(unseen.entities.alice, { mapId: 'roof', x: 4, y: 3 });
   assert.deepEqual(g.companionAction(unseen, 'keeper'), { kind: 'wait' });
+  assert.equal(g.worldTurnCompanionContinuation(unseen, 'keeper'), undefined);
+  assert.equal(g.admitWorldTurnActors(unseen, ['keeper'], g.turnFence(unseen)).error, 'FORBIDDEN');
+  assert.equal(
+    g.applyWorldTurnAction(unseen, 'keeper', action, g.turnFence(unseen)).error,
+    'FORBIDDEN',
+  );
+  assert.equal(s.turnController.worldNpcActions.keeper, 1);
+  assert.equal(
+    g.applyWorldTurnAction(s, 'keeper', { kind: 'wait' }, g.turnFence(s)).error,
+    'ROUND_LOCKED',
+  );
 });
 
 test('deferred world speech uses the same intent admission, rejects wrong actor/evidence/whisper atomically', () => {

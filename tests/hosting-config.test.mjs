@@ -129,3 +129,9 @@ test('prebuilt browser launch rejects absent output before opening a database', 
   assert.notEqual(result.status, 0);
   assert.match(result.stderr, /Run the production web build before --prebuilt-web/);
 });
+
+// Git pushes must never consume a Vercel build before GitHub CI is green.
+test('Vercel Git deployments stay disabled for both preview and production', () => {
+  const config = JSON.parse(readFileSync('apps/web/vercel.json', 'utf8'));
+  assert.equal(config.git?.deploymentEnabled, false);
+});

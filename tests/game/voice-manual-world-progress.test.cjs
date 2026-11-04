@@ -43,6 +43,20 @@ async function world({
   const rows = (values) => ({ rows: values, rowCount: values.length });
   async function query(sql, params = []) {
     if (sql.includes('pg_advisory_xact_lock')) return rows([{}]);
+    // These legacy requests already belong to a frozen world roster. New-round
+    // preparation is covered separately; it must not manufacture replacement work.
+    if (sql.startsWith('SELECT 1 FROM game_world_round_rosters')) return rows([{}]);
+    if (sql.startsWith('SELECT roster FROM game_world_round_rosters'))
+      return rows([{ roster: [{ npcId: request.npc_id, consideration: 'plan' }] }]);
+    if (sql.startsWith('UPDATE game_npc_decision_requests r SET')) {
+      if (linkedJob && ['queued', 'scheduled'].includes(request.status)) {
+        request.status = 'failed';
+        request.result_code = 'PROVIDER_OUTCOME_UNKNOWN';
+        return rows([{ id: request.id }]);
+      }
+      return rows([]);
+    }
+    if (sql.includes("result_code='MISSING_PROVIDER_JOB'")) return rows([]);
     if (sql.startsWith('SELECT campaign_id FROM game_npc_decision_requests'))
       return rows([{ campaign_id: campaignId }]);
     if (sql.startsWith('SELECT status,job_id FROM game_npc_decision_requests'))
@@ -165,8 +179,9 @@ test('active manual session preserves the owner opportunity to consent instead o
 test('expiry cannot release or replace a linked uncertain job or its liability', async () => {
   for (const permitState of [null, 'authorized', 'unknown']) {
     const result = await world({ linkedJob: true, permitState });
-    assert.equal(result.request.status, 'queued');
-    assert.equal(result.live.state.turnController.phase, 'world');
+    assert.equal(result.request.status, 'failed');
+    assert.equal(result.request.result_code, 'PROVIDER_OUTCOME_UNKNOWN');
+    assert.equal(result.live.state.turnController.phase, 'player');
     assert.deepEqual(result.observed, {
       queueCalls: 0,
       dispatchCalls: 0,

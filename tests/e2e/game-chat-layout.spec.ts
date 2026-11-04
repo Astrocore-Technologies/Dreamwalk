@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import type { StoryFeedEntry, StoryTurnFeed } from '@dreamwalk/contracts';
+import { npcThoughtMessages } from '../../apps/web/components/game/npc-thought-messages';
 import { campaignDetails } from './support/campaign-details';
 
 async function bounds(page: Page) {
@@ -55,6 +56,30 @@ for (const locale of ['ru', 'en', 'uk']) {
     await page.route(`**/api/v1/game/campaigns/${id}/turns/feed`, (route) =>
       route.fulfill({ json: fixture }),
     );
+    const thoughtCopy = npcThoughtMessages[locale as keyof typeof npcThoughtMessages];
+    let thoughtStatus: 'ready' | 'empty' | 'forbidden' = 'ready';
+    let thoughtReads = 0;
+    await page.route(`**/api/v1/game/campaigns/${id}/npcs/keeper/inner-thought`, (route) => {
+      thoughtReads++;
+      return route.fulfill({
+        status: thoughtStatus === 'forbidden' ? 403 : 200,
+        json:
+          thoughtStatus === 'forbidden'
+            ? { code: 'FORBIDDEN' }
+            : {
+                npcId: 'keeper',
+                thought:
+                  thoughtStatus === 'empty'
+                    ? null
+                    : {
+                        text: 'I should keep watch at the gate. '.repeat(30),
+                        roundId: 'reader-round',
+                        roundNumber: 3,
+                        tick: 42,
+                      },
+              },
+      });
+    });
     await page.setViewportSize({ width: 1440, height: 900 });
     await page.goto(`/game/${id}`);
     const panel = page.getByTestId('unified-story');
@@ -176,6 +201,29 @@ for (const locale of ['ru', 'en', 'uk']) {
     await expect(input).toHaveValue('Inspection preserves this private draft');
     expect((await input.boundingBox())!.y).toBeCloseTo(originalInput!.y, 0);
     const npcName = await inspection.getByRole('heading').innerText();
+    const thoughtToggle = inspection.getByRole('button', { name: thoughtCopy.open, exact: true });
+    expect(thoughtReads).toBe(0);
+    await thoughtToggle.focus();
+    await thoughtToggle.press('Enter');
+    await expect(thoughtToggle).toHaveAttribute('aria-expanded', 'true');
+    await expect(inspection.getByTestId('npc-inner-thought')).toContainText('I should keep watch');
+    await expect(inspection).toContainText(thoughtCopy.provenance);
+    await expect(inspection).toContainText(`${thoughtCopy.round} 3`);
+    await expect(input).toHaveValue('Inspection preserves this private draft');
+    await expect(input).toBeInViewport();
+    await thoughtToggle.click();
+    await expect(inspection.getByTestId('npc-inner-thought')).toHaveCount(0);
+    thoughtStatus = 'empty';
+    await thoughtToggle.click();
+    await expect(inspection).toContainText(thoughtCopy.empty);
+    thoughtStatus = 'forbidden';
+    await inspection.getByRole('button', { name: thoughtCopy.refresh, exact: true }).click();
+    await expect(inspection).toContainText(thoughtCopy.unavailable);
+    await expect(inspection.getByTestId('npc-inner-thought')).toHaveCount(0);
+    thoughtStatus = 'ready';
+    await inspection.getByRole('button', { name: thoughtCopy.retry, exact: true }).click();
+    await expect(inspection.getByTestId('npc-inner-thought')).toBeVisible();
+    await thoughtToggle.click();
     await inspection.getByTestId('npc-inspection-talk').click();
     await panel.getByRole('button', { name: inspectionCopy.whisper, exact: true }).click();
     for (let click = 0; click < 2; click++) {
@@ -268,11 +316,38 @@ for (const locale of ['ru', 'en', 'uk']) {
           above: action.top - clip.top,
           below: clip.bottom - action.bottom,
           focusRing: parseFloat(focusedStyle.outlineWidth) + parseFloat(focusedStyle.outlineOffset),
+          viewportHeight: clip.height,
+          actionHeight: action.height,
         };
       });
       expect(actionBounds.focusRing).toBeGreaterThan(0);
+      expect(actionBounds.viewportHeight).toBeGreaterThanOrEqual(
+        actionBounds.actionHeight + 2 * actionBounds.focusRing,
+      );
       expect(actionBounds.above).toBeGreaterThanOrEqual(actionBounds.focusRing);
       expect(actionBounds.below).toBeGreaterThanOrEqual(actionBounds.focusRing);
+      await talk.press('Tab');
+      await expect(thoughtToggle).toBeFocused();
+      const readerBounds = await thoughtToggle.evaluate((element) => {
+        const clip = element
+          .closest('[data-testid="npc-public-inspection"]')!
+          .parentElement!.getBoundingClientRect();
+        const action = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return {
+          above: action.top - clip.top,
+          below: clip.bottom - action.bottom,
+          focusRing: parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset),
+        };
+      });
+      expect(readerBounds.focusRing).toBeGreaterThan(0);
+      expect(readerBounds.above).toBeGreaterThanOrEqual(readerBounds.focusRing);
+      expect(readerBounds.below).toBeGreaterThanOrEqual(readerBounds.focusRing);
+      await thoughtToggle.press('Enter');
+      await expect(inspection.getByTestId('npc-inner-thought')).toBeVisible();
+      await expect(input).toBeInViewport();
+      expect((await bounds(page)).height).toBeLessThanOrEqual(1);
+      await thoughtToggle.press('Enter');
       await expect(input).toBeInViewport();
       expect((await bounds(page)).height).toBeLessThanOrEqual(1);
       expect((await bounds(page)).width).toBeLessThanOrEqual(1);

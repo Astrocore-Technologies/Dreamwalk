@@ -3,7 +3,8 @@ import { readdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-// Conservative scheduling weights from CI 41633194416 and 41731720347, not timeouts.
+// Conservative scheduling weights from CI 41633194416, 41731720347 and 41805081188,
+// not timeouts. Include complete locale matrices, not just one test in each file.
 // The latter completed 107 tests on shard 2 before its job was cancelled at 20 minutes.
 // Round slow-file observations up and keep prior larger estimates to leave retry headroom.
 const seconds = {
@@ -13,7 +14,10 @@ const seconds = {
   'game-cooperation.spec.ts': 110,
   'game-authored.spec.ts': 90,
   'game-turns.spec.ts': 65,
-  'game-living.spec.ts': 50,
+  'game-living.spec.ts': 65,
+  'game-chat-layout.spec.ts': 200,
+  'game-area-speech.spec.ts': 150,
+  'game-map-coordinates.spec.ts': 30,
   'generation-policy-revisions.spec.ts': 120,
   'owner-generation.spec.ts': 55,
   'simple-generation-confirmation.spec.ts': 90,

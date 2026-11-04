@@ -244,6 +244,9 @@ await test(
       await t.test(
         'two distinct addressed messages queue with order and do not move or answer during player phase',
         async () => {
+          // Stand within whisper range of Mira, but outside the nearby player's range.
+          // A whisper at (3,3) is legitimately overheard by the guest at (3,2).
+          await move(owner, id, { x: 4, y: 4 });
           firstPost = await post(
             owner,
             id,
@@ -270,7 +273,8 @@ await test(
             firstPost.receipt.id,
           );
           const frozen = await state(id);
-          assert.equal(frozen.turnController.deferredSpeech.length, 2);
+          // Whisper reaches only Mira; the subsequent public speech reaches both nearby NPCs.
+          assert.equal(frozen.turnController.deferredSpeech.length, 3);
           const queuedLanguages = (
             await db.query(
               "SELECT npc_id,context->>'replyLocale' AS locale FROM game_npc_decision_requests WHERE campaign_id=$1 AND purpose='speech' ORDER BY context->>'turnOrder'",
@@ -279,11 +283,12 @@ await test(
           ).rows;
           assert.deepEqual(queuedLanguages, [
             { npc_id: 'first-npc', locale: 'uk' },
+            { npc_id: 'first-npc', locale: 'ru' },
             { npc_id: 'second-npc', locale: 'ru' },
           ]);
           assert.deepEqual(
             frozen.turnController.deferredSpeech.map((s) => s.recipientId),
-            ['first-npc', 'second-npc'],
+            ['first-npc', 'first-npc', 'second-npc'],
           );
           await delay(350);
           await snapshot(owner, id);
@@ -350,7 +355,7 @@ await test(
           assert.equal(stale.status, 'rejected');
           const persisted = await state(id);
           assert.equal(persisted.turnController.activeActorId, `player-${guest.user.id}`);
-          assert.equal(persisted.turnController.deferredSpeech.length, 2);
+          assert.equal(persisted.turnController.deferredSpeech.length, 3);
         },
       );
       await t.test(
@@ -386,14 +391,18 @@ await test(
           const replies = (await owner.request(path(id, 'turns/feed'))).entries.filter(
             (e) => e.kind === 'npc_reply',
           );
-          assert.equal(replies.length, 2);
+          assert.equal(replies.length, 3);
           assert.deepEqual(
             replies.map((e) => e.authorId),
-            ['first-npc', 'second-npc'],
+            ['first-npc', 'first-npc', 'second-npc'],
           );
           assert.deepEqual(
             replies.map((entry) => entry.text),
-            ['Я вас чую. Продовжуйте, будь ласка.', 'Я вас слышу. Продолжайте, пожалуйста.'],
+            [
+              'Я вас чую. Продовжуйте, будь ласка.',
+              'Я вас слышу. Продолжайте, пожалуйста.',
+              'Я вас слышу. Продолжайте, пожалуйста.',
+            ],
           );
           assert.ok(
             !JSON.stringify(await guest.request(path(id, 'turns/feed'))).includes(
@@ -408,6 +417,7 @@ await test(
           ).rows;
           assert.deepEqual(generatedLanguages, [
             { npc_id: 'first-npc', locale: 'uk', status: 'committed' },
+            { npc_id: 'first-npc', locale: 'ru', status: 'committed' },
             { npc_id: 'second-npc', locale: 'ru', status: 'committed' },
           ]);
           const jobs = (
@@ -622,13 +632,13 @@ await test(
         },
       );
       await t.test(
-        'untargeted story posts commit player text now and continue canon only in the world phase',
+        'untargeted roleplay attempts commit player intent now and continue canon only in the world phase',
         async () => {
           const storyWorld = await fixture(owner, guest);
           const submitted = await post(
             owner,
             storyWorld,
-            'I investigate a faint signal beyond the rain room.',
+            '*I investigate a faint signal beyond the rain room.*',
           );
           assert.equal(submitted.receipt.status, 'committed');
           let feed = await owner.request(path(storyWorld, 'turns/feed'));
@@ -654,7 +664,7 @@ await test(
           assert.equal(
             feed.entries.filter(
               (entry) =>
-                entry.kind === 'speech' &&
+                entry.kind === 'attempt' &&
                 entry.text === 'I investigate a faint signal beyond the rain room.',
             ).length,
             1,

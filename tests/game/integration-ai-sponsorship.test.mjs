@@ -234,7 +234,10 @@ await test(
               maxCostMicros: 100000,
             };
           const result = await p.generate(request);
-          assert.deepEqual(result.proposal, { text: 'Good evening.' });
+          // Optional cognition may be present as undefined in memory, but must
+          // not add private reasoning or actions to the persisted public reply.
+          assert.equal(result.proposal.cognition, undefined);
+          assert.deepEqual(JSON.parse(JSON.stringify(result.proposal)), { text: 'Good evening.' });
           assert.equal(result.usage.costMicros, 34);
           assert.equal(calls, 1);
           await assert.rejects(() =>

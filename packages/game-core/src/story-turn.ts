@@ -1,3 +1,4 @@
+import { observedVisible } from './observation-visibility';
 import {
   footprintDistance,
   occupiedCells,
@@ -24,6 +25,8 @@ import {
   buildNpcPublicSpeechContext,
   commitNpcPublicUtterance,
   canNpcHear,
+  npcSpeechListenerIds,
+  npcSpeechProspectiveListenerIds,
   npcContextFingerprint,
   publicNpcFactTopics,
   resolveNpcFactTopic,
@@ -68,7 +71,7 @@ export function parseStorySegments(text: string): { segments: StorySegment[]; co
 export type StorySafeEntry = Omit<
   StoryFeedEntry,
   'id' | 'sequence' | 'createdAt' | 'turnId' | 'legacy'
-> & { audienceIds: string[]; sourceId?: string };
+> & { audienceIds: string[]; sourceId?: string; speakerKnownToIds?: string[] };
 const normalize = (s: string) =>
   s
     .trim()
@@ -123,7 +126,7 @@ function safeSpeech(
   ).state;
   const marker = admittedNpcSpeechObservationId(next, actorId, npcId, speech, identity);
   if (!marker) throw new Error('STALE_STATE');
-  const audience = channel === 'whisper' ? [actorId, npcId] : listeners(next, npcId);
+  const audience = npcSpeechProspectiveListenerIds(next, npcId, channel);
   const topics = publicNpcFactTopics(next, npcId).filter(
     (t) => normalize(t.title) === normalize(segment.text),
   );
@@ -547,8 +550,25 @@ export function applyStoryTurnProposal(
   const entries: StorySafeEntry[] = [];
   let next = structuredClone(state);
   const events: GameResult['events'] = [];
-  const push = (entry: Omit<StorySafeEntry, 'ordinal' | 'tick'>) =>
-    entries.push({ ...entry, ordinal: entries.length, tick: state.tick });
+  const push = (entry: Omit<StorySafeEntry, 'ordinal' | 'tick'>) => {
+    // Capture recognition at emission, never from the reader's later visibility.
+    const speaker = entry.authorId && next.entities[entry.authorId];
+    const source = entry.sourceId && next.npcUtterances?.find((u) => u.id === entry.sourceId);
+    const identity = ['speech', 'npc_reply'].includes(entry.kind)
+      ? {
+          speakerKnownToIds: source
+            ? [...(source.speakerKnownToIds ?? [])]
+            : speaker
+              ? entry.audienceIds.filter(
+                  (id) =>
+                    id === speaker.id ||
+                    (!!next.entities[id] && observedVisible(next, next.entities[id], speaker)),
+                )
+              : [],
+        }
+      : {};
+    entries.push({ ...entry, ...identity, ordinal: entries.length, tick: state.tick });
+  };
   if (context.mode === 'director') {
     // Materialize the typed scene before resolving its ordered interactions. All mutations
     // remain in this local proposal until every action and speech admission succeeds.
@@ -566,7 +586,10 @@ export function applyStoryTurnProposal(
     const resolveNpc = (id: string) =>
       id === 'new_npc' && p.narrative?.newNpc ? `support-${turnId}` : id;
     for (const [i, segment] of context.segments.entries()) {
-      const audience = listeners(next, actorId);
+      const audience =
+        segment.kind === 'speech'
+          ? npcSpeechListenerIds(next, actorId, { channel: 'say', text: segment.text })
+          : listeners(next, actorId);
       push({
         kind: segment.kind,
         channel: 'say',
@@ -661,9 +684,10 @@ export function applyStoryTurnProposal(
           replyToObservationId: spoken.context.replyToObservationId,
         });
         if (response.error) return reject(response.error);
-        const sourceId = response.state.npcUtterances?.find(
+        const responseUtterance = response.state.npcUtterances?.find(
           (u) => u.speakerId === npcId && !next.npcUtterances?.some((old) => old.id === u.id),
-        )?.id;
+        );
+        const sourceId = responseUtterance?.id;
         next = response.state;
         events.push(...response.events);
         push({
@@ -673,7 +697,7 @@ export function applyStoryTurnProposal(
           authorId: npcId,
           authorLabel: npc.label,
           ...p.steps[i].reply!,
-          audienceIds: spoken.context.audienceIds,
+          audienceIds: responseUtterance?.audienceIds ?? [],
         });
       }
     }
@@ -682,7 +706,12 @@ export function applyStoryTurnProposal(
     const npcId = input.targetNpcId!;
     for (const [i, segment] of context.segments.entries()) {
       const step = p.steps[i];
-      const audience = input.channel === 'whisper' ? [actorId, npcId] : listeners(next, actorId);
+      const audience =
+        segment.kind === 'speech'
+          ? npcSpeechListenerIds(next, actorId, { channel: input.channel, text: segment.text })
+          : input.channel === 'whisper'
+            ? [actorId, npcId]
+            : listeners(next, actorId);
       push({
         kind: segment.kind,
         channel: input.channel,
@@ -747,9 +776,10 @@ export function applyStoryTurnProposal(
           replyLocale: input.replyLocale,
         });
         if (r.error) return reject(r.error);
-        const sourceId = r.state.npcUtterances?.find(
+        const responseUtterance = r.state.npcUtterances?.find(
           (u) => u.speakerId === npcId && !next.npcUtterances?.some((old) => old.id === u.id),
-        )?.id;
+        );
+        const sourceId = responseUtterance?.id;
         next = r.state;
         events.push(...r.events);
         push({
@@ -759,7 +789,7 @@ export function applyStoryTurnProposal(
           authorId: npcId,
           authorLabel: next.entities[npcId].label,
           ...('text' in step.reply! ? { text: step.reply!.text } : { code: 'acknowledged' }),
-          audienceIds: spoken.context.audienceIds,
+          audienceIds: responseUtterance?.audienceIds ?? [],
         });
       }
     }

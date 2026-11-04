@@ -5,6 +5,8 @@ import {
 } from '../game/runtime-map-context';
 import {
   RuntimeMapCountRequired,
+  readWorldQuoteRoster,
+  type WorldQuoteRoster,
   runtimeMapAdmissionStateHash,
   withRuntimeMapPreflight,
 } from './runtime-map-preflight';
@@ -19,6 +21,8 @@ import { z } from 'zod';
 import { Db } from '../db';
 import {
   SparksAccounting,
+  verifyAcceptedWorldBatch,
+  type AcceptedWorldBatchProof,
   sparkQuoteRateVersion,
   type SparkSettlement,
 } from '../generation/sparks-accounting';
@@ -118,6 +122,7 @@ function publicRequestMeta(value: unknown) {
     requestKey: v.requestKey ?? '',
     sponsorId: v.sponsorId ?? null,
     runtimeRequestId: v.runtimeRequestId ?? null,
+    acceptedWorldBatchId: v.acceptedWorldBatchId ?? null,
   };
 }
 export class NpcAiEngine {
@@ -448,7 +453,39 @@ export class NpcAiEngine {
             [scope.requesterUserId],
           )
         ).rows[0];
-        if (recent.n >= 60) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+        if (request.worldBatchRequestId) {
+          const pending = (
+            await c.query(
+              `SELECT context,npc_id,purpose FROM game_npc_decision_requests WHERE id=$1 AND campaign_id=$2
+              AND status='queued' AND job_id IS NULL FOR SHARE`,
+              [request.worldBatchRequestId, scope.campaignId],
+            )
+          ).rows[0];
+          if (
+            !pending ||
+            pending.npc_id !== scope.npcId ||
+            pending.purpose !== (scope.purpose ?? 'plan') ||
+            digest(pending.context) !== digest(context) ||
+            !(
+              pending.context.worldRoundDecision ||
+              pending.context.generationPolicy === 'world-batch-v1'
+            )
+          )
+            fail(409, 'RUNTIME_REQUEST_STALE', 'RUNTIME_REQUEST_STALE');
+          const batches = (
+            await c.query(
+              "SELECT count(*)::int AS n FROM game_world_generation_batches WHERE owner_id=$1 AND created_at>clock_timestamp()-interval '1 minute'",
+              [scope.requesterUserId],
+            )
+          ).rows[0];
+          // Failed aggregate quotes do not persist a batch. Bound those attempts
+          // too, in complete finite-roster units rather than limiting NPC count.
+          const rosterSize = request.worldBatchRequestIds?.length ?? 0;
+          if (!rosterSize || !request.worldBatchRequestIds?.includes(request.worldBatchRequestId))
+            fail(409, 'RUNTIME_REQUEST_STALE', 'RUNTIME_REQUEST_STALE');
+          if (batches.n >= 60 || recent.n >= 60 * rosterSize)
+            fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+        } else if (recent.n >= 60) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
         const id = randomUUID();
         await c.query(
           "INSERT INTO runtime_map_token_counts(id,actor_id,campaign_id,body_sha256,model,provider_version,status) VALUES($1,$2,$3,$4,$5,$6,'dispatched')",
@@ -502,6 +539,8 @@ export class NpcAiEngine {
     input: DecisionContext,
     requesterUserId: string,
     client?: PoolClient,
+    worldBatchRequestId?: string,
+    worldQuoteRoster?: WorldQuoteRoster,
   ) {
     const context = validateDecisionContext(input, this.policy.maxContextBytes);
     if (!this.contextFits(scope.purpose, context))
@@ -511,9 +550,52 @@ export class NpcAiEngine {
       await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
         `npc-ai-quote:${requesterUserId}`,
       ]);
+      let worldBatchRequestIds: readonly string[] | undefined;
+      if (worldBatchRequestId) {
+        if (!client) fail(409, 'WORLD_BATCH_CONSENT_STALE', 'WORLD_BATCH_CONSENT_STALE');
+        const owner = (
+          await c.query(
+            "SELECT id FROM game_campaigns WHERE id=$1 AND owner_id=$2 AND status='active' AND state->'turnController'->>'phase'='world' FOR SHARE",
+            [scope.campaignId, requesterUserId],
+          )
+        ).rowCount;
+        if (!owner) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+        const rosterIds = worldQuoteRoster
+          ? readWorldQuoteRoster(
+              worldQuoteRoster,
+              c,
+              requesterUserId,
+              scope.campaignId,
+              worldBatchRequestId,
+              scope.npcId,
+              scope.purpose ?? 'plan',
+              digest(context),
+            )
+          : undefined;
+        const requests = (
+          await c.query(
+            `SELECT id,npc_id,purpose,context FROM game_npc_decision_requests WHERE campaign_id=$1
+            AND status='queued' AND job_id IS NULL
+            AND (context ? 'worldRoundDecision' OR context->>'generationPolicy'='world-batch-v1')
+            ${rosterIds ? 'AND id=$2' : ''} ORDER BY id FOR UPDATE`,
+            rosterIds ? [scope.campaignId, worldBatchRequestId] : [scope.campaignId],
+          )
+        ).rows;
+        const request = requests.find((r) => r.id === worldBatchRequestId);
+        if (
+          !request ||
+          request.npc_id !== scope.npcId ||
+          request.purpose !== (scope.purpose ?? 'plan') ||
+          digest(request.context) !== digest(context)
+        )
+          fail(409, 'RUNTIME_REQUEST_STALE', 'RUNTIME_REQUEST_STALE');
+        worldBatchRequestIds = rosterIds ?? requests.map((r) => String(r.id));
+      }
       const recent = (
         await c.query(
-          "SELECT count(*)::int AS count FROM npc_ai_quotes WHERE user_id=$1 AND created_at>now()-interval '1 minute'",
+          worldBatchRequestId
+            ? "SELECT count(*)::int AS count FROM game_world_generation_batches WHERE owner_id=$1 AND created_at>now()-interval '1 minute'"
+            : "SELECT count(*)::int AS count FROM npc_ai_quotes WHERE user_id=$1 AND created_at>now()-interval '1 minute'",
           [requesterUserId],
         )
       ).rows[0];
@@ -527,11 +609,20 @@ export class NpcAiEngine {
         if (!(await sparksEnabled(c, requesterUserId)))
           fail(409, 'SPARK_WALLET_NOT_ENABLED', 'SPARK_WALLET_NOT_ENABLED');
       }
-      const requestPlan = await this.requestPlan(
-        { ...scope, origin: 'user', requesterUserId },
-        context,
-        c,
-      );
+      let requestPlan: Awaited<ReturnType<NpcAiEngine['requestPlan']>>;
+      try {
+        requestPlan = await this.requestPlan(
+          { ...scope, origin: 'user', requesterUserId },
+          context,
+          c,
+        );
+      } catch (error) {
+        if (error instanceof RuntimeMapCountRequired && worldBatchRequestId) {
+          error.worldBatchRequestId = worldBatchRequestId;
+          error.worldBatchRequestIds = worldBatchRequestIds;
+        }
+        throw error;
+      }
       const sparkMode =
         !(this.provider instanceof ManualLiveProvider) &&
         !this.isFreeBuiltInSimulation() &&
@@ -700,13 +791,7 @@ export class NpcAiEngine {
         j.requester_user_id !== (scope.requesterUserId ?? null) ||
         j.purpose !== (scope.purpose ?? 'plan') ||
         digest(publicRequestMeta(j.request_meta)) !==
-          digest({
-            quoteId: quoteId ?? null,
-            consent,
-            requestKey,
-            sponsorId: sponsorId ?? null,
-            runtimeRequestId: runtimeRequestId ?? null,
-          })
+          digest(publicRequestMeta({ quoteId, consent, requestKey, sponsorId, runtimeRequestId }))
       )
         fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
       return this.dto(c, j);
@@ -727,6 +812,7 @@ export class NpcAiEngine {
       requestKey: input.requestKey ?? '',
       sponsorId: input.sponsorId ?? null,
       runtimeRequestId: input.runtimeRequestId ?? null,
+      acceptedWorldBatchId: input.acceptedWorldBatchId ?? null,
     });
     return this.db.tx(async (c) => {
       let generationAuthorizationId =
@@ -809,6 +895,30 @@ export class NpcAiEngine {
         fail(503, 'PROVIDER_DISABLED', 'PROVIDER_DISABLED');
       if (!this.contextFits(scope.purpose, context))
         fail(413, 'TEXT_CONTEXT_WINDOW_EXCEEDED', 'TEXT_CONTEXT_WINDOW_EXCEEDED');
+      let worldBatchProof: AcceptedWorldBatchProof | undefined;
+      if (input.acceptedWorldBatchId) {
+        if (
+          !input.quoteId ||
+          !input.runtimeRequestId ||
+          !input.expectedRuntimeContextDigest ||
+          !scope.requesterUserId ||
+          !input.consent ||
+          input.sponsorId ||
+          digest(context) !== input.expectedRuntimeContextDigest
+        )
+          fail(409, 'WORLD_BATCH_CONSENT_STALE', 'WORLD_BATCH_CONSENT_STALE');
+        worldBatchProof = {
+          batchId: input.acceptedWorldBatchId,
+          nativeQuoteId: input.quoteId!,
+          runtimeRequestId: input.runtimeRequestId!,
+          contextDigest: digest(context),
+          campaignId: scope.campaignId,
+          providerId: this.provider.id,
+          providerVersion: this.provider.version,
+          policyVersion: this.policy.version,
+        };
+        await verifyAcceptedWorldBatch(c, scope.requesterUserId!, worldBatchProof);
+      }
       // Accepted quotes/permits outlive the short-lived quote cache. Read their
       // server-owned snapshot before preparation, never recount during consent.
       const acceptedQuote = input.quoteId
@@ -827,7 +937,7 @@ export class NpcAiEngine {
           acceptedQuote.provider_id !== this.provider.id ||
           acceptedQuote.provider_version !== this.provider.version ||
           acceptedQuote.policy_version !== this.policy.version ||
-          new Date(acceptedQuote.expires_at).getTime() <= Date.now())
+          (!worldBatchProof && new Date(acceptedQuote.expires_at).getTime() <= Date.now()))
       )
         fail(409, 'QUOTE_EXPIRED', 'QUOTE_EXPIRED');
       const pinned = acceptedQuote?.request_snapshot ?? releasePermit?.requestSnapshot ?? undefined;
@@ -892,7 +1002,7 @@ export class NpcAiEngine {
           (ownSparkHold && !q.spark_quote_id) ||
           Number(q.upper_micros) !== requestPlan.reserveMicros ||
           digest(q.request_snapshot ?? null) !== digest(requestPlan.snapshot) ||
-          new Date(q.expires_at).getTime() <= Date.now()
+          (!worldBatchProof && new Date(q.expires_at).getTime() <= Date.now())
         )
           fail(409, 'QUOTE_EXPIRED', 'QUOTE_EXPIRED');
         if (
@@ -1083,7 +1193,9 @@ export class NpcAiEngine {
         }
       }
       const sparkHold =
-        sparkQuoteId && payer ? await new SparksAccounting().reserve(c, payer, sparkQuoteId) : null;
+        sparkQuoteId && payer
+          ? await new SparksAccounting().reserve(c, payer, sparkQuoteId, worldBatchProof)
+          : null;
       const r = await c.query<Job>(
         `INSERT INTO npc_ai_jobs(id,campaign_id,npc_id,operation_id,request_hash,origin,requester_user_id,payer_user_id,purpose,context_hash,context,provider_id,provider_version,policy_version,status,credits,reservation_status,reservation_expires_at,provider_upper_micros,provider_budget_status,quote_id,request_meta,sponsor_id,subject_kind,provider_external,generation_authorization_id,request_snapshot,spark_hold_id,generation_reservation_id)
       VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12,$13,$14,'reserved',$15,$16,$17,$18,'reserved',$19,$20,$21,$22,$23,$24,$25,$26,$27) RETURNING *`,
@@ -1912,7 +2024,9 @@ export class NpcAiService extends NpcAiEngine implements OnModuleInit, OnModuleD
       }
       await this.db.query(`DELETE FROM npc_ai_quotes q WHERE id IN
         (SELECT id FROM npc_ai_quotes q2 WHERE expires_at<now()-interval '1 hour'
-         AND NOT EXISTS (SELECT 1 FROM npc_ai_jobs j WHERE j.quote_id=q2.id) LIMIT 1000)`);
+         AND NOT EXISTS (SELECT 1 FROM npc_ai_jobs j WHERE j.quote_id=q2.id)
+         AND NOT EXISTS (SELECT 1 FROM game_world_generation_batches b WHERE b.state='accepted'
+           AND b.entries @> jsonb_build_array(jsonb_build_object('quote',jsonb_build_object('id',q2.id::text)))) LIMIT 1000)`);
     } catch {
       /* Retry bounded maintenance next tick; no provider calls or game mutations. */
     } finally {

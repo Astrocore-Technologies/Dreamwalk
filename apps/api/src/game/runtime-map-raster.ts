@@ -181,6 +181,35 @@ function numericDigits(
   return `<g fill="none" stroke-linecap="round" stroke-linejoin="round">${outline ? `<path d="${paths}" stroke="#10141b" stroke-width="${stroke + 2}"/>` : ''}<path d="${paths}" stroke="${color}" stroke-width="${stroke}"/></g>`;
 }
 
+/** Zero-based engine coordinates, independent of artwork, perception or marker IDs.
+ * Keep both origin labels: y=0 is left-aligned so it cannot collide with x=0.
+ */
+export function runtimeMapCoordinateLabels(
+  map: Pick<RuntimeMapView, 'width' | 'height'>,
+  transform: RuntimeMapTransform,
+) {
+  const unit = transform.cellPixels;
+  const height = Math.min(10, unit * 0.45);
+  const labelWidth = (value: number) => {
+    const length = String(value).length;
+    return length * height * 0.55 + (length - 1) * height * 0.2;
+  };
+  return {
+    x: Array.from({ length: map.width }, (_, value) => ({
+      value,
+      x: transform.mapRect.x + (value + 0.5) * unit,
+      y: transform.mapRect.y + height / 2 + 1,
+      height,
+    })),
+    y: Array.from({ length: map.height }, (_, value) => ({
+      value,
+      x: transform.mapRect.x + labelWidth(value) / 2 + 1,
+      y: transform.mapRect.y + (value + 0.5) * unit,
+      height,
+    })),
+  };
+}
+
 /** Trusted numeric geometry only: no label, ID, URL, author text or image href enters SVG. */
 function numericGuide(view: RuntimeMapView, transform: RuntimeMapTransform): Buffer {
   const unit = transform.cellPixels;
@@ -189,16 +218,10 @@ function numericGuide(view: RuntimeMapView, transform: RuntimeMapTransform): Buf
     parts.push(`<path d="M ${x * unit} 0 V ${view.height * unit}"/>`);
   for (let y = 0; y <= view.height; y++)
     parts.push(`<path d="M 0 ${y * unit} H ${view.width * unit}"/>`);
-  const labels: string[] = [];
-  const digitHeight = Math.min(8, unit * 0.3);
-  for (let x = 0; x < view.width; x++)
-    labels.push(
-      numericDigits(x, (x + 0.5) * unit, digitHeight / 2 + 3, digitHeight, '#ffffff', true),
-    );
-  for (let y = 1; y < view.height; y++)
-    labels.push(
-      numericDigits(y, Math.min(9, unit * 0.4), (y + 0.5) * unit, digitHeight, '#ffffff', true),
-    );
+  const coordinates = runtimeMapCoordinateLabels(view, transform);
+  const labels = [...coordinates.x, ...coordinates.y].map(({ value, x, y, height }) =>
+    numericDigits(value, x, y, height, '#ffffff', true),
+  );
   const colors = { player: '#5bc0ff', npc: '#ffbc69', item: '#f5e779', door: '#c8d0db' };
   const markers = view.markers.map((marker) => {
     const right = Math.max(...marker.occupiedCells.map((cell) => cell.x)) + 1;
@@ -211,7 +234,7 @@ function numericGuide(view: RuntimeMapView, transform: RuntimeMapTransform): Buf
     return `<g fill="${colors[marker.kind]}" stroke="#10141b" stroke-width="1.5">${marker.occupiedCells.map((cell) => `<rect x="${cell.x * unit + 1}" y="${cell.y * unit + 1}" width="${unit - 2}" height="${unit - 2}" fill-opacity="0.2"/>`).join('')}<circle cx="${x}" cy="${y}" r="${radius}"/>${numericDigits(marker.marker, x, y, height, '#10141b')}</g>`;
   });
   return Buffer.from(
-    `<svg width="768" height="768" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="0.6">${parts.join('')}</g>${labels.join('')}${markers.join('')}</svg>`,
+    `<svg width="768" height="768" xmlns="http://www.w3.org/2000/svg"><g fill="none" stroke="#ffffff" stroke-opacity="0.22" stroke-width="0.6">${parts.join('')}</g>${markers.join('')}${labels.join('')}</svg>`,
   );
 }
 

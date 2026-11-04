@@ -38,7 +38,14 @@ test('typed allegation binds actual admitted speaker rather than the accused act
   assert.equal(g.npcReplyObservation(state, 'bob', 'keeper', id), undefined);
 });
 test('reply trigger never bypasses whole-audience whisper disclosure', () => {
-  const { state, id } = speak(world(), { channel: 'whisper', text: 'Private phrase.' });
+  const before = world();
+  Object.assign(before.entities.bob, { x: 7, y: 5 }); // Outside the original one-cell whisper.
+  const { state, id } = speak(before, { channel: 'whisper', text: 'Private phrase.' });
+  assert.ok(
+    !state.npcBrains.keeper.living.observations
+      .find((o) => o.id === id)
+      .audienceIds.includes('bob'),
+  );
   assert.ok(g.npcReplyObservation(state, 'alice', 'keeper', id));
   assert.equal(
     g.buildNpcPublicSpeechContext(state, 'keeper', ['alice', 'keeper'], [id]).claims.length,

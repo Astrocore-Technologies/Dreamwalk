@@ -1,7 +1,8 @@
-import { applyTurnAction, turnFence } from './turns';
+import { applyTurnAction, turnFence, matchesTurnFence } from './turns';
 import type { TurnFence } from '@dreamwalk/contracts';
 import {
   npcBeliefRevisionSchema,
+  npcCognitionSchema,
   gameActionSchema,
   type GameState,
   type GameResult,
@@ -260,4 +261,39 @@ export function proposePlayerActionIntent(
     requiresConfirmation: true as const,
   };
   return { id: `intent-${npcContextFingerprint(proposal)}`, ...proposal };
+}
+
+/** Store bounded authored fiction only after the caller's admission checks. No knowledge is granted. */
+export function recordNpcCognition(
+  state: GameState,
+  npcId: string,
+  input: unknown,
+  fence: { knowledgeRevision: number; turnFence?: TurnFence; sourceObservationId?: string },
+): GameResult {
+  const parsed = npcCognitionSchema.safeParse(input),
+    memory = state.npcBrains?.[npcId]?.living;
+  if (!parsed.success || !memory || state.entities[npcId]?.kind !== 'npc')
+    return { state, events: [], error: 'INVALID_ACTION' };
+  if (
+    memory.knowledgeRevision !== fence.knowledgeRevision ||
+    (fence.turnFence && !matchesTurnFence(state, fence.turnFence)) ||
+    (fence.sourceObservationId &&
+      !memory.observations.some((o) => o.id === fence.sourceObservationId))
+  )
+    return { state, events: [], error: 'STALE_STATE' };
+  const next = structuredClone(state);
+  next.npcBrains![npcId].living!.cognition = {
+    ...parsed.data,
+    tick: state.tick,
+    knowledgeRevision: memory.knowledgeRevision,
+    ...(state.turnController
+      ? {
+          roundId: state.turnController.roundId,
+          roundNumber: state.turnController.roundNumber,
+        }
+      : {}),
+    ...(fence.sourceObservationId ? { sourceObservationId: fence.sourceObservationId } : {}),
+  };
+  next.revision++;
+  return { state: next, events: [] };
 }

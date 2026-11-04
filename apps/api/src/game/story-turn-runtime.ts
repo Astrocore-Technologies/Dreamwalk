@@ -24,7 +24,6 @@ import {
 } from '@dreamwalk/contracts';
 import {
   applyTurnAction,
-  endPlayerTurn,
   recordNpcEvents,
   parsePlayerTextAction,
   turnFence,
@@ -74,7 +73,16 @@ interface Port {
     preflight: (c: PoolClient) => Promise<void>,
   ): Promise<void>;
   dispatch(id: string): void;
+  failWorldRequest(campaignId: string, requestId: string, code: string): Promise<void>;
   deferredSpeechContext(state: GameState, request: NpcDecisionRequest): DecisionContext;
+  prepareAreaTurnSpeech?(
+    state: GameState,
+    actorId: string,
+    speech: { channel: 'say' | 'whisper'; text: string; replyLocale?: Locale },
+    userId: string,
+    identity: { turnId: string; segmentIndex: number },
+    targetNpcId?: string,
+  ): { state: GameState; requests: NpcDecisionRequest[]; audienceIds: string[]; sourceId?: string };
   prepareTurnSpeech(
     state: GameState,
     actorId: string,
@@ -97,7 +105,7 @@ interface Port {
   };
 }
 type Row = QueryResultRow;
-type QuotedReply = { request: NpcDecisionRequest; quote: StoryQuote };
+type QuotedReply = { request: NpcDecisionRequest; quote: StoryQuote; batchId?: string };
 const baseInput = (v: Row): StoryTurnInput =>
   storyTurnInputSchema.parse({
     operationId: v.operationId,
@@ -269,7 +277,7 @@ export class StoryTurnRuntime {
       fail(409, 'STALE_CANON', 'STALE_CANON');
     const parsed = parseStorySegments(input.text);
     if (parsed.code) throw new Error(parsed.code);
-    if (input.channel === 'whisper' && !input.targetNpcId)
+    if (input.channel === 'whisper' && !input.targetNpcId && !this.port.prepareAreaTurnSpeech)
       throw new Error('PRIVATE_STORY_EXTENSION');
     let next = structuredClone(state);
     const entries: StorySafeEntry[] = [],
@@ -341,6 +349,31 @@ export class StoryTurnRuntime {
           action: action as NonNullable<StoryFeedEntry['action']>,
           audienceIds: input.channel === 'whisper' ? [actorId] : listeners(next),
         });
+      } else if (this.port.prepareAreaTurnSpeech) {
+        const spoken = this.port.prepareAreaTurnSpeech(
+          next,
+          actorId,
+          { channel: input.channel, text: segment.text, replyLocale: input.replyLocale },
+          userId,
+          { turnId, segmentIndex: segment.index },
+          input.targetNpcId,
+        );
+        next = spoken.state;
+        requests.push(...spoken.requests);
+        entries.push({
+          ordinal: entries.length,
+          tick: next.tick,
+          kind: 'speech',
+          channel: input.channel,
+          authorId: actorId,
+          authorLabel: next.entities[actorId].label,
+          text: segment.text,
+          audienceIds: spoken.audienceIds,
+          speakerKnownToIds: [
+            ...(next.npcUtterances?.find((u) => u.id === spoken.sourceId)?.speakerKnownToIds ?? []),
+          ],
+          ...(spoken.sourceId ? { sourceId: spoken.sourceId } : {}),
+        });
       } else if (input.targetNpcId) {
         const hash = digest({ turnId, index: segment.index });
         const requestId = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
@@ -364,6 +397,9 @@ export class StoryTurnRuntime {
           authorLabel: next.entities[actorId].label,
           text: segment.text,
           audienceIds: spoken.audienceIds,
+          speakerKnownToIds: [
+            ...(next.npcUtterances?.find((u) => u.id === spoken.sourceId)?.speakerKnownToIds ?? []),
+          ],
           ...(spoken.sourceId ? { sourceId: spoken.sourceId } : {}),
         });
       } else
@@ -420,17 +456,20 @@ export class StoryTurnRuntime {
       actions,
       segments: parsed.segments,
       untrustedRoleplay,
-      directorText: !input.targetNpcId
-        ? parsed.segments
-            .flatMap((segment) =>
-              segment.kind === 'speech'
-                ? [segment.text]
-                : untrustedRoleplay.some((entry) => entry.segmentIndex === segment.index)
-                  ? [`*${segment.text.replaceAll('\\', '\\\\').replaceAll('*', '\\*')}*`]
-                  : [],
-            )
-            .join('\n')
-        : '',
+      directorText:
+        !input.targetNpcId &&
+        input.channel !== 'whisper' &&
+        (!this.port.prepareAreaTurnSpeech || untrustedRoleplay.length > 0)
+          ? parsed.segments
+              .flatMap((segment) =>
+                segment.kind === 'speech'
+                  ? [segment.text]
+                  : untrustedRoleplay.some((entry) => entry.segmentIndex === segment.index)
+                    ? [`*${segment.text.replaceAll('\\', '\\\\').replaceAll('*', '\\*')}*`]
+                    : [],
+              )
+              .join('\n')
+          : '',
     };
   }
   private async quoteTurnBased(
@@ -483,7 +522,7 @@ export class StoryTurnRuntime {
           };
         throw error;
       }
-      let quote: StoryQuote = {
+      const quote: StoryQuote = {
         id: randomUUID(),
         credits: 0,
         expiresAt: new Date(Date.now() + 300000).toISOString(),
@@ -495,107 +534,8 @@ export class StoryTurnRuntime {
         policyVersion: 'dreamwalk-turn-v1',
       };
       const quotedReplies: QuotedReply[] = [];
-      if (this.ai.releaseGeneration() && (simulation.requests.length || simulation.directorText)) {
-        // Predict only phase transitions, never other players' actions. The exact fence,
-        // context and quote must still match when the world phase actually arrives.
-        let world = simulation.state;
-        while (world.turnController?.phase === 'player') {
-          const ended = endPlayerTurn(
-            world,
-            world.turnController.activeActorId!,
-            turnFence(world)!,
-          );
-          if (ended.error) fail(409, 'STALE_STATE', 'STALE_STATE');
-          world = ended.state;
-        }
-        for (const request of simulation.requests) {
-          const context = await extendContextHistory(
-            this.db,
-            this.ai,
-            id,
-            world,
-            a.actorId,
-            this.port.deferredSpeechContext(world, request),
-            'speech',
-            request.npcId,
-          );
-          const reply = { ...request, context };
-          const priced = await this.ai.quote(
-            {
-              campaignId: id,
-              npcId: request.npcId,
-              subjectKind: 'npc',
-              origin: 'user',
-              purpose: 'speech',
-              requesterUserId: a.user.id,
-            },
-            context,
-            a.user.id,
-            c,
-          );
-          quotedReplies.push({ request: reply, quote: priced });
-        }
-        if (simulation.directorText) {
-          const worldInput = {
-            ...input,
-            text: simulation.directorText,
-            expectedCanonRevision: world.narrativeCanon?.revision ?? 0,
-            turnFence: turnFence(world)!,
-          };
-          const base = buildStoryTurnContext(world, a.actorId, worldInput, turnId);
-          const context = await extendContextHistory(
-            this.db,
-            this.ai,
-            id,
-            world,
-            a.actorId,
-            {
-              ...base,
-              turnBased: true,
-              turnBasedDeferredDirector: true,
-              worldInput,
-              storyTurnId: turnId,
-              directorText: simulation.directorText,
-              ...(simulation.untrustedRoleplay.length
-                ? {
-                    untrustedRoleplay: simulation.untrustedRoleplay,
-                    roleplayPolicy:
-                      'Player-authored RP, not a mechanical action or validated inventory, money, damage or movement change. Harmless everyday roleplay can continue naturally.',
-                  }
-                : {}),
-              turnFence: turnFence(world),
-              mockProposal: createMockStoryTurnProposal(world, a.actorId, worldInput, turnId),
-            },
-            'story_turn',
-            undefined,
-            c,
-          );
-          const request: NpcDecisionRequest = {
-            id: turnId,
-            npcId: a.actorId,
-            purpose: 'story_turn',
-            causeKey: `turn-director:${turnId}`,
-            requesterUserId: a.user.id,
-            recipientActorId: a.actorId,
-            context,
-          };
-          const priced = await this.ai.quote(
-            {
-              campaignId: id,
-              npcId: a.actorId,
-              subjectKind: 'player',
-              origin: 'user',
-              purpose: 'story_turn',
-              requesterUserId: a.user.id,
-            },
-            context,
-            a.user.id,
-            c,
-          );
-          quotedReplies.push({ request, quote: priced });
-        }
-        quote = aggregateReplyQuote(quote.id, quotedReplies);
-      }
+      // Posting mechanics is free. The complete world roster is prepared and
+      // priced once after all players finish; never pre-sell an incomplete round.
       const confirmationHash = npcContextFingerprint(simulation.actions);
       const response: StoryTurnQuoteResponse = {
         status: 'quoted',
@@ -608,12 +548,14 @@ export class StoryTurnRuntime {
         quote,
       };
       const context = {
+        generationPolicy: 'world-batch-v1',
         turnBased: true,
         replyLocale: input.replyLocale,
         stateHash: digest(live.state),
         turnFence: turnFence(live.state),
         confirmationHash,
         directorText: simulation.directorText,
+        npcRepliesHandled: simulation.requests.length > 0,
         ...(simulation.untrustedRoleplay.length
           ? {
               untrustedRoleplay: simulation.untrustedRoleplay,
@@ -676,7 +618,12 @@ export class StoryTurnRuntime {
         const quotedReplies = r.context.quotedReplies as QuotedReply[] | undefined;
         if (quotedReplies?.length) {
           for (const reply of quotedReplies) await insertNpcRequest(c, id, reply.request);
-        } else for (const request of simulation.requests) await insertNpcRequest(c, id, request);
+        } else
+          for (const request of simulation.requests)
+            await insertNpcRequest(c, id, {
+              ...request,
+              context: { ...request.context, generationPolicy: r.context.generationPolicy },
+            });
         if (simulation.directorText && !quotedReplies?.length) {
           await insertNpcRequest(c, id, {
             id: r.id,
@@ -689,6 +636,7 @@ export class StoryTurnRuntime {
               contextHash: digest({ id: r.id }),
               replyLocale: base.replyLocale,
               turnBasedDeferredDirector: true,
+              generationPolicy: r.context.generationPolicy,
             },
           });
         }
@@ -1109,11 +1057,123 @@ export class StoryTurnRuntime {
       return this.receipt((await this.row(id, turnId, a.user.id))!);
     });
   }
+  /** Build every new-policy request against the actual world-entry state, before pricing. */
+  async prepareWorldRequests(id: string, live: StoryLive) {
+    if (live.state.turnController?.phase !== 'world') return;
+    const rows = await this.db.query(
+      "SELECT * FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' AND job_id IS NULL AND context->>'generationPolicy'='world-batch-v1' AND NOT(context ? 'worldPrepared') ORDER BY created_at,id",
+      [id],
+    );
+    for (const request of rows) {
+      const turnId = request.context.storyTurnId ?? request.id;
+      const turn = await this.row(id, turnId);
+      if (!turn || turn.erased_at || turn.status !== 'committed') continue;
+      let context: DecisionContext;
+      if (request.purpose === 'speech') {
+        const speaker = live.state.entities[turn.actor_id];
+        const recipient = live.state.entities[request.npc_id];
+        if (!speaker || !recipient || speaker.mapId !== recipient.mapId) {
+          // Keep the original heard memory, but do not generate a reply across maps
+          // or construct a raster spanning the departed speaker and this NPC.
+          // The financial-evidence guard refuses to terminalize already-paid work;
+          // advanceTurnWorld drains only terminal request markers afterwards.
+          await this.port.failWorldRequest(id, request.id, 'SPEECH_PARTICIPANT_DEPARTED');
+          continue;
+        }
+        let base: DecisionContext;
+        try {
+          base = this.port.deferredSpeechContext(live.state, {
+            id: request.id,
+            npcId: request.npc_id,
+            purpose: 'speech',
+            causeKey: request.cause_key,
+            requesterUserId: request.requester_user_id,
+            context: request.context,
+          });
+        } catch (error) {
+          const code = error instanceof Error ? error.message : '';
+          if (!['STALE_STATE', 'OUT_OF_RANGE', 'TARGET_UNAVAILABLE', 'FORBIDDEN'].includes(code))
+            throw error;
+          // A new outgoing audience may not be allowed to hear the incoming
+          // whisper. Stay silent; never broaden disclosure or strand the roster.
+          await this.port.failWorldRequest(id, request.id, 'NO_SAFE_RESPONSE');
+          continue;
+        }
+        context = await extendContextHistory(
+          this.db,
+          this.ai,
+          id,
+          live.state,
+          turn.actor_id,
+          {
+            ...base,
+            generationPolicy: 'world-batch-v1',
+            worldPrepared: true,
+            worldRequesterId: turn.requester_user_id,
+          },
+          'speech',
+          request.npc_id,
+        );
+      } else if (request.purpose === 'story_turn') {
+        const worldInput = {
+          ...turn.input,
+          text: turn.context.directorText,
+          expectedCanonRevision: live.state.narrativeCanon?.revision ?? 0,
+          turnFence: turnFence(live.state)!,
+        };
+        const base = buildStoryTurnContext(live.state, turn.actor_id, worldInput, turn.id);
+        context = await extendContextHistory(
+          this.db,
+          this.ai,
+          id,
+          live.state,
+          turn.actor_id,
+          {
+            ...base,
+            worldInput,
+            turnBasedDeferredDirector: true,
+            turnBased: true,
+            storyTurnId: turn.id,
+            generationPolicy: 'world-batch-v1',
+            worldPrepared: true,
+            worldRequesterId: turn.requester_user_id,
+            turnFence: turnFence(live.state),
+            npcRepliesHandled: turn.context.npcRepliesHandled === true,
+            ...(turn.context.untrustedRoleplay?.length
+              ? {
+                  untrustedRoleplay: turn.context.untrustedRoleplay,
+                  roleplayPolicy: turn.context.roleplayPolicy,
+                }
+              : {}),
+            mockProposal: createMockStoryTurnProposal(
+              live.state,
+              turn.actor_id,
+              worldInput,
+              turn.id,
+            ),
+          },
+          'story_turn',
+        );
+      } else continue;
+      await this.db.tx(async (c) => {
+        await c.query(
+          "UPDATE game_npc_decision_requests SET context=$2 WHERE id=$1 AND status='queued' AND job_id IS NULL AND NOT(context ? 'worldPrepared')",
+          [request.id, JSON.stringify(context)],
+        );
+        if (request.purpose === 'story_turn')
+          await c.query(
+            'UPDATE game_story_turns SET context=$2 WHERE id=$1 AND erased_at IS NULL',
+            [turn.id, JSON.stringify({ ...turn.context, ...context })],
+          );
+      });
+    }
+  }
   /** Upgrade only proven-unpaid pre-composer requests; never reset a permit or provider outcome. */
   async requireLegacyReplyConsent(campaignId: string, request: Row) {
     if (
       !this.ai.releaseGeneration() ||
       request.job_id ||
+      request.context?.generationPolicy === 'world-batch-v1' ||
       !request.requester_user_id ||
       !['speech', 'story_turn'].includes(request.purpose)
     )
@@ -1148,10 +1208,10 @@ export class StoryTurnRuntime {
     );
     return reply && digest(reply.request.context) === digest(request.context) ? reply : null;
   }
-  async schedule(id: string, live: StoryLive, request: Row) {
+  async schedule(id: string, live: StoryLive, request: Row, worldReply?: QuotedReply | null) {
     const r = await this.row(id, request.id);
     if (r?.context.turnBased && r.context.directorText && request.context.turnBasedDeferredDirector)
-      return this.scheduleTurnDirector(id, live, request, r);
+      return this.scheduleTurnDirector(id, live, request, r, worldReply);
     if (!r || r.erased_at || r.status !== 'queued') {
       await this.db.query(
         "UPDATE game_npc_decision_requests SET status='cancelled',context='{}',result_code='TURN_UNAVAILABLE' WHERE id=$1 AND status='queued'",
@@ -1196,10 +1256,16 @@ export class StoryTurnRuntime {
       });
     }
   }
-  private async scheduleTurnDirector(id: string, live: StoryLive, request: Row, r: Row) {
+  private async scheduleTurnDirector(
+    id: string,
+    live: StoryLive,
+    request: Row,
+    r: Row,
+    worldReply?: QuotedReply | null,
+  ) {
     if (live.state.turnController?.phase !== 'world') return;
     if (request.result_code === 'GENERATION_QUOTE_STALE') return;
-    const frozenReply = await this.quotedReply(id, request);
+    const frozenReply = worldReply ?? (await this.quotedReply(id, request));
     if (frozenReply) {
       try {
         const context = frozenReply.request.context;
@@ -1230,9 +1296,9 @@ export class StoryTurnRuntime {
             subjectKind: 'player',
             origin: 'user',
             purpose: 'story_turn',
-            requesterUserId: r.requester_user_id,
+            requesterUserId: request.requester_user_id,
           },
-          requesterUserId: r.requester_user_id,
+          requesterUserId: request.requester_user_id,
           operationId: r.id,
           quoteId: frozenReply.quote.id,
           consent: true,
@@ -1240,12 +1306,17 @@ export class StoryTurnRuntime {
           requestKey: `turn-director:${r.id}`,
           runtimeRequestId: r.id,
           expectedRuntimeContextDigest: digest(context),
+          ...(worldReply?.batchId ? { acceptedWorldBatchId: worldReply.batchId } : {}),
         });
         live.aiPending = true;
         this.port.dispatch(id);
       } catch (error) {
         const code = error instanceof Error ? error.message : '';
         if (code.includes('NPC_AI_BUSY') || code.includes('RATE_LIMITED')) return;
+        if (worldReply && request.context.generationPolicy === 'world-batch-v1') {
+          await this.port.failWorldRequest(id, request.id, 'WORLD_ADMISSION_FAILED');
+          return;
+        }
         await this.db.query(
           "UPDATE game_npc_decision_requests SET result_code='GENERATION_QUOTE_STALE' WHERE id=$1 AND status='queued'",
           [request.id],
@@ -1383,6 +1454,7 @@ export class StoryTurnRuntime {
         ...(source.code ? { code: source.code } : {}),
         sourceId: source.id,
         audienceIds: source.audienceIds,
+        speakerKnownToIds: [...(source.speakerKnownToIds ?? [])],
       },
     ]);
     await c.query(
@@ -1427,19 +1499,36 @@ export class StoryTurnRuntime {
           !matchesTurnFence(live.state, job.context.turnFence) ||
           live.state.turnController.phase !== 'world')) ||
       r.actor_id !== job.npcId ||
-      r.requester_user_id !== job.requesterUserId ||
+      r.requester_user_id !==
+        (job.context.generationPolicy === 'world-batch-v1'
+          ? job.context.worldRequesterId
+          : job.requesterUserId) ||
       r.context.contextHash !== job.contextHash
     ) {
       await this.db.tx((c) => this.ai.finalize(c, job.id, 'stale'));
       return;
     }
-    const applied = applyStoryTurnProposal(
-      live.state,
-      r.actor_id,
-      deferredDirector ? r.context.worldInput : r.input,
-      r.id,
-      job.proposal,
-    );
+    const duplicateReply =
+      job.context.npcRepliesHandled === true &&
+      Array.isArray((job.proposal as { steps?: unknown[] } | null)?.steps) &&
+      (job.proposal as { steps: { reply?: unknown; replyNpcId?: unknown }[] }).steps.some(
+        (step) => step.reply != null || step.replyNpcId != null,
+      );
+    const applied: ReturnType<typeof applyStoryTurnProposal> = duplicateReply
+      ? {
+          state: live.state,
+          events: [],
+          entries: [],
+          actions: [],
+          error: 'INVALID_ACTION' as const,
+        }
+      : applyStoryTurnProposal(
+          live.state,
+          r.actor_id,
+          deferredDirector ? r.context.worldInput : r.input,
+          r.id,
+          job.proposal,
+        );
     const requiresConfirmation =
       !deferredDirector &&
       !applied.error &&
@@ -1622,8 +1711,19 @@ export class StoryTurnRuntime {
         tick: Number(r.tick),
         createdAt: date(r.created_at),
       }));
-      for (const entry of entries)
-        delete (entry as StoryFeedEntry & { sourceId?: string }).sourceId;
+      for (const entry of entries) {
+        const stored = entry as StoryFeedEntry & { sourceId?: string; speakerKnownToIds?: unknown };
+        if (
+          ['speech', 'npc_reply'].includes(entry.kind) &&
+          (!Array.isArray(stored.speakerKnownToIds) ||
+            !stored.speakerKnownToIds.includes(a.actorId))
+        ) {
+          delete entry.authorId;
+          delete entry.authorLabel;
+        }
+        delete stored.sourceId;
+        delete stored.speakerKnownToIds;
+      }
       const turnIds = new Set(entries.map((e) => e.turnId));
       const view = projectState(live.state, a.actorId);
       const legacy: StoryFeedEntry[] = [];
@@ -1685,8 +1785,7 @@ export class StoryTurnRuntime {
             id: `legacy-narrative-input:${t.id}`,
             ordinal: 0,
             kind: 'speech',
-            authorId: t.actor_id,
-            authorLabel: view.entities.find((e) => e.id === t.actor_id)?.label,
+            // Legacy narrative rows have no immutable speaker-recognition evidence.
             text: t.input_text,
           });
         if (typeof t.result?.narration === 'string' && t.result.narration)

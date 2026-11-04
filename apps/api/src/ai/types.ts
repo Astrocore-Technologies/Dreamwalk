@@ -32,6 +32,8 @@ export interface QueueDecision {
   runtimeRequestId?: string;
   /** Server-side immutable deferred quote binding, rechecked under the request row lock. */
   expectedRuntimeContextDigest?: string;
+  /** Server-only finite batch consent, verified from locked DB records, never a client flag. */
+  acceptedWorldBatchId?: string;
 }
 export type AiJobStatus =
   | 'queued'

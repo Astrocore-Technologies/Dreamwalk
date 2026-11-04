@@ -28,16 +28,43 @@ export const storyMessages = {
     'Recipient unavailable. Choose a visible NPC; a whisper will never become public speech.',
     'Співрозмовник недоступний. Обери видимого NPC; шепіт не стане публічною реплікою.',
   ],
-  chooseWhisper: [
-    'Для шёпота выбери NPC на сцене.',
-    'Select an NPC in the scene to whisper.',
-    'Для шепоту обери NPC на сцені.',
+  legacyWhisper: ['Шёпот · старое сохранение', 'Whisper · old save', 'Шепіт · старе збереження'],
+  legacySpeech: [
+    'Это старое сохранение. Для новой системы NPC нужно отдельно включить пошаговые ходы; автоматического перехода нет. Пока сообщение без собеседника адресуется ведущему, а не всем рядом.',
+    'This is an old save. The new NPC system requires explicitly enabling turn-based play; saves are not switched automatically. For now, a message without a recipient goes to the director, not everyone nearby.',
+    'Це старе збереження. Для нової системи NPC потрібно окремо ввімкнути покрокові ходи; автоматичного переходу немає. Поки повідомлення без співрозмовника адресоване ведучому, а не всім поруч.',
+  ],
+  legacyChooseWhisper: [
+    'В старом сохранении шёпот без собеседника недоступен. Для речи ко всем рядом нужно явно включить пошаговые ходы.',
+    'Whispering without a recipient is unavailable in this old save. Speech to everyone nearby requires explicitly enabling turn-based play.',
+    'У старому збереженні шепіт без співрозмовника недоступний. Для мови до всіх поруч потрібно явно ввімкнути покрокові ходи.',
+  ],
+  nearbyWhisper: ['Шёпот рядом', 'Nearby whisper', 'Шепіт поруч'],
+  areaSpeech: [
+    'Собеседник необязателен: обычную речь слышно в пределах 3 клеток, речь с ! — 6, шёпот — 1. Стены и закрытые двери мешают слышимости.',
+    'A recipient is optional: normal speech reaches 3 cells, speech with ! reaches 6, and whispers reach 1. Walls and closed doors block hearing.',
+    'Співрозмовник необов’язковий: звичайну мову чути в межах 3 клітинок, мову з ! — 6, шепіт — 1. Стіни й зачинені двері заважають чутності.',
+  ],
+  areaWhisper: [
+    'Шёпот без выбранного собеседника услышат только те, кто рядом: до 1 клетки с учётом препятствий.',
+    'Without a selected recipient, only nearby listeners can hear your whisper: within 1 cell, subject to obstacles.',
+    'Шепіт без обраного співрозмовника почують лише ті, хто поруч: до 1 клітинки з урахуванням перешкод.',
   ],
   send: ['Отправить', 'Send', 'Надіслати'],
   confirm: ['Подтвердить ход', 'Confirm turn', 'Підтвердити хід'],
   dismiss: ['Отмена', 'Cancel', 'Скасувати'],
   estimatedCost: ['Примерно {amount} Искр', 'About {amount} Sparks', 'Приблизно {amount} Іскор'],
   freeTurn: ['Искры не списываются', 'No Sparks charge', 'Іскри не списуються'],
+  worldBatchPosting: [
+    'Сообщение фиксирует твои слова и проверенные действия без платы за генерацию. После завершения ходов игроков решения NPC, их ответы и продолжение ведущего оцениваются вместе.',
+    'Posting records your speech and validated actions without a generation charge. After players end their turns, NPC decisions, replies and the director’s continuation are estimated together.',
+    'Повідомлення фіксує твої слова й перевірені дії без плати за генерацію. Після завершення ходів гравців рішення NPC, їхні відповіді та продовження ведучого оцінюються разом.',
+  ],
+  worldBatchCost: [
+    'За отправку Искры не списываются. Ответы мира ждут завершения ходов игроков и отдельного подтверждения общей стоимости.',
+    'Posting costs no Sparks. World responses wait for players to end their turns and for approval of the combined cost.',
+    'За надсилання Іскри не списуються. Відповіді світу чекають завершення ходів гравців і окремого підтвердження загальної вартості.',
+  ],
   worldMembersError: [
     'Не удалось проверить участников и владельца кампании. Повторяем проверку; подтверждение генерации пока недоступно.',
     'Could not verify the campaign members and owner. Retrying; generation confirmation is unavailable until verification succeeds.',
@@ -74,9 +101,9 @@ export const storyMessages = {
     'Хід світу ще очікує обробки. Зараз немає доступного кошторису для підтвердження; це не підтверджує запуск AI.',
   ],
   worldEstimate: [
-    'Мир готовит следующий ход. Подтверди стоимость дополнительных ответов.',
-    'The world is preparing its next turn. Review the cost of additional responses.',
-    'Світ готує наступний хід. Підтвердь вартість додаткових відповідей.',
+    'Мир готовит следующий ход. Проверь общую стоимость ожидающих решений NPC, ответов и продолжения ведущего.',
+    'The world is preparing its next turn. Review the combined cost of pending NPC decisions, replies and the director’s continuation.',
+    'Світ готує наступний хід. Перевір загальну вартість очікуваних рішень NPC, відповідей і продовження ведучого.',
   ],
   estimateWorld: ['Узнать стоимость', 'Estimate cost', 'Дізнатися вартість'],
   worldPending: [

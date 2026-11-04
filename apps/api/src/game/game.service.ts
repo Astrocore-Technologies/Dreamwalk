@@ -1,3 +1,4 @@
+import { stampNpcThoughtAudience, projectNpcInnerThought } from './npc-thought-access';
 import {
   campaignDirectorUpdateSchema,
   directorProfileIdSchema,
@@ -49,8 +50,11 @@ import {
   markTurnSpeechResolved,
   finishWorldPhase,
   applyWorldTurnAction,
+  admitWorldTurnActors,
+  worldTurnCompanionContinuation,
   companionAction,
   stepWorldNpcPlan,
+  npcConditionsMet,
   turnFence,
   matchesTurnFence,
   createStateFromPlayable,
@@ -88,9 +92,11 @@ import {
   admittedNpcSpeechObservationId,
   npcReplyObservation,
   commitNpcPublicUtterance,
-  canNpcHear,
+  npcSpeechListenerIds,
+  npcSpeechProspectiveListenerIds,
   npcContextFingerprint,
   recordNpcEvents,
+  recordNpcCognition,
   respondNpcObligation,
   resolveNpcFactTopic,
   createMockNpcPublicResponse,
@@ -101,7 +107,7 @@ import {
 import { Db } from '../db';
 import { NpcAiService } from '../ai/npc-ai.service';
 import { packNpcContext } from './npc-context-budget';
-import type { ReadyDecision, AiPurpose } from '../ai/types';
+import type { ReadyDecision, AiPurpose, DecisionContext } from '../ai/types';
 import { insertNpcRequest, type NpcDecisionRequest } from './npc-requests';
 import { archiveNpcEpisodes, recallNpcEpisodes } from './npc-memory';
 import { Auth } from '../auth';
@@ -258,7 +264,11 @@ export class GameService implements OnModuleDestroy {
       persist: (id, live, state, kind, extra, preflight) =>
         this.persist(id, live as Live, state, kind, undefined, extra, undefined, preflight),
       dispatch: (id) => this.dispatchAi(id),
+      failWorldRequest: (id, requestId, code) =>
+        this.worldGeneration.failUnspent(id, requestId, code),
       deferredSpeechContext: (state, request) => this.deferredSpeechContext(state, request),
+      prepareAreaTurnSpeech: (state, actorId, speech, userId, identity, targetNpcId) =>
+        this.prepareAreaTurnSpeech(state, actorId, speech, userId, identity, targetNpcId),
       prepareTurnSpeech: (state, actorId, npcId, speech, requestId, userId, identity) =>
         this.prepareTurnSpeech(state, actorId, npcId, speech, requestId, userId, identity),
     });
@@ -479,6 +489,26 @@ export class GameService implements OnModuleDestroy {
   storyQuote(req: Request, id: string, body: unknown) {
     return this.story.quote(req, id, body);
   }
+  npcInnerThought(req: Request, id: string, npcId: string) {
+    z.string()
+      .min(1)
+      .max(100)
+      .regex(/^[\w-]+$/)
+      .refine((value) => !(value in Object.prototype))
+      .parse(npcId);
+    return this.serial(id, async () => {
+      const access = await this.access(req, id),
+        live = await this.load(id);
+      const authored = await this.db.query(
+        `SELECT 1 FROM game_campaigns c
+         LEFT JOIN game_playable_versions v ON v.id=c.source_version_id
+         LEFT JOIN adventures a ON a.id=v.adventure_id
+         WHERE c.id=$1 AND ((c.source_version_id IS NULL AND c.owner_id=$2) OR a.owner_id=$2)`,
+        [id, access.user.id],
+      );
+      return projectNpcInnerThought(live.state, access.actorId, npcId, authored.length > 0);
+    });
+  }
   worldGenerationStatus(req: Request, id: string) {
     return this.serial(id, async () => {
       const a = await this.access(req, id),
@@ -490,6 +520,7 @@ export class GameService implements OnModuleDestroy {
     return this.serial(id, async () => {
       const a = await this.access(req, id),
         live = await this.load(id);
+      await this.scheduleRoundRequests(id, live);
       return this.worldGeneration.quote(a.user.id, id, live.state, body);
     });
   }
@@ -1238,14 +1269,7 @@ export class GameService implements OnModuleDestroy {
       recipient.encounterId
     )
       fail(409, 'OUT_OF_RANGE', 'OUT_OF_RANGE');
-    const audience = deferred
-      ? deferred.audienceIds
-      : channel === 'whisper'
-        ? [recipientId, npcId]
-        : Object.values(state.entities)
-            .filter((e) => ['npc', 'player'].includes(e.kind) && canNpcHear(state, e, npc))
-            .map((e) => e.id)
-            .sort();
+    const audience = npcSpeechProspectiveListenerIds(state, npcId, channel);
     const namedTopic = topicId ? resolveNpcFactTopic(state, npcId, topicId) : [];
     if (
       topicId &&
@@ -1344,6 +1368,7 @@ export class GameService implements OnModuleDestroy {
   ) {
     let next = state,
       accepted = false;
+    let cognitionCommitted = false;
     let intentOutcome:
       | {
           id: string;
@@ -1500,39 +1525,68 @@ export class GameService implements OnModuleDestroy {
         } catch {
           /* No longer nearby/in same phase: stale, never broadcast. */
         }
-        if (context?.contextHash === job.contextHash) {
-          const result = commitNpcPublicUtterance(state, job.npcId, {
-            ...proposal.data,
-            channel: context.channel,
-            recipientId: context.recipientId,
-            observationIds: context.observationIds,
-            requestedFactIds: context.requestedFactIds,
-            contextHash: context.speechHash,
-            replyToObservationId: request.data.replyToObservationId,
-            replyLocale: request.data.replyLocale,
-            ...(request.data.deferredSpeechId
-              ? { deferredSpeechId: request.data.deferredSpeechId }
-              : {}),
-          });
-          if (!result.error) {
-            next = recordNpcEvents(state, result.state, result.events, 'ai-' + job.id).state;
-            if (state.turnController) {
-              next = structuredClone(next);
-              next.tick++;
-              next.revision++;
+        if (
+          context &&
+          (context.contextHash === job.contextHash ||
+            this.frozenSpeechContext(state, job.npcId, job.context, context))
+        ) {
+          const keepPrivateCognition =
+            !!memory.cognition &&
+            (!memory.cognition.sourceObservationId ||
+              (!!state.turnController &&
+                memory.cognition.roundId === state.turnController.roundId));
+          if ('silent' in proposal.data && proposal.data.silent) {
+            accepted = job.context.responseOptional === true;
+            if (accepted && proposal.data.cognition && !keepPrivateCognition) {
+              const thought = recordNpcCognition(state, job.npcId, proposal.data.cognition, {
+                knowledgeRevision: memory.knowledgeRevision,
+                turnFence: turnFence(state) ?? undefined,
+                sourceObservationId: request.data.replyToObservationId,
+              });
+              if (!thought.error) {
+                next = thought.state;
+                cognitionCommitted = true;
+              }
             }
-            accepted = true;
+          } else {
+            const result = commitNpcPublicUtterance(state, job.npcId, {
+              ...proposal.data,
+              ...(keepPrivateCognition ? { cognition: undefined } : {}),
+              channel: context.channel,
+              recipientId: context.recipientId,
+              observationIds: context.observationIds,
+              requestedFactIds: context.requestedFactIds,
+              contextHash: context.speechHash,
+              replyToObservationId: request.data.replyToObservationId,
+              replyLocale: request.data.replyLocale,
+              ...(request.data.deferredSpeechId
+                ? { deferredSpeechId: request.data.deferredSpeechId }
+                : {}),
+            });
+            if (!result.error) {
+              cognitionCommitted =
+                'cognition' in proposal.data && !!proposal.data.cognition && !keepPrivateCognition;
+              next = recordNpcEvents(state, result.state, result.events, 'ai-' + job.id).state;
+              if (state.turnController) {
+                next = structuredClone(next);
+                next.tick++;
+                next.revision++;
+              }
+              accepted = true;
+            }
           }
         }
       }
     } else if (
       memory &&
-      (await this.decisionContext(id, state, job.npcId, job.purpose)).contextHash ===
-        job.contextHash
+      (this.frozenRoundContext(state, job.npcId, job.context) ||
+        (await this.decisionContext(id, state, job.npcId, job.purpose)).contextHash ===
+          job.contextHash)
     ) {
       if (job.purpose === 'plan') {
         const result = acceptNpcPlan(state, job.npcId, job.proposal);
         if (!result.error) {
+          cognitionCommitted = !!(job.proposal as { cognition?: unknown } | null)?.cognition;
           next = recordNpcEvents(state, result.state, result.events, `ai-${job.id}`).state;
           accepted = true;
         }
@@ -1565,6 +1619,8 @@ export class GameService implements OnModuleDestroy {
         }
       }
     }
+    if (accepted && cognitionCommitted)
+      next = stampNpcThoughtAudience(next, job.npcId, job.purpose, job.context);
     if (!accepted)
       recordNpcMetric(job.purpose === 'summary' ? 'summaryRejected' : 'knowledgeRejected');
     if (state.turnController && typeof job.context.deferredSpeechId === 'string') {
@@ -1640,8 +1696,219 @@ export class GameService implements OnModuleDestroy {
     );
     if (!updated.rowCount) fail(409, 'STALE_STATE', 'STALE_STATE');
   }
+  /** Freeze the complete active-scene roster before any world result can commit. */
+  private async scheduleRoundRequests(id: string, live: Live) {
+    let state = live.state;
+    const turn = state.turnController;
+    if (!turn || turn.phase !== 'world') return;
+    const frozenRoster = await this.db.query(
+      'SELECT 1 FROM game_world_round_rosters WHERE campaign_id=$1 AND round_id=$2',
+      [id, turn.roundId],
+    );
+    if (frozenRoster.length) return;
+    const maps = new Set(turn.actorOrder.map((actor) => state.entities[actor]?.mapId));
+    const roster = Object.entries(state.npcBrains ?? {})
+      .filter(([npcId, brain]) => {
+        const npc = state.entities[npcId];
+        return (
+          !!brain.living &&
+          npc?.kind === 'npc' &&
+          !npc.encounterId &&
+          (npc.vitality === undefined || npc.vitality > 0) &&
+          (maps.has(npc.mapId) || !!worldTurnCompanionContinuation(state, npcId))
+        );
+      })
+      .sort(([a], [b]) => a.localeCompare(b));
+    const admitted = admitWorldTurnActors(
+      state,
+      roster.map(([npcId]) => npcId),
+      turnFence(state)!,
+    );
+    if (admitted.error) fail(409, admitted.error, admitted.error);
+    state = admitted.state;
+    await this.story.prepareWorldRequests(id, { ...live, state });
+    const existing = await this.db.query(
+      "SELECT npc_id,purpose,cause_key,context FROM game_npc_decision_requests WHERE campaign_id=$1 AND (context->'turnFence'->>'roundId'=$2 OR cause_key LIKE $3)",
+      [id, turn.roundId, `round:${turn.roundId}:%`],
+    );
+    const requests: NpcDecisionRequest[] = [];
+    const continuing: string[] = [];
+    const offmapCompanions = new Set<string>();
+    for (const [npcId, brain] of roster) {
+      if (existing.some((r) => r.npc_id === npcId && r.purpose === 'plan')) continue;
+      const npc = state.entities[npcId];
+      const causeKey = `round:${turn.roundId}:${npcId}`;
+      if (!maps.has(npc.mapId)) {
+        const action = worldTurnCompanionContinuation(state, npcId);
+        if (!action) continue;
+        const requestId = randomUUID();
+        requests.push({
+          id: requestId,
+          npcId,
+          purpose: 'plan',
+          causeKey,
+          context: {
+            contextHash: digest({ roundId: turn.roundId, npcId, action }),
+            turnFence: turnFence(state),
+            offmapCompanionContinuation: true,
+          },
+        });
+        continuing.push(requestId);
+        offmapCompanions.add(npcId);
+        continue;
+      }
+      const context = await this.decisionContext(id, state, npcId, 'plan');
+      const urgent = brain.living!.causes.some(
+        (cause) => cause.priority >= 2 && cause.notBeforeTick <= state.tick,
+      );
+      const memory = brain.living!;
+      const prior = memory.cognition;
+      const outcome = memory.lastActionOutcome;
+      const pendingPlan =
+        brain.cursor < brain.plan.length &&
+        (!brain.planMapId || brain.planMapId === npc.mapId) &&
+        (brain.movementGeneration === undefined ||
+          brain.movementGeneration === (npc.movementGeneration ?? 0));
+      const source =
+        brain.planSource &&
+        memory.observations.find(
+          (observation) => observation.id === brain.planSource!.sourceObservationId,
+        );
+      const newCommitment = (tick: number) =>
+        (!outcome || tick >= outcome.tick) && (!prior || tick >= prior.tick);
+      const obligation = memory.obligations.find(
+        (item) =>
+          item.status === 'accepted' &&
+          item.dueTick > state.tick &&
+          npcConditionsMet(state, npcId, item.conditions ?? [], item.toActorId, item.createdTick) &&
+          newCommitment(item.acceptedTick ?? item.createdTick),
+      );
+      const firstKey =
+        pendingPlan && ((!prior && !outcome) || (!!source && newCommitment(source.tick)))
+          ? `plan:${brain.generation}:${brain.planSource?.sourceObservationId ?? 'existing'}`
+          : obligation
+            ? `obligation:${obligation.id}:${obligation.acceptedTick ?? obligation.createdTick}`
+            : undefined;
+      // A persisted identity, rather than wall-clock/game ticks, gives each new
+      // commitment one opportunity. Same-tick later rounds cannot renew this lease.
+      const firstOpportunity = !!firstKey && memory.continuationOpportunity?.key !== firstKey;
+      const continuation =
+        !urgent &&
+        (firstOpportunity ||
+          (outcome?.status !== 'blocked' &&
+            !!prior &&
+            prior.roundNumber !== undefined &&
+            turn.roundNumber < prior.roundNumber + prior.reconsiderAfterRounds &&
+            prior.knowledgeRevision === memory.knowledgeRevision &&
+            (pendingPlan || !!npc.path?.length || !!memory.companionship)));
+      if (continuation && firstOpportunity)
+        state.npcBrains![npcId].living!.continuationOpportunity = {
+          key: firstKey!,
+          roundId: turn.roundId,
+        };
+      const requestId = randomUUID();
+      requests.push({
+        id: requestId,
+        npcId,
+        purpose: 'plan',
+        causeKey,
+        context: {
+          ...context,
+          worldRoundDecision: {
+            ...turnFence(state),
+            npcId,
+            entityRevision: npc.revision,
+            brainGeneration: brain.generation,
+            mapId: npc.mapId,
+            mapRevision: state.maps[npc.mapId].revision,
+          },
+          mockProposal: createMockNpcPlan(state, npcId),
+        },
+      });
+      if (continuation) continuing.push(requestId);
+    }
+    await this.persist(id, live, state, 'npc.round.considered', undefined, async (c) => {
+      await c.query(
+        'INSERT INTO game_world_round_rosters(campaign_id,round_id,turn_fence,roster) VALUES($1,$2,$3,$4)',
+        [
+          id,
+          turn.roundId,
+          JSON.stringify(turnFence(state)),
+          JSON.stringify(
+            roster.map(([npcId]) => ({
+              npcId,
+              consideration: offmapCompanions.has(npcId)
+                ? 'companion'
+                : requests.some((r) => r.npcId === npcId && continuing.includes(r.id))
+                  ? 'continue'
+                  : 'plan',
+            })),
+          ),
+        ],
+      );
+      for (const request of requests) await insertNpcRequest(c, id, request);
+      // Continuing an already admitted intention is a durable, free consideration.
+      if (continuing.length)
+        await c.query(
+          "UPDATE game_npc_decision_requests SET status='fallback',result_code='ROUND_CONTINUE' WHERE id=ANY($1::uuid[]) AND status='queued'",
+          [continuing],
+        );
+    });
+    await this.worldGeneration.stopUnspentForUnknown(id);
+    live.decisionsPending = true;
+  }
+  private frozenRoundContext(state: GameState, npcId: string, context: DecisionContext) {
+    const frozen = context.worldRoundDecision as Record<string, unknown> | undefined;
+    const npc = state.entities[npcId],
+      brain = state.npcBrains?.[npcId];
+    return (
+      !!frozen &&
+      state.turnController?.phase === 'world' &&
+      matchesTurnFence(state, context.turnFence) &&
+      matchesTurnFence(state, {
+        roundId: frozen.roundId,
+        phaseEpoch: frozen.phaseEpoch,
+        rulesetVersion: frozen.rulesetVersion,
+      }) &&
+      frozen.npcId === npcId &&
+      !!npc &&
+      !!brain &&
+      !npc.encounterId &&
+      frozen.entityRevision === npc.revision &&
+      frozen.brainGeneration === brain.generation &&
+      frozen.mapId === npc.mapId &&
+      frozen.mapRevision === state.maps[npc.mapId]?.revision
+    );
+  }
+  private frozenSpeechContext(
+    state: GameState,
+    npcId: string,
+    frozen: DecisionContext,
+    current: DecisionContext,
+  ) {
+    if (
+      frozen.generationPolicy !== 'world-batch-v1' ||
+      !frozen.worldPrepared ||
+      !matchesTurnFence(state, frozen.turnFence) ||
+      state.turnController?.phase !== 'world'
+    )
+      return false;
+    // The public response saw only these audience-authorized claims. Revalidate
+    // them and current audience; core independently checks every action/item intent.
+    // New unrelated observations/other NPC decisions cannot rewrite the paid body.
+    return (
+      frozen.npcId === npcId &&
+      current.npcId === npcId &&
+      digest(frozen.claims) === digest(current.claims) &&
+      digest(frozen.audienceIds) === digest(current.audienceIds) &&
+      frozen.recipientId === current.recipientId &&
+      frozen.channel === current.channel &&
+      digest(frozen.publicIdentity ?? null) === digest(current.publicIdentity ?? null) &&
+      digest(frozen.requestedFactIds ?? []) === digest(current.requestedFactIds ?? [])
+    );
+  }
   private async scheduleAutonomousRequests(id: string, live: Live) {
-    if (live.state.turnController && live.state.turnController.phase !== 'world') return;
+    if (live.state.turnController) return this.scheduleRoundRequests(id, live);
     if (
       !Object.values(live.state.npcBrains ?? {}).some((b) =>
         b.living?.causes.some((c) => c.priority >= 2 && c.notBeforeTick <= live.state.tick),
@@ -1747,10 +2014,23 @@ export class GameService implements OnModuleDestroy {
     if (live.state.turnController && live.state.turnController.phase !== 'world') return;
     await this.reconcileIntents(id, live.state.tick);
     const requests = await this.db.query(
-      "SELECT * FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' ORDER BY CASE WHEN context ? 'turnOrder' THEN (context->>'turnOrder')::bigint ELSE 9223372036854775807 END,created_at,id LIMIT 8",
+      "SELECT * FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' ORDER BY CASE WHEN purpose='plan' AND context ? 'worldRoundDecision' THEN 0 WHEN purpose='story_turn' AND context->>'generationPolicy'='world-batch-v1' THEN 1 ELSE 2 END,CASE WHEN context ? 'turnOrder' THEN (context->>'turnOrder')::bigint ELSE 9223372036854775807 END,created_at,id LIMIT 8",
       [id],
     );
     for (let r of requests) {
+      if (r.purpose === 'speech' && r.context.deferredSpeechId) {
+        // Preserve the player's chronological conversation across different NPCs.
+        // A queued reply must not overtake an earlier scheduled/busy reply merely
+        // because the later NPC has a free provider slot. Terminal refs drain in
+        // advanceTurnWorld; private NPC planning remains independently eligible.
+        const first = live.state.turnController?.deferredSpeech.reduce<
+          { id: string; sequence: number } | undefined
+        >(
+          (earliest, entry) => (!earliest || entry.sequence < earliest.sequence ? entry : earliest),
+          undefined,
+        );
+        if (first && first.id !== r.context.deferredSpeechId) continue;
+      }
       const allowed = r.requester_user_id
         ? await this.db.query(
             `SELECT c.id FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id JOIN users u ON u.id=m.user_id WHERE c.id=$1 AND m.user_id=$2 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('$2')}`,
@@ -1792,9 +2072,22 @@ export class GameService implements OnModuleDestroy {
           ? await this.worldGeneration.quotedWorldRequest(id, r)
           : null;
       const quotedReply = storyReply || worldReply;
+      if (
+        this.ai.releaseGeneration() &&
+        (r.context.worldRoundDecision || r.context.generationPolicy === 'world-batch-v1') &&
+        !quotedReply
+      )
+        continue;
       if (worldReply && (r.purpose === 'plan' || r.purpose === 'summary')) {
         const current = await this.decisionContext(id, live.state, String(r.npc_id), r.purpose);
-        if (current.contextHash !== r.context.contextHash) {
+        if (
+          !this.frozenRoundContext(live.state, String(r.npc_id), r.context) &&
+          current.contextHash !== r.context.contextHash
+        ) {
+          if (r.context.worldRoundDecision) {
+            await this.worldGeneration.failUnspent(id, r.id, 'ROUND_CONTEXT_STALE');
+            continue;
+          }
           await this.worldGeneration.invalidate(id, r.id);
           // An unpaid stale batch never authorizes a new body. Prepare a fresh
           // candidate for a new visible quote, retaining the original paid evidence.
@@ -1829,10 +2122,13 @@ export class GameService implements OnModuleDestroy {
           );
           if (
             quotedReply &&
-            (current.contextHash !== r.context.contextHash ||
+            ((current.contextHash !== r.context.contextHash &&
+              !this.frozenSpeechContext(live.state, String(r.npc_id), r.context, current)) ||
               !matchesTurnFence(live.state, r.context.turnFence))
           ) {
-            if (worldReply) await this.worldGeneration.invalidate(id, r.id);
+            if (worldReply && r.context.generationPolicy === 'world-batch-v1')
+              await this.worldGeneration.failUnspent(id, r.id, 'ROUND_CONTEXT_STALE');
+            else if (worldReply) await this.worldGeneration.invalidate(id, r.id);
             else
               await this.db.query(
                 "UPDATE game_npc_decision_requests SET result_code='GENERATION_QUOTE_STALE' WHERE id=$1 AND status='queued'",
@@ -1876,7 +2172,12 @@ export class GameService implements OnModuleDestroy {
           continue;
         }
       }
-      if (this.ai.contextWindow() && r.purpose === 'speech' && !r.context.historyPolicy) {
+      if (
+        !quotedReply &&
+        this.ai.contextWindow() &&
+        r.purpose === 'speech' &&
+        !r.context.historyPolicy
+      ) {
         const extended = await extendContextHistory(
           this.db,
           this.ai,
@@ -1922,7 +2223,7 @@ export class GameService implements OnModuleDestroy {
         }
       }
       if (r.purpose === 'story_turn') {
-        await this.story.schedule(id, live, r);
+        await this.story.schedule(id, live, r, worldReply);
         continue;
       }
       if (r.purpose === 'narrative') {
@@ -2022,7 +2323,7 @@ export class GameService implements OnModuleDestroy {
       if (busy && busy.status !== 'reconciling') continue;
       const configuration = this.ai.configuration(),
         purpose = r.purpose as AiPurpose;
-      const sponsorId = await this.ai.activeSponsor(id, purpose);
+      const sponsorId = quotedReply ? undefined : await this.ai.activeSponsor(id, purpose);
       const useProvider =
         configuration.enabled &&
         !busy &&
@@ -2090,6 +2391,7 @@ export class GameService implements OnModuleDestroy {
           sponsorId,
           requestKey: `runtime:${r.cause_key}`,
           runtimeRequestId: r.id,
+          ...(worldReply ? { acceptedWorldBatchId: worldReply.batchId } : {}),
           ...(quotedReply
             ? {
                 quoteId: quotedReply.quote.id,
@@ -2109,7 +2411,16 @@ export class GameService implements OnModuleDestroy {
         const message = error instanceof Error ? error.message : '';
         if (message.includes('RATE_LIMITED') || message.includes('NPC_AI_BUSY')) continue;
         if (quotedReply) {
-          if (worldReply) await this.worldGeneration.invalidate(id, r.id);
+          if (
+            worldReply &&
+            (r.context.worldRoundDecision || r.context.generationPolicy === 'world-batch-v1')
+          )
+            await this.worldGeneration.failUnspent(
+              id,
+              r.id,
+              /^[A-Z0-9_]{1,80}$/.test(message) ? message : 'WORLD_ADMISSION_FAILED',
+            );
+          else if (worldReply) await this.worldGeneration.invalidate(id, r.id);
           else
             await this.db.query(
               "UPDATE game_npc_decision_requests SET result_code='GENERATION_QUOTE_STALE' WHERE id=$1 AND status='queued'",
@@ -3211,10 +3522,87 @@ export class GameService implements OnModuleDestroy {
       knowledgeRevision: r.knowledgeRevision,
       deferredSpeechId: r.deferredSpeechId,
       turnOrder: r.turnOrder,
+      ...(r.responseOptional ? { responseOptional: true } : {}),
       ...(r.untrustedRoleplay
         ? { untrustedRoleplay: r.untrustedRoleplay, roleplayPolicy: r.roleplayPolicy }
         : {}),
       mockProposal: createMockNpcPublicResponse(current),
+    };
+  }
+  /** One spoken source, any number of listeners. Contexts freeze later at world entry. */
+  private prepareAreaTurnSpeech(
+    state: GameState,
+    actorId: string,
+    speech: z.infer<typeof npcSpeechSchema>,
+    userId: string,
+    identity: { turnId: string; segmentIndex: number },
+    targetNpcId?: string,
+  ) {
+    const audienceIds = npcSpeechListenerIds(state, actorId, speech);
+    const applied = applyNpcSpeech(state, actorId, targetNpcId, speech, {
+      suppressReply: true,
+      identity,
+    });
+    if (applied.error) fail(409, applied.error, applied.error);
+    let next = recordNpcEvents(
+      state,
+      applied.state,
+      applied.events,
+      `turn:${identity.turnId}:${identity.segmentIndex}`,
+    ).state;
+    const requests: NpcDecisionRequest[] = [];
+    for (const npcId of audienceIds.filter(
+      (id) => next.entities[id]?.kind === 'npc' && next.npcBrains?.[id]?.living,
+    )) {
+      const marker = admittedNpcSpeechObservationId(next, actorId, npcId, speech, identity);
+      if (!marker) continue; // E.g. an encounter participant could not admit this utterance.
+      const hash = digest({ ...identity, npcId });
+      const requestId = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
+      const queued = queueTurnSpeech(
+        next,
+        actorId,
+        {
+          id: requestId,
+          recipientId: npcId,
+          utteranceId: marker,
+          channel: speech.channel,
+          audienceIds,
+        },
+        turnFence(next)!,
+      );
+      if (queued.error) fail(409, queued.error, queued.error);
+      next = queued.state;
+      const ref = next.turnController!.deferredSpeech.find((item) => item.id === requestId)!;
+      requests.push({
+        id: requestId,
+        npcId,
+        purpose: 'speech',
+        causeKey: `turn-dialogue:${requestId}`,
+        requesterUserId: userId,
+        recipientActorId: actorId,
+        context: {
+          contextHash: digest({ requestId, marker }),
+          channel: speech.channel,
+          recipientId: actorId,
+          replyLocale: speech.replyLocale,
+          replyToObservationId: marker,
+          storyTurnId: identity.turnId,
+          segmentIndex: identity.segmentIndex,
+          deferredSpeechId: requestId,
+          turnOrder: ref.sequence,
+          responseOptional: npcId !== targetNpcId,
+          knowledgeRevision: next.npcBrains![npcId].living!.knowledgeRevision,
+        },
+      });
+    }
+    return {
+      state: next,
+      requests,
+      audienceIds,
+      sourceId: next.npcUtterances?.find(
+        (item) =>
+          item.speakerId === actorId && !state.npcUtterances?.some((old) => old.id === item.id),
+      )?.id,
     };
   }
   private prepareTurnSpeech(
@@ -3319,12 +3707,14 @@ export class GameService implements OnModuleDestroy {
     if (!turn || turn.phase !== 'world') return;
     await this.reconcileWorldOrphans(id);
     if (live.aiPending) await this.processAi(id, live);
-    await this.processDecisionRequests(id, live);
     await this.scheduleAutonomousRequests(id, live);
+    await this.processDecisionRequests(id, live);
     // Unknown provider liability remains in its ledger. It does not strand the game phase.
     await this.db.query(
       `UPDATE game_npc_decision_requests r SET status='failed',result_code='PROVIDER_OUTCOME_UNKNOWN'
-      FROM npc_ai_jobs j WHERE r.campaign_id=$1 AND r.job_id=j.id AND r.status='scheduled' AND j.status='reconciling'`,
+      FROM npc_ai_jobs j WHERE r.campaign_id=$1 AND j.campaign_id=r.campaign_id
+      AND (r.job_id=j.id OR j.operation_id=r.id OR j.request_meta->>'runtimeRequestId'=r.id::text)
+      AND r.status IN ('queued','scheduled') AND j.status='reconciling'`,
       [id],
     );
     const refs = live.state.turnController!.deferredSpeech;
@@ -3349,21 +3739,39 @@ export class GameService implements OnModuleDestroy {
     if (work.length || live.state.turnController!.deferredSpeech.length) return;
     // Every NPC gets the existing bounded local policy opportunity. This is pure
     // deterministic work, not another model request or a compulsory spoken reply.
-    const routine = stepLivingNpcs(live.state);
+    const roundRoster = (
+      await this.db.query(
+        'SELECT roster FROM game_world_round_rosters WHERE campaign_id=$1 AND round_id=$2',
+        [id, live.state.turnController!.roundId],
+      )
+    )[0]?.roster as { npcId: string; consideration: string }[] | undefined;
+    const routine = stepLivingNpcs(live.state, {
+      deferredNpcIds: roundRoster
+        ? Object.keys(live.state.npcBrains ?? {}).filter(
+            (npcId) =>
+              !roundRoster.some(
+                (entry) => entry.npcId === npcId && entry.consideration === 'continue',
+              ),
+          )
+        : undefined,
+    });
     let state = recordNpcEvents(
       live.state,
       routine.state,
       routine.events,
       `world:${live.state.turnController!.roundId}:routine`,
     ).state;
-    for (const npcId of Object.keys(state.npcBrains ?? {}).sort()) {
+    for (const npcId of (
+      roundRoster?.map((entry) => entry.npcId) ?? Object.keys(state.npcBrains ?? {})
+    ).sort()) {
       const brain = state.npcBrains![npcId];
       const companion =
-        brain.cursor >= brain.plan.length ? companionAction(state, npcId) : undefined;
+        worldTurnCompanionContinuation(state, npcId) ??
+        (brain.cursor >= brain.plan.length ? companionAction(state, npcId) : undefined);
       const applied = companion
         ? applyWorldTurnAction(state, npcId, companion, turnFence(state)!)
         : stepWorldNpcPlan(state, npcId);
-      if (!applied.error)
+      if (!applied.error || applied.error === 'PATH_BLOCKED' || applied.error === 'ROUND_LOCKED')
         state = recordNpcEvents(
           state,
           applied.state,
