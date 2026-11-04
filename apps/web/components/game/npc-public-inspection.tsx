@@ -3,12 +3,15 @@ import { useEffect, useId, useRef } from 'react';
 import { MessageCircle, X } from 'lucide-react';
 import { useT } from '@/lib/i18n';
 import { Button } from '@/components/ui';
+import { NpcThoughtReader } from './npc-thought-reader';
 import { useTurnText } from './turn-messages';
 import styles from './npc-public-inspection.module.css';
 
 /** Only the current recipient-safe public projection and authorized portrait enter this card. */
 export function NpcPublicInspection({
   npcId,
+  campaignId,
+  canReadThoughts,
   name,
   role,
   description,
@@ -19,6 +22,8 @@ export function NpcPublicInspection({
   onTalk,
 }: {
   npcId: string;
+  campaignId: string;
+  canReadThoughts: boolean;
   name: string;
   role?: string;
   description: string;
@@ -100,6 +105,9 @@ export function NpcPublicInspection({
           <MessageCircle size={20} aria-hidden="true" />
           {text('talk')}
         </Button>
+        {canReadThoughts && (
+          <NpcThoughtReader key={`${campaignId}:${npcId}`} campaignId={campaignId} npcId={npcId} />
+        )}
       </div>
     </section>
   );

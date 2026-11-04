@@ -1,3 +1,4 @@
+import { captureWorldQuoteRoster } from '../ai/runtime-map-preflight';
 import { aggregateFunding, optionalFunding } from '../generation/currency-funding';
 import { totalQuotedSparkSubunits, commonQuotedSparkRate } from '../generation/sparks-quote-total';
 import { randomUUID } from 'node:crypto';
@@ -71,21 +72,35 @@ export class WorldGenerationBatch {
       await c.query(
         `SELECT r.* FROM game_npc_decision_requests r
       WHERE r.campaign_id=$1 AND r.status='queued' AND r.job_id IS NULL
-      AND (r.requester_user_id IS NULL OR r.requester_user_id=$2)
-      AND r.purpose IN ('plan','summary','speech') AND NOT(r.context ? 'storyTurnId')
+      AND (r.requester_user_id IS NULL OR r.requester_user_id=$2 OR r.context->>'generationPolicy'='world-batch-v1')
+      AND r.purpose IN ('plan','summary','speech','story_turn')
+      AND (NOT(r.context ? 'storyTurnId') OR r.context->>'generationPolicy'='world-batch-v1')
       AND NOT EXISTS(SELECT 1 FROM live_test_text_permits p WHERE p.request_id=r.id)
       AND NOT EXISTS(SELECT 1 FROM npc_ai_jobs j WHERE j.id=r.job_id OR j.operation_id=r.id OR j.request_meta->>'runtimeRequestId'=r.id::text)
       AND NOT EXISTS(SELECT 1 FROM generation_budget_reservations br WHERE br.operation_key='manual-text:'||r.id::text)
       AND NOT EXISTS(SELECT 1 FROM spark_holds h WHERE h.source_id=r.id::text)
+      AND NOT EXISTS(SELECT 1 FROM game_world_generation_batches accepted WHERE accepted.campaign_id=$1
+        AND accepted.accepted_at IS NOT NULL
+        AND (r.context ? 'worldRoundDecision' OR r.context->>'generationPolicy'='world-batch-v1')
+        AND accepted.entries @> jsonb_build_array(jsonb_build_object('requestId',r.id::text)))
       AND NOT EXISTS(SELECT 1 FROM game_world_generation_batches b WHERE b.campaign_id=$1 AND b.state='accepted'
         AND b.expires_at>now() AND b.turn_fence=$3::jsonb AND b.entries @> jsonb_build_array(jsonb_build_object('requestId',r.id::text)))
-      ORDER BY r.created_at,r.id LIMIT 16 ${lockRows ? 'FOR UPDATE OF r' : ''}`,
+      ORDER BY CASE WHEN r.purpose='story_turn' THEN 0 WHEN r.purpose='speech' THEN 1 ELSE 2 END,r.created_at,r.id ${lockRows ? 'FOR UPDATE OF r' : ''}`,
         [campaignId, userId, JSON.stringify(turnFence(state))],
       )
     ).rows;
-    return rows.filter(
-      (r) => matchesTurnFence(state, r.context.turnFence) && !r.context.budgetExceeded,
-    );
+    // A quote is the entire round, never a silent subset with missing oversized bodies.
+    if (rows.some((r) => r.context.budgetExceeded))
+      fail(413, 'CONTEXT_BUDGET_EXCEEDED', 'CONTEXT_BUDGET_EXCEEDED');
+    if (
+      rows.some(
+        (r) =>
+          (r.context.worldRoundDecision || r.context.generationPolicy === 'world-batch-v1') &&
+          !matchesTurnFence(state, r.context.turnFence),
+      )
+    )
+      fail(409, 'GENERATION_QUOTE_STALE', 'GENERATION_QUOTE_STALE');
+    return rows.filter((r) => matchesTurnFence(state, r.context.turnFence));
   }
   private async progress(c: PoolClient, campaignId: string) {
     const rows = (
@@ -110,18 +125,25 @@ export class WorldGenerationBatch {
   private async expire(c: PoolClient, campaignId: string, state: GameState) {
     const rows = (
       await c.query(
-        "SELECT id,turn_fence,expires_at FROM game_world_generation_batches WHERE campaign_id=$1 AND state='accepted' FOR UPDATE",
+        "SELECT id,turn_fence,expires_at,entries FROM game_world_generation_batches WHERE campaign_id=$1 AND state='accepted' FOR UPDATE",
         [campaignId],
       )
     ).rows;
     for (const row of rows)
-      if (
-        !matchesTurnFence(state, row.turn_fence) ||
-        new Date(row.expires_at).getTime() <= Date.now()
-      )
+      if (!matchesTurnFence(state, row.turn_fence)) {
         await c.query("UPDATE game_world_generation_batches SET state='stale' WHERE id=$1", [
           row.id,
         ]);
+        for (const entry of row.entries as Entry[]) {
+          const context = (
+            await c.query('SELECT context FROM game_npc_decision_requests WHERE id=$1', [
+              entry.requestId,
+            ])
+          ).rows[0]?.context;
+          if (context?.worldRoundDecision || context?.generationPolicy === 'world-batch-v1')
+            await this.failUnspent(campaignId, entry.requestId, 'WORLD_QUOTE_STALE', c);
+        }
+      }
   }
   async status(userId: string, campaignId: string, state: GameState) {
     return this.db.tx(async (c) => {
@@ -170,7 +192,6 @@ export class WorldGenerationBatch {
         progress.rows.some(
           (r) =>
             r.state === 'accepted' &&
-            new Date(r.expires_at).getTime() > Date.now() &&
             matchesTurnFence(state, r.turn_fence) &&
             r.request_status === 'queued' &&
             !r.job_id,
@@ -230,19 +251,26 @@ export class WorldGenerationBatch {
       const requests = await this.eligible(c, userId, campaignId, state);
       if (!requests.length) fail(409, 'LIVE_REQUEST_UNAVAILABLE', 'LIVE_REQUEST_UNAVAILABLE');
       const entries: Entry[] = [];
+      const quoteRoster = captureWorldQuoteRoster(c, userId, campaignId, requests);
       for (const r of requests) {
         const quote = await this.ai.quote(
           {
             campaignId,
             npcId: r.npc_id,
             purpose: r.purpose,
-            subjectKind: 'npc',
+            subjectKind: r.purpose === 'story_turn' ? 'player' : 'npc',
             origin: 'user',
             requesterUserId: userId,
           },
           r.context,
           userId,
           c,
+          r.context.worldRoundDecision || r.context.generationPolicy === 'world-batch-v1'
+            ? String(r.id)
+            : undefined,
+          r.context.worldRoundDecision || r.context.generationPolicy === 'world-batch-v1'
+            ? quoteRoster
+            : undefined,
         );
         entries.push({
           requestId: r.id,
@@ -269,6 +297,10 @@ export class WorldGenerationBatch {
         expiresAt = new Date(
           Math.min(...entries.map((e) => Date.parse(e.quote.expiresAt))),
         ).toISOString();
+      // Never publish a dead aggregate after a slow exact-quote pass. Rollback
+      // every native quote together; no consent, job or hold was created.
+      if (Date.parse(expiresAt) <= Date.now())
+        fail(409, 'GENERATION_QUOTE_STALE', 'GENERATION_QUOTE_STALE');
       const quote: StoryQuote = {
         id,
         credits: 0,
@@ -446,7 +478,26 @@ export class WorldGenerationBatch {
       ).rows[0];
       if (!batch) return null;
       const progress = await this.progress(c, campaignId);
-      if (progress.unknown || progress.active) return null;
+      if (progress.unknown) {
+        // Stop unpaid siblings, not the unresolved financial evidence. A player
+        // must not remain trapped in this phase or buy replacement work.
+        for (const unpaid of batch.entries as Entry[]) {
+          const context = (
+            await c.query('SELECT context FROM game_npc_decision_requests WHERE id=$1', [
+              unpaid.requestId,
+            ])
+          ).rows[0]?.context;
+          if (context?.worldRoundDecision || context?.generationPolicy === 'world-batch-v1')
+            await this.failUnspent(
+              campaignId,
+              unpaid.requestId,
+              'WORLD_PROVIDER_OUTCOME_UNKNOWN',
+              c,
+            );
+        }
+        return null;
+      }
+      if (progress.active) return null;
       const request = (
         await c.query(
           'SELECT * FROM game_npc_decision_requests WHERE id=$1 AND campaign_id=$2 FOR UPDATE',
@@ -457,15 +508,18 @@ export class WorldGenerationBatch {
         .rows[0]?.state;
       const entry = (batch.entries as Entry[]).find((e) => e.requestId === callerRequest.id)!;
       if (
-        progress.rows.some(
-          (r) => r.id === batch.id && ['failed', 'stale', 'cancelled'].includes(r.job_status),
-        ) ||
+        (!(
+          request?.context.worldRoundDecision ||
+          request?.context.generationPolicy === 'world-batch-v1'
+        ) &&
+          progress.rows.some(
+            (r) => r.id === batch.id && ['failed', 'stale', 'cancelled'].includes(r.job_status),
+          )) ||
         !request ||
         request.status !== 'queued' ||
         request.job_id ||
         !state ||
         !matchesTurnFence(state, batch.turn_fence) ||
-        new Date(batch.expires_at).getTime() <= Date.now() ||
         digest(request.context) !== entry.contextDigest ||
         digest(callerRequest.context) !== entry.contextDigest ||
         request.requester_user_id !== batch.owner_id
@@ -473,6 +527,15 @@ export class WorldGenerationBatch {
         await c.query("UPDATE game_world_generation_batches SET state='stale' WHERE id=$1", [
           batch.id,
         ]);
+        for (const unpaid of batch.entries as Entry[]) {
+          const candidate = await c.query(
+            'SELECT context FROM game_npc_decision_requests WHERE id=$1',
+            [unpaid.requestId],
+          );
+          const context = candidate.rows[0]?.context;
+          if (context?.worldRoundDecision || context?.generationPolicy === 'world-batch-v1')
+            await this.failUnspent(campaignId, unpaid.requestId, 'WORLD_QUOTE_STALE', c);
+        }
         return null;
       }
       return {
@@ -480,13 +543,41 @@ export class WorldGenerationBatch {
         request: {
           id: request.id,
           npcId: request.npc_id,
-          purpose: request.purpose,
+          purpose: request.purpose as AiPurpose,
+          causeKey: String(request.cause_key),
           context: request.context,
           requesterUserId: batch.owner_id,
         },
         batchId: batch.id,
       };
     });
+  }
+  /** An unresolved prior round must not create a new charge or strand later rounds. */
+  async stopUnspentForUnknown(campaignId: string) {
+    const unknown = await this.db.query(
+      `SELECT 1 FROM npc_ai_jobs j LEFT JOIN spark_holds h ON h.id=j.spark_hold_id
+       WHERE j.campaign_id=$1 AND (j.status='reconciling' OR h.status='pending')
+       UNION ALL SELECT 1 FROM live_test_text_permits WHERE campaign_id=$1 AND state='unknown' LIMIT 1`,
+      [campaignId],
+    );
+    if (!unknown.length) return;
+    const unpaid = await this.db.query(
+      "SELECT id FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' AND (context ? 'worldRoundDecision' OR context->>'generationPolicy'='world-batch-v1')",
+      [campaignId],
+    );
+    for (const request of unpaid)
+      await this.failUnspent(campaignId, request.id, 'WORLD_PROVIDER_OUTCOME_UNKNOWN');
+  }
+  /** Terminalize only a proven-unspent request; never erase a permit, hold or uncertain liability. */
+  async failUnspent(campaignId: string, requestId: string, code: string, client?: PoolClient) {
+    const sql = `UPDATE game_npc_decision_requests r SET status='failed',result_code=$3
+      WHERE r.campaign_id=$1 AND r.id=$2 AND r.status='queued' AND r.job_id IS NULL
+      AND NOT EXISTS(SELECT 1 FROM npc_ai_jobs j WHERE j.operation_id=r.id OR j.request_meta->>'runtimeRequestId'=r.id::text)
+      AND NOT EXISTS(SELECT 1 FROM live_test_text_permits p WHERE p.request_id=r.id)
+      AND NOT EXISTS(SELECT 1 FROM generation_budget_reservations b WHERE b.operation_key='manual-text:'||r.id::text)
+      AND NOT EXISTS(SELECT 1 FROM spark_holds h WHERE h.source_id=r.id::text)`;
+    if (client) await client.query(sql, [campaignId, requestId, code]);
+    else await this.db.query(sql, [campaignId, requestId, code]);
   }
   async invalidate(campaignId: string, requestId: string) {
     await this.db.query(

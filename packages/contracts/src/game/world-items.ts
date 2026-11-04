@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { npcCognitionSchema } from './living';
 const id = z
   .string()
   .min(1)
@@ -94,9 +95,11 @@ export const npcActionIntentSchema = z
   .strict();
 export type NpcActionIntent = z.infer<typeof npcActionIntentSchema>;
 export const npcPublicReplySchema = z.union([
+  z.object({ silent: z.literal(true), cognition: npcCognitionSchema.optional() }).strict(),
   z
     .object({
       text: z.string().trim().min(1).max(1000),
+      cognition: npcCognitionSchema.optional(),
       itemIntents: npcItemIntentsSchema.optional(),
       companionIntent: npcCompanionIntentSchema.optional(),
       actionIntent: npcActionIntentSchema.optional(),

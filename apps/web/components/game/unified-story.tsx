@@ -588,7 +588,11 @@ export function UnifiedStory({
               {h('hint')}
             </p>
             <div className={styles.composerFeedback}>
-              <RuntimeMapQuoteNotice />
+              {projection.turn ? (
+                <small data-testid="world-batch-posting">{h('worldBatchPosting')}</small>
+              ) : (
+                <RuntimeMapQuoteNotice />
+              )}
               <ErrorBox message={error} />
               {notice && (
                 <p className={styles.status} role="status">

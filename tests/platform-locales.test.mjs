@@ -148,6 +148,9 @@ test('visible Cyrillic and Latin JSX copy is localized except explicit invariant
     'RU',
     'UK',
     'EN',
+    // Engine coordinate axes are the same mathematical notation in every locale.
+    'x/y',
+    'x → · y ↓',
   ]);
   // These examples are machine identifiers, not a sentence or instruction to the user.
   const invariantExamples = new Set(['wanderer', 'you@example.com', 'handle']);

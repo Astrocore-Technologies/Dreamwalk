@@ -5,6 +5,7 @@ const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const g = require('../../packages/game-core/dist');
 const { OpenAiNpcProvider, openAiOutputSchema } = require('../../apps/api/dist/ai/openai-provider');
+const { GameService } = require('../../apps/api/dist/game/game.service');
 const { StoryTurnRuntime } = require('../../apps/api/dist/game/story-turn-runtime');
 test('actual turn-post route materializes and speaks as a professor with one synthetic model dispatch', async () => {
   const draft = g.createCompleteObservatoryDraft();
@@ -21,6 +22,9 @@ test('actual turn-post route materializes and speaks as a professor with one syn
   };
   const turnId = randomUUID(),
     runtime = Object.create(StoryTurnRuntime.prototype);
+  runtime.port = {
+    prepareAreaTurnSpeech: (...args) => GameService.prototype.prepareAreaTurnSpeech(...args),
+  };
   const post = runtime.simulateTurnPost(state, 'alice', input, turnId, 'synthetic-owner');
   assert.equal(post.requests.length, 0);
   assert.equal(post.untrustedRoleplay.length, 1);

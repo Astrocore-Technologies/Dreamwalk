@@ -9,6 +9,7 @@ import {
   type NpcItemIntent,
 } from '@dreamwalk/contracts';
 import { npcActionAllowed } from './living-policy';
+import { worldTurnActorGate } from './turns';
 import { visible, walkable } from './index';
 const fail = (state: GameState, error: GameResult['error']): GameResult => ({
   state,
@@ -114,11 +115,8 @@ export function materializeNpcItems(
     npc = state.entities[npcId];
   if (!turn || turn.phase !== 'world' || turn.pendingResolution || npc?.kind !== 'npc')
     return fail(state, 'WRONG_MODE');
-  if (
-    turn.worldActions + 1 > turn.ruleset.maxWorldActions ||
-    (turn.worldNpcActions[npcId] ?? 0) + 1 > turn.ruleset.maxNpcActions
-  )
-    return fail(state, 'ROUND_LOCKED');
+  const gate = worldTurnActorGate(state, npcId);
+  if (gate) return fail(state, gate);
   if (state.npcBrains?.[npcId]?.living?.personality.taboos.includes('give_valuables'))
     return fail(state, 'FORBIDDEN');
   const s = structuredClone(state),

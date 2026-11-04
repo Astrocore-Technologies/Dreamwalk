@@ -1,6 +1,7 @@
 import { footprintDistance, adjacentFootprintAnchors } from '@dreamwalk/contracts';
 import { characterAppraisal } from './character';
-import { reviseNpcBelief } from './living-reasoning';
+import { matchesTurnFence, turnFence } from './turns';
+import { recordNpcCognition, reviseNpcBelief } from './living-reasoning';
 import { npcActionAllowed } from './living-policy';
 import { recordLivingNpcEvents, communicateNpcObservations } from './living';
 import {
@@ -48,6 +49,7 @@ export function createMockNpcPlan(state: GameState, id: string): unknown {
     if (action.targetId)
       targetRevisions[action.targetId] = state.entities[action.targetId].revision;
   return {
+    ...(state.turnController?.phase === 'world' ? { turnFence: turnFence(state)! } : {}),
     contextRevision: state.revision,
     mapRevision: state.maps[npc.mapId].revision,
     entityRevision: npc.revision,
@@ -64,7 +66,16 @@ export function acceptNpcPlan(state: GameState, id: string, input: unknown): Gam
   const parsed = npcPlanProposalSchema.safeParse(input);
   if (!parsed.success) return { ...result(state), error: 'INVALID_ACTION' };
   const p = parsed.data;
-  if (npc.encounterId || brain.cursor < brain.plan.length || state.tick < brain.nextDecisionTick)
+  const worldDecision = p.turnFence !== undefined;
+  if (
+    worldDecision &&
+    (state.turnController?.phase !== 'world' || !matchesTurnFence(state, p.turnFence))
+  )
+    return { ...result(state), error: 'STALE_STATE' };
+  if (
+    npc.encounterId ||
+    (!worldDecision && (brain.cursor < brain.plan.length || state.tick < brain.nextDecisionTick))
+  )
     return { ...result(state), error: 'WRONG_MODE' };
   if (
     p.contextRevision > state.revision ||
@@ -115,6 +126,14 @@ export function acceptNpcPlan(state: GameState, id: string, input: unknown): Gam
     if (a.itemId && state.entities[a.itemId]?.ownerId !== id)
       return { ...result(state), error: 'FORBIDDEN' };
   }
+  if (
+    p.cognition &&
+    (p.knowledgeRevision === undefined ||
+      !brain.living ||
+      p.knowledgeRevision > brain.living.knowledgeRevision ||
+      (!worldDecision && p.knowledgeRevision !== brain.living.knowledgeRevision))
+  )
+    return { ...result(state), error: 'STALE_STATE' };
   let revised = state;
   if (p.beliefRevisions?.length) {
     if (p.knowledgeRevision !== brain.living?.knowledgeRevision)
@@ -125,6 +144,17 @@ export function acceptNpcPlan(state: GameState, id: string, input: unknown): Gam
       revised = r.state;
     }
   }
+  if (p.cognition) {
+    const thought = recordNpcCognition(revised, id, p.cognition, {
+      knowledgeRevision: revised.npcBrains![id].living!.knowledgeRevision,
+      turnFence: p.turnFence,
+    });
+    if (thought.error) return { ...result(state), error: thought.error };
+    revised = thought.state;
+    // Frozen round decisions retain their original knowledge provenance. Later
+    // observations remain in memory and can prompt a fresh decision next round.
+    revised.npcBrains![id].living!.cognition!.knowledgeRevision = p.knowledgeRevision!;
+  }
   const s = structuredClone(revised),
     b = s.npcBrains![id];
   b.plan = structuredClone(p.actions);
@@ -132,7 +162,11 @@ export function acceptNpcPlan(state: GameState, id: string, input: unknown): Gam
   b.cursor = 0;
   b.waitingForPath = false;
   b.planMapId = npc.mapId;
-  b.movementGeneration = npc.movementGeneration ?? 0;
+  if (worldDecision) {
+    s.entities[id].path = [];
+    s.entities[id].movementGeneration = (npc.movementGeneration ?? 0) + 1;
+  }
+  b.movementGeneration = s.entities[id].movementGeneration ?? 0;
   b.generation++;
   b.nextDecisionTick = s.tick + 20;
   s.revision++;

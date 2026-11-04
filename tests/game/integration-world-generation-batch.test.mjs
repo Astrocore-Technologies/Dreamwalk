@@ -33,7 +33,7 @@ await test(
       const owner = await client().registerLegacyFixture();
       const source = await owner.request('/adventures/old-observatory?view=published');
       const ids = [];
-      for (let i = 0; i < 9; i++) {
+      for (let i = 0; i < 13; i++) {
         const made = await owner.request('/game/campaigns', {
           turnBased: true,
           playableVersionId: source.playableVersionId,
@@ -361,8 +361,8 @@ await test(
             [q.quote.id],
           );
           const status = await batch.status(owner.user.id, id, live.state);
-          assert.equal(status.available, true);
-          assert.equal(status.pending, false);
+          assert.equal(status.available, false);
+          assert.equal(status.pending, true);
           assert.equal(
             (
               await db.query('SELECT state FROM game_world_generation_batches WHERE id=$1', [
@@ -409,12 +409,284 @@ await test(
         },
       );
       await t.test(
+        'empty End turn freezes five calm NPCs durably and commits every paid plan without requoting',
+        async () => {
+          const id = ids[9],
+            live = await setup(id);
+          for (let i = 1; i < 5; i++) {
+            const npcId = `calm-${i}`;
+            live.state.entities[npcId] = {
+              ...structuredClone(live.state.entities.keeper),
+              id: npcId,
+              inventory: [], // Keeper-owned items must not be forged into another NPC's inventory.
+            };
+            live.state.npcBrains[npcId] = structuredClone(live.state.npcBrains.keeper);
+          }
+          for (const brain of Object.values(live.state.npcBrains)) brain.living.causes = [];
+          await game.persist(
+            id,
+            live,
+            endPlayerTurn(live.state, actorId, turnFence(live.state)).state,
+            'test.empty.world',
+          );
+          await game.scheduleRoundRequests(id, live);
+          await game.scheduleRoundRequests(id, live);
+          assert.equal((await requests(id)).length, 5);
+          assert.ok(
+            (await requests(id)).every(
+              (r) => r.cause_key === `round:${live.state.turnController.roundId}:${r.npc_id}`,
+            ),
+          );
+          const roster = (
+            await db.query('SELECT * FROM game_world_round_rosters WHERE campaign_id=$1', [id])
+          ).rows;
+          assert.equal(roster.length, 1);
+          assert.equal(roster[0].roster.length, 5);
+          // A new runtime instance reads the durable guard, not an in-memory cooldown.
+          const restarted = Object.create(GameService.prototype);
+          Object.assign(restarted, {
+            db: database,
+            story: {
+              prepareWorldRequests: () => {
+                throw new Error('must not reprepare');
+              },
+            },
+          });
+          await restarted.scheduleRoundRequests(id, live);
+          assert.equal((await requests(id)).length, 5);
+          const beforeCalls = calls,
+            operationId = randomUUID();
+          const quote = await batch.quote(owner.user.id, id, live.state, { operationId });
+          const entries = (
+            await db.query('SELECT entries FROM game_world_generation_batches WHERE id=$1', [
+              quote.quote.id,
+            ])
+          ).rows[0].entries;
+          assert.equal(entries.length, 5);
+          assert.equal(
+            quote.quote.sparkReservedSubunits,
+            entries
+              .reduce((sum, entry) => sum + BigInt(entry.quote.sparkReservedSubunits), 0n)
+              .toString(),
+          );
+          await batch.consent(owner.user.id, id, live.state, {
+            operationId,
+            quoteId: quote.quote.id,
+            consent: true,
+          });
+          const frozenContexts = (await requests(id)).map((r) => [r.id, JSON.stringify(r.context)]);
+          for (let i = 0; i < 5; i++) {
+            await game.processDecisionRequests(id, live);
+            const job = (
+              await db.query(
+                "SELECT id FROM npc_ai_jobs WHERE campaign_id=$1 AND status IN ('queued','reserved','running') ORDER BY created_at LIMIT 1",
+                [id],
+              )
+            ).rows[0];
+            assert.ok(
+              job,
+              `round NPC ${i + 1} admitted from original batch: ${JSON.stringify((await requests(id)).map((r) => ({ npcId: r.npc_id, status: r.status, code: r.result_code, job: r.job_id })))}`,
+            );
+            await ai.run(job.id, async () => true);
+            await game.processAi(id, live);
+          }
+          assert.equal(calls - beforeCalls, 5);
+          assert.equal(
+            (
+              await db.query(
+                "SELECT count(*)::int AS n FROM npc_ai_jobs WHERE campaign_id=$1 AND status='committed'",
+                [id],
+              )
+            ).rows[0].n,
+            5,
+          );
+          assert.deepEqual(
+            (await requests(id)).map((r) => [r.id, JSON.stringify(r.context)]),
+            frozenContexts,
+          );
+          assert.equal(
+            (
+              await db.query(
+                'SELECT count(*)::int AS n FROM game_world_generation_batches WHERE campaign_id=$1',
+                [id],
+              )
+            ).rows[0].n,
+            1,
+          );
+          await game.scheduleRoundRequests(id, live);
+          assert.equal((await requests(id)).length, 5);
+        },
+      );
+      await t.test(
+        'new composer is free; speech and private NPC deliberation share exactly one world quote',
+        async () => {
+          const id = ids[10],
+            live = await setup(id),
+            beforeCalls = calls;
+          const body = {
+            operationId: randomUUID(),
+            text: 'Hello',
+            channel: 'say',
+            targetNpcId: 'keeper',
+            replyLocale: 'en',
+            expectedCanonRevision: live.state.narrativeCanon?.revision ?? 0,
+            turnFence: turnFence(live.state),
+          };
+          const post = await game.storyQuote(req, id, body);
+          assert.equal(post.quote.credits, 0);
+          assert.equal(post.quote.external, false);
+          await game.storySubmit(req, id, {
+            ...body,
+            turnId: post.turnId,
+            quoteId: post.quote.id,
+            consent: true,
+            confirmedActionHash: post.confirmationHash,
+          });
+          assert.equal(
+            (
+              await db.query('SELECT count(*)::int AS n FROM npc_ai_quotes WHERE campaign_id=$1', [
+                id,
+              ])
+            ).rows[0].n,
+            0,
+          );
+          await game.persist(
+            id,
+            live,
+            endPlayerTurn(live.state, actorId, turnFence(live.state)).state,
+            'test.speech.world',
+          );
+          await game.scheduleRoundRequests(id, live);
+          const pending = await requests(id);
+          assert.deepEqual(pending.map((r) => r.purpose).sort(), ['plan', 'speech']);
+          const operationId = randomUUID(),
+            quote = await batch.quote(owner.user.id, id, live.state, { operationId });
+          const entries = (
+            await db.query('SELECT entries FROM game_world_generation_batches WHERE id=$1', [
+              quote.quote.id,
+            ])
+          ).rows[0].entries;
+          assert.equal(entries.length, 2);
+          assert.equal(
+            quote.quote.providerReserveMicros,
+            entries.reduce((sum, e) => sum + e.quote.providerReserveMicros, 0),
+          );
+          const changed = structuredClone(live.state);
+          changed.revision++;
+          await assert.rejects(
+            batch.consent(owner.user.id, id, changed, {
+              operationId,
+              quoteId: quote.quote.id,
+              consent: true,
+            }),
+            code('GENERATION_QUOTE_STALE'),
+          );
+          assert.equal(calls, beforeCalls);
+          await batch.consent(owner.user.id, id, live.state, {
+            operationId,
+            quoteId: quote.quote.id,
+            consent: true,
+          });
+          for (let i = 0; i < 2; i++) {
+            await game.processDecisionRequests(id, live);
+            const job = (
+              await db.query(
+                "SELECT id,purpose FROM npc_ai_jobs WHERE campaign_id=$1 AND status IN ('queued','reserved','running') ORDER BY created_at LIMIT 1",
+                [id],
+              )
+            ).rows[0];
+            assert.ok(job);
+            assert.equal(job.purpose, i ? 'speech' : 'plan');
+            await ai.run(job.id, async () => true);
+            await game.processAi(id, live);
+          }
+          assert.equal(calls - beforeCalls, 2);
+          assert.equal(
+            (
+              await db.query(
+                'SELECT count(*)::int AS n FROM game_world_generation_batches WHERE campaign_id=$1',
+                [id],
+              )
+            ).rows[0].n,
+            1,
+          );
+        },
+      );
+      await t.test(
+        'timely accepted whole-round proof survives wall-clock quote expiry without a new quote',
+        async () => {
+          const id = ids[11],
+            live = await pendingWorld(id);
+          await game.scheduleRoundRequests(id, live);
+          const operationId = randomUUID(),
+            quote = await batch.quote(owner.user.id, id, live.state, { operationId });
+          await batch.consent(owner.user.id, id, live.state, {
+            operationId,
+            quoteId: quote.quote.id,
+            consent: true,
+          });
+          // Advance only the process clock, never mutate immutable accounting records.
+          const realNow = Date.now;
+          Date.now = () => Date.parse(quote.quote.expiresAt) + 1000;
+          const beforeCalls = calls;
+          try {
+            await game.processDecisionRequests(id, live);
+            const request = (await requests(id))[0];
+            assert.equal(request.status, 'scheduled', request.result_code);
+            assert.equal(calls, beforeCalls);
+            await ai.run(request.job_id, async () => true);
+            await game.processAi(id, live);
+            assert.equal(calls, beforeCalls + 1);
+            assert.equal(
+              (
+                await db.query(
+                  'SELECT count(*)::int AS n FROM game_world_generation_batches WHERE campaign_id=$1',
+                  [id],
+                )
+              ).rows[0].n,
+              1,
+            );
+          } finally {
+            Date.now = realNow;
+          }
+          await assert.rejects(
+            batch.quote(owner.user.id, id, live.state, { operationId: randomUUID() }),
+            code('LIVE_REQUEST_UNAVAILABLE'),
+          );
+        },
+      );
+      await t.test('revoked member cannot dispatch an accepted round after consent', async () => {
+        const id = ids[12],
+          live = await pendingWorld(id);
+        await game.scheduleRoundRequests(id, live);
+        const operationId = randomUUID(),
+          quote = await batch.quote(owner.user.id, id, live.state, { operationId });
+        await batch.consent(owner.user.id, id, live.state, {
+          operationId,
+          quoteId: quote.quote.id,
+          consent: true,
+        });
+        await db.query(
+          "UPDATE game_members SET status='revoked' WHERE campaign_id=$1 AND user_id=$2",
+          [id, owner.user.id],
+        );
+        const beforeCalls = calls;
+        await assert.rejects(batch.status(owner.user.id, id, live.state), code('FORBIDDEN'));
+        await game.processDecisionRequests(id, live);
+        assert.ok((await requests(id)).every((r) => r.status === 'cancelled'));
+        assert.equal(calls, beforeCalls);
+      });
+      await t.test(
         'unknown native outcome and queue-commit/request-link crash block every remaining authorization',
         async () => {
           const id = ids[8],
             live = await pendingWorld(id);
           await addRequest(id, live);
           await addRequest(id, live);
+          await db.query(
+            'UPDATE game_npc_decision_requests SET context=context||\'{"generationPolicy":"world-batch-v1"}\'::jsonb WHERE campaign_id=$1',
+            [id],
+          );
           const operationId = randomUUID(),
             q = await batch.quote(owner.user.id, id, live.state, { operationId });
           await batch.consent(owner.user.id, id, live.state, {
@@ -431,6 +703,10 @@ await test(
             "UPDATE game_npc_decision_requests SET status='queued',job_id=NULL WHERE id=$1",
             [first.id],
           );
+          // A broken request/job link is not proof that this request was unpaid.
+          await batch.failUnspent(id, first.id, 'NO_SAFE_RESPONSE');
+          assert.equal((await requests(id)).find((r) => r.id === first.id).status, 'queued');
+          assert.equal((await requests(id)).find((r) => r.id === second.id).status, 'queued');
           assert.deepEqual(await batch.status(owner.user.id, id, live.state), {
             available: false,
             pending: true,
@@ -449,6 +725,32 @@ await test(
             'manual status must not label reconciling paid work as absent',
           );
           assert.equal(await batch.quotedWorldRequest(id, second), null);
+          assert.equal(
+            (await requests(id)).find((r) => r.id === second.id).result_code,
+            'WORLD_PROVIDER_OUTCOME_UNKNOWN',
+          );
+          await game.advanceTurnWorld(id, live);
+          assert.equal(live.state.turnController.phase, 'player');
+          assert.equal(
+            (await db.query('SELECT status FROM npc_ai_jobs WHERE id=$1', [first.job_id])).rows[0]
+              .status,
+            'reconciling',
+          );
+          await game.persist(
+            id,
+            live,
+            endPlayerTurn(live.state, actorId, turnFence(live.state)).state,
+            'test.next-round.unknown',
+          );
+          await game.advanceTurnWorld(id, live);
+          assert.equal(
+            live.state.turnController.phase,
+            'player',
+            'unresolved old liability does not strand subsequent rounds',
+          );
+          assert.ok(
+            (await requests(id)).some((r) => r.result_code === 'WORLD_PROVIDER_OUTCOME_UNKNOWN'),
+          );
           await assert.rejects(
             batch.quote(owner.user.id, id, live.state, { operationId: randomUUID() }),
             code('LIVE_OUTCOME_UNRESOLVED'),

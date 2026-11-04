@@ -161,6 +161,7 @@ test('player reaction interrupts durably, uses a bounded budget and returns to t
 
 test('ordered multi-recipient speech waits for world phase and whisper addressees stay private', () => {
   let s = fixture();
+  Object.assign(s.entities.bob, { x: 10, y: 7 });
   Object.assign(s.entities.keeper, { x: 3, y: 3 });
   s.entities.helper = { id: 'helper', kind: 'npc', mapId: 'courtyard', x: 4, y: 3, revision: 0 };
   s.npcBrains.helper = structuredClone(s.npcBrains.keeper);
@@ -259,8 +260,9 @@ test('explicit revocation removes blocked active turn; mere disconnection does n
   assert.equal(g.applyTurnMove(s, 'alice', { x: 3, y: 3 }, fence(s)).error, 'FORBIDDEN');
 });
 
-test('deferred NPC reply preserves exact admission audience after the speaker walks away', () => {
+test('deferred reply preserves source provenance but only current listeners hear its response', () => {
   let s = fixture();
+  Object.assign(s.entities.bob, { x: 10, y: 7 });
   Object.assign(s.entities.keeper, { x: 3, y: 3 });
   const speech = { channel: 'whisper', text: 'PRIVATE_ORIGINAL_QUESTION' },
     identity = { turnId: '00000000-0000-4000-8000-000000000003', segmentIndex: 0 };
@@ -284,10 +286,13 @@ test('deferred NPC reply preserves exact admission audience after the speaker wa
     g.buildNpcPublicSpeechContext(s, 'keeper', ['alice', 'keeper'], [marker]).claims,
     [],
   );
+  assert.deepEqual(s.turnController.deferredSpeech[0].audienceIds, ['alice', 'keeper']);
+  const prospective = g.npcSpeechProspectiveListenerIds(s, 'keeper', 'whisper');
+  assert.deepEqual(prospective, ['keeper']);
   const context = g.buildNpcPublicSpeechContext(
     s,
     'keeper',
-    ['alice', 'keeper'],
+    prospective,
     [marker],
     [],
     'deferred-reply',
@@ -303,6 +308,10 @@ test('deferred NPC reply preserves exact admission audience after the speaker wa
     deferredSpeechId: 'deferred-reply',
   });
   assert.equal(reply.error, undefined);
+  assert.deepEqual(reply.state.npcUtterances.at(-1).audienceIds, ['keeper']);
+  assert.ok(
+    !JSON.stringify(g.projectState(reply.state, 'alice')).includes('A reply to the saved question'),
+  );
   assert.ok(
     !JSON.stringify(g.projectState(reply.state, 'bob')).includes('A reply to the saved question'),
   );

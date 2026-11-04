@@ -165,6 +165,85 @@
   width: 100%;
   height: 100%;
 }
+.mapCoordinates {
+  position: absolute;
+  inset: 0;
+  pointer-events: none;
+  overflow: hidden;
+  color: #f4ecd8;
+  font: 600 11px / 1 monospace;
+  font-variant-numeric: tabular-nums;
+}
+.mapCoordinateX,
+.mapCoordinateY,
+.mapCoordinateOrigin {
+  position: absolute;
+  background: #171321eb;
+}
+.mapCoordinateX {
+  inset: auto 22px 0 0;
+  height: 22px;
+  overflow: hidden;
+}
+.mapCoordinateY {
+  inset: 0 0 22px auto;
+  width: 22px;
+  overflow: hidden;
+}
+.mapCoordinateX > span,
+.mapCoordinateY > span {
+  position: absolute;
+  text-align: center;
+}
+.mapCoordinateX > span {
+  top: 0;
+  padding-top: 6px;
+  transform: translateX(-50%);
+}
+.mapCoordinateY > span {
+  left: 0;
+  padding-left: 5px;
+  transform: translateY(-50%);
+}
+.mapCoordinateX > span::before,
+.mapCoordinateY > span::before {
+  position: absolute;
+  content: '';
+  background: #c9bda4;
+}
+.mapCoordinateX > span::before {
+  width: 1px;
+  height: 3px;
+  top: 0;
+  left: 50%;
+}
+.mapCoordinateY > span::before {
+  width: 3px;
+  height: 1px;
+  top: 50%;
+  left: 0;
+}
+.mapCoordinates [data-labeled='false'] > span {
+  visibility: hidden;
+}
+.mapCoordinateOrigin {
+  right: 0;
+  bottom: 0;
+  width: 22px;
+  height: 22px;
+  display: grid;
+  place-items: center;
+  font-size: 9px;
+}
+.mapCoordinateReadout {
+  color: #f4ecd8;
+  background: #171321eb;
+  border-radius: 5px;
+  padding: 4px 7px;
+  font: 11px / 1.4 monospace;
+  font-variant-numeric: tabular-nums;
+  white-space: nowrap;
+}
 .canvasFallback {
   position: absolute;
   inset: 30% 10%;
@@ -175,7 +254,7 @@
   gap: 6px;
   position: absolute;
   top: 14px;
-  right: 14px;
+  right: 34px;
 }
 .mapTools button,
 .dpad button {
@@ -214,6 +293,7 @@
 .dpad {
   display: flex;
   gap: 4px;
+  align-items: center;
   flex-shrink: 0;
   touch-action: none;
 }
@@ -1049,7 +1129,7 @@
   }
   .controls {
     position: absolute;
-    inset: auto 12px 12px auto;
+    inset: auto 34px 34px auto;
     padding: 0;
     z-index: 8;
   }

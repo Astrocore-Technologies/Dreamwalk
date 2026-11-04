@@ -103,7 +103,12 @@ test('movement rechecks colliding actors and preserves a blocked path for a late
   };
   const blocked = g.stepWorldNpcPlan(s, 'keeper');
   assert.equal(blocked.error, 'PATH_BLOCKED');
-  assert.strictEqual(blocked.state, s);
+  assert.deepEqual(blocked.state.entities, s.entities);
+  assert.deepEqual(blocked.state.npcBrains.keeper.plan, s.npcBrains.keeper.plan);
+  assert.equal(blocked.state.npcBrains.keeper.cursor, s.npcBrains.keeper.cursor);
+  assert.equal(blocked.state.npcBrains.keeper.living.lastActionOutcome.code, 'PATH_BLOCKED');
+  assert.equal(s.npcBrains.keeper.living.lastActionOutcome, undefined);
+  s = blocked.state;
   delete s.entities.blocker;
   s = g.stepWorldNpcPlan(s, 'keeper').state;
   assert.equal(g.footprintOverlaps(s.entities.keeper, s.entities.alice), false);

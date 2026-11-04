@@ -24,6 +24,8 @@ import {
   buildNpcPublicSpeechContext,
   commitNpcPublicUtterance,
   canNpcHear,
+  npcSpeechListenerIds,
+  npcSpeechProspectiveListenerIds,
   npcContextFingerprint,
   publicNpcFactTopics,
   resolveNpcFactTopic,
@@ -123,7 +125,7 @@ function safeSpeech(
   ).state;
   const marker = admittedNpcSpeechObservationId(next, actorId, npcId, speech, identity);
   if (!marker) throw new Error('STALE_STATE');
-  const audience = channel === 'whisper' ? [actorId, npcId] : listeners(next, npcId);
+  const audience = npcSpeechProspectiveListenerIds(next, npcId, channel);
   const topics = publicNpcFactTopics(next, npcId).filter(
     (t) => normalize(t.title) === normalize(segment.text),
   );
@@ -566,7 +568,10 @@ export function applyStoryTurnProposal(
     const resolveNpc = (id: string) =>
       id === 'new_npc' && p.narrative?.newNpc ? `support-${turnId}` : id;
     for (const [i, segment] of context.segments.entries()) {
-      const audience = listeners(next, actorId);
+      const audience =
+        segment.kind === 'speech'
+          ? npcSpeechListenerIds(next, actorId, { channel: 'say', text: segment.text })
+          : listeners(next, actorId);
       push({
         kind: segment.kind,
         channel: 'say',
@@ -661,9 +666,10 @@ export function applyStoryTurnProposal(
           replyToObservationId: spoken.context.replyToObservationId,
         });
         if (response.error) return reject(response.error);
-        const sourceId = response.state.npcUtterances?.find(
+        const responseUtterance = response.state.npcUtterances?.find(
           (u) => u.speakerId === npcId && !next.npcUtterances?.some((old) => old.id === u.id),
-        )?.id;
+        );
+        const sourceId = responseUtterance?.id;
         next = response.state;
         events.push(...response.events);
         push({
@@ -673,7 +679,7 @@ export function applyStoryTurnProposal(
           authorId: npcId,
           authorLabel: npc.label,
           ...p.steps[i].reply!,
-          audienceIds: spoken.context.audienceIds,
+          audienceIds: responseUtterance?.audienceIds ?? [],
         });
       }
     }
@@ -682,7 +688,12 @@ export function applyStoryTurnProposal(
     const npcId = input.targetNpcId!;
     for (const [i, segment] of context.segments.entries()) {
       const step = p.steps[i];
-      const audience = input.channel === 'whisper' ? [actorId, npcId] : listeners(next, actorId);
+      const audience =
+        segment.kind === 'speech'
+          ? npcSpeechListenerIds(next, actorId, { channel: input.channel, text: segment.text })
+          : input.channel === 'whisper'
+            ? [actorId, npcId]
+            : listeners(next, actorId);
       push({
         kind: segment.kind,
         channel: input.channel,
@@ -747,9 +758,10 @@ export function applyStoryTurnProposal(
           replyLocale: input.replyLocale,
         });
         if (r.error) return reject(r.error);
-        const sourceId = r.state.npcUtterances?.find(
+        const responseUtterance = r.state.npcUtterances?.find(
           (u) => u.speakerId === npcId && !next.npcUtterances?.some((old) => old.id === u.id),
-        )?.id;
+        );
+        const sourceId = responseUtterance?.id;
         next = r.state;
         events.push(...r.events);
         push({
@@ -759,7 +771,7 @@ export function applyStoryTurnProposal(
           authorId: npcId,
           authorLabel: next.entities[npcId].label,
           ...('text' in step.reply! ? { text: step.reply!.text } : { code: 'acknowledged' }),
-          audienceIds: spoken.context.audienceIds,
+          audienceIds: responseUtterance?.audienceIds ?? [],
         });
       }
     }

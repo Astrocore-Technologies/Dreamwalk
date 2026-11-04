@@ -518,6 +518,15 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           inspection={
             inspectedNpc ? (
               <NpcPublicInspection
+                key={`${campaignId}:${inspectedNpc.id}:${user?.id}`}
+                campaignId={campaignId}
+                canReadThoughts={
+                  connected &&
+                  !members.error &&
+                  !!members.data?.members.some(
+                    (member) => member.userId === user?.id && member.status === 'accepted',
+                  )
+                }
                 npcId={inspectedNpc.id}
                 name={inspectedNpc.label || t('NPC')}
                 role={inspectedNpc.publicProfile?.role || inspectedNpc.supportingNpc?.roleLabel}

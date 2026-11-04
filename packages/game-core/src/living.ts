@@ -1,3 +1,5 @@
+import { recordNpcCognition } from './living-reasoning';
+import { type NpcCognition } from '@dreamwalk/contracts';
 import { observedVisible } from './observation-visibility';
 import { companionAction } from './companionship';
 import { npcActionContext, prepareNpcActionIntent } from './npc-actions';
@@ -10,6 +12,7 @@ import type { NpcItemIntent } from '@dreamwalk/contracts';
 import { mockAcknowledgement, mockCharacterAcknowledgement, mockFactReply } from './mock-speech';
 import {
   footprintDistance,
+  occupiedCells,
   adjacentFootprintAnchors,
   readNarrativePreferences,
   npcLoreRelevance,
@@ -108,17 +111,18 @@ export function canNpcHear(
   source: GameEntity,
   range = 6,
 ): boolean {
-  if (listener.mapId !== source.mapId) return false;
+  if (listener.mapId !== source.mapId || footprintDistance(listener, source) > range) return false;
   const m = state.maps[listener.mapId];
   if (!m) return false;
-  const queue = [{ x: source.x, y: source.y, d: 0 }],
+  const queue = occupiedCells(source).map((p) => ({ ...p, d: 0 })),
+    listenerCells = new Set(occupiedCells(listener).map((p) => `${p.x},${p.y}`)),
     seen = new Set<string>();
   while (queue.length) {
     const p = queue.shift()!;
     const key = `${p.x},${p.y}`;
     if (seen.has(key) || p.d > range) continue;
     seen.add(key);
-    if (p.x === listener.x && p.y === listener.y) return true;
+    if (listenerCells.has(key)) return true;
     for (const [dx, dy] of [
       [1, 0],
       [-1, 0],
@@ -145,6 +149,38 @@ export function canNpcHear(
     }
   }
   return false;
+}
+/** Only the spoken segment sets volume; action/emote punctuation is not speech. */
+export function npcSpeechHearingRange(input: {
+  channel: 'say' | 'whisper';
+  text?: string;
+}): 1 | 3 | 6 {
+  return input.channel === 'whisper' ? 1 : input.text?.includes('!') ? 6 : 3;
+}
+/** Complete acoustic audience, including bystanders and the speaker. */
+export function npcSpeechListenerIds(
+  state: GameState,
+  speakerId: string,
+  input: { channel: 'say' | 'whisper'; text?: string },
+): string[] {
+  const speaker = state.entities[speakerId];
+  if (!speaker) return [];
+  return Object.values(state.entities)
+    .filter(
+      (e) =>
+        ['npc', 'player'].includes(e.kind) &&
+        canNpcHear(state, e, speaker, npcSpeechHearingRange(input)),
+    )
+    .map((e) => e.id)
+    .sort();
+}
+/** Authorize the largest possible reply audience before generating any public prose. */
+export function npcSpeechProspectiveListenerIds(
+  state: GameState,
+  npcId: string,
+  channel: 'say' | 'whisper',
+): string[] {
+  return npcSpeechListenerIds(state, npcId, { channel, text: channel === 'say' ? '!' : undefined });
 }
 function audience(state: GameState, npc: GameEntity): string[] {
   return Object.values(state.entities)
@@ -599,7 +635,6 @@ export function npcReplyObservation(
   );
   if (
     !o ||
-    o.addressedNpcId !== npcId ||
     o.depth !== 0 ||
     o.sourceNpcId ||
     o.channel !== 'report' ||
@@ -637,7 +672,7 @@ export function admittedNpcSpeechObservationId(
 export function applyNpcSpeech(
   state: GameState,
   speakerId: string,
-  npcId: string,
+  npcId: string | undefined,
   input: unknown,
   options: {
     suppressReply?: boolean;
@@ -647,19 +682,18 @@ export function applyNpcSpeech(
 ): GameResult {
   const p = npcSpeechSchema.safeParse(input),
     speaker = state.entities[speakerId],
-    npc = state.entities[npcId];
+    npc = npcId ? state.entities[npcId] : undefined;
   if (!p.success || state.rulesetVersion !== 'hybrid-v3')
     return result(state, [], 'INVALID_ACTION');
   if (
     !speaker ||
     speaker.kind !== 'player' ||
-    npc?.kind !== 'npc' ||
-    !state.npcBrains?.[npcId]?.living
+    (npcId !== undefined && (npc?.kind !== 'npc' || !state.npcBrains?.[npcId]?.living))
   )
     return result(state, [], 'TARGET_UNAVAILABLE');
-  if (!near(speaker, npc) || !visible(state, speaker, npc))
+  if (npc && !canNpcHear(state, npc, speaker, npcSpeechHearingRange(p.data)))
     return result(state, [], 'OUT_OF_RANGE');
-  if (speaker.encounterId || npc.encounterId) return result(state, [], 'WRONG_MODE');
+  if (speaker.encounterId || npc?.encounterId) return result(state, [], 'WRONG_MODE');
   if (
     options.identity &&
     (!/^[0-9a-f-]{36}$/i.test(options.identity.turnId) ||
@@ -679,18 +713,14 @@ export function applyNpcSpeech(
     return result(state, [], 'TARGET_UNAVAILABLE');
   const s = clone(state),
     root = speechRoot(speakerId, s.tick, p.data, options.identity)!;
-  const recipients =
-    p.data.channel === 'whisper'
-      ? [npcId]
-      : Object.values(s.entities)
-          .filter(
-            (e) =>
-              e.kind === 'npc' &&
-              (options.presentationKind === 'attempt'
-                ? observedVisible(state, e, speaker)
-                : canNpcHear(state, e, speaker)),
-          )
-          .map((e) => e.id);
+  const listeners =
+    options.presentationKind === 'attempt'
+      ? Object.values(s.entities)
+          .filter((e) => ['player', 'npc'].includes(e.kind) && observedVisible(state, e, speaker))
+          .map((e) => e.id)
+          .sort()
+      : npcSpeechListenerIds(s, speakerId, p.data);
+  const recipients = listeners.filter((id) => s.entities[id].kind === 'npc');
   for (const id of recipients) {
     const m = s.npcBrains?.[id]?.living;
     if (!m) continue;
@@ -718,23 +748,11 @@ export function applyNpcSpeech(
       ...(options.identity ? { speechIdentity: clone(options.identity) } : {}),
       depth: 0,
       disclosure: p.data.channel === 'whisper' ? 'participants' : 'public',
-      audienceIds: p.data.channel === 'whisper' ? [speakerId, npcId] : [],
+      audienceIds: listeners,
       ...(p.data.text ? { text: p.data.text } : {}),
     });
   }
   if (p.data.text) {
-    const listeners =
-      p.data.channel === 'whisper'
-        ? [speakerId, npcId]
-        : Object.values(s.entities)
-            .filter(
-              (e) =>
-                ['player', 'npc'].includes(e.kind) &&
-                (options.presentationKind === 'attempt'
-                  ? observedVisible(s, e, speaker)
-                  : canNpcHear(s, e, speaker)),
-            )
-            .map((e) => e.id);
     const known = listeners.filter(
       (id) => id === speakerId || observedVisible(s, s.entities[id], speaker),
     );
@@ -748,13 +766,8 @@ export function applyNpcSpeech(
       audienceIds: listeners,
       speakerKnownToIds: known,
     });
-    const replyListeners =
-      p.data.channel === 'whisper'
-        ? [speakerId, npcId]
-        : Object.values(s.entities)
-            .filter((e) => ['player', 'npc'].includes(e.kind) && canNpcHear(s, e, npc))
-            .map((e) => e.id);
-    if (!options.suppressReply)
+    if (!options.suppressReply && npc && npcId) {
+      const replyListeners = npcSpeechListenerIds(s, npcId, { channel: p.data.channel });
       s.npcUtterances.push({
         id: `reply-${hash(root)}`,
         speakerId: npcId,
@@ -766,11 +779,17 @@ export function applyNpcSpeech(
           (id) => id === npcId || observedVisible(s, s.entities[id], npc),
         ),
       });
+    }
     s.npcUtterances = s.npcUtterances.slice(-128);
   }
   s.revision++;
   return result(s, [
     { kind: 'npc.addressed', actorId: speakerId, targetId: npcId, mapId: speaker.mapId },
+    ...recipients.map((id): GameEvent => ({
+      kind: 'npc.memory_summarized',
+      actorId: id,
+      mapId: s.entities[id].mapId,
+    })),
   ]);
 }
 function adjacentPath(
@@ -862,10 +881,24 @@ export function stepLivingNpcs(
 ): GameResult {
   if (state.turnController && state.turnController.phase !== 'world') return result(state);
   if (state.rulesetVersion !== 'hybrid-v3') return result(state);
-  const perception = refreshLivingPerception(state);
+  const activeIds = state.turnController
+    ? Object.keys(state.npcBrains ?? {}).filter((npcId) => {
+        const npc = state.entities[npcId];
+        return (
+          npc?.kind === 'npc' &&
+          !npc.encounterId &&
+          (npc.vitality === undefined || npc.vitality > 0) &&
+          (!state.turnController!.worldActorIds ||
+            state.turnController!.worldActorIds.includes(npcId)) &&
+          state.turnController!.actorOrder.some((id) => state.entities[id]?.mapId === npc.mapId)
+        );
+      })
+    : undefined;
+  const perception = refreshLivingPerception(state, activeIds);
   let s = perception.state;
   const events: GameEvent[] = [...perception.events];
   for (const npcId of Object.keys(state.npcBrains ?? {}).sort()) {
+    if (activeIds && !activeIds.includes(npcId)) continue;
     const companion = companionAction(s, npcId);
     if (companion) {
       if (s.turnController) continue;
@@ -1185,10 +1218,7 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
   const query =
     [...m.observations]
       .reverse()
-      .find(
-        (o) =>
-          (o.kind === 'addressed' || (o.kind === 'said' && o.addressedNpcId === npcId)) && o.text,
-      )?.text ?? '';
+      .find((o) => (o.kind === 'addressed' || o.kind === 'said') && o.text)?.text ?? '';
   const pinned = new Set([
     ...m.goal.evidenceIds,
     ...m.obligations
@@ -1232,6 +1262,12 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
           },
         }
       : {}),
+    actionContext: npcActionContext(state, npcId, []),
+    previousCognition: m.cognition ? clone(m.cognition) : null,
+    lastActionOutcome: m.lastActionOutcome ? clone(m.lastActionOutcome) : null,
+    ...(state.turnController
+      ? { roundId: state.turnController.roundId, roundNumber: state.turnController.roundNumber }
+      : {}),
     knowledgeRevision: m.knowledgeRevision,
     goalGeneration: m.goal.revision,
     personality: clone(m.personality),
@@ -1247,10 +1283,7 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
       mood: m.affect?.mood ?? 'calm',
     },
     communicationPolicy: {
-      publicAudienceIds: Object.values(state.entities)
-        .filter((e) => ['npc', 'player'].includes(e.kind) && canNpcHear(state, e, npc))
-        .map((e) => e.id)
-        .sort(),
+      publicAudienceIds: npcSpeechListenerIds(state, npcId, { channel: 'say' }),
       privateEvidenceRequiresOriginalAudience: true,
       plannerCannotGrantDisclosure: true,
     },
@@ -1416,7 +1449,8 @@ export function buildNpcPublicSpeechContext(
           (speech) =>
             speech.id === deferredSpeechId &&
             speech.recipientId === npcId &&
-            JSON.stringify([...speech.audienceIds].sort()) === JSON.stringify(audience) &&
+            JSON.stringify(npcSpeechProspectiveListenerIds(state, npcId, speech.channel)) ===
+              JSON.stringify(audience) &&
             observationIds.includes(speech.utteranceId) &&
             !!npcReplyObservation(state, speech.actorId, npcId, speech.utteranceId),
         )
@@ -1424,9 +1458,7 @@ export function buildNpcPublicSpeechContext(
   if (
     !audienceIds.length ||
     (deferredSpeechId && !deferred) ||
-    audienceIds.some(
-      (id) => !state.entities[id] || (!deferred && !canNpcHear(state, state.entities[id], npc)),
-    )
+    audienceIds.some((id) => !state.entities[id] || !canNpcHear(state, state.entities[id], npc))
   )
     return { npcId, replyLocale: locale, audienceIds: audience, claims: [] };
   const claims = observationIds.flatMap((id) => {
@@ -1548,6 +1580,7 @@ export function commitNpcPublicUtterance(
   npcId: string,
   input: {
     text?: string;
+    cognition?: NpcCognition;
     itemIntents?: NpcItemIntent[];
     companionIntent?: NpcCompanionIntent;
     actionIntent?: NpcActionIntent;
@@ -1606,14 +1639,7 @@ export function commitNpcPublicUtterance(
     input.observationIds.length > 16
   )
     return result(state, [], 'INVALID_ACTION');
-  const listeners = deferred
-    ? [...deferred.audienceIds].sort()
-    : input.channel === 'whisper'
-      ? [recipient.id, npcId]
-      : Object.values(state.entities)
-          .filter((e) => ['player', 'npc'].includes(e.kind) && canNpcHear(state, e, npc))
-          .map((e) => e.id)
-          .sort();
+  const listeners = npcSpeechProspectiveListenerIds(state, npcId, input.channel);
   const context = buildNpcPublicSpeechContext(
     state,
     npcId,
@@ -1662,7 +1688,6 @@ export function commitNpcPublicUtterance(
       !source ||
       source.kind !== 'said' ||
       source.actorId !== recipient.id ||
-      source.addressedNpcId !== npcId ||
       source.disclosure !== 'public' ||
       replySource !== source.id ||
       !input.observationIds.includes(source.id) ||
@@ -1672,7 +1697,14 @@ export function commitNpcPublicUtterance(
   }
   const items = materializeNpcItems(state, npcId, input.recipientId, input.itemIntents ?? [], id);
   if (items.error) return items;
-  const s = clone(items.state);
+  const thought = input.cognition
+    ? recordNpcCognition(items.state, npcId, input.cognition, {
+        knowledgeRevision: items.state.npcBrains![npcId].living!.knowledgeRevision,
+        sourceObservationId: deferred?.utteranceId ?? input.replyToObservationId,
+      })
+    : items;
+  if (thought.error) return result(state, [], thought.error);
+  const s = clone(thought.state);
   if (input.companionIntent) {
     const brain = s.npcBrains![npcId],
       memory = brain.living!;
@@ -1710,6 +1742,12 @@ export function commitNpcPublicUtterance(
     s.entities[npcId].movementGeneration = (s.entities[npcId].movementGeneration ?? 0) + 1;
     brain.movementGeneration = s.entities[npcId].movementGeneration;
   }
+  // Generation is authorized for the frozen context, but sound is heard only here and now.
+  // Never expand disclosure to a bystander who was absent from that approved context.
+  const audible = new Set(
+    npcSpeechListenerIds(s, npcId, { channel: input.channel, text: input.text }),
+  );
+  const heardBy = listeners.filter((id) => audible.has(id));
   (s.npcUtterances ??= []).push({
     id,
     speakerId: npcId,
@@ -1717,14 +1755,14 @@ export function commitNpcPublicUtterance(
     ...(input.code ? { code: input.code } : { text: input.text }),
     mapId: npc.mapId,
     sourceObservationIds: [...input.observationIds],
-    audienceIds: listeners,
-    speakerKnownToIds: listeners.filter(
+    audienceIds: heardBy,
+    speakerKnownToIds: heardBy.filter(
       (id) => id === npcId || observedVisible(s, s.entities[id], npc),
     ),
   });
   s.npcUtterances = s.npcUtterances.slice(-128);
   if (input.text)
-    for (const listenerId of listeners) {
+    for (const listenerId of heardBy) {
       const memory = s.npcBrains?.[listenerId]?.living;
       if (!memory) continue;
       const recognizes = listenerId === npcId || observedVisible(s, s.entities[listenerId], npc);
@@ -1741,7 +1779,7 @@ export function commitNpcPublicUtterance(
         sourceNpcId: recognizes ? npcId : undefined,
         depth: 0,
         disclosure: input.channel === 'whisper' ? 'participants' : 'public',
-        audienceIds: input.channel === 'whisper' ? listeners : [],
+        audienceIds: input.channel === 'whisper' ? heardBy : [],
         text: input.text,
       });
     }
@@ -1750,12 +1788,13 @@ export function commitNpcPublicUtterance(
 }
 
 /** Inspect remembered locations, never consult the hidden owner's identity. */
-export function refreshLivingPerception(state: GameState): GameResult {
+export function refreshLivingPerception(state: GameState, npcIds?: readonly string[]): GameResult {
   if (state.rulesetVersion !== 'hybrid-v3') return result(state);
   const s = clone(state);
   let changed = false;
   const events: GameEvent[] = [];
   for (const [id, brain] of Object.entries(s.npcBrains ?? {})) {
+    if (npcIds && !npcIds.includes(id)) continue;
     const m = brain.living,
       npc = s.entities[id];
     if (
@@ -2062,13 +2101,7 @@ export function communicateNpcObservations(
   )
     return result(state, [], 'INVALID_ACTION');
   if (m.personality.taboos.includes('share_rumors')) return result(state, [], 'FORBIDDEN');
-  const audienceIds =
-    action.channel === 'whisper'
-      ? [npcId, recipient.id]
-      : Object.values(state.entities)
-          .filter((e) => ['npc', 'player'].includes(e.kind) && canNpcHear(state, e, npc))
-          .map((e) => e.id)
-          .sort();
+  const audienceIds = npcSpeechProspectiveListenerIds(state, npcId, action.channel);
   const context = buildNpcPublicSpeechContext(state, npcId, audienceIds, action.observationIds, []);
   if (context.claims.length !== action.observationIds.length) return result(state, [], 'FORBIDDEN');
   const sources = action.observationIds.map((id) => m.observations.find((o) => o.id === id)!);
@@ -2084,7 +2117,8 @@ export function communicateNpcObservations(
   if (committed.error) return committed;
   let s = committed.state;
   let changed = false;
-  for (const listenerId of audienceIds) {
+  const heardBy = committed.state.npcUtterances?.at(-1)?.audienceIds ?? [];
+  for (const listenerId of heardBy) {
     if (listenerId === npcId) continue;
     const memory = s.npcBrains?.[listenerId]?.living;
     if (!memory) continue;
@@ -2103,7 +2137,7 @@ export function communicateNpcObservations(
           sourceNpcId: npcId,
           depth: source.depth + 1,
           disclosure: source.disclosure === 'public' ? 'public' : 'participants',
-          audienceIds: source.disclosure === 'public' ? [] : audienceIds,
+          audienceIds: source.disclosure === 'public' ? [] : heardBy,
           revealCondition: undefined,
         }) || changed;
     }

@@ -49,7 +49,7 @@ export const deferredTurnSpeechSchema = z
     recipientId: id,
     utteranceId: z.string().min(1).max(240),
     channel: z.enum(['say', 'whisper']),
-    audienceIds: z.array(id).min(2).max(32),
+    audienceIds: z.array(id).min(2),
   })
   .strict();
 export type DeferredTurnSpeechInput = z.infer<typeof deferredTurnSpeechSchema>;
@@ -89,6 +89,8 @@ export interface TurnController {
   nextSpeechSequence: number;
   pendingResolution?: TurnPendingResolution;
   reaction?: TurnReaction;
+  /** Frozen server-admitted current-map NPC roster for this world phase. */
+  worldActorIds?: string[];
   worldActions: number;
   worldNpcActions: Record<string, number>;
 }
@@ -106,9 +108,9 @@ export const turnProjectionSchema = z
     resources: turnResourcesSchema,
     ownTurn: z.boolean(),
     pendingResolution: z.boolean(),
-    pendingNpcReplies: z
-      .array(z.object({ npcId: id, count: z.number().int().positive().max(64) }).strict())
-      .max(32),
+    pendingNpcReplies: z.array(
+      z.object({ npcId: id, count: z.number().int().positive().max(64) }).strict(),
+    ),
     reaction: z
       .object({
         id: z.string().max(200),

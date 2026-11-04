@@ -55,6 +55,8 @@ export function redactNarrativeContent(value) {
       memory.causes = [];
       memory.processedCauses = [];
       delete memory.summary;
+      delete memory.cognition;
+      delete memory.lastActionOutcome;
       memory.knowledgeRevision = (memory.knowledgeRevision ?? 0) + 1;
       memory.goal = { kind: 'patrol', revision: (memory.goal?.revision ?? 0) + 1, evidenceIds: [] };
       for (const obligation of memory.obligations ?? []) {

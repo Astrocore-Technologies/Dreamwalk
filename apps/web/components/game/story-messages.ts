@@ -38,6 +38,16 @@ export const storyMessages = {
   dismiss: ['Отмена', 'Cancel', 'Скасувати'],
   estimatedCost: ['Примерно {amount} Искр', 'About {amount} Sparks', 'Приблизно {amount} Іскор'],
   freeTurn: ['Искры не списываются', 'No Sparks charge', 'Іскри не списуються'],
+  worldBatchPosting: [
+    'Сообщение фиксирует твои слова и проверенные действия без платы за генерацию. После завершения ходов игроков решения NPC, их ответы и продолжение ведущего оцениваются вместе.',
+    'Posting records your speech and validated actions without a generation charge. After players end their turns, NPC decisions, replies and the director’s continuation are estimated together.',
+    'Повідомлення фіксує твої слова й перевірені дії без плати за генерацію. Після завершення ходів гравців рішення NPC, їхні відповіді та продовження ведучого оцінюються разом.',
+  ],
+  worldBatchCost: [
+    'За отправку Искры не списываются. Ответы мира ждут завершения ходов игроков и отдельного подтверждения общей стоимости.',
+    'Posting costs no Sparks. World responses wait for players to end their turns and for approval of the combined cost.',
+    'За надсилання Іскри не списуються. Відповіді світу чекають завершення ходів гравців і окремого підтвердження загальної вартості.',
+  ],
   worldMembersError: [
     'Не удалось проверить участников и владельца кампании. Повторяем проверку; подтверждение генерации пока недоступно.',
     'Could not verify the campaign members and owner. Retrying; generation confirmation is unavailable until verification succeeds.',
@@ -74,9 +84,9 @@ export const storyMessages = {
     'Хід світу ще очікує обробки. Зараз немає доступного кошторису для підтвердження; це не підтверджує запуск AI.',
   ],
   worldEstimate: [
-    'Мир готовит следующий ход. Подтверди стоимость дополнительных ответов.',
-    'The world is preparing its next turn. Review the cost of additional responses.',
-    'Світ готує наступний хід. Підтвердь вартість додаткових відповідей.',
+    'Мир готовит следующий ход. Проверь общую стоимость ожидающих решений NPC, ответов и продолжения ведущего.',
+    'The world is preparing its next turn. Review the combined cost of pending NPC decisions, replies and the director’s continuation.',
+    'Світ готує наступний хід. Перевір загальну вартість очікуваних рішень NPC, відповідей і продовження ведучого.',
   ],
   estimateWorld: ['Узнать стоимость', 'Estimate cost', 'Дізнатися вартість'],
   worldPending: [

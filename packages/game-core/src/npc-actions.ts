@@ -116,6 +116,26 @@ export function prepareNpcActionIntent(
   return actions;
 }
 
+function withNpcActionOutcome(
+  result: GameResult,
+  npcId: string,
+  actionKind: string,
+  status: 'completed' | 'progressed' | 'blocked',
+  code?: string,
+): GameResult {
+  if (!result.state.npcBrains?.[npcId]?.living) return result;
+  const state = structuredClone(result.state);
+  state.npcBrains![npcId].living!.lastActionOutcome = {
+    actionKind,
+    status,
+    ...(code ? { code } : {}),
+    tick: state.tick,
+    ...(state.turnController ? { roundId: state.turnController.roundId } : {}),
+  };
+  state.revision++;
+  return { ...result, state };
+}
+
 /** One ordinary action per world phase. Long paths continue, with fresh collision checks. */
 export function stepWorldNpcPlan(state: GameState, npcId: string): GameResult {
   if (state.turnController?.phase !== 'world') return { state, events: [], error: 'WRONG_MODE' };
@@ -154,7 +174,14 @@ export function stepWorldNpcPlan(state: GameState, npcId: string): GameResult {
     let action = planned;
     if (planned.kind === 'move_to') {
       const path = findPath(next, npc.mapId, npc, planned.target!, npcId, true);
-      if (!path) return { state: next, events: [], error: 'PATH_BLOCKED' };
+      if (!path)
+        return withNpcActionOutcome(
+          { state: next, events: [], error: 'PATH_BLOCKED' },
+          npcId,
+          planned.kind,
+          'blocked',
+          'PATH_BLOCKED',
+        );
       if (!path.length) {
         next = structuredClone(next);
         next.npcBrains![npcId].cursor++;
@@ -166,19 +193,26 @@ export function stepWorldNpcPlan(state: GameState, npcId: string): GameResult {
     }
     const result = applyWorldTurnAction(next, npcId, action, turnFence(next)!);
     if (result.error) {
-      if (result.error === 'PATH_BLOCKED' || result.error === 'ROUND_LOCKED') return result;
+      if (result.error === 'PATH_BLOCKED' || result.error === 'ROUND_LOCKED')
+        return withNpcActionOutcome(result, npcId, planned.kind, 'blocked', result.error);
       const stopped = structuredClone(next),
         brain = stopped.npcBrains![npcId];
       brain.plan = [];
       brain.cursor = 0;
       delete brain.planSource;
       stopped.revision++;
-      return {
-        state: stopped,
-        events: [
-          { kind: 'npc.plan_stopped', actorId: npcId, mapId: npc.mapId, code: result.error },
-        ],
-      };
+      return withNpcActionOutcome(
+        {
+          state: stopped,
+          events: [
+            { kind: 'npc.plan_stopped', actorId: npcId, mapId: npc.mapId, code: result.error },
+          ],
+        },
+        npcId,
+        planned.kind,
+        'blocked',
+        result.error,
+      );
     }
     const after = result.state === next ? structuredClone(next) : result.state;
     if (
@@ -187,7 +221,12 @@ export function stepWorldNpcPlan(state: GameState, npcId: string): GameResult {
         after.entities[npcId].y === planned.target!.y)
     )
       after.npcBrains![npcId].cursor++;
-    return { ...result, state: after };
+    return withNpcActionOutcome(
+      { ...result, state: after },
+      npcId,
+      planned.kind,
+      after.npcBrains![npcId].cursor > brain.cursor ? 'completed' : 'progressed',
+    );
   }
   return { state: next, events: [] };
 }

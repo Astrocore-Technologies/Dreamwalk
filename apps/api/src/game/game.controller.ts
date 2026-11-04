@@ -1,4 +1,15 @@
-import { Body, Controller, Delete, Get, Inject, Param, Post, Req, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Header,
+  Inject,
+  Param,
+  Post,
+  Req,
+  Res,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { GameService } from './game.service';
 @Controller('api/v1/game')
@@ -152,6 +163,11 @@ export class GameController {
     @Body() body: unknown,
   ) {
     return this.game.aiDecision(req, id, body);
+  }
+  @Get('campaigns/:id/npcs/:npcId/inner-thought')
+  @Header('Cache-Control', 'no-store')
+  npcInnerThought(@Req() req: Request, @Param('id') id: string, @Param('npcId') npcId: string) {
+    return this.game.npcInnerThought(req, id, npcId);
   }
   @Get('campaigns/:id/hero') hero(@Req() req: Request, @Param('id') id: string) {
     return this.game.selectedHero(req, id);

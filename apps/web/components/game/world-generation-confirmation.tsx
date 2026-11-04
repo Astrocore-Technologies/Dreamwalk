@@ -5,7 +5,7 @@ import { ErrorBox } from '../ui';
 import { StoryReplyConfirmation } from './story-reply-confirmation';
 import { useStoryText } from './story-messages';
 
-/** Only separate, unquoted world work appears here; composer-covered replies are excluded by server. */
+/** One world batch covers pending decisions and replies; legacy composer-covered jobs stay excluded. */
 export function WorldGenerationConfirmation({
   campaignId,
   scope,
