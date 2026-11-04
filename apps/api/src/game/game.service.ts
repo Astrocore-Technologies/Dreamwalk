@@ -94,6 +94,7 @@ import {
   npcReplyObservation,
   commitNpcPublicUtterance,
   npcSpeechListenerIds,
+  npcRoleplayObserverIds,
   npcSpeechProspectiveListenerIds,
   npcContextFingerprint,
   recordNpcEvents,
@@ -198,6 +199,32 @@ const digest = (v: unknown) =>
   createHash('sha256')
     .update(JSON.stringify(canonical(v)))
     .digest('hex');
+/** RP prose uses the same complete-audience authorization as ordinary claims. */
+function safeRoleplayExtras(source: DecisionContext, current: DecisionContext) {
+  const claims = Array.isArray(current.claims) ? (current.claims as Record<string, unknown>[]) : [];
+  const roleplay = Array.isArray(source.untrustedRoleplay)
+    ? source.untrustedRoleplay.filter((value: unknown) => {
+        if (!value || typeof value !== 'object') return false;
+        const entry = value as Record<string, unknown>;
+        return claims.some(
+          (claim) =>
+            claim.kind === 'attempted' &&
+            claim.actorId === entry.actorId &&
+            claim.untrustedAttempt === entry.text &&
+            (entry.observationId === undefined || claim.observationId === entry.observationId),
+        );
+      })
+    : [];
+  return roleplay.length
+    ? { untrustedRoleplay: roleplay, roleplayPolicy: source.roleplayPolicy }
+    : {};
+}
+export function roleplayExtrasRemainSafe(source: DecisionContext, current: DecisionContext) {
+  return (
+    digest(source.untrustedRoleplay ?? []) ===
+    digest(safeRoleplayExtras(source, current).untrustedRoleplay ?? [])
+  );
+}
 function canonical(value: unknown): unknown {
   if (Array.isArray(value)) return value.map(canonical);
   if (value && typeof value === 'object')
@@ -1538,6 +1565,7 @@ export class GameService implements OnModuleDestroy {
         }
         if (
           context &&
+          roleplayExtrasRemainSafe(job.context, context) &&
           (context.contextHash === job.contextHash ||
             this.frozenSpeechContext(state, job.npcId, job.context, context))
         ) {
@@ -2116,6 +2144,7 @@ export class GameService implements OnModuleDestroy {
             quotedReply &&
             ((current.contextHash !== r.context.contextHash &&
               !this.frozenSpeechContext(live.state, String(r.npc_id), r.context, current)) ||
+              !roleplayExtrasRemainSafe(r.context, current) ||
               !matchesTurnFence(live.state, r.context.turnFence))
           ) {
             if (worldReply && r.context.generationPolicy === 'world-batch-v1')
@@ -2139,12 +2168,8 @@ export class GameService implements OnModuleDestroy {
                   knowledgeRevision: r.context.knowledgeRevision,
                   deferredSpeechId: r.context.deferredSpeechId,
                   turnOrder: r.context.turnOrder,
-                  ...(r.context.untrustedRoleplay
-                    ? {
-                        untrustedRoleplay: r.context.untrustedRoleplay,
-                        roleplayPolicy: r.context.roleplayPolicy,
-                      }
-                    : {}),
+                  ...(r.context.responseOptional ? { responseOptional: true } : {}),
+                  ...safeRoleplayExtras(r.context, current),
                   mockProposal: createMockNpcPublicResponse(current),
                 },
                 Boolean(this.ai.contextWindow()),
@@ -3517,9 +3542,7 @@ export class GameService implements OnModuleDestroy {
       deferredSpeechId: r.deferredSpeechId,
       turnOrder: r.turnOrder,
       ...(r.responseOptional ? { responseOptional: true } : {}),
-      ...(r.untrustedRoleplay
-        ? { untrustedRoleplay: r.untrustedRoleplay, roleplayPolicy: r.roleplayPolicy }
-        : {}),
+      ...safeRoleplayExtras(r, current),
       mockProposal: createMockNpcPublicResponse(current),
     };
   }
@@ -3527,15 +3550,24 @@ export class GameService implements OnModuleDestroy {
   private prepareAreaTurnSpeech(
     state: GameState,
     actorId: string,
-    speech: z.infer<typeof npcSpeechSchema>,
+    speech: z.infer<typeof npcSpeechSchema> & {
+      presentationKind?: 'attempt';
+      observeOnly?: boolean;
+    },
     userId: string,
     identity: { turnId: string; segmentIndex: number },
-    targetNpcId?: string,
+    _legacyTargetNpcId?: string,
   ) {
-    const audienceIds = npcSpeechListenerIds(state, actorId, speech);
-    const applied = applyNpcSpeech(state, actorId, targetNpcId, speech, {
+    const { presentationKind, observeOnly, ...utterance } = speech;
+    const audienceIds =
+      presentationKind === 'attempt'
+        ? npcRoleplayObserverIds(state, actorId, utterance)
+        : npcSpeechListenerIds(state, actorId, utterance);
+    // Spatial speech has no selected recipient, including requests from older clients.
+    const applied = applyNpcSpeech(state, actorId, undefined, utterance, {
       suppressReply: true,
       identity,
+      presentationKind,
     });
     if (applied.error) fail(409, applied.error, applied.error);
     let next = recordNpcEvents(
@@ -3546,9 +3578,9 @@ export class GameService implements OnModuleDestroy {
     ).state;
     const requests: NpcDecisionRequest[] = [];
     for (const npcId of audienceIds.filter(
-      (id) => next.entities[id]?.kind === 'npc' && next.npcBrains?.[id]?.living,
+      (id) => !observeOnly && next.entities[id]?.kind === 'npc' && next.npcBrains?.[id]?.living,
     )) {
-      const marker = admittedNpcSpeechObservationId(next, actorId, npcId, speech, identity);
+      const marker = admittedNpcSpeechObservationId(next, actorId, npcId, utterance, identity);
       if (!marker) continue; // E.g. an encounter participant could not admit this utterance.
       const hash = digest({ ...identity, npcId });
       const requestId = `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`;
@@ -3584,7 +3616,7 @@ export class GameService implements OnModuleDestroy {
           segmentIndex: identity.segmentIndex,
           deferredSpeechId: requestId,
           turnOrder: ref.sequence,
-          responseOptional: npcId !== targetNpcId,
+          responseOptional: true,
           knowledgeRevision: next.npcBrains![npcId].living!.knowledgeRevision,
         },
       });

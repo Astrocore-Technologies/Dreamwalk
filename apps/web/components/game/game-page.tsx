@@ -507,6 +507,10 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             onAction={act}
             onApproach={approach}
             onSelectNpc={(npcId) => {
+              if (p.turn) {
+                setInspectedNpcId(npcId);
+                return;
+              }
               const npc = p.entities.find((entity) => entity.id === npcId && entity.kind === 'npc');
               if (npc) setRecipient({ id: npc.id, label: npc.label || t('NPC') });
             }}
@@ -552,7 +556,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                   const npc = p.entities.find(
                     (entity) => entity.kind === 'npc' && entity.id === inspectedNpcId,
                   );
-                  if (npc && !controlsDisabled && !storyBusy)
+                  if (!p.turn && npc && !controlsDisabled && !storyBusy)
                     setRecipient({ id: npc.id, label: npc.label || t('NPC') });
                 }}
               />

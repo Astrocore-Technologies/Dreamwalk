@@ -3,6 +3,9 @@
 Every living, active NPC on a player-occupied map receives one private model
 consideration per world round, including rounds with no player speech. Prior plans,
 obligations and cognition remain decision context; they no longer skip a model turn.
+The private currentPlan includes the remaining accepted action and its grounded
+source, so each fresh decision can continue a promise instead of forgetting it.
+The free deterministic provider reconsiders still-valid plans and obligations too.
 An already agreed off-map companion crossing remains a bounded mechanical action,
 not permission to simulate a dormant off-map mind.
 
@@ -31,11 +34,19 @@ amount-bound recovery through the existing accounting helper.
 
 Planner context explicitly lists adjacent communication recipients and complete
 prospective say/whisper audiences. Acoustic speech still reaches the actual heard
-area; selecting a person does not exclude nearby listeners.
+area. Turn-based play no longer selects a recipient; map clicks inspect NPCs and
+Talk focuses the composer. Older recipient metadata cannot force or block a spatial
+NPC response. Legacy real-time selection remains compatible.
+
+Free-form emotes remain unverified attributed roleplay. Only actual observers learn
+them; whispered emotes also stay within one cell. Mixed prose admits those memories
+without duplicating speech jobs, and raw RP context is filtered through the same
+complete-audience claims as every public reply. Targetless coauthor/director work
+remains in the combined quote when needed by the existing story policy.
 
 ## User visibility
 
-The game shows the owner's current Sparks and Dreams balances. A read-only forecast
+The game shows the signed-in player's own Sparks and Dreams balances. A read-only forecast
 updates during the player phase, and the complete exact quote is prepared when the
 world batch is available. A forecast is not consent, a reservation or a provider call.
 Exact quotes still require explicit consent. Unresolved prior billing stays visible
@@ -43,3 +54,9 @@ in the player phase instead of appearing as silent NPC behavior.
 
 Verification uses synthetic fixtures and mocked providers. No production gameplay,
 provider dispatch or accounting reconciliation is part of a test run.
+
+A cancelled or definitively rejected unpaid quote retires its operation identity.
+Transport uncertainty retains the exact identity; an uncertain accepted consent is
+never silently repriced. The long layout browser journey retains every assertion
+and 15-second expectation deadline with a 90-second total budget, based on measured
+38–42-second reference runs and a 39% slowdown across unrelated CI tests.

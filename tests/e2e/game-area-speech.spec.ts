@@ -33,14 +33,57 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
     expect(created.ok()).toBeTruthy();
     const id = (await created.json()).campaignId;
     const copy = {
-      ru: { send: 'Отправить', confirm: 'Подтвердить ход', whisper: 'Шёпот' },
-      en: { send: 'Send', confirm: 'Confirm turn', whisper: 'Whisper' },
-      uk: { send: 'Надіслати', confirm: 'Підтвердити хід', whisper: 'Шепіт' },
+      ru: {
+        send: 'Отправить',
+        confirm: 'Подтвердить ход',
+        whisper: 'Шёпот',
+        actions: 'Действия',
+        inspect: 'Осмотреть',
+        say: 'Сказать',
+        nearby: 'Речь рядом',
+        nearbyWhisper: 'Шёпот рядом',
+        clear: 'Обратиться к ведущему',
+      },
+      en: {
+        send: 'Send',
+        confirm: 'Confirm turn',
+        whisper: 'Whisper',
+        actions: 'Actions',
+        inspect: 'Inspect',
+        say: 'Say',
+        nearby: 'Speech nearby',
+        nearbyWhisper: 'Nearby whisper',
+        clear: 'Address the director',
+      },
+      uk: {
+        send: 'Надіслати',
+        confirm: 'Підтвердити хід',
+        whisper: 'Шепіт',
+        actions: 'Дії',
+        inspect: 'Оглянути',
+        say: 'Сказати',
+        nearby: 'Мова поруч',
+        nearbyWhisper: 'Шепіт поруч',
+        clear: 'Звернутися до ведучого',
+      },
     }[locale];
     await page.goto(`/game/${id}`);
     const composer = page.getByTestId('unified-story').locator('form');
     const input = composer.locator('textarea');
     const whisper = composer.getByRole('button', { name: copy.whisper, exact: true });
+    // Inspection stays available, but neither the map nor Talk selects a speech target.
+    await page.getByRole('button', { name: copy.actions, exact: true }).click();
+    const npcActions = page
+      .getByRole('dialog', { name: copy.actions, exact: true })
+      .locator('[data-map-target="keeper"]');
+    await expect(npcActions.getByRole('button', { name: copy.say, exact: true })).toHaveCount(0);
+    await npcActions.getByRole('button', { name: copy.inspect, exact: true }).click();
+    const inspection = page.getByTestId('npc-public-inspection');
+    await expect(inspection).toBeVisible();
+    await inspection.getByTestId('npc-inspection-talk').click();
+    await expect(input).toBeFocused();
+    await expect(composer.getByTestId('story-audience')).toHaveText(copy.nearby);
+    await expect(composer.getByRole('button', { name: copy.clear, exact: true })).toHaveCount(0);
     for (const speech of [
       { text: 'Good morning', channel: 'say' },
       { text: 'Can anyone hear me!', channel: 'say' },
@@ -61,6 +104,17 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
       expect(quoteInput.targetNpcId).toBeUndefined();
       expect(quoteInput.channel).toBe(speech.channel);
       expect(quoteInput.text).toBe(speech.text);
+      // Even after a quote is prepared, repeated inspection actions preserve the draft,
+      // channel and authorization instead of binding the post to that NPC.
+      for (let click = 0; click < 2; click++) {
+        await inspection.getByTestId('npc-inspection-talk').click();
+        await expect(input).toBeFocused();
+        await expect(input).toHaveValue(speech.text);
+        await expect(composer.getByTestId('story-audience')).toHaveText(
+          speech.channel === 'whisper' ? copy.nearbyWhisper : copy.nearby,
+        );
+        await expect(composer.getByTestId('story-quote')).toBeVisible();
+      }
       const submitResponse = page.waitForResponse(
         (response) =>
           response.request().method() === 'POST' &&

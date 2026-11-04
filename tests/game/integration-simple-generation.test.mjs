@@ -323,8 +323,14 @@ await test(
             [ids[7], true],
             [ids[8], false],
           ]) {
-            const live = await setup(id),
-              body = input(live, target);
+            const live = await setup(id);
+            if (!target) {
+              // A pre-upgrade director-only request had no local NPC response.
+              // Keep that original recovery fixture distinct from new area emotes.
+              Object.assign(live.state.entities.keeper, { x: 19, y: 19 });
+              await game.persist(id, live, live.state, 'test.legacy-director-alone');
+            }
+            const body = input(live, target);
             const q = await game.storyQuote(req, id, body);
             await submit(id, body, q);
             // Reproduce a persisted pre-upgrade unpaid turn, not the new composer policy.
@@ -359,7 +365,16 @@ await test(
             });
             await game.processDecisionRequests(id, live);
             const request = (await requests(id))[0];
-            assert.equal(request.status, 'scheduled', request.result_code);
+            assert.equal(
+              request.status,
+              'scheduled',
+              JSON.stringify({
+                target,
+                purpose: request.purpose,
+                code: request.result_code,
+                requestCount: (await requests(id)).length,
+              }),
+            );
             assert.equal((await requests(id)).length, 1);
             await ai.run(request.job_id, async () => true);
             await game.processAi(id, live);

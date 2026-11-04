@@ -1288,15 +1288,33 @@ for (const locale of ['uk', 'en', 'ru'] as const)
       name: { ru: 'Сказать', en: 'Say', uk: 'Сказати' }[locale],
       exact: true,
     });
-    await say.focus();
-    await say.press('Enter');
+    await expect(say).toHaveCount(0);
+    const inspect = npcActions.getByRole('button', {
+      name: { ru: 'Осмотреть', en: 'Inspect', uk: 'Оглянути' }[locale],
+      exact: true,
+    });
+    await inspect.focus();
+    await inspect.press('Enter');
     await expect(menu).toHaveCount(0);
-    await expect(actions).toBeFocused();
-    await expect(page.getByTestId('unified-story')).toContainText(
-      `${{ ru: 'Собеседник', en: 'Recipient', uk: 'Співрозмовник' }[locale]}: ${npcLabel}`,
+    const inspection = page.getByTestId('npc-public-inspection');
+    await expect(inspection.getByRole('heading')).toHaveText(npcLabel);
+    const closeInspection = inspection.getByRole('button', {
+      name: { ru: 'Закрыть осмотр', en: 'Close inspection', uk: 'Закрити огляд' }[locale],
+      exact: true,
+    });
+    await expect(closeInspection).toBeFocused();
+    await inspection.getByTestId('npc-inspection-talk').click();
+    await expect(page.getByTestId('unified-story').locator('textarea')).toBeFocused();
+    await expect(page.getByTestId('story-audience')).toHaveText(
+      { ru: 'Речь рядом', en: 'Speech nearby', uk: 'Мова поруч' }[locale],
     );
+    await closeInspection.click();
 
     const npcPoint = await cellPoint(npc.x, npc.y);
+    await page.mouse.click(npcPoint.x, npcPoint.y);
+    await expect(inspection.getByRole('heading')).toHaveText(npcLabel);
+    expect(f.moves).toHaveLength(0);
+    await closeInspection.click();
     await page.mouse.click(npcPoint.x, npcPoint.y, { button: 'right' });
     await expect(page.locator(`[data-map-target="${npc.id}"]`)).toBeVisible();
     await menu.press('Escape');

@@ -110,6 +110,7 @@ export function StoryReplyConfirmation({
       });
       if (stamp !== epoch.current || currentScope.current !== scope) return;
       if (!result.quote || !providerBoundKnown(result.quote, result.quote.external)) {
+        quoteOperation.current = null;
         setError(h('noBound'));
         return;
       }
@@ -152,6 +153,7 @@ export function StoryReplyConfirmation({
         expiresAt <= Date.now())
     ) {
       setPrepared(null);
+      quoteOperation.current = null;
       setError(h('expired'));
       return;
     }
@@ -187,6 +189,7 @@ export function StoryReplyConfirmation({
         setUnknown(false);
         submitted.current = null;
         setPrepared(null);
+        quoteOperation.current = null;
         await onChanged();
       }
     } finally {
@@ -222,7 +225,10 @@ export function StoryReplyConfirmation({
                 type="button"
                 variant="secondary"
                 disabled={busy}
-                onClick={() => setPrepared(null)}
+                onClick={() => {
+                  setPrepared(null);
+                  quoteOperation.current = null;
+                }}
               >
                 {h('dismiss')}
               </Button>

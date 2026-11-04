@@ -3,7 +3,7 @@ process.env.DATABASE_URL ??= 'postgresql://fixture:fixture@127.0.0.1:1/fixture';
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const g = require('../../packages/game-core/dist');
-const { GameService } = require('../../apps/api/dist/game/game.service');
+const { GameService, roleplayExtrasRemainSafe } = require('../../apps/api/dist/game/game.service');
 function world(count = 5) {
   const draft = g.createCompleteObservatoryDraft();
   draft.turnRules = g.turnRulesSchema.parse({});
@@ -1050,4 +1050,186 @@ test('blocked private communication never publishes the secret or applies an uns
   assert.ok(
     !JSON.stringify(g.projectState(result.next, 'alice')).includes('I should not reveal this.'),
   );
+});
+
+test('modern area speech ignores stale selected-recipient metadata and never forces one NPC to reply', () => {
+  for (const targetNpcId of ['missing-old-selection', 'seven', 'keeper']) {
+    const { state, runtime } = speechFixture(),
+      id = require('node:crypto').randomUUID();
+    const posted = runtime.simulateTurnPost(
+      state,
+      'alice',
+      {
+        operationId: id,
+        text: 'Hello',
+        channel: 'say',
+        targetNpcId,
+        expectedCanonRevision: 0,
+        turnFence: g.turnFence(state),
+      },
+      id,
+      'owner',
+    );
+    assert.deepEqual(posted.requests.map((request) => request.npcId).sort(), ['keeper', 'three']);
+    assert.ok(posted.requests.every((request) => request.context.responseOptional));
+    assert.ok(
+      posted.state.npcBrains.keeper.living.observations
+        .filter((observation) => observation.text === 'Hello')
+        .every((observation) => observation.addressedNpcId === undefined),
+    );
+  }
+});
+
+test('targetless emote-only posts admit visible observers without mechanical changes', () => {
+  const { state, runtime } = speechFixture(),
+    id = require('node:crypto').randomUUID();
+  const physical = structuredClone(state.entities);
+  const posted = runtime.simulateTurnPost(
+    state,
+    'alice',
+    {
+      operationId: id,
+      text: '*Smiles gently and adjusts a scarf*',
+      channel: 'say',
+      expectedCanonRevision: 0,
+      turnFence: g.turnFence(state),
+    },
+    id,
+    'owner',
+  );
+  assert.deepEqual(posted.state.entities, physical);
+  assert.deepEqual(posted.actions, []);
+  assert.deepEqual(posted.requests.map((request) => request.npcId).sort(), [
+    'keeper',
+    'seven',
+    'six',
+    'three',
+  ]);
+  assert.equal(posted.entries.length, 1);
+  assert.equal(posted.entries[0].kind, 'attempt');
+  assert.ok(posted.entries[0].sourceId);
+  assert.ok(posted.requests.every((request) => request.context.responseOptional));
+  for (const request of posted.requests) {
+    const observation = g.npcReplyObservation(
+      posted.state,
+      'alice',
+      request.npcId,
+      request.context.replyToObservationId,
+    );
+    assert.equal(observation.kind, 'attempted');
+    assert.equal(observation.confidence, 'reported');
+    assert.equal(request.context.untrustedRoleplay[0].verified, false);
+  }
+});
+
+test('a whispered emote cannot disclose private contents to distant visible NPCs', () => {
+  const { state, runtime } = speechFixture(),
+    id = require('node:crypto').randomUUID();
+  const text = 'Shows a secret note';
+  const posted = runtime.simulateTurnPost(
+    state,
+    'alice',
+    {
+      operationId: id,
+      text: `*${text}*`,
+      channel: 'whisper',
+      expectedCanonRevision: 0,
+      turnFence: g.turnFence(state),
+    },
+    id,
+    'owner',
+  );
+  assert.deepEqual(
+    posted.requests.map((request) => request.npcId),
+    ['keeper'],
+  );
+  assert.deepEqual(posted.entries[0].audienceIds, ['alice', 'keeper']);
+  assert.deepEqual(posted.state.npcUtterances.at(-1).audienceIds, ['alice', 'keeper']);
+  assert.equal(posted.directorText, '');
+  for (const npcId of ['three', 'six', 'seven'])
+    assert.equal(
+      posted.state.npcBrains[npcId].living.observations.some((o) => o.text === text),
+      false,
+    );
+});
+
+test('mixed roleplay is observed separately from sound and adds no duplicate reply jobs', () => {
+  const { state, runtime } = speechFixture(),
+    id = require('node:crypto').randomUUID();
+  state.entities.hidden = { ...structuredClone(state.entities.keeper), id: 'hidden', x: 7, y: 6 };
+  state.npcBrains.hidden = structuredClone(state.npcBrains.keeper);
+  state.maps.courtyard.blocked.push({ x: 6, y: 5 });
+  Object.assign(state.entities.keeper, { x: 5, y: 4 });
+  Object.assign(state.entities.three, { x: 5, y: 8 });
+  assert.equal(g.visible(state, state.entities.hidden, state.entities.alice), false);
+  assert.equal(g.canNpcHear(state, state.entities.hidden, state.entities.alice, 3), true);
+  const posted = runtime.simulateTurnPost(
+    state,
+    'alice',
+    {
+      operationId: id,
+      text: '*Smiles gently* Hello',
+      channel: 'say',
+      expectedCanonRevision: 0,
+      turnFence: g.turnFence(state),
+    },
+    id,
+    'owner',
+  );
+  assert.deepEqual(posted.requests.map((request) => request.npcId).sort(), [
+    'hidden',
+    'keeper',
+    'three',
+  ]);
+  const hidden = posted.requests.find((request) => request.npcId === 'hidden');
+  assert.equal(hidden.context.untrustedRoleplay, undefined);
+  assert.equal(
+    posted.state.npcBrains.hidden.living.observations.some((o) => o.text === 'Smiles gently'),
+    false,
+  );
+  assert.equal(posted.entries[0].audienceIds.includes('hidden'), false);
+  assert.equal(posted.entries[1].audienceIds.includes('hidden'), true);
+  assert.equal(
+    posted.requests.find((request) => request.npcId === 'keeper').context.untrustedRoleplay.length,
+    1,
+  );
+});
+
+test('deferred roleplay extras cannot bypass the complete outgoing audience disclosure check', () => {
+  const { state, runtime, game } = speechFixture(),
+    id = require('node:crypto').randomUUID();
+  const posted = runtime.simulateTurnPost(
+    state,
+    'alice',
+    {
+      operationId: id,
+      text: '*Smiles secretly* Hello',
+      channel: 'whisper',
+      expectedCanonRevision: 0,
+      turnFence: g.turnFence(state),
+    },
+    id,
+    'owner',
+  );
+  const request = posted.requests[0];
+  assert.equal(request.context.untrustedRoleplay.length, 1);
+  // The second source was heard by a new bystander; the earlier private gesture
+  // was not. This models distinct emission audiences without broadening either.
+  posted.state.entities.bob = {
+    ...structuredClone(posted.state.entities.alice),
+    id: 'bob',
+    x: 7,
+    y: 5,
+  };
+  const spoken = posted.state.npcBrains.keeper.living.observations.find(
+    (o) => o.id === request.context.replyToObservationId,
+  );
+  spoken.audienceIds.push('bob');
+  const worldState = g.endPlayerTurn(posted.state, 'alice', g.turnFence(posted.state)).state;
+  game.ai = { contextBudgetBytes: () => 64000 };
+  const current = game.deferredSpeechContext(worldState, request);
+  assert.ok(current.audienceIds.includes('bob'));
+  assert.equal(current.untrustedRoleplay, undefined);
+  assert.equal(JSON.stringify(current).includes('Smiles secretly'), false);
+  assert.equal(roleplayExtrasRemainSafe(request.context, current), false);
 });

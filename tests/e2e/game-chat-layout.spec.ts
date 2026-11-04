@@ -16,6 +16,10 @@ for (const locale of ['ru', 'en', 'uk']) {
   test(`game history stays anchored and desktop stays inside the viewport (${locale})`, async ({
     page,
   }, info) => {
+    // The complete desktop/inspection/mobile/reload journey takes 38–42s on
+    // the reference runner; shared CI measured ~40% slower across unrelated tests.
+    // Keep individual 15s expectation deadlines and all final reload assertions.
+    test.setTimeout(90_000);
     const handle = `layout_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
     const registered = await page.request.post('/api/v1/auth/register', {
       data: {

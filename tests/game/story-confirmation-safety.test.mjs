@@ -121,6 +121,9 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
       : [node, ...[].concat(node.props?.children ?? []).flatMap(nodes)];
   return {
     render,
+    apiError(status) {
+      return Object.assign(new ApiError(`HTTP_${status}`), { status });
+    },
     button(label) {
       const found = nodes().find((node) => node.type === 'button' && node.props.children === label);
       assert.ok(found, `Button ${label} exists`);
@@ -234,6 +237,11 @@ test('reply cancel makes no consent call; repeated synchronous confirmation disp
   ui.button('refreshEstimate')();
   await tick();
   ui.render();
+  assert.notEqual(
+    calls[1].body.operationId,
+    calls[0].body.operationId,
+    'cancel abandons the previous quote identity',
+  );
   const confirm = ui.button('confirm');
   confirm();
   confirm();
@@ -725,4 +733,96 @@ test('game toolbar shows both account-bound currencies and refreshes after round
   assert.match(wallet, /\[ownerId, scope\]/);
   assert.match(wallet, /SPARKS_REFRESH_EVENT/);
   assert.doesNotMatch(wallet, /campaign.*ownerId|\/consent|\/quote/);
+});
+
+for (const status of [409, 408, 500]) {
+  test(`quote HTTP ${status} ${status === 409 ? 'retires a rejected' : 'preserves an uncertain'} operation identity`, async () => {
+    const calls = [];
+    const ui = await harness('story-reply-confirmation', async (path, options) => {
+      calls.push({ path, body: JSON.parse(options.body) });
+      if (calls.length === 1) throw ui.apiError(status);
+      return quote();
+    });
+    ui.render(props());
+    ui.button('refreshEstimate')();
+    await tick();
+    ui.render();
+    ui.button('refreshEstimate')();
+    await tick();
+    ui.render();
+    assert.equal(calls[1].body.operationId === calls[0].body.operationId, status !== 409);
+    assert.ok(calls.every((call) => call.path.endsWith('/quote')));
+    ui.unmount();
+  });
+}
+
+test('definitively rejected consent retires its quote before the next manual estimate', async () => {
+  const calls = [];
+  const ui = await harness('story-reply-confirmation', async (path, options) => {
+    calls.push({ path, body: JSON.parse(options.body) });
+    if (path.endsWith('/consent')) throw ui.apiError(409);
+    return quote();
+  });
+  ui.render(props());
+  ui.button('refreshEstimate')();
+  await tick();
+  ui.render();
+  ui.button('confirm')();
+  await tick();
+  ui.render();
+  assert.equal(ui.has('retrySame'), false);
+  ui.button('refreshEstimate')();
+  await tick();
+  ui.render();
+  assert.equal(calls.length, 3);
+  assert.notEqual(calls[2].body.operationId, calls[0].body.operationId);
+  assert.equal(calls[1].body.operationId, calls[0].body.operationId);
+  ui.unmount();
+});
+
+test('expiry checked at click time retires the old quote even before the timer runs', async () => {
+  const calls = [];
+  const prepared = quote();
+  const ui = await harness('story-reply-confirmation', async (path, options) => {
+    calls.push({ path, body: JSON.parse(options.body) });
+    return calls.length === 1 ? prepared : quote();
+  });
+  ui.render(props());
+  ui.button('refreshEstimate')();
+  await tick();
+  ui.render();
+  const now = Date.now;
+  try {
+    Date.now = () => Date.parse(prepared.quote.expiresAt) + 1;
+    ui.button('confirm')();
+  } finally {
+    Date.now = now;
+  }
+  await tick();
+  ui.render();
+  assert.equal(calls.length, 1, 'expired confirmation never reaches the server');
+  ui.button('refreshEstimate')();
+  await tick();
+  ui.render();
+  assert.notEqual(calls[1].body.operationId, calls[0].body.operationId);
+  ui.unmount();
+});
+
+test('a returned invalid quote is retired rather than indefinitely replayed', async () => {
+  const calls = [];
+  const ui = await harness('story-reply-confirmation', async (path, options) => {
+    calls.push({ path, body: JSON.parse(options.body) });
+    return calls.length === 1 ? { quote: { external: true } } : quote();
+  });
+  ui.render(props());
+  ui.button('refreshEstimate')();
+  await tick();
+  ui.render();
+  assert.equal(ui.has('confirm'), false);
+  ui.button('refreshEstimate')();
+  await tick();
+  ui.render();
+  assert.notEqual(calls[1].body.operationId, calls[0].body.operationId);
+  assert.equal(ui.has('confirm'), true);
+  ui.unmount();
 });
