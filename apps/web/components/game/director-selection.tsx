@@ -1,5 +1,5 @@
 'use client';
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import type {
   CampaignDirectorSelection,
   DirectorCatalog,
@@ -156,14 +156,22 @@ export function CampaignDirector({
   const [profileId, setProfileId] = useState('');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
+  const editing =
+    !!selection.data?.canChange &&
+    profileId !== selection.data.profileId &&
+    !!catalog.data?.profiles.some((profile) => profile.id === profileId && profile.enabled);
+  const refreshBlocked = useRef(false);
+  refreshBlocked.current = busy || editing;
   useEffect(() => {
     if (selection.data) setProfileId(selection.data.profileId);
   }, [selection.data?.revision, selection.data?.profileId]);
   useEffect(() => {
-    if (busy) return;
+    if (busy || editing) return;
     // Other members observe owner changes; refresh never launches a generation.
+    // Do not disable an owner's save button between pointer down and pointer up.
+    // The revision check still rejects changes made elsewhere while editing.
     const refresh = () => {
-      if (document.visibilityState === 'visible') selection.reload();
+      if (!refreshBlocked.current && document.visibilityState === 'visible') selection.reload();
     };
     const timer = setInterval(refresh, 5000);
     document.addEventListener('visibilitychange', refresh);
@@ -171,7 +179,7 @@ export function CampaignDirector({
       clearInterval(timer);
       document.removeEventListener('visibilitychange', refresh);
     };
-  }, [busy, selection.reload]);
+  }, [busy, editing, selection.reload]);
   async function change() {
     if (
       !selection.data?.canChange ||
