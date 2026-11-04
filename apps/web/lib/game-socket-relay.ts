@@ -1,4 +1,5 @@
 import WebSocket, { type RawData } from 'ws';
+import { localeSchema } from '@dreamwalk/contracts';
 import { canonicalWebOrigin, trustedBrowserOrigin } from './hosted-origin';
 
 const CLIENT_LIMIT = 8192;
@@ -42,6 +43,9 @@ export function socketRelayTarget(request: Request, env: NodeJS.ProcessEnv) {
   const url = new URL('/api/v1/game/socket', api);
   url.protocol = 'wss:';
   url.searchParams.set('campaignId', campaignId);
+  // Match the API socket's bounded output preference, never forward arbitrary query data.
+  const locale = localeSchema.safeParse(incoming.searchParams.get('locale'));
+  if (locale.success) url.searchParams.set('locale', locale.data);
   return {
     url: url.href,
     headers: { cookie: sessionCookie, origin: web.origin, 'x-dreamwalk-ingress': secret },
