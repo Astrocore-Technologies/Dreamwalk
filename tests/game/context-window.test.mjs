@@ -342,7 +342,6 @@ test('deferred speech refresh retains the previously quoted complete body only u
 });
 
 test('overflow of feed-shaped records without optional IDs keeps the latest record, not every anonymous record', () => {
-  const provider = new OpenAiNpcProvider(config({ contextBudgetTokens: 16000 }), noNetwork);
   const history = Array.from({ length: 160 }, (_, sequence) => ({
     sequence,
     ordinal: 0,
@@ -350,6 +349,17 @@ test('overflow of feed-shaped records without optional IDs keeps the latest reco
   }));
   const input = { contextHash: 'feed-canon', rules: 'PINNED', history };
   const original = structuredClone(input);
+  // Leave bounded room beyond the full pinned-record envelope. A stale absolute
+  // window can reject even the required latest record before packing is tested.
+  const pinnedTokens = new OpenAiNpcProvider(config(), noNetwork).prepareTextRequest('narrative', {
+    ...input,
+    history: history.slice(-1),
+  }).snapshot.contextWindow.totalTokens;
+  const provider = new OpenAiNpcProvider(
+    config({ contextBudgetTokens: pinnedTokens + 4096 }),
+    noNetwork,
+  );
+  assert.equal(provider.contextFits('narrative', input), false);
   const packed = packNpcContextWindow(input, (context) =>
     provider.contextFits('narrative', context),
   );
