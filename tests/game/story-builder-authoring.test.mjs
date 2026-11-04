@@ -72,3 +72,26 @@ test('application is reviewed and separate from publication, with localized dura
   ])
     assert.ok(source.includes(text));
 });
+
+test('builder review composition uses only actual draft labels and retains the disabled map', async () => {
+  assert.match(source, /story-playable-builder\.module\.css/);
+  assert.match(source, /aria-current=\{index === step \? 'step' : undefined\}/);
+  assert.match(source, /state\.draft\.maps\.map/);
+  assert.match(source, /state\.draft\.npcs\.map/);
+  assert.match(source, /state\.draft\.objects\.map/);
+  assert.match(source, /item\.labelTranslations\?\.\[locale\] \|\| item\.label/);
+  assert.match(source, /<GameCanvas\s+projection=\{projection\}\s+disabled\s+reducedMotion/);
+  assert.doesNotMatch(
+    source,
+    /initialFacts|initialKnowledge|personality|promiseTemplates|<img|backgroundImage/,
+  );
+  const css = await readFile(
+    new URL(
+      '../../apps/web/components/visual-authoring/story-playable-builder.module.css',
+      import.meta.url,
+    ),
+    'utf8',
+  );
+  assert.match(css, /@media \(max-width: 600px\)/);
+  assert.match(css, /grid-template-columns: minmax\(0, 2fr\) minmax\(260px, 1fr\)/);
+});
