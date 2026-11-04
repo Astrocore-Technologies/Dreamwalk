@@ -111,6 +111,7 @@ export interface ConfirmedNarrativeTurn {
   evidenceIds: string[];
   introducedScene?: { id: string; name: string; description: string };
   introducedNpc?: { id: string; name: string; roleLabel: string };
+  introducedItem?: { id: string; name: string; description: string };
 }
 export interface NarrativeCanon {
   revision: number;

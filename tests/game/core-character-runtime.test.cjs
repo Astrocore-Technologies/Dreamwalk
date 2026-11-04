@@ -195,6 +195,97 @@ test('public-facing disposition honors accumulated conflict instead of instant f
   assert.equal(character.characterAppraisal(m).certainty, 'witnessed');
 });
 
+test('public performance follows the newest admitted interaction instead of an old trigger', () => {
+  let s = address(world('prosper'));
+  const old = s.npcBrains.keeper.living.observations.find((o) => o.kind === 'addressed');
+  assert.ok(old);
+  s.tick++;
+  s = g.applyNpcSpeech(
+    s,
+    'alice',
+    undefined,
+    { channel: 'say', text: 'I am sorry. Is that cloth yours?' },
+    { suppressReply: true },
+  ).state;
+  const m = s.npcBrains.keeper.living;
+  const current = m.observations.find((o) => o.kind === 'said');
+  const selected = [old.id, current.id];
+  for (const ids of [selected, [...selected].reverse()]) {
+    const context = g.buildNpcPublicSpeechContext(s, 'keeper', ['alice', 'keeper'], ids);
+    assert.equal(context.performance.stance, 'reserved', 'an old refusal is not the current beat');
+  }
+  assert.equal(m.relationships.alice, undefined, 'apology does not mechanically manufacture trust');
+});
+
+test('new emote resets an old delivery stance without leaking private changes or erasing character', () => {
+  let s = address(world('prosper'));
+  const old = s.npcBrains.keeper.living.observations.find((o) => o.kind === 'addressed');
+  // Same simulation tick, but this gesture was admitted later.
+  s = g.applyNpcSpeech(
+    s,
+    'alice',
+    undefined,
+    { channel: 'say', text: 'looks at the cloth on the floor' },
+    { suppressReply: true, presentationKind: 'attempt' },
+  ).state;
+  const m = s.npcBrains.keeper.living;
+  const current = m.observations.find((o) => o.kind === 'attempted');
+  const context = g.buildNpcPublicSpeechContext(
+    s,
+    'keeper',
+    ['alice', 'keeper'],
+    [old.id, current.id],
+  );
+  assert.equal(context.performance.stance, 'reserved');
+  assert.deepEqual(m.personality.characterization.motives, [{ kind: 'prosper', priority: 3 }]);
+  m.observations.push({
+    ...old,
+    id: 'private-newest',
+    tick: 100,
+    disclosure: 'private',
+    audienceIds: [],
+  });
+  assert.deepEqual(
+    g.buildNpcPublicSpeechContext(
+      s,
+      'keeper',
+      ['alice', 'keeper'],
+      [old.id, current.id, 'private-newest'],
+    ),
+    context,
+  );
+});
+
+test('a fresh admitted ownership-unknown pickup does not replay an older guarded stance', () => {
+  const s = address(world('prosper'));
+  const memory = s.npcBrains.keeper.living;
+  const old = memory.observations.find((o) => o.kind === 'addressed');
+  const pickup = {
+    ...old,
+    id: 'neutral-pickup',
+    eventId: 'neutral-pickup',
+    rootId: 'neutral-pickup',
+    kind: 'item_taken',
+    channel: 'direct',
+    confidence: 'witnessed',
+    itemOwnershipContext: 'unestablished',
+    targetId: 'ordinary-prop',
+  };
+  memory.observations.push(pickup);
+  assert.equal(character.characterTrigger(pickup, 'keeper'), undefined);
+  for (const ids of [
+    [old.id, pickup.id],
+    [pickup.id, old.id],
+  ]) {
+    const context = g.buildNpcPublicSpeechContext(s, 'keeper', ['alice', 'keeper'], ids);
+    assert.equal(context.performance.stance, 'reserved');
+    assert.equal(
+      context.claims.find((claim) => claim.observationId === pickup.id).itemOwnershipContext,
+      'unestablished',
+    );
+  }
+});
+
 test('opt-in mood holds game time; old character state remains unchanged', () => {
   let s = witnessed(world(), 'action.give', 'help');
   const { updateNpcAffect } = require('../../packages/game-core/dist/living-policy');

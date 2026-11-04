@@ -76,6 +76,19 @@ export const storyTurnProposalSchema = z
         narration: z.string().trim().min(1).max(2000),
         newScene: narrativeSceneSchema.nullable(),
         newNpc: narrativeNpcSchema.nullable(),
+        newItem: z
+          .object({
+            name: z
+              .string()
+              .trim()
+              .min(2)
+              .max(120)
+              .regex(/^[^<>\p{Cc}\p{Cf}]+$/u),
+            description: z.string().trim().min(1).max(500),
+          })
+          .strict()
+          .nullable()
+          .optional(),
         evidenceIds: z.array(id).max(8),
       })
       .strict()

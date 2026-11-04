@@ -7,6 +7,7 @@ import { type NpcActionIntent } from '@dreamwalk/contracts';
 import { npcCompanionIntentSchema, type NpcCompanionIntent } from '@dreamwalk/contracts';
 import { spatialContext } from './spatial-context';
 import { characterAppraisal, characterPerformance, updateCharacterRelationship } from './character';
+import { isUnestablishedStoryPickup, storyPickupOwnershipContext } from './item-observations';
 import { materializeNpcItems, npcItemContext } from './world-items';
 import type { NpcItemIntent } from '@dreamwalk/contracts';
 import { mockAcknowledgement, mockCharacterAcknowledgement, mockFactReply } from './mock-speech';
@@ -276,6 +277,7 @@ function remember(
     return false;
   memory.observations.push(observation);
   memory.knowledgeRevision++;
+  const neutralPickup = isUnestablishedStoryPickup(observation);
   memory.affect ??= {
     fatigue: 0,
     attention: 100,
@@ -283,7 +285,7 @@ function remember(
     mood: 'calm',
     lastUpdatedTick: observation.tick,
   };
-  if (['item_taken', 'item_missing', 'noise'].includes(observation.kind)) {
+  if (!neutralPickup && ['item_taken', 'item_missing', 'noise'].includes(observation.kind)) {
     memory.affect.alertness = Math.min(100, memory.affect.alertness + 20);
     memory.affect.mood = 'alarmed';
   }
@@ -293,6 +295,7 @@ function remember(
   }
   if (
     memory.personality.characterization &&
+    !neutralPickup &&
     ['helped', 'harmed', 'pushed', 'item_taken'].includes(observation.kind)
   ) {
     memory.affect.moodUntilTick = observation.tick + 60;
@@ -300,7 +303,8 @@ function remember(
   }
   const kind = observation.kind;
   if (
-    [
+    !neutralPickup &&
+    ([
       'item_taken',
       'item_placed',
       'item_given',
@@ -312,7 +316,7 @@ function remember(
       'harmed',
       'pushed',
     ].includes(kind) ||
-    (memory.personality.characterization && kind === 'helped')
+      (memory.personality.characterization && kind === 'helped'))
   ) {
     const c = {
       id: observation.id,
@@ -386,6 +390,7 @@ function remember(
   }
   if (
     observation.actorId &&
+    !neutralPickup &&
     observation.channel === 'direct' &&
     ['item_taken', 'helped'].includes(kind)
   ) {
@@ -561,6 +566,9 @@ export function recordLivingNpcEvents(
         mapId: npc.mapId,
         channel: direct ? 'direct' : 'heard',
         confidence: direct ? 'witnessed' : 'uncertain',
+        ...(direct && seesTarget && storyPickupOwnershipContext(before, after, e, operationId)
+          ? { itemOwnershipContext: 'unestablished' as const }
+          : {}),
         depth: 0,
         disclosure: kind === 'addressed' ? 'participants' : 'public',
         audienceIds: kind === 'addressed' ? [actor.id, npcId] : [],
@@ -1272,15 +1280,12 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
   const context = {
     ...(spatialContext(state, npcId) ? { spatialContext: spatialContext(state, npcId) } : {}),
     npcId,
-    ...(npc.supportingNpc
-      ? {
-          publicIdentity: {
-            name: npc.label,
-            role: npc.supportingNpc.roleLabel,
-            untrustedPersonalityFlavor: npc.supportingNpc.personalitySummary,
-          },
-        }
-      : {}),
+    publicIdentity: {
+      ...publicNpcIdentity(npc),
+      ...(npc.supportingNpc
+        ? { untrustedPersonalityFlavor: npc.supportingNpc.personalitySummary }
+        : {}),
+    },
     actionContext: npcActionContext(state, npcId, []),
     currentPlan,
     previousCognition: m.cognition ? clone(m.cognition) : null,
@@ -1443,6 +1448,19 @@ export function validateNpcSummary(state: GameState, npcId: string, input: unkno
       c.kind === source[i]!.kind,
   );
 }
+/** Only already-public presentation, never author biography, motives or secrets.
+ * Works on old saved NPCs without rewriting their source or remembered history. */
+function publicNpcIdentity(npc: GameEntity) {
+  const description = npc.publicProfile?.description ?? npc.supportingNpc?.description;
+  const appearance = npc.publicProfile?.appearance ?? npc.supportingNpc?.appearance;
+  return {
+    name: npc.label,
+    role: npc.supportingNpc?.roleLabel ?? npc.publicProfile?.role ?? '',
+    ...(description ? { description: description.slice(0, 1200) } : {}),
+    ...(appearance ? { appearance: appearance.slice(0, 800) } : {}),
+  };
+}
+
 /** Legacy free text is private. Project only exact, known presentation labels, never prose. */
 function publicNpcSpeechStyle(personality: NpcPersonality) {
   if (personality.publicSpeechStyle) return personality.publicSpeechStyle;
@@ -1453,7 +1471,8 @@ function publicNpcSpeechStyle(personality: NpcPersonality) {
     formal: 'formal',
     terse: 'terse',
     brief: 'terse',
-    reserved: 'terse',
+    // Reserved is a demeanor, not an authored demand for clipped one-line speech.
+    reserved: 'neutral',
     wry: 'wry',
   };
   const style = personality.speechStyle.trim().toLowerCase();
@@ -1493,7 +1512,7 @@ export function buildNpcPublicSpeechContext(
     audienceIds.some((id) => !state.entities[id] || !canNpcHear(state, state.entities[id], npc))
   )
     return { npcId, replyLocale: locale, audienceIds: audience, claims: [] };
-  const claims = observationIds.flatMap((id) => {
+  const admitted = observationIds.flatMap((id) => {
     const o = m.observations.find((o) => o.id === id);
     if (!o) return [];
     const reveal =
@@ -1505,21 +1524,31 @@ export function buildNpcPublicSpeechContext(
       (o.disclosure === 'participants' && audienceIds.some((id) => !o.audienceIds.includes(id)))
     )
       return [];
-    return [
-      {
-        observationId: o.id,
-        kind: o.kind,
-        confidence: o.confidence,
-        ...(o.actorId ? { actorId: o.actorId } : {}),
-        ...(o.targetId ? { targetId: o.targetId } : {}),
-        ...(o.text && o.kind !== 'attempted' ? { untrustedUtterance: o.text } : {}),
-        ...(o.text && o.kind === 'attempted' ? { untrustedAttempt: o.text } : {}),
-        ...(o.kind === 'authored_fact' && o.definitionText
-          ? { authoredFact: { title: o.title ?? '', text: o.definitionText } }
-          : {}),
-      },
-    ];
+    return [o];
   });
+  // Rank only permitted observations. Hidden events cannot affect this metadata,
+  // and a queued turn reconstructed at a later tick keeps the same semantic hash.
+  const sourceOrder = new Map(m.observations.map((o, index) => [o.id, index]));
+  const chronology = new Map(
+    [...admitted]
+      .sort((a, b) => (sourceOrder.get(a.id) ?? 0) - (sourceOrder.get(b.id) ?? 0))
+      .map((o, index) => [o.id, index]),
+  );
+  const claims = admitted.map((o) => ({
+    observationId: o.id,
+    kind: o.kind,
+    observationOrder: chronology.get(o.id)!,
+    ...(isUnestablishedStoryPickup(o) ? { itemOwnershipContext: o.itemOwnershipContext } : {}),
+    ...(o.kind === 'said' ? { isOwnUtterance: o.actorId === npcId } : {}),
+    confidence: o.confidence,
+    ...(o.actorId ? { actorId: o.actorId } : {}),
+    ...(o.targetId ? { targetId: o.targetId } : {}),
+    ...(o.text && o.kind !== 'attempted' ? { untrustedUtterance: o.text } : {}),
+    ...(o.text && o.kind === 'attempted' ? { untrustedAttempt: o.text } : {}),
+    ...(o.kind === 'authored_fact' && o.definitionText
+      ? { authoredFact: { title: o.title ?? '', text: o.definitionText } }
+      : {}),
+  }));
   return {
     ...npcItemContext(state, npcId),
     actionContext: npcActionContext(state, npcId, audience),
@@ -1530,10 +1559,7 @@ export function buildNpcPublicSpeechContext(
     // An audible but unseen speaker must not reveal a hidden authored identity.
     ...(audience.every((id) => id === npcId || observedVisible(state, state.entities[id], npc))
       ? {
-          publicIdentity: {
-            name: npc.label,
-            role: npc.supportingNpc?.roleLabel ?? npc.publicProfile?.role ?? '',
-          },
+          publicIdentity: publicNpcIdentity(npc),
         }
       : {}),
     publicSpeechStyle: publicNpcSpeechStyle(m.personality),

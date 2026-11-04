@@ -1,3 +1,4 @@
+import { explicitStoryPickup, materializeStoryItem, applyStoryPickup } from './story-items';
 import { observedVisible } from './observation-visibility';
 import {
   footprintDistance,
@@ -93,7 +94,7 @@ function allowedAction(state: GameState, actorId: string, input: unknown): GameA
       !target ||
       !(
         visible(state, actor, target) ||
-        (p.data.kind === 'consume' &&
+        (['consume', 'pick_up'].includes(p.data.kind) &&
           target.ownerId === actorId &&
           actor.inventory?.includes(target.id))
       )
@@ -247,7 +248,10 @@ export function buildStoryTurnContext(
       if (action && action.kind !== 'move_to' && action.kind !== 'transition') {
         const valid = allowedAction(simulated, actorId, action);
         if (!valid) throw new Error('UNSUPPORTED');
-        const r = applyAction(simulated, actorId, valid);
+        const r =
+          valid.kind === 'pick_up'
+            ? applyStoryPickup(simulated, actorId, valid.targetId!, segment.text, input)
+            : applyAction(simulated, actorId, valid);
         if (r.error === 'OUT_OF_RANGE' || r.error === 'PATH_BLOCKED') throw new Error('WALK_FIRST');
         actionOutcomes.push({ segmentIndex: segment.index, code: r.error ?? 'ACTION_SUCCEEDED' });
         actionPreview.push({
@@ -354,6 +358,19 @@ export function buildStoryTurnContext(
     mapId: actor.mapId,
     canonRevision: state.narrativeCanon?.revision ?? 0,
     mechanics,
+    referencedInventory: (mode === 'director' ? view.inventory : [])
+      .filter((item) =>
+        parsed.segments.some(
+          (segment) =>
+            segment.kind === 'attempt' &&
+            explicitStoryPickup(segment.text, [
+              item.id,
+              item.label ?? '',
+              ...Object.values(item.labelTranslations ?? {}),
+            ]),
+        ),
+      )
+      .map((item) => ({ id: item.id, label: item.label, alreadyCarried: true as const })),
     actionPreview,
     actionOutcomes,
     dialogues,
@@ -372,6 +389,10 @@ export function buildStoryTurnContext(
       'wait',
       ...(mode === 'director' && !state.turnController ? ['approach'] : []),
     ],
+    itemPolicy:
+      mode === 'director'
+        ? 'An explicit pickup/pocket attempt can use pick_up with an existing visible item ID. For a newly encountered ordinary prop, provide narrative.newItem and targetId=new_item in its matching attempt. No powers, payment, secrets, alleged prior owner or duplicate item. Use referencedInventory only for the actor own current pickup/pocket request; never enumerate private inventory to NPCs or shared narration. Already carried items stay carried.'
+        : undefined,
     sceneInteractionPolicy:
       mode === 'director'
         ? 'Materialize new people through newNpc. Use new_npc only for the new character in this proposal. approach requires an explicit player attempt; speech replies require replyNpcId and use only that character perceived evidence plus attributed player speech, never narrator omniscience.'
@@ -511,6 +532,9 @@ export function applyStoryTurnProposal(
         actions.push({
           segmentIndex: segment.index,
           action: step.action,
+          ...(step.action.targetId === 'new_item' && p.narrative?.newItem
+            ? { targetLabel: p.narrative.newItem.name }
+            : {}),
           ...(step.action.targetId === 'new_npc' && p.narrative?.newNpc
             ? { targetLabel: p.narrative.newNpc.name }
             : {}),
@@ -522,14 +546,41 @@ export function applyStoryTurnProposal(
         : Boolean(step.reply) !== Boolean(step.replyNpcId))
     )
       return reject('INVALID_ACTION');
-    if (context.mode === 'director' && state.turnController && step.action)
+    if (
+      context.mode === 'director' &&
+      state.turnController &&
+      step.action &&
+      step.action.kind !== 'pick_up'
+    )
       return reject('FORBIDDEN');
+    if (step.action?.kind === 'pick_up') {
+      const target =
+        step.action.targetId === 'new_item'
+          ? p.narrative?.newItem
+          : state.entities[step.action.targetId ?? ''];
+      const labels =
+        target &&
+        ('name' in target
+          ? [target.name]
+          : [target.id, target.label ?? '', ...Object.values(target.labelTranslations ?? {})]);
+      if (step.action.itemId || !labels || !explicitStoryPickup(segment.text, labels))
+        return reject('FORBIDDEN');
+    }
     if (
       step.action?.kind === 'approach' &&
       (context.mode !== 'director' || !step.action.targetId || step.action.itemId)
     )
       return reject('FORBIDDEN');
   }
+  if (
+    p.narrative?.newItem &&
+    (context.mode !== 'director' ||
+      input.channel !== 'say' ||
+      p.steps.filter(
+        (step) => step.action?.kind === 'pick_up' && step.action.targetId === 'new_item',
+      ).length !== 1)
+  )
+    return reject('FORBIDDEN');
   const knownFailure = (segmentIndex: number, action: GameAction, code: string) => {
     const quoted = context.actionPreview.find((a) => a.segmentIndex === segmentIndex)?.action;
     return (
@@ -576,13 +627,36 @@ export function applyStoryTurnProposal(
     const created = applyNarrativeProposal(
       next,
       actorId,
-      { turnId, contextHash: directorContext.contextHash, ...p.narrative!, actions: [] },
+      {
+        turnId,
+        contextHash: directorContext.contextHash,
+        narration: p.narrative!.narration,
+        newScene: p.narrative!.newScene,
+        newNpc: p.narrative!.newNpc,
+        evidenceIds: p.narrative!.evidenceIds,
+        actions: [],
+      },
       input.text,
       input.replyLocale,
     );
     if (created.error) return reject(created.error);
     next = recordNpcEvents(next, created.state, created.events, `story:${turnId}`).state;
     events.push(...created.events);
+    if (p.narrative?.newItem) {
+      const materialized = materializeStoryItem(next, actorId, turnId, p.narrative.newItem);
+      if (materialized.error) return reject(materialized.error);
+      next = recordNpcEvents(
+        next,
+        materialized.state,
+        materialized.events,
+        `story-item:${turnId}`,
+      ).state;
+      events.push(...materialized.events);
+      next.narrativeCanon!.turns.find((turn) => turn.id === turnId)!.introducedItem = {
+        id: `prop-${turnId}`,
+        ...p.narrative.newItem,
+      };
+    }
     const resolveNpc = (id: string) =>
       id === 'new_npc' && p.narrative?.newNpc ? `support-${turnId}` : id;
     for (const [i, segment] of context.segments.entries()) {
@@ -599,14 +673,20 @@ export function applyStoryTurnProposal(
         audienceIds: audience,
       });
       if (segment.kind === 'attempt') {
-        const proposed = p.steps[i].action;
+        const rawAction = p.steps[i].action;
+        const proposed =
+          rawAction?.targetId === 'new_item'
+            ? { ...rawAction, targetId: `prop-${turnId}` }
+            : rawAction;
         if (!proposed) continue; // Descriptive emote, not a mechanically completed action.
         const action = proposed.kind === 'approach' ? null : allowedAction(next, actorId, proposed);
         if (!action && proposed.kind !== 'approach') return reject('FORBIDDEN');
         const outcome =
-          proposed.kind === 'approach'
-            ? approachStoryNpc(next, actorId, resolveNpc(proposed.targetId!))
-            : applyAction(next, actorId, action!);
+          proposed.kind === 'pick_up'
+            ? applyStoryPickup(next, actorId, proposed.targetId!, segment.text, input)
+            : proposed.kind === 'approach'
+              ? approachStoryNpc(next, actorId, resolveNpc(proposed.targetId!))
+              : applyAction(next, actorId, action!);
         if (outcome.error && (!action || !knownFailure(segment.index, action, outcome.error)))
           return unsupported();
         if (outcome.error === 'OUT_OF_RANGE' || outcome.error === 'PATH_BLOCKED')
@@ -723,7 +803,10 @@ export function applyStoryTurnProposal(
       if (segment.kind === 'attempt') {
         const action = allowedAction(next, actorId, step.action);
         if (!action) return reject('FORBIDDEN');
-        const r = applyAction(next, actorId, action);
+        const r =
+          action.kind === 'pick_up'
+            ? applyStoryPickup(next, actorId, action.targetId!, segment.text, input)
+            : applyAction(next, actorId, action);
         if (r.error && !knownFailure(segment.index, action, r.error)) return unsupported();
         if (
           r.error === 'OUT_OF_RANGE' ||

@@ -29,7 +29,7 @@ function proposal(s) {
 test('fictional cognition is bounded, optional for old plans, and cannot carry reader ACLs', () => {
   assert.equal(g.npcCognitionSchema.safeParse(thought).success, true);
   for (const bad of [
-    { ...thought, innerThought: 'x'.repeat(481) },
+    { ...thought, innerThought: 'x'.repeat(1401) },
     { ...thought, reconsiderAfterRounds: 4 },
     { ...thought, audienceIds: ['alice'] },
     { ...thought, hiddenReasoning: 'not character fiction' },
@@ -37,6 +37,27 @@ test('fictional cognition is bounded, optional for old plans, and cannot carry r
     assert.equal(g.npcCognitionSchema.safeParse(bad).success, false);
   const s = world();
   assert.equal(g.npcPlanProposalSchema.safeParse(g.createMockNpcPlan(s, 'keeper')).success, true);
+});
+test('a developed fictional paragraph survives admission and persistence without entering public state', () => {
+  const innerThought = (
+    'The visitor sounds calmer now, though I am still unsettled by the argument. ' +
+    'I want to hear the warning without answering for anyone else. ' +
+    'There may be a real concern here, but I cannot tell yet. ' +
+    'For now I can listen and leave them room to explain. '
+  )
+    .repeat(3)
+    .trim();
+  assert.ok(innerThought.length > 480 && innerThought.length <= 1400);
+  const state = world();
+  const result = g.acceptNpcPlan(state, 'keeper', {
+    ...proposal(state),
+    cognition: { ...thought, innerThought },
+  });
+  assert.equal(result.error, undefined);
+  const restored = JSON.parse(JSON.stringify(result.state));
+  assert.equal(restored.npcBrains.keeper.living.cognition.innerThought, innerThought);
+  assert.equal(JSON.stringify(g.projectState(restored, 'alice')).includes(innerThought), false);
+  assert.equal(JSON.stringify(result.events).includes(innerThought), false);
 });
 test('world-fenced fresh decision replaces a plan despite tick cooldown and persists private RP', () => {
   const s = world();
@@ -149,7 +170,7 @@ test('speech cognition is persisted atomically, not spoken or remembered by list
   );
   const invalid = g.commitNpcPublicUtterance(s, 'keeper', {
     ...input,
-    cognition: { ...thought, innerThought: 'x'.repeat(481) },
+    cognition: { ...thought, innerThought: 'x'.repeat(1401) },
   });
   assert.equal(invalid.error, 'INVALID_ACTION');
   assert.strictEqual(invalid.state, s);

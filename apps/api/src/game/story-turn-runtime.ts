@@ -349,7 +349,16 @@ export class StoryTurnRuntime {
           });
           continue;
         }
-        const applied = applyTurnAction(next, actorId, action, input.turnFence!);
+        // Putting an already carried object into a pocket changes its presentation,
+        // not custody. Do not fail it or charge a second item action.
+        const alreadyCarried =
+          action.kind === 'pick_up' &&
+          action.targetId &&
+          next.entities[action.targetId]?.ownerId === actorId &&
+          next.entities[actorId].inventory?.includes(action.targetId);
+        const applied = alreadyCarried
+          ? { state: next, events: [] }
+          : applyTurnAction(next, actorId, action, input.turnFence!);
         actions.push({
           segmentIndex: segment.index,
           action: action as NonNullable<StoryFeedEntry['action']>,
@@ -1581,7 +1590,7 @@ export class StoryTurnRuntime {
       !deferredDirector &&
       !applied.error &&
       !applied.clarification &&
-      applied.actions.length > 0 &&
+      applied.actions.some((preview) => preview.action.kind !== 'pick_up') &&
       r.confirmed_action_hash !== npcContextFingerprint(applied.actions);
     const status = applied.error
       ? 'stale'

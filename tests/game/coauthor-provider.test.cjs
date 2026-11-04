@@ -253,3 +253,131 @@ test('director existing-speaker intents survive synthetic provider transport and
     assert.deepEqual(applied.state.entities.alice, state.entities.alice);
   }
 });
+
+test('deferred RP pickup survives strict provider transport and updates inventory with one synthetic dispatch', async () => {
+  let state = g.createStateFromPlayable(
+    g.compilePlayableDraft(g.createCompleteObservatoryDraft()).playable,
+    ['alice'],
+  );
+  state = g.initializeTurnController(state, ['alice']).state;
+  const input = {
+    operationId: randomUUID(),
+    text: '*положил синий платок себе в карман*',
+    channel: 'say',
+    replyLocale: 'ru',
+    expectedCanonRevision: 0,
+    turnFence: g.turnFence(state),
+  };
+  const turnId = randomUUID(),
+    runtime = Object.create(StoryTurnRuntime.prototype);
+  runtime.port = {
+    prepareAreaTurnSpeech: (...args) => GameService.prototype.prepareAreaTurnSpeech(...args),
+  };
+  const post = runtime.simulateTurnPost(state, 'alice', input, turnId, 'synthetic-owner');
+  assert.equal(post.untrustedRoleplay.length, 1);
+  state = g.endPlayerTurn(post.state, 'alice', g.turnFence(post.state)).state;
+  const worldInput = { ...input, text: post.directorText, turnFence: g.turnFence(state) };
+  const context = {
+    ...g.buildStoryTurnContext(state, 'alice', worldInput, turnId),
+    turnBasedDeferredDirector: true,
+    untrustedRoleplay: post.untrustedRoleplay,
+  };
+  const response = {
+    status: 'ready',
+    code: null,
+    steps: [
+      {
+        segmentIndex: 0,
+        action: { kind: 'pick_up', targetId: 'new_item', itemId: null },
+        reply: null,
+        replyNpcId: null,
+        replyContextHash: null,
+      },
+    ],
+    narrative: {
+      narration: 'Вещь теперь в кармане.',
+      newScene: null,
+      newNpc: null,
+      newItem: { name: 'синий платок', description: 'Обычная вещь неизвестного происхождения.' },
+      evidenceIds: [],
+    },
+  };
+  let calls = 0;
+  const provider = new OpenAiNpcProvider(
+    {
+      enabled: true,
+      apiKey: 'synthetic-fixture-key',
+      model: 'synthetic-model',
+      version: 'inventory-test',
+      maxInputBytes: 64000,
+      maxOutputTokens: 1000,
+      maxResponseBytes: 1000000,
+      inputMicrosPerMillion: 1,
+      outputMicrosPerMillion: 1,
+    },
+    async (_url, init) => {
+      calls++;
+      const request = JSON.parse(init.body);
+      assert.ok(request.text.format.schema.properties.narrative.anyOf[0].properties.newItem);
+      assert.match(request.instructions, /targetId=new_item/);
+      assert.match(request.instructions, /No alleged prior owner/);
+      return new Response(
+        JSON.stringify({
+          id: 'synthetic-request',
+          status: 'completed',
+          service_tier: 'default',
+          output: [
+            { type: 'message', content: [{ type: 'output_text', text: JSON.stringify(response) }] },
+          ],
+          usage: { input_tokens: 50, output_tokens: 100 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    },
+  );
+  const generated = await provider.generate({
+    jobId: randomUUID(),
+    purpose: 'story_turn',
+    context,
+    signal: new AbortController().signal,
+    maxCostMicros: 100,
+  });
+  assert.equal(generated.failureCode, undefined);
+  assert.equal(calls, 1);
+  const applied = g.applyStoryTurnProposal(state, 'alice', worldInput, turnId, generated.proposal);
+  assert.equal(applied.error, undefined);
+  assert.equal(applied.clarification, undefined);
+  assert.ok(applied.state.entities.alice.inventory.includes(`prop-${turnId}`));
+  assert.equal(applied.state.entities[`prop-${turnId}`].ownerId, 'alice');
+  assert.ok(applied.events.some((event) => event.kind === 'action.pick_up'));
+});
+
+test('turn-post pocketing an already carried prop is a no-op success, not a duplicate or failed action', () => {
+  let state = g.createStateFromPlayable(
+    g.compilePlayableDraft(g.createCompleteObservatoryDraft()).playable,
+    ['alice'],
+  );
+  state = g.initializeTurnController(state, ['alice']).state;
+  Object.assign(state.entities.key, { label: 'ribbon', ownerId: 'alice' });
+  state.entities.alice.inventory.push('key');
+  const input = {
+    operationId: randomUUID(),
+    text: '*put ribbon in my pocket*',
+    channel: 'say',
+    replyLocale: 'en',
+    expectedCanonRevision: 0,
+    turnFence: g.turnFence(state),
+  };
+  const runtime = Object.create(StoryTurnRuntime.prototype);
+  runtime.port = {
+    prepareAreaTurnSpeech: (...args) => GameService.prototype.prepareAreaTurnSpeech(...args),
+  };
+  const post = runtime.simulateTurnPost(state, 'alice', input, randomUUID(), 'synthetic-owner');
+  assert.deepEqual(post.state.entities.alice.inventory, ['key']);
+  assert.equal(
+    post.state.turnController.resources.alice.additional,
+    state.turnController.resources.alice.additional,
+  );
+  assert.equal(post.entries.find((entry) => entry.kind === 'outcome').code, 'ACTION_SUCCEEDED');
+  assert.equal(post.untrustedRoleplay.length, 0);
+});
