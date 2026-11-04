@@ -636,7 +636,27 @@ test('conditional voices never widen pre-effect disclosure and stale advisory re
   assert.equal(r.entries.filter((e) => e.kind === 'npc_reply').length, 0);
   assert.equal(JSON.stringify(r.state.narrativeCanon).includes('FAKE_UNCOMMITTED_SECRET'), false);
   assert.equal(JSON.stringify(r.entries).includes('FAKE_UNCOMMITTED_SECRET'), false);
-  assert.equal(r.state.npcUtterances.filter((u) => u.speakerId === 'alice').length, 1);
+  const playerSources = r.state.npcUtterances.filter((u) => u.speakerId === 'alice');
+  const spoken = playerSources.filter((u) => u.presentationKind !== 'attempt');
+  assert.equal(spoken.length, 1);
+  assert.equal(spoken[0].text, 'Can you answer?');
+  const attempts = playerSources.filter((u) => u.presentationKind === 'attempt');
+  assert.equal(attempts.length, 2);
+  assert.equal(new Set(attempts.map((u) => u.id)).size, 2);
+  assert.equal(r.entries.find((entry) => entry.kind === 'attempt').sourceId, attempts[1].id);
+  const observed = r.state.npcBrains.keeper.living.observations.filter(
+    (observation) => observation.text === attempts[0].text,
+  );
+  assert.equal(observed.length, 1);
+  assert.equal(observed[0].kind, 'attempted');
+  assert.equal(observed[0].confidence, 'reported');
+  // The private revival attempt was made while the NPC was inactive, not retroactively seen.
+  assert.deepEqual(attempts[1].audienceIds, ['alice']);
+  assert.equal(
+    r.state.npcBrains.keeper.living.observations.some((o) => o.text === attempts[1].text),
+    false,
+  );
+  assert.equal(r.state.npcUtterances.filter((u) => u.speakerId === 'keeper').length, 0);
   assert.equal(
     r.state.turnController.deferredSpeech.length,
     0,

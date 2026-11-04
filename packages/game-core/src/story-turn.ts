@@ -1,4 +1,5 @@
 import { applyStoryOrderedAction } from './story-ordered-actions';
+import { admitStoryRoleplayAttempt, storyAttemptEvidenceIds } from './story-roleplay';
 import { explicitStoryPickup, materializeStoryItem, applyStoryPickup } from './story-items';
 import {
   resolveTravelRequest,
@@ -43,6 +44,7 @@ import {
   npcSpeechListenerIds,
   npcSpeechProspectiveListenerIds,
   npcSpeechHearingRange,
+  npcRoleplayObserverIds,
   npcContextFingerprint,
   publicNpcFactTopics,
   resolveNpcFactTopic,
@@ -87,7 +89,12 @@ export function parseStorySegments(text: string): { segments: StorySegment[]; co
 export type StorySafeEntry = Omit<
   StoryFeedEntry,
   'id' | 'sequence' | 'createdAt' | 'turnId' | 'legacy'
-> & { audienceIds: string[]; sourceId?: string; speakerKnownToIds?: string[] };
+> & {
+  audienceIds: string[];
+  sourceId?: string;
+  sourceSegmentIndex?: number;
+  speakerKnownToIds?: string[];
+};
 const normalize = (s: string) =>
   s
     .trim()
@@ -175,8 +182,13 @@ function safeSpeech(
       [marker],
       requested,
     );
-  if (preauthorizedObservationIds)
-    ids = ids.filter((id) => id === marker || preauthorizedObservationIds.includes(id));
+  if (preauthorizedObservationIds) {
+    const currentAttempts = storyAttemptEvidenceIds(next, actorId, npcId, turnId, segment.index);
+    ids = ids.filter(
+      (id) =>
+        id === marker || preauthorizedObservationIds.includes(id) || currentAttempts.includes(id),
+    );
+  }
   if (sharedDirector) {
     // The director also writes globally visible narration. Local permission to hear
     // an old whisper or to release an asked secret must not become shared context.
@@ -367,6 +379,27 @@ function prospectiveImpactVoices(
     const effectIds: string[] = [];
     let valid = true;
     for (const segment of segments.filter((entry) => entry.index < speech.index)) {
+      if (
+        segment.kind === 'attempt' &&
+        !actionPreview.some((entry) => entry.segmentIndex === segment.index)
+      ) {
+        for (const key of ['before', 'after'] as const) {
+          const observed = admitStoryRoleplayAttempt(
+            key === 'before' ? before : after,
+            actorId,
+            input,
+            turnId,
+            segment,
+          );
+          if (observed.error) {
+            valid = false;
+            break;
+          }
+          if (key === 'before') before = observed.state;
+          else after = observed.state;
+        }
+        if (!valid) break;
+      }
       if (segment.index === attempt.index) {
         const impacted = applyStoryImpact(
           after,
@@ -590,7 +623,12 @@ export function buildStoryTurnContext(
     if (segment.kind === 'attempt') {
       if (mode === 'director') attemptStates.set(segment.index, structuredClone(simulated));
       const action = parsePlayerTextAction(simulated, actorId, segment.text);
-      if (mode === 'director' && isNpcStoryContact(simulated, action)) continue;
+      if (mode === 'director' && (!action || isNpcStoryContact(simulated, action))) {
+        const observed = admitStoryRoleplayAttempt(simulated, actorId, input, turnId, segment);
+        if (observed.error) throw new Error(observed.error);
+        simulated = observed.state;
+        continue;
+      }
       if (action) {
         const valid = allowedAction(simulated, actorId, action);
         if (!valid) throw new Error('UNSUPPORTED');
@@ -1209,9 +1247,10 @@ export function applyStoryTurnProposal(
           ? privateAudience
           : segment.kind === 'speech'
             ? npcSpeechListenerIds(next, actorId, { channel: input.channel, text: segment.text })
-            : listeners(next, actorId);
+            : npcRoleplayObserverIds(next, actorId, input);
       push({
         kind: segment.kind,
+        sourceSegmentIndex: originalSpeech?.index ?? segment.index,
         channel: input.channel,
         authorId: actorId,
         authorLabel: next.entities[actorId].label,
@@ -1258,6 +1297,15 @@ export function applyStoryTurnProposal(
         return undefined;
       };
       if (segment.kind === 'attempt') {
+        if (!context.actionPreview.some((entry) => entry.segmentIndex === segment.index)) {
+          const observed = admitStoryRoleplayAttempt(next, actorId, input, turnId, segment);
+          if (observed.error) return reject(observed.error);
+          next = observed.state;
+          events.push(...observed.events);
+          entries[entries.length - 1].sourceId = observed.source?.id;
+          entries[entries.length - 1].audienceIds = observed.source?.audienceIds ?? [];
+          entries[entries.length - 1].speakerKnownToIds = observed.source?.speakerKnownToIds ?? [];
+        }
         const impact = p.steps[i].narrativeImpact;
         if (impact) {
           const outcome = applyStoryImpact(next, actorId, turnId, segment.index, impact, input);

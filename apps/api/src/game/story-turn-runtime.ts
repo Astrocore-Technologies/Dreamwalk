@@ -37,7 +37,6 @@ import {
   storyTurnMode,
   storyPrivateAudience,
   storyImpactContext,
-  npcSpeechListenerIds,
   turnFence,
   matchesTurnFence,
   canNpcHear,
@@ -447,7 +446,9 @@ export class StoryTurnRuntime {
             text: segment.text,
             verified: false,
           });
-          const audienceIds = privateAudience ?? npcRoleplayObserverIds(next, actorId, input);
+          const audienceIds = directorOwned
+            ? [actorId]
+            : (privateAudience ?? npcRoleplayObserverIds(next, actorId, input));
           roleplayAudiences.set(segment.index, audienceIds);
           const observed = !directorOwned
             ? this.port.prepareAreaTurnSpeech?.(
@@ -534,9 +535,9 @@ export class StoryTurnRuntime {
           audienceIds: input.channel === 'whisper' ? [actorId] : listeners(next),
         });
       } else if (directorOwned && !areaWhisper) {
-        const audienceIds =
-          privateAudience ??
-          npcSpeechListenerIds(next, actorId, { channel: input.channel, text: segment.text });
+        // Earlier unresolved actions can change location, hearing and lifecycle.
+        // Publish only after the ordered admission stamps the actual audience.
+        const audienceIds = [actorId];
         entries.push({
           ordinal: entries.length,
           tick: next.tick,
@@ -708,6 +709,9 @@ export class StoryTurnRuntime {
             'Attributed player roleplay, in segment order. Respond naturally to harmless gestures, meals and services without requiring mechanical stock. These emotes alone do not mutate actual inventory, money, health or location; do not treat claimed damage or powers as validated mechanics.',
         };
       }
+    if (directorOwned && deferAllAttempts)
+      for (const [index, entry] of entries.entries())
+        entry.sourceSegmentIndex = parsed.segments[index].index;
     return {
       state: next,
       entries,
@@ -2066,20 +2070,28 @@ export class StoryTurnRuntime {
           }
           if (status === 'committed' && deferredDirector && !r.context.speechAlreadyRecorded)
             for (const entry of applied.entries.filter(
-              (entry) => entry.kind === 'speech' && entry.sourceId,
+              (entry) => entry.kind === 'attempt' || (entry.kind === 'speech' && entry.sourceId),
             ))
               await c.query(
-                `UPDATE game_story_feed SET entry=jsonb_set(jsonb_set(entry,'{sourceId}',to_jsonb($4::text)),'{speakerKnownToIds}',$6::jsonb),audience_ids=$5::text[]
-                WHERE id=(SELECT id FROM game_story_feed WHERE turn_id=$1 AND entry->>'kind'='speech'
-                  AND entry->>'authorId'=$2 AND entry->>'text'=$3 AND NOT(entry ? 'sourceId')
-                  ORDER BY ordinal LIMIT 1)`,
+                `UPDATE game_story_feed SET entry=entry || $4::jsonb,audience_ids=$5::text[]
+                WHERE id=(SELECT id FROM game_story_feed WHERE turn_id=$1 AND entry->>'kind'=$7
+                  AND entry->>'authorId'=$2 AND entry->>'text'=$3
+                  AND (entry->>'sourceSegmentIndex'=$6::text OR
+                    (NOT(entry ? 'sourceSegmentIndex') AND NOT(entry ? 'sourceId')))
+                  ORDER BY CASE WHEN entry->>'sourceSegmentIndex'=$6::text THEN 0 ELSE 1 END,
+                    ordinal LIMIT 1)`,
                 [
                   r.id,
                   entry.authorId,
                   entry.text,
-                  entry.sourceId,
+                  JSON.stringify({
+                    ...(entry.sourceId ? { sourceId: entry.sourceId } : {}),
+                    sourceSegmentIndex: entry.sourceSegmentIndex,
+                    speakerKnownToIds: entry.speakerKnownToIds ?? [],
+                  }),
                   entry.audienceIds,
-                  JSON.stringify(entry.speakerKnownToIds ?? []),
+                  entry.sourceSegmentIndex,
+                  entry.kind,
                 ],
               );
           if (status === 'committed')
@@ -2241,7 +2253,11 @@ export class StoryTurnRuntime {
         createdAt: date(r.created_at),
       }));
       for (const entry of entries) {
-        const stored = entry as StoryFeedEntry & { sourceId?: string; speakerKnownToIds?: unknown };
+        const stored = entry as StoryFeedEntry & {
+          sourceId?: string;
+          sourceSegmentIndex?: number;
+          speakerKnownToIds?: unknown;
+        };
         if (
           ['speech', 'npc_reply'].includes(entry.kind) &&
           (!Array.isArray(stored.speakerKnownToIds) ||
@@ -2251,6 +2267,7 @@ export class StoryTurnRuntime {
           delete entry.authorLabel;
         }
         delete stored.sourceId;
+        delete stored.sourceSegmentIndex;
         delete stored.speakerKnownToIds;
       }
       const turnIds = new Set(entries.map((e) => e.turnId));

@@ -26,6 +26,7 @@ const {
   endPlayerTurn,
   npcReplyObservation,
   npcSpeechListenerIds,
+  parseStorySegments,
   turnFence,
 } = require('../../packages/game-core/dist');
 const database = new Db();
@@ -397,6 +398,28 @@ await test(
                     JSON.stringify([...row.audience_ids].sort()) === JSON.stringify(audienceIds),
                 ),
               );
+              const attemptText = parseStorySegments(body.text).segments[0].text;
+              const attempts = persisted.npcUtterances.filter(
+                (u) =>
+                  u.speakerId === actorId &&
+                  u.presentationKind === 'attempt' &&
+                  u.text === attemptText,
+              );
+              assert.equal(attempts.length, 1);
+              const attemptEntry = entries.find((row) => row.entry.kind === 'attempt');
+              assert.equal(attemptEntry.entry.sourceId, attempts[0].id);
+              assert.equal(attemptEntry.entry.sourceSegmentIndex, 0);
+              assert.deepEqual(
+                attemptEntry.entry.speakerKnownToIds,
+                attempts[0].speakerKnownToIds ?? [],
+              );
+              assert.deepEqual([...attempts[0].audienceIds].sort(), audienceIds);
+              const observations = persisted.npcBrains.keeper.living.observations.filter(
+                (o) => o.text === attemptText && o.speechIdentity?.turnId === posted.id,
+              );
+              assert.equal(observations.length, 1);
+              assert.equal(observations[0].kind, 'attempted');
+              assert.equal(observations[0].confidence, 'reported');
               const source = persisted.npcUtterances.filter(
                 (u) => u.speakerId === actorId && u.text === words,
               );
@@ -426,6 +449,8 @@ await test(
               );
               assert.ok(JSON.stringify(own).includes(`PRIVATE_STORY_NARRATION_${effect}`));
               assert.equal(own.entries.filter((entry) => entry.text === words).length, 1);
+              assert.ok(own.entries.every((entry) => !('sourceSegmentIndex' in entry)));
+
               assert.equal(
                 own.entries.filter(
                   (entry) => entry.text === 'PRIVATE_STORY_REPLY: I am still here.',
@@ -779,6 +804,19 @@ await test(
               ),
               false,
             );
+            const attemptText = parseStorySegments(body.text).segments[0].text;
+            const attempts = persisted.npcUtterances.filter(
+              (u) =>
+                u.speakerId === actorId &&
+                u.presentationKind === 'attempt' &&
+                u.text === attemptText,
+            );
+            assert.equal(attempts.length, 1);
+            assert.deepEqual(attempts[0].audienceIds, [actorId]);
+            assert.equal(
+              persisted.npcBrains.keeper.living.observations.some((o) => o.text === attemptText),
+              false,
+            );
             const speech = persisted.npcUtterances.filter(
               (entry) => entry.speakerId === actorId && entry.text === words,
             );
@@ -800,6 +838,13 @@ await test(
                   row.audience_ids.length === 1 &&
                   row.audience_ids[0] === actorId,
               ),
+            );
+            const attemptEntry = feed.find((row) => row.entry.kind === 'attempt');
+            assert.equal(attemptEntry.entry.sourceId, attempts[0].id);
+            assert.equal(attemptEntry.entry.sourceSegmentIndex, 0);
+            assert.deepEqual(
+              attemptEntry.entry.speakerKnownToIds,
+              attempts[0].speakerKnownToIds ?? [],
             );
             assert.equal(
               feed.find((row) => row.entry.kind === 'speech').entry.sourceId,
