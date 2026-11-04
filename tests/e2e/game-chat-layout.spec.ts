@@ -316,16 +316,38 @@ for (const locale of ['ru', 'en', 'uk']) {
           above: action.top - clip.top,
           below: clip.bottom - action.bottom,
           focusRing: parseFloat(focusedStyle.outlineWidth) + parseFloat(focusedStyle.outlineOffset),
+          viewportHeight: clip.height,
+          actionHeight: action.height,
         };
       });
       expect(actionBounds.focusRing).toBeGreaterThan(0);
+      expect(actionBounds.viewportHeight).toBeGreaterThanOrEqual(
+        actionBounds.actionHeight + 2 * actionBounds.focusRing,
+      );
       expect(actionBounds.above).toBeGreaterThanOrEqual(actionBounds.focusRing);
       expect(actionBounds.below).toBeGreaterThanOrEqual(actionBounds.focusRing);
-      await thoughtToggle.click();
+      await talk.press('Tab');
+      await expect(thoughtToggle).toBeFocused();
+      const readerBounds = await thoughtToggle.evaluate((element) => {
+        const clip = element
+          .closest('[data-testid="npc-public-inspection"]')!
+          .parentElement!.getBoundingClientRect();
+        const action = element.getBoundingClientRect();
+        const style = getComputedStyle(element);
+        return {
+          above: action.top - clip.top,
+          below: clip.bottom - action.bottom,
+          focusRing: parseFloat(style.outlineWidth) + parseFloat(style.outlineOffset),
+        };
+      });
+      expect(readerBounds.focusRing).toBeGreaterThan(0);
+      expect(readerBounds.above).toBeGreaterThanOrEqual(readerBounds.focusRing);
+      expect(readerBounds.below).toBeGreaterThanOrEqual(readerBounds.focusRing);
+      await thoughtToggle.press('Enter');
       await expect(inspection.getByTestId('npc-inner-thought')).toBeVisible();
       await expect(input).toBeInViewport();
       expect((await bounds(page)).height).toBeLessThanOrEqual(1);
-      await thoughtToggle.click();
+      await thoughtToggle.press('Enter');
       await expect(input).toBeInViewport();
       expect((await bounds(page)).height).toBeLessThanOrEqual(1);
       expect((await bounds(page)).width).toBeLessThanOrEqual(1);

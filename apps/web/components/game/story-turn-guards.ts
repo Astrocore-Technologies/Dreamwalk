@@ -1,5 +1,5 @@
 import type { GameProjection } from '@dreamwalk/contracts';
-/** A stale selected recipient fails closed; no selection is intentional area speech. */
+/** A stale selected recipient fails closed; area whispers require turn-based play. */
 export function storyTargetVisible(projection: GameProjection, targetNpcId?: string) {
   return (
     !targetNpcId ||
@@ -12,7 +12,9 @@ export function storyTargetValid(
   targetNpcId?: string,
 ) {
   return (
-    (channel === 'say' || channel === 'whisper') && storyTargetVisible(projection, targetNpcId)
+    (channel === 'say' || channel === 'whisper') &&
+    storyTargetVisible(projection, targetNpcId) &&
+    (channel !== 'whisper' || !!targetNpcId || !!projection.turn)
   );
 }
 /** Selection keeps identity; its display name follows the current localized projection. */

@@ -101,3 +101,15 @@ its build and readback, and merge only after review. After merge, wait for all
 checks on the exact main SHA before creating a production deployment. Verify the
 canonical production alias and API release before reporting deployment complete.
 No new access token is needed for the existing connected deployment operator.
+
+## Existing-save compatibility
+
+Round-based play is the only mode offered for new adventures. All browser launch
+paths explicitly request it, and Studio exposes round settings without a realtime
+mode switch. Existing realtime saves are retained for compatibility and are not
+converted automatically. The composer identifies an old save instead of
+advertising realtime as another supported choice or promising area-whisper
+support. The older single-response protocol remains available only for existing
+save compatibility; it never schedules additional unquoted fan-out. Converting a
+saved campaign requires a separate explicit owner-authorized operation with the
+existing pause, pending-work, state-fence and transaction safeguards.

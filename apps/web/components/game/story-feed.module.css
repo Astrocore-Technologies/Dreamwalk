@@ -299,7 +299,8 @@
   position: relative;
   display: flex;
   flex: 1 1 auto;
-  min-height: 0;
+  /* A 48px inspection action plus its focus ring and scroll padding must fit. */
+  min-height: 72px;
   overflow: hidden;
 }
 :global(.game-shell) .history .feed {
@@ -311,9 +312,15 @@
 :global(.game-shell) .composer {
   display: flex;
   flex-direction: column;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-height: 0;
   max-height: none;
   overflow: visible;
+}
+/* Preserve the input and instructions; only confirmation/status content yields
+   space to the minimum keyboard-accessible history viewport on short screens. */
+:global(.game-shell) .composer > :not(.composerFeedback) {
+  flex-shrink: 0;
 }
 :global(.game-shell) .composer textarea {
   height: 70px;
@@ -323,6 +330,7 @@
 }
 .composerFeedback {
   display: grid;
+  flex: 0 1 auto;
   gap: 8px;
   min-height: 0;
   max-height: min(240px, 25dvh);

@@ -716,7 +716,23 @@ test('actual deferred-request processor preserves previously quoted history duri
   };
   const state = {
     tick: 1,
-    turnController: { phase: 'world' },
+    turnController: {
+      ...fence,
+      phase: 'world',
+      deferredSpeech: [
+        {
+          id: frozen.deferredSpeechId,
+          actorId: 'player',
+          recipientId: 'keeper',
+          utteranceId: 'synthetic-utterance',
+          channel: 'say',
+          audienceIds: ['keeper', 'player'],
+          sequence: 0,
+          roundId: fence.roundId,
+          phaseEpoch: fence.phaseEpoch,
+        },
+      ],
+    },
     entities: { keeper: { kind: 'npc' } },
     npcBrains: { keeper: {} },
   };
@@ -797,7 +813,23 @@ test('actual deferred-request processor prepares the history window before askin
   };
   const state = {
     tick: 1,
-    turnController: { phase: 'world' },
+    turnController: {
+      ...fence,
+      phase: 'world',
+      deferredSpeech: [
+        {
+          id: original.deferredSpeechId,
+          actorId: 'player',
+          recipientId: 'keeper',
+          utteranceId: 'synthetic-utterance',
+          channel: 'say',
+          audienceIds: ['keeper', 'player'],
+          sequence: 0,
+          roundId: fence.roundId,
+          phaseEpoch: fence.phaseEpoch,
+        },
+      ],
+    },
     entities: { keeper: { kind: 'npc' } },
     npcBrains: {
       keeper: { living: { relationships: {}, goal: {}, obligations: [], observations: [] } },

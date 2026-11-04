@@ -28,6 +28,17 @@ export const storyMessages = {
     'Recipient unavailable. Choose a visible NPC; a whisper will never become public speech.',
     'Співрозмовник недоступний. Обери видимого NPC; шепіт не стане публічною реплікою.',
   ],
+  legacyWhisper: ['Шёпот · старое сохранение', 'Whisper · old save', 'Шепіт · старе збереження'],
+  legacySpeech: [
+    'Это старое сохранение. Для новой системы NPC нужно отдельно включить пошаговые ходы; автоматического перехода нет. Пока сообщение без собеседника адресуется ведущему, а не всем рядом.',
+    'This is an old save. The new NPC system requires explicitly enabling turn-based play; saves are not switched automatically. For now, a message without a recipient goes to the director, not everyone nearby.',
+    'Це старе збереження. Для нової системи NPC потрібно окремо ввімкнути покрокові ходи; автоматичного переходу немає. Поки повідомлення без співрозмовника адресоване ведучому, а не всім поруч.',
+  ],
+  legacyChooseWhisper: [
+    'В старом сохранении шёпот без собеседника недоступен. Для речи ко всем рядом нужно явно включить пошаговые ходы.',
+    'Whispering without a recipient is unavailable in this old save. Speech to everyone nearby requires explicitly enabling turn-based play.',
+    'У старому збереженні шепіт без співрозмовника недоступний. Для мови до всіх поруч потрібно явно ввімкнути покрокові ходи.',
+  ],
   nearbyWhisper: ['Шёпот рядом', 'Nearby whisper', 'Шепіт поруч'],
   areaSpeech: [
     'Собеседник необязателен: обычную речь слышно в пределах 3 клеток, речь с ! — 6, шёпот — 1. Стены и закрытые двери мешают слышимости.',

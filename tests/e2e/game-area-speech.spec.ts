@@ -71,3 +71,72 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
     // Nothing ends the player turn here: no world generation or paid provider call is needed.
   });
 }
+
+for (const locale of ['ru', 'en', 'uk'] as const) {
+  test(`legacy composer explains its recipient requirement without quoting targetless whispers (${locale})`, async ({
+    page,
+  }) => {
+    const handle = `legacy_area_${randomUUID().replaceAll('-', '').slice(0, 10)}`;
+    const account = await page.request.post('/api/v1/auth/register', {
+      data: {
+        handle,
+        name: 'Synthetic legacy speech',
+        email: `${handle}@example.test`,
+        password: `Speech-${randomUUID()}!`,
+      },
+    });
+    expect(account.ok()).toBeTruthy();
+    expect(
+      (await page.request.patch('/api/v1/account/settings', { data: { language: locale } })).ok(),
+    ).toBeTruthy();
+    await page.addInitScript(
+      (language) => localStorage.setItem('dreamwalk-language', language),
+      locale,
+    );
+    const created = await page.request.post('/api/v1/game/campaigns', {
+      data: { template: 'observatory-v1', turnBased: false },
+    });
+    expect(created.ok()).toBeTruthy();
+    const id = (await created.json()).campaignId;
+    const copy = {
+      ru: {
+        send: 'Отправить',
+        whisper: 'Шёпот',
+        warning: 'В старом сохранении шёпот без собеседника недоступен.',
+      },
+      en: {
+        send: 'Send',
+        whisper: 'Whisper',
+        warning: 'Whispering without a recipient is unavailable in this old save.',
+      },
+      uk: {
+        send: 'Надіслати',
+        whisper: 'Шепіт',
+        warning: 'У старому збереженні шепіт без співрозмовника недоступний.',
+      },
+    }[locale];
+    let quotes = 0;
+    page.on('request', (request) => {
+      if (new URL(request.url()).pathname === `/api/v1/game/campaigns/${id}/turns/quote`) quotes++;
+    });
+    await page.goto(`/game/${id}`);
+    const composer = page.getByTestId('unified-story').locator('form');
+    const input = composer.locator('textarea');
+    const send = composer.getByRole('button', { name: copy.send, exact: true });
+    await expect(composer.getByTestId('legacy-speech-hint')).toBeVisible();
+    await expect(composer.getByTestId('area-speech-hint')).toHaveCount(0);
+    await input.fill('Keep this draft');
+    await expect(send).toBeEnabled();
+    const whisper = composer.getByRole('button', { name: copy.whisper, exact: true });
+    await whisper.click();
+    await expect(whisper).toHaveAttribute('aria-pressed', 'true');
+    await expect(send).toBeDisabled();
+    await expect(composer).toContainText(copy.warning);
+    await expect(input).toHaveValue('Keep this draft');
+    expect(quotes).toBe(0);
+    await whisper.click();
+    await expect(send).toBeEnabled();
+    await expect(input).toHaveValue('Keep this draft');
+    expect(quotes).toBe(0);
+  });
+}
