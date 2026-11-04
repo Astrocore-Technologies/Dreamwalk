@@ -278,7 +278,8 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
       // Reselecting the saved value resumes polling without saving anything.
       await select.selectOption('coauthor');
       const readsBeforeCancel = directorReads;
-      await page.clock.runFor(5100);
+      // Cross one polling interval without replaying every game-animation frame.
+      await page.clock.fastForward(5100);
       await expect.poll(() => directorReads).toBeGreaterThan(readsBeforeCancel);
       await expect(select).toBeEnabled();
       await select.selectOption('storyteller');
@@ -293,7 +294,7 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
         await page.mouse.down();
         // Both automatic refresh paths must leave an unsaved owner's click intact.
         await page.evaluate(() => document.dispatchEvent(new Event('visibilitychange')));
-        await page.clock.runFor(5100);
+        await page.clock.fastForward(5100);
         await expect(change).toBeEnabled();
         expect(directorReads).toBe(readsBeforeSave);
         await page.mouse.up();
@@ -309,7 +310,7 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
     expect(changes).toHaveLength(1);
     if (locale === 'en') {
       const readsAfterSave = directorReads;
-      await page.clock.runFor(5100);
+      await page.clock.fastForward(5100);
       await expect.poll(() => directorReads).toBeGreaterThan(readsAfterSave);
     }
     await page.reload();
@@ -329,7 +330,7 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
     await expect(director.getByRole('button', { name: text.change, exact: true })).toHaveCount(0);
     if (locale === 'en') {
       const memberReads = directorReads;
-      await page.clock.runFor(5100);
+      await page.clock.fastForward(5100);
       await expect.poll(() => directorReads).toBeGreaterThan(memberReads);
     }
     expect(changes).toHaveLength(1);
