@@ -1041,6 +1041,28 @@ and language-switch races. See `automatic-translation.md` for scope and checks.
 Production dispatch remains disconnected pending the owner's payer, spend and
 content-sharing decision. This is not a claim of live automatic translation.
 
+## KAN-16: stable game viewport and chat (2026-11-03)
+
+- Removed the gameplay “Graphics for new scenes” disclosure. Existing image preparation,
+  generation, rights/consent and binding APIs remain available and unchanged.
+- Desktop gameplay now uses the viewport's remaining flex/grid space instead of an
+  estimated canvas height plus additional document content. Map and story remain aligned;
+  campaign/hero/party controls open in a compact scrollable panel. Narrow screens retain
+  their single-column document navigation. Legacy encounter controls open when needed.
+- The composer stays outside history scrolling, long confirmations scroll separately,
+  and the new-event shortcut overlays history without changing its size. Reading position
+  is anchored to the first visible entry across new messages, polling and layout changes;
+  readers near the end follow new entries. Page scrolling is never used for history.
+- Added RU/EN/UK synthetic browser coverage for desktop sizes down to 1024×600,
+  messages/polling, pending confirmations, keyboard return-to-latest, campaign details,
+  narrow-screen reflow and reload. Updated existing party/hero journeys for the disclosure;
+  mobile offscreen-renderer coverage and explicit mock media API coverage remain.
+- Local checks passed: full typecheck, repository lint, 37 focused checks and all 549
+  `test:game` tests (232 core, 312 UI/domain, 5 director). Installed Chromium is
+  blocked before page load by the sandbox's Unix-socket restriction; the permitted
+  escalation fails before launch due to the environment mount. Browser acceptance must
+  run in CI. No paid calls, merge or production deployment were performed.
+
 ## Account/admin selected-design alignment (2026-11-03)
 
 Authenticated visual audit found missing account/overview artwork and small generic

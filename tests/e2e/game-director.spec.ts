@@ -1,3 +1,4 @@
+import { campaignDetails } from './support/campaign-details';
 import {
   approachTarget,
   mapAction,
@@ -95,6 +96,7 @@ test('two realtime players coauthor committed evolving scenes, travel and retain
     await expect(owner).toHaveURL(/\/game\/[a-f0-9-]+$/);
     const id = new URL(owner.url()).pathname.split('/').at(-1)!;
     await expect(owner.getByText('Подключено', { exact: true })).toBeVisible();
+    await campaignDetails(owner);
     await owner.getByLabel('Пригласить по имени пользователя').fill(guestHandle);
     await owner.getByRole('button', { name: 'Пригласить игрока', exact: true }).click();
     await expect(owner.getByText('Игрок приглашён', { exact: true })).toBeVisible();
@@ -112,6 +114,7 @@ test('two realtime players coauthor committed evolving scenes, travel and retain
     await expect(
       owner.locator(`[data-member-handle="${guestHandle}"]`).getByText('Принято', { exact: true }),
     ).toBeVisible();
+    await campaignDetails(owner, false);
     await expect(owner.getByTestId('game-advanced')).toHaveCount(0);
     const original = await snapshot(owner, id);
     const originalMap = original.map.id;
@@ -171,47 +174,102 @@ test('two realtime players coauthor committed evolving scenes, travel and retain
     });
     expect(registered.ok()).toBeTruthy();
     const revision = (await registered.json()).id as string;
-    const media = owner.getByTestId('scene-media');
-    await media.locator(':scope > summary').click();
-    await media.getByRole('button', { name: 'Подобрать готовое оформление', exact: true }).click();
-    await media
-      .locator(`[data-media-revision="${revision}"]`)
-      .getByRole('button', { name: 'Применить к этой кампании', exact: true })
-      .click();
+    await expect(owner.getByTestId('scene-media')).toHaveCount(0);
+    // The removed gameplay control does not remove media APIs or explicit consent.
+    const mediaPath = `/api/v1/game/campaigns/${id}`;
+    const prepResponse = await owner.request.post(`${mediaPath}/media-preparation`, {
+      data: { kind: 'background' },
+    });
+    expect(prepResponse.ok()).toBeTruthy();
+    const background = await prepResponse.json();
+    expect(
+      (
+        await owner.request.post(`${mediaPath}/media-bindings`, {
+          data: {
+            operationId: randomUUID(),
+            expectedCanonRevision: background.canonRevision,
+            expectedMapId: background.expectedMapId,
+            kind: 'background',
+            revisionId: revision,
+          },
+        })
+      ).ok(),
+    ).toBeTruthy();
     await expect(owner.locator('[data-art-loaded]')).toHaveAttribute('data-art-loaded', '1', {
       timeout: 15000,
     });
-    // Grounded mock portrait uses a separate attested quote + consent, then a separate attachment.
-    await media.getByLabel('Тип оформления', { exact: true }).selectOption('portrait');
-    await media.getByRole('button', { name: 'Подобрать готовое оформление', exact: true }).click();
-    const generation = media.getByTestId('grounded-image');
-    await generation.locator(':scope > summary').click();
-    await generation
-      .getByLabel('Название лицензии или условий', { exact: true })
-      .fill('Mock sample for test only');
-    await generation
-      .getByLabel('Подтверждаю права на запрос и выбранные собственные референсы.', { exact: true })
-      .check();
-    await generation.getByRole('button', { name: 'Узнать стоимость', exact: true }).click();
-    await expect(generation.getByTestId('grounded-image-quote')).toBeVisible();
-    await generation
-      .getByLabel(
-        'Подтверждаю один тестовый запуск по этой цене. Повторная генерация не выполняется автоматически.',
-        { exact: true },
+    const portraitPreparation = await owner.request.post(`${mediaPath}/media-preparation`, {
+      data: { kind: 'portrait', entityId: first.npcId },
+    });
+    expect(portraitPreparation.ok()).toBeTruthy();
+    const prep = await portraitPreparation.json();
+    const quoteResponse = await owner.request.post('/api/v1/image-generation/quotes', {
+      data: {
+        adventureId: prep.adventureId,
+        prompt: prep.prompt,
+        title: prep.grounding.subject.label.slice(0, 120),
+        framingVersion: prep.spec.framingVersion,
+        imageFraming: prep.spec.imageFraming,
+        kind: prep.spec.kind,
+        camera: prep.spec.camera,
+        tags: prep.spec.tags,
+        background: prep.spec.background,
+        referenceRevisionIds: prep.spec.referenceRevisionIds,
+        rights: {
+          basis: 'generated',
+          licenseLabel: 'Mock sample for test only',
+          attribution: '',
+          allowAuthorReuse: false,
+          attested: true,
+        },
+        mode: 'mock',
+        declineReuse: true,
+        campaignContext: {
+          campaignId: id,
+          expectedCanonRevision: prep.canonRevision,
+          groundingHash: prep.groundingHash,
+          kind: 'portrait',
+          entityId: first.npcId,
+        },
+      },
+    });
+    expect(quoteResponse.ok()).toBeTruthy();
+    const { quote } = await quoteResponse.json();
+    expect(quote.mode).toBe('mock');
+    expect(quote.upperMicros).toBe(0);
+    const jobResponse = await owner.request.post('/api/v1/image-generation/jobs', {
+      data: { quoteId: quote.id, operationId: randomUUID(), consent: true },
+    });
+    expect(jobResponse.ok()).toBeTruthy();
+    const jobId = (await jobResponse.json()).id;
+    let portraitId = '';
+    await expect
+      .poll(
+        async () => {
+          const result = await owner.request.get(`/api/v1/image-generation/jobs/${jobId}`);
+          expect(result.ok()).toBeTruthy();
+          const job = await result.json();
+          portraitId = job.revisionId || '';
+          return job.status;
+        },
+        { timeout: 30000 },
       )
-      .check();
-    await generation.getByRole('button', { name: 'Запустить один тест', exact: true }).click();
-    await expect(
-      generation.getByText('Сохранено как неизменяемая ревизия', { exact: true }),
-    ).toBeVisible({ timeout: 30000 });
-    const portrait = media.locator('[data-media-revision]');
-    await expect(portrait).toHaveCount(1);
-    const portraitId = await portrait.getAttribute('data-media-revision');
-    await portrait.getByRole('button', { name: 'Применить к этой кампании', exact: true }).click();
-    await owner
-      .getByRole('button', { name: /^Осмотреть ·/ })
-      .first()
-      .click();
+      .toBe('admitted');
+    expect(
+      (
+        await owner.request.post(`${mediaPath}/media-bindings`, {
+          data: {
+            operationId: randomUUID(),
+            expectedCanonRevision: prep.canonRevision,
+            expectedMapId: prep.expectedMapId,
+            kind: 'portrait',
+            entityId: first.npcId,
+            revisionId: portraitId,
+          },
+        })
+      ).ok(),
+    ).toBeTruthy();
+    await mapAction(owner, id, first.npcId, 'Осмотреть');
     const appliedPortrait = owner
       .getByTestId('npc-public-inspection')
       .locator(`img[src*="${portraitId}"][src*="campaignId"]`);

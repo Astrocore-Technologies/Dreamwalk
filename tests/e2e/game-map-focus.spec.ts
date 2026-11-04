@@ -1,3 +1,4 @@
+import { campaignDetails } from './support/campaign-details';
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import { mapMenu } from './support/map-actions';
@@ -49,9 +50,11 @@ test('map inventory/menu focus stays inside; external focus and explicit keyboar
   const outsideStop = page.waitForResponse(
     (response) => response.request().method() === 'POST' && isStop(response.url()),
   );
+  await campaignDetails(page);
   await page.getByLabel('Пригласить по имени пользователя').focus();
   expect((await outsideStop).ok()).toBeTruthy();
   expect(stops).toHaveLength(1);
+  await campaignDetails(page, false);
   const explicit = page.getByRole('button', { name: 'Остановиться', exact: true });
   await explicit.focus();
   const keyboardStop = page.waitForResponse(

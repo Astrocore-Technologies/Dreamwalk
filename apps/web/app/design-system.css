@@ -1570,3 +1570,36 @@ td {
   font-size: 14px;
   line-height: 1.5;
 }
+
+/* A game is a viewport, not a document with another screen of controls underneath. */
+@media (min-width: 761px) {
+  .game-shell:has([data-testid='game-room']) {
+    height: 100dvh;
+    min-height: 0;
+    overflow: hidden;
+  }
+  .game-shell:has([data-testid='game-room']) .workspace {
+    display: flex;
+    flex-direction: column;
+    height: 100%;
+    min-height: 0;
+  }
+  .game-shell:has([data-testid='game-room']) .topbar {
+    flex: 0 0 auto;
+  }
+  .game-shell:has([data-testid='game-room']) .main-content {
+    flex: 1;
+    min-height: 0;
+    width: 100%;
+    overflow: hidden;
+    padding: 0 8px 8px;
+  }
+}
+
+@media (min-width: 761px) {
+  /* The route's locale wrapper is part of the percentage-height chain. */
+  .game-shell:has([data-testid='game-room']) .main-content > [data-locale] {
+    height: 100%;
+    min-height: 0;
+  }
+}
