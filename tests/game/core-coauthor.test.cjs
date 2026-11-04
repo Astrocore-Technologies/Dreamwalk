@@ -269,7 +269,34 @@ test('descriptive director emote has no mechanical outcome or fabricated spoken 
     result.entries.filter((e) => e.kind === 'outcome' || e.kind === 'npc_reply').length,
     0,
   );
-  assert.equal(result.state.npcUtterances?.length ?? 0, f.state.npcUtterances?.length ?? 0);
+  assert.deepEqual(
+    result.state.npcUtterances.filter((source) => source.presentationKind !== 'attempt'),
+    (f.state.npcUtterances ?? []).filter((source) => source.presentationKind !== 'attempt'),
+  );
+  const attempts = result.state.npcUtterances.filter(
+    (source) => source.presentationKind === 'attempt',
+  );
+  assert.equal(attempts.length, 1);
+  const entry = result.entries.find((entry) => entry.kind === 'attempt');
+  assert.equal(entry.sourceId, attempts[0].id);
+  assert.equal(attempts[0].speakerId, 'alice');
+  assert.equal(attempts[0].text, g.parseStorySegments(f.input.text).segments[0].text);
+  const observations = Object.entries(result.state.npcBrains).flatMap(([npcId, brain]) =>
+    brain.living.observations
+      .filter((observation) => observation.speechIdentity?.turnId === f.turnId)
+      .map((observation) => ({ npcId, observation })),
+  );
+  assert.ok(observations.length);
+  for (const { npcId, observation } of observations) {
+    assert.equal(observation.kind, 'attempted');
+    assert.equal(observation.confidence, 'reported');
+    assert.equal(observation.speechIdentity.segmentIndex, 0);
+    assert.equal(observation.text, attempts[0].text);
+    assert.equal(
+      g.npcReplyObservation(result.state, 'alice', npcId, observation.id)?.id,
+      observation.id,
+    );
+  }
 });
 function deferredFixture(text) {
   const f = fixture(text);
