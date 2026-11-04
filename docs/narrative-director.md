@@ -130,3 +130,19 @@ knowledge, protected canon, player agency, validation, consent, provider or budg
 gates. Verification uses offline request-body tests, isolated PostgreSQL/API tests
 and synthetic browser fixtures in RU/EN/UK. Live-model literary quality and paid
 generation are not claimed.
+
+## Director reply intent binding (2026-11-03)
+
+An existing NPC's reply in a shared director proposal may voluntarily start/stop
+companionship or queue a wait, using the exact current observation from its safe
+voice context. Admission carries that server-derived observation into the same
+source/audience/context checks as targeted NPC speech. An older, missing or foreign
+source rejects the complete proposal, including newly proposed canon or NPCs.
+
+Director voice previews still omit private action targets and provisioning.
+Movement/inspection intents are therefore unavailable in director replies; the
+existing targeted NPC route retains its separately validated action context.
+A newborn's first reply has no provider-visible observation identity before
+materialization and cannot include companionship or action intents. Plain newborn
+creation and speech remain atomic and supported. No extra provider call, automatic
+retry or campaign migration is introduced.

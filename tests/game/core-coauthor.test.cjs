@@ -345,3 +345,179 @@ test('new nearby NPC does not stale an existing speaker when public voice eviden
   assert.ok(result.state.entities[`support-${f.turnId}`]);
   assert.equal(result.entries.find((e) => e.kind === 'npc_reply').authorId, 'keeper');
 });
+
+function existingSpeakerFixture(text = 'Will you accompany me?', prepare = (state) => state) {
+  const f = fixture(text);
+  Object.assign(f.state.entities.alice, { x: 5, y: 4 });
+  f.state = prepare(f.state);
+  const context = g.buildStoryTurnContext(f.state, 'alice', f.input, f.turnId);
+  const voice = context.sceneSpeakers.find((v) => v.npcId === 'keeper' && v.segmentIndex === 0);
+  assert.ok(voice?.replyToObservationId);
+  f.proposal.contextHash = context.contextHash;
+  f.proposal.narrative = {
+    narration: 'The keeper answers.',
+    newScene: null,
+    newNpc: null,
+    evidenceIds: [],
+  };
+  f.proposal.steps = [
+    {
+      segmentIndex: 0,
+      action: null,
+      replyNpcId: 'keeper',
+      replyContextHash: voice.speechHash,
+      reply: { text: 'I will accompany you.' },
+    },
+  ];
+  return { ...f, voice };
+}
+
+test('director existing-speaker agreement binds the current speech and preserves follow/stop', () => {
+  for (const kind of ['follow', 'stop']) {
+    const f = existingSpeakerFixture('Will you accompany me?', (state) => {
+      if (kind === 'stop')
+        state.npcBrains.keeper.living.companionship = {
+          actorId: 'alice',
+          sourceObservationId: 'prior-agreement',
+          utteranceId: 'prior-reply',
+          crossings: [],
+        };
+      return state;
+    });
+    f.proposal.steps[0].reply.companionIntent = {
+      kind,
+      actorId: 'alice',
+      sourceObservationId: f.voice.replyToObservationId,
+    };
+    const result = apply(f);
+    assert.equal(result.error, undefined);
+    assert.equal(result.state.narrativeCanon.revision, 1);
+    assert.equal(result.entries.filter((entry) => entry.kind === 'npc_reply').length, 1);
+    assert.equal(
+      result.state.npcBrains.keeper.living.companionship?.actorId,
+      kind === 'follow' ? 'alice' : undefined,
+    );
+    if (kind === 'follow')
+      assert.equal(
+        result.state.npcBrains.keeper.living.companionship.sourceObservationId,
+        f.voice.replyToObservationId,
+      );
+    assert.equal(
+      f.state.npcBrains.keeper.living.companionship?.actorId,
+      kind === 'stop' ? 'alice' : undefined,
+    );
+  }
+});
+
+test('director existing-speaker wait uses the exact current source without private action context', () => {
+  const f = existingSpeakerFixture('Please wait here.');
+  assert.equal(f.voice.actionContext, undefined);
+  f.proposal.steps[0].reply = {
+    text: 'I will wait here.',
+    actionIntent: {
+      sourceObservationId: f.voice.replyToObservationId,
+      actions: [{ kind: 'wait' }],
+    },
+  };
+  const result = apply(f);
+  assert.equal(result.error, undefined);
+  assert.deepEqual(result.state.npcBrains.keeper.plan, [{ kind: 'wait' }]);
+  assert.equal(
+    result.state.npcBrains.keeper.planSource.sourceObservationId,
+    f.voice.replyToObservationId,
+  );
+  assert.deepEqual(result.state.entities.alice, f.state.entities.alice);
+});
+
+test('director wrong-source intents roll back narration and NPC effects atomically', () => {
+  for (const intent of ['companionIntent', 'actionIntent']) {
+    const f = existingSpeakerFixture();
+    f.proposal.steps[0].reply[intent] =
+      intent === 'companionIntent'
+        ? { kind: 'follow', actorId: 'alice', sourceObservationId: 'old-or-foreign-source' }
+        : { sourceObservationId: 'old-or-foreign-source', actions: [{ kind: 'wait' }] };
+    const context = g.buildStoryTurnContext(f.state, 'alice', f.input, f.turnId);
+    const seed = g.createMockNarrativeProposal(f.state, 'alice', f.input.text, f.turnId, 'ru');
+    f.proposal.narrative.newNpc = {
+      ...seed.newNpc,
+      name: 'New Witness',
+      roleLabel: 'Witness',
+      placement: 'current',
+      spawn: context.director.availableConnections.find(
+        (point) => g.footprintDistance(f.state.entities.alice, point) === 1,
+      ),
+      knownEntityIds: [],
+    };
+    const before = JSON.stringify(f.state);
+    const result = apply(f);
+    assert.equal(result.error, 'FORBIDDEN');
+    assert.equal(result.state, f.state);
+    assert.equal(JSON.stringify(f.state), before);
+    assert.deepEqual(result.entries, []);
+    assert.deepEqual(result.events, []);
+  }
+});
+
+test('director intents cannot use unavailable movement targets or newborn source identities', () => {
+  const existing = existingSpeakerFixture();
+  existing.proposal.steps[0].reply.actionIntent = {
+    sourceObservationId: existing.voice.replyToObservationId,
+    actions: [{ kind: 'move_to', target: { x: 3, y: 6 } }],
+  };
+  assert.equal(apply(existing).error, 'FORBIDDEN');
+  for (const intent of ['companionIntent', 'actionIntent']) {
+    const f = fixture();
+    // Even knowing the deterministic marker after an independently admitted plain reply
+    // cannot supply a source the newborn's original provider context never contained.
+    const plain = apply(f);
+    assert.equal(plain.error, undefined);
+    const source = plain.state.npcBrains[`support-${f.turnId}`].living.observations.find(
+      (o) => o.kind === 'said' && o.actorId === 'alice',
+    ).id;
+    f.proposal.steps[1].reply[intent] =
+      intent === 'companionIntent'
+        ? { kind: 'follow', actorId: 'alice', sourceObservationId: source }
+        : { sourceObservationId: source, actions: [{ kind: 'wait' }] };
+    const result = apply(f);
+    assert.equal(result.error, 'FORBIDDEN');
+    assert.equal(result.state, f.state);
+    assert.deepEqual(result.entries, []);
+    assert.deepEqual(result.events, []);
+  }
+});
+
+test('director cannot bind a current reply to an older authorized observation in the same voice', () => {
+  const f = existingSpeakerFixture('Wait here now.', (state) => {
+    const result = g.applyNpcSpeech(
+      state,
+      'alice',
+      'keeper',
+      {
+        channel: 'say',
+        text: 'Come with me earlier.',
+      },
+      { suppressReply: true, identity: { turnId: randomUUID(), segmentIndex: 0 } },
+    );
+    assert.equal(result.error, undefined);
+    return result.state;
+  });
+  const old = f.voice.claims.find(
+    (claim) => claim.actorId === 'alice' && claim.observationId !== f.voice.replyToObservationId,
+  );
+  assert.ok(old);
+  assert.ok(f.voice.observationIds.includes(old.observationId));
+  for (const intent of ['companionIntent', 'actionIntent']) {
+    f.proposal.steps[0].reply = {
+      text: 'I agree.',
+      [intent]:
+        intent === 'companionIntent'
+          ? { kind: 'follow', actorId: 'alice', sourceObservationId: old.observationId }
+          : { sourceObservationId: old.observationId, actions: [{ kind: 'wait' }] },
+    };
+    const result = apply(f);
+    assert.equal(result.error, 'FORBIDDEN');
+    assert.equal(result.state, f.state);
+    assert.deepEqual(result.entries, []);
+    assert.deepEqual(result.events, []);
+  }
+});
