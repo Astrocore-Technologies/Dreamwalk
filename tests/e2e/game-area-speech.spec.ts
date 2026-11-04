@@ -1,5 +1,12 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { createAuthoredDraft } from '@dreamwalk/game-core';
+import type { GameProjection, StoryTurnFeed } from '@dreamwalk/contracts';
+import {
+  authoringRequest,
+  publishPrivateFixture,
+  savePrivateFixture,
+} from './support/private-authoring';
 
 for (const locale of ['ru', 'en', 'uk'] as const) {
   test(`all speech modes can post without selecting an NPC (${locale})`, async ({ page }) => {
@@ -93,11 +100,33 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
       (language) => localStorage.setItem('dreamwalk-language', language),
       locale,
     );
+    // The original observatory-v1 template predates the story composer entirely.
+    // Exercise an existing-style hybrid-v3 save with no turn controller instead.
+    const story = await authoringRequest(page, '/studio/adventures', {
+      title: `Legacy speech ${handle}`,
+    });
+    const draft = createAuthoredDraft('courtyard');
+    draft.npcBehavior = 'reactive-v1';
+    delete draft.turnRules;
+    await savePrivateFixture(page, story.id, draft);
+    const release = await publishPrivateFixture(page, story.id);
     const created = await page.request.post('/api/v1/game/campaigns', {
-      data: { template: 'observatory-v1', turnBased: false },
+      data: { playableVersionId: release.playableVersionId, turnBased: false },
     });
     expect(created.ok()).toBeTruthy();
     const id = (await created.json()).campaignId;
+    const snapshot = await page.request.get(`/api/v1/game/campaigns/${id}/snapshot`);
+    expect(snapshot.ok()).toBeTruthy();
+    const projection: GameProjection = (await snapshot.json()).projection;
+    expect(projection.rulesetVersion).toBe('hybrid-v3');
+    expect(projection.turn).toBeUndefined();
+    const feedResponse = await page.request.get(`/api/v1/game/campaigns/${id}/turns/feed`);
+    expect(feedResponse.ok()).toBeTruthy();
+    const feed: StoryTurnFeed = await feedResponse.json();
+    expect(feed.canSubmit, 'The compatibility fixture supports the legacy story composer').toBe(
+      true,
+    );
+    expect(feed.unavailableReason).toBeNull();
     const copy = {
       ru: {
         send: 'Отправить',

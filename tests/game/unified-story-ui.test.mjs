@@ -234,7 +234,7 @@ test('viewport layout separates history from stable composer and removes the sce
   assert.match(css, /scrollbar-gutter: stable/);
   assert.match(css, /overflow-anchor: none/);
   assert.match(css, /resize: none/);
-  assert.match(css, /\.history\s*\{[^}]*min-height: 72px/s);
+  assert.match(css, /\.history\s*\{[^}]*flex: 1 1 0;[^}]*min-height: 72px/s);
   assert.match(
     css,
     /:global\(\.game-shell\) \.composer\s*\{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*max-height: none/s,
@@ -273,6 +273,8 @@ test('public NPC inspection occupies history without replacing the composer or i
     /inspection && <div className=\{styles\.inspectionLayer\}>\{inspection\}<\/div>/,
   );
   assert.match(css, /visibility: hidden/);
+  assert.match(css, /\.inspectionLayer\s*\{[^}]*container-type: size/s);
+  assert.match(await read('npc-public-inspection.module.css'), /max-height: min\(240px, 35cqh\)/);
   assert.match(
     css,
     /\.inspectionLayer\s*\{[^}]*position: absolute;[^}]*inset: 0;[^}]*overflow-y: auto;/s,

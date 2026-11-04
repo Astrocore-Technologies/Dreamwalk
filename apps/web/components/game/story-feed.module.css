@@ -298,7 +298,8 @@
 .history {
   position: relative;
   display: flex;
-  flex: 1 1 auto;
+  /* Feed length must not participate in composer shrink distribution. */
+  flex: 1 1 0;
   /* A 48px inspection action plus its focus ring and scroll padding must fit. */
   min-height: 72px;
   overflow: hidden;
@@ -373,6 +374,8 @@
 .inspectionLayer {
   position: absolute;
   inset: 0;
+  /* Portrait sizing follows the actual history slot, including composer confirmations. */
+  container-type: size;
   overflow-y: auto;
   /* Native keyboard focus must reveal the action's 6px focus ring, not just its box. */
   scroll-padding-block: 8px;
