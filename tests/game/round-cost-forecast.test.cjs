@@ -312,14 +312,22 @@ test('status authorizes before forecasting and pending or unknown outcomes suppr
     game.access = async () => ({ user: { id: 'owner' } });
     game.load = async () => ({ state: world() });
     game.worldGeneration = { status: async () => status };
+    let consentReads = 0;
     game.db = {
-      query() {
+      query(sql, values) {
+        if (/^SELECT state,result_code AS code FROM game_ordinary_round_consents\s/.test(sql)) {
+          assert.deepEqual(values, ['campaign', 'owner']);
+          consentReads++;
+          return [];
+        }
         throw new Error('Do not estimate a blocked round');
       },
     };
     const result = await game.worldGenerationStatus({}, 'campaign');
     assert.equal(result.forecast, null);
     assert.equal(result.unknown, status.unknown);
+    assert.equal(result.ordinary, null);
+    assert.equal(consentReads, 1, 'Only the authorized read-only admission status is loaded');
   }
   const game = Object.create(GameService.prototype);
   game.serial = (_id, work) => work();
