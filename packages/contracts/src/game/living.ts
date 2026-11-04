@@ -5,7 +5,7 @@ export const npcCognitionSchema = z
     motive: z.string().trim().min(1).max(240),
     belief: z.string().trim().min(1).max(240),
     intent: z.string().trim().min(1).max(240),
-    innerThought: z.string().trim().min(1).max(480),
+    innerThought: z.string().trim().min(1).max(1400),
     reconsiderAfterRounds: z.number().int().min(1).max(3).default(1),
   })
   .strict();
@@ -162,6 +162,8 @@ export interface NpcObservation {
   addressedNpcId?: string;
   /** Server-created durable story turn provenance; never accepted from speech input. */
   speechIdentity?: { turnId: string; segmentIndex: number };
+  /** Server-stamped first pickup of an admitted mundane story prop. This is not legal ownership. */
+  itemOwnershipContext?: 'unestablished';
   depth: number;
   disclosure: 'public' | 'participants' | 'private';
   audienceIds: string[];

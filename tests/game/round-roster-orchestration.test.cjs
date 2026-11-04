@@ -921,9 +921,28 @@ test('blocked-intention admission cannot bypass malformed cognition or stale rou
     },
     knowledgeRevision: live.state.npcBrains.keeper.living.knowledgeRevision,
   };
+  for (const length of [481, 1400]) {
+    const proposal = structuredClone(base);
+    proposal.cognition.innerThought = 'x'.repeat(length);
+    const evaluated = await game.evaluateDecision('campaign', live.state, {
+      id: `bounded-thought-${length}`,
+      npcId: 'keeper',
+      purpose: 'plan',
+      context: request.context,
+      contextHash: request.context.contextHash,
+      proposal,
+    });
+    assert.equal(evaluated.accepted, true);
+    assert.match(evaluated.decisionCode, /^NPC_INTENTION_BLOCKED:/);
+    assert.equal(
+      evaluated.next.npcBrains.keeper.living.cognition.innerThought,
+      proposal.cognition.innerThought,
+    );
+    assert.deepEqual(evaluated.next.npcUtterances, live.state.npcUtterances);
+  }
   for (const mutate of [
     (p) => {
-      p.cognition.innerThought = 'x'.repeat(481);
+      p.cognition.innerThought = 'x'.repeat(1401);
     },
     (p) => {
       p.turnFence.phaseEpoch++;

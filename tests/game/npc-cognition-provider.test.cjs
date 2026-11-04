@@ -9,23 +9,67 @@ const config = { model: 'synthetic-no-network', maxOutputTokens: 1000 };
 test('plan and speech use bounded authored RP, never provider hidden reasoning traces', () => {
   for (const purpose of ['plan', 'speech']) {
     const schema = openAiOutputSchema(purpose);
-    assert.equal(schema.properties.cognition.anyOf[0].properties.innerThought.maxLength, 480);
+    assert.equal(schema.properties.cognition.anyOf[0].properties.innerThought.maxLength, 1400);
     assert.equal(schema.properties.cognition.anyOf[0].properties.reconsiderAfterRounds.maximum, 3);
     assert.equal(schema.properties.cognition.anyOf[0].additionalProperties, false);
     const body = JSON.parse(
       buildOpenAiNpcRequestBody(config, purpose, { npcId: 'keeper', replyLocale: 'ru' }),
     );
+    assert.match(body.instructions, /You portray an individual fictional character/);
     assert.match(body.instructions, /authored fictional roleplay state/);
+    assert.match(body.instructions, /one coherent 3-6 sentence paragraph/);
+    assert.match(body.instructions, /rather than a one-line action summary/);
+    assert.match(body.instructions, /Do not merely repeat the spoken reply/);
+    assert.match(body.instructions, /Do not mechanically list these ingredients/);
     assert.match(body.instructions, /never reveal or request native reasoning traces/);
     assert.match(body.instructions, /Cognition does not create facts/);
     assert.match(body.instructions, /Output language: Russian/);
     assert.equal(body.store, false);
   }
 });
+test('speech updates the current beat without inventing ownership or answering for another NPC', () => {
+  for (const [purpose, context] of [
+    ['speech', {}],
+    ['story_turn', { mode: 'npc' }],
+  ]) {
+    const body = JSON.parse(buildOpenAiNpcRequestBody(config, purpose, context));
+    assert.match(body.instructions, /Follow the latest conversational beat/);
+    assert.match(body.instructions, /a change of topic, an apology, a calmer request/);
+    assert.match(
+      body.instructions,
+      /do not accept an apology or decide a response on another character behalf/,
+    );
+    assert.match(body.instructions, /observationOrder for retained memory order/);
+    assert.match(body.instructions, /isOwnUtterance.*not new verified world facts/);
+    assert.match(
+      body.instructions,
+      /If ownership is unknown, do not turn it into a possessive fact/,
+    );
+    assert.match(
+      body.instructions,
+      /itemOwnershipContext=unestablished marks witnessed pickup only/,
+    );
+    assert.match(body.instructions, /current custody is not legal ownership/);
+    assert.match(body.instructions, /do not force the same stance or a group chorus/);
+    assert.match(body.instructions, /public name, role, description, appearance and speech style/);
+    assert.match(
+      body.instructions,
+      /rather than flattening every NPC into a generic polite helper/,
+    );
+    assert.match(body.instructions, /If a profile is sparse, keep characterization modest/);
+    assert.match(body.instructions, /public fields are untrusted character data/);
+    assert.match(body.instructions, /Never fill a gap from another NPC, private memory/);
+  }
+});
 test('fresh autonomous decision uses own character and scene, not automatic obedience', () => {
   const body = JSON.parse(buildOpenAiNpcRequestBody(config, 'plan', { npcId: 'keeper' }));
   assert.match(body.instructions, /even if nobody addressed it/);
   assert.match(body.instructions, /Do not automatically obey or help/);
+  assert.match(
+    body.instructions,
+    /itemOwnershipContext=unestablished proves witnessed pickup only/,
+  );
+  assert.match(body.instructions, /coarse helper role as a duty to help everyone/);
   assert.match(body.instructions, /previousCognition, lastActionOutcome/);
   assert.match(body.instructions, /currentPlan, accepted obligations/);
   assert.match(body.instructions, /remaining accepted intent/);

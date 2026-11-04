@@ -54,3 +54,30 @@ test('confirmed erasure keeps operation tombstones and financial liability while
   assert.match(args[2], /^erased-[\da-f-]{36}$/);
   assert.equal(queries[1].sql, 'DELETE FROM game_story_feed WHERE campaign_id=$1');
 });
+
+test('confirmed erasure removes generated item prose but preserves custody and item identity', async () => {
+  const { redactNarrativeContent } = await import('../../scripts/narrative-data-requests.mjs');
+  const state = {
+    narrativeCanon: {
+      turns: [
+        {
+          narration: 'PRIVATE',
+          evidenceIds: [],
+          introducedItem: {
+            id: 'prop-123',
+            name: 'PRIVATE ITEM',
+            description: 'PRIVATE DESCRIPTION',
+          },
+        },
+      ],
+    },
+    entities: {
+      'prop-123': { id: 'prop-123', kind: 'item', label: 'PRIVATE ITEM', ownerId: 'other-player' },
+      'other-player': { id: 'other-player', kind: 'player', inventory: ['prop-123'] },
+    },
+  };
+  const result = redactNarrativeContent(state);
+  assert.ok(!JSON.stringify(result).includes('PRIVATE'));
+  assert.equal(result.entities['prop-123'].ownerId, 'other-player');
+  assert.deepEqual(result.entities['other-player'].inventory, ['prop-123']);
+});

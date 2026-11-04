@@ -37,6 +37,47 @@ test('typed allegation binds actual admitted speaker rather than the accused act
   assert.equal(g.npcReplyObservation(state, 'alice', 'keeper', id).actorId, 'bob');
   assert.equal(g.npcReplyObservation(state, 'bob', 'keeper', id), undefined);
 });
+test('speech claims carry permitted memory order and identify own words without widening disclosure', () => {
+  const initial = world();
+  initial.tick = 10;
+  const { state, id } = speak(initial, { channel: 'say', text: 'What is that object?' });
+  const audience = g.npcSpeechProspectiveListenerIds(state, 'keeper', 'say');
+  const context = g.buildNpcPublicSpeechContext(state, 'keeper', audience, [id]);
+  const replied = g.commitNpcPublicUtterance(state, 'keeper', {
+    text: 'I see the object, but I do not know its owner.',
+    channel: 'say',
+    recipientId: 'alice',
+    observationIds: [id],
+    replyToObservationId: id,
+    contextHash: g.npcContextFingerprint(context),
+  });
+  assert.equal(replied.error, undefined);
+  const memory = replied.state.npcBrains.keeper.living;
+  const own = memory.observations.find((o) => o.kind === 'said' && o.actorId === 'keeper');
+  assert.ok(own);
+  memory.observations.push({
+    ...own,
+    id: 'private-own-words',
+    disclosure: 'participants',
+    audienceIds: ['keeper'],
+    text: 'Private previous speech must not enter this conversation.',
+  });
+  const next = g.buildNpcPublicSpeechContext(replied.state, 'keeper', audience, [
+    own.id,
+    'private-own-words',
+    id,
+  ]);
+  assert.deepEqual(
+    next.claims.map((c) => c.observationId),
+    [own.id, id],
+  );
+  assert.equal(next.claims[0].isOwnUtterance, true);
+  assert.equal(next.claims[1].isOwnUtterance, false);
+  assert.equal(next.claims[0].observationOrder, 1);
+  assert.equal(next.claims[1].observationOrder, 0);
+  assert.equal(JSON.stringify(next).includes('Private previous speech'), false);
+  assert.equal(next.claims[0].confidence, 'reported', 'own dialogue is not verified world canon');
+});
 test('reply trigger never bypasses whole-audience whisper disclosure', () => {
   const before = world();
   Object.assign(before.entities.bob, { x: 7, y: 5 }); // Outside the original one-cell whisper.

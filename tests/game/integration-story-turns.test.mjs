@@ -40,7 +40,7 @@ await test(
         outsider = await client().registerLegacyFixture();
       const source = await owner.request('/adventures/old-observatory?view=published');
       const ids = [];
-      for (let i = 0; i < 16; i++) {
+      for (let i = 0; i < 17; i++) {
         const { campaignId } = await owner.request('/game/campaigns', {
           turnBased: false,
           playableVersionId: source.playableVersionId,
@@ -186,6 +186,60 @@ await test(
         assert.equal(r.status, 'awaiting_confirmation');
         return { ...q, proposalHash: r.proposal_hash };
       }
+      await t.test(
+        'natural RP pickup commits a durable inventory item without a second confirmation or model call',
+        async () => {
+          const id = ids[16];
+          await prepare(id);
+          const beforeCalls = calls;
+          const q = await queued(
+            id,
+            await quoted(
+              id,
+              input(id, '*положил синий платок себе в карман*', {
+                targetNpcId: undefined,
+                replyLocale: 'ru',
+              }),
+            ),
+          );
+          const proposal = structuredClone(q.p.request.context.mockProposal);
+          proposal.status = 'ready';
+          proposal.code = null;
+          proposal.steps = [
+            { segmentIndex: 0, action: { kind: 'pick_up', targetId: 'new_item' }, reply: null },
+          ];
+          proposal.narrative = {
+            narration: 'Обычный предмет теперь в кармане; его прежний владелец неизвестен.',
+            newScene: null,
+            newNpc: null,
+            newItem: {
+              name: 'синий платок',
+              description: 'Найденная обычная вещь неизвестного происхождения.',
+            },
+            evidenceIds: [],
+          };
+          const row = await complete(id, q, proposal);
+          assert.equal(row.status, 'committed');
+          const itemId = `prop-${q.id}`;
+          assert.ok(game.live.get(id).state.entities[actor].inventory.includes(itemId));
+          assert.equal(game.live.get(id).state.entities[itemId].ownerId, actor);
+          assert.equal((await controller.storySubmit(req, id, q.submit)).status, 'committed');
+          assert.equal(calls, beforeCalls + 1);
+          const count = await db.query(
+            'SELECT count(*)::int n FROM game_story_feed WHERE turn_id=$1',
+            [q.id],
+          );
+          assert.equal(count.rows[0].n, 3);
+          game.live.delete(id);
+          await controller.snapshot(req, id);
+          assert.equal(
+            game.live.get(id).state.entities[actor].inventory.filter((value) => value === itemId)
+              .length,
+            1,
+          );
+          assert.equal(game.live.get(id).state.entities[itemId].ownerId, actor);
+        },
+      );
       await t.test(
         'director persists a fresh professor and attributed reply with one charge and replay',
         async () => {

@@ -1,3 +1,4 @@
+import { parseStoryItemAction } from './story-items';
 import { applyTurnAction, turnFence, matchesTurnFence } from './turns';
 import type { TurnFence } from '@dreamwalk/contracts';
 import {
@@ -107,6 +108,8 @@ export function parsePlayerTextAction(
   const actor = state.entities[actorId];
   if (actor?.kind !== 'player' || typeof text !== 'string' || !text.trim() || text.length > 1000)
     return null;
+  const pickup = parseStoryItemAction(state, actorId, text);
+  if (pickup) return pickup;
   const normalized = text.trim().toLowerCase(),
     patterns: [RegExp, GameAction['kind']][] = [
       [

@@ -133,6 +133,7 @@ export function buildNarrativeContext(
       narration: t.narration,
       introducedScene: t.introducedScene,
       introducedNpc: t.introducedNpc,
+      introducedItem: t.introducedItem,
     })),
     remainingScenes: Math.max(0, constraints.maxScenes - Object.keys(state.maps).length),
     remainingNpcs: Math.max(
