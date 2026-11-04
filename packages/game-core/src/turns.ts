@@ -1,3 +1,5 @@
+import { transitionNpcLifeState } from './lifecycle';
+import { isActorConscious } from '@dreamwalk/contracts';
 import {
   footprintDistance,
   footprintCells,
@@ -202,7 +204,7 @@ export function applyTurnMove(
 }
 type Cost = 'main' | 'additional' | null;
 export function turnActionCost(action: GameAction): Cost {
-  if (['inspect', 'talk', 'communicate'].includes(action.kind)) return null;
+  if (['inspect', 'talk', 'communicate', 'travel'].includes(action.kind)) return null;
   if (
     ['pick_up', 'give', 'open', 'close', 'unlock', 'lock', 'knock', 'transition'].includes(
       action.kind,
@@ -217,8 +219,9 @@ function contactGate(state: GameState, actorId: string, action: GameAction): Gam
   if (
     !target ||
     !['player', 'npc'].includes(target.kind) ||
+    !isActorConscious(target) ||
     target.id === actorId ||
-    !actor ||
+    !isActorConscious(actor) ||
     target.mapId !== actor.mapId ||
     !visible(state, actor, target)
   )
@@ -258,6 +261,9 @@ function resolveContact(
     target.vitality = Math.max(0, (target.vitality ?? target.maxVitality) - rules.hitDamage);
     affected = true;
   }
+  const unconscious =
+    target.kind === 'npc' && target.vitality === 0 && action.kind === 'hit' && !defended;
+  if (unconscious) transitionNpcLifeState(next, target.id, 'unconscious');
   if (!defended && action.kind === 'push') {
     for (let step = 0; step < rules.pushDistance; step++) {
       const point = { x: target.x + dx, y: target.y + dy };
@@ -283,6 +289,9 @@ function resolveContact(
       targetId: target.id,
       mapId: target.mapId,
     },
+    ...(unconscious
+      ? [{ kind: 'actor.lost_consciousness', actorId, targetId: target.id, mapId: target.mapId }]
+      : []),
   ]);
 }
 /** Reaction data is a durable pending mechanical resolution, never an NPC social-response table. */
@@ -383,7 +392,9 @@ export function resolveTurnReaction(
   const resolved = resolveContact(state, pending.actorId, pending.action, decision === 'defend');
   if (resolved.error) return resolved;
   const t = resolved.state.turnController!;
-  if (reaction.resumePhase === 'world') {
+  // Resume location is independent of who owes this contact's action cost.
+  // Deferred player RP may await a reaction during world without becoming an NPC.
+  if (state.entities[pending.actorId]?.kind === 'npc') {
     t.worldActions++;
     t.worldNpcActions[pending.actorId] = (t.worldNpcActions[pending.actorId] ?? 0) + 1;
   } else t.resources[pending.actorId].main--;
@@ -574,7 +585,7 @@ function isActiveWorldNpc(state: GameState, npcId: string): boolean {
     npc?.kind === 'npc' &&
     !!state.npcBrains?.[npcId]?.living &&
     !npc.encounterId &&
-    (npc.vitality === undefined || npc.vitality > 0) &&
+    isActorConscious(npc) &&
     !!state.turnController?.actorOrder.some((id) => {
       const player = state.entities[id];
       return player?.kind === 'player' && player.mapId === npc.mapId;
@@ -599,7 +610,7 @@ export function worldTurnCompanionContinuation(
     npc.mapId === leader.mapId ||
     npc.encounterId ||
     leader.encounterId ||
-    (npc.vitality !== undefined && npc.vitality <= 0) ||
+    !isActorConscious(npc) ||
     !crossing ||
     crossing.mapId !== npc.mapId ||
     crossing.destinationMapId !== leader.mapId ||

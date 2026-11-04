@@ -10,8 +10,9 @@ import { intersectsViewport, rendererActivity } from './renderer-activity';
 import { sceneClick } from './scene-input';
 import { entityLayout, containsScenePoint } from './scene-geometry';
 import { MapActions, InventoryPanel } from './map-actions';
+import { useTurnText } from './turn-messages';
 import { useItemText } from './item-messages';
-import { committedPathSample, spriteFeedback } from './turn-ui';
+import { committedPathSample, spriteFeedback, npcUnavailable, publicLifeState } from './turn-ui';
 import { useEffect, useRef, useState } from 'react';
 import { mapCamera, mapRasterBounds, MIN_MAP_ZOOM, MAX_MAP_ZOOM } from './map-camera';
 import { mapCoordinateAt, mapCoordinateTicks } from './map-coordinates';
@@ -57,6 +58,7 @@ export function GameCanvas({
 }) {
   const { t } = useT();
   const itemText = useItemText();
+  const turnText = useTurnText();
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [menu, setMenu] = useState<{ ids: string[]; x: number; y: number; mapId: string } | null>(
     null,
@@ -687,6 +689,11 @@ export function GameCanvas({
               );
             const boundTexture = binding && artTextures.get(binding.url);
             record.animated = !!(entity.characterAnimation && boundTexture);
+            record.sprite.tint = npcUnavailable(entity)
+              ? publicLifeState(entity) === 'dead'
+                ? 0x888888
+                : 0xb7a5cd
+              : 0xffffff;
             if (record.animated && boundTexture) {
               if (record.animationBase !== boundTexture) {
                 record.animatedTexture?.destroy(false);
@@ -744,6 +751,11 @@ export function GameCanvas({
                 dy: entity.feedback.dy,
               };
             }
+            if (npcUnavailable(entity)) {
+              record.trace = undefined;
+              record.feedback = undefined;
+              record.walkingUntil = 0;
+            }
             if (
               record.x !== entity.x * tile ||
               record.y !== entity.y * tile ||
@@ -788,7 +800,10 @@ export function GameCanvas({
               .stroke({ color: 0xe0bd79, width: 2, alpha: 0.8 });
           }
         }
-        for (const record of sprites.values()) {
+        const entitiesById = new Map(p.entities.map((entity) => [entity.id, entity]));
+        for (const [entityId, record] of sprites) {
+          const entity = entitiesById.get(entityId);
+          const inactive = !!entity && npcUnavailable(entity);
           if (resuming) {
             record.trace = undefined;
             record.feedback = undefined;
@@ -828,11 +843,12 @@ export function GameCanvas({
           record.sprite.rotation = feedback.rotation;
           record.sprite.zIndex = y + tile + (record.offsetX ? 2 : 0);
           if (record.animated && record.animatedTexture && record.animationBase) {
-            const col = reduced
-              ? 0
-              : now < record.walkingUntil
-                ? 2 + (Math.floor(now / 125) % 4)
-                : Math.floor(now / 700) % 2;
+            const col =
+              reduced || inactive
+                ? 0
+                : now < record.walkingUntil
+                  ? 2 + (Math.floor(now / 125) % 4)
+                  : Math.floor(now / 700) % 2;
             const index = record.direction * 6 + col;
             if (index !== record.animationFrame) {
               record.animationFrame = index;
@@ -960,6 +976,23 @@ export function GameCanvas({
         }}
       >
         <div ref={host} className={styles.canvas} />
+        <div className={styles.lifecycleBadges} aria-live="polite">
+          {projection.entities.filter(npcUnavailable).map((entity) => {
+            const state = publicLifeState(entity);
+            return (
+              state !== 'conscious' && (
+                <button
+                  type="button"
+                  key={entity.id}
+                  data-life-state={state}
+                  onClick={() => onInspectNpc?.(entity.id)}
+                >
+                  {entity.label || entity.id}: {turnText(state)}
+                </button>
+              )
+            );
+          })}
+        </div>
         <div ref={coordinateRulers} className={styles.mapCoordinates} aria-hidden="true">
           <div className={styles.mapCoordinateX}>
             {Array.from({ length: projection.map.width }, (_, x) => (

@@ -23,6 +23,28 @@ export function directorHistoryEntry(
   return entry;
 }
 
+function privateDirectorAudience(
+  value: Record<string, unknown>,
+  state: GameState,
+  actorId: string,
+): string[] | undefined {
+  if (value.mode !== 'director' || value.channel !== 'whisper') return undefined;
+  const audience = value.outputAudienceIds;
+  if (
+    !Array.isArray(audience) ||
+    !audience.length ||
+    !audience.includes(actorId) ||
+    !audience.every(
+      (id) =>
+        typeof id === 'string' &&
+        id.trim().length > 0 &&
+        ['player', 'npc'].includes(state.entities[id]?.kind),
+    )
+  )
+    throw new Error('FORBIDDEN');
+  return [...new Set(audience)];
+}
+
 /** Reuse archived knowledge and committed, audience-safe history. Never reads OOC chat or writes a summary. */
 export async function extendContextHistory<T extends object>(
   db: Db,
@@ -35,6 +57,9 @@ export async function extendContextHistory<T extends object>(
   npcId?: string,
   transaction?: PoolClient,
 ): Promise<T & { budgetExceeded?: boolean }> {
+  // An empty SQL containment array would admit every private row. Reject before
+  // any context extension, including when history packing is disabled.
+  privateDirectorAudience(context as Record<string, unknown>, state, actorId);
   // Quoting may already hold a pool connection. Do not reserve a second one for settings.
   const settingsDb = transaction
     ? {
@@ -52,12 +77,13 @@ export async function extendContextHistory<T extends object>(
     npcId,
     transaction,
   ) ?? context);
+  const value = context as T & Record<string, unknown>;
+  const privateAudience = privateDirectorAudience(value, state, actorId);
   const budget = ai.contextWindow();
   if (!budget) return context;
-  const value = context as T & Record<string, unknown>;
   const maximum = Math.min(32768, budget.effectiveContextTokens);
   let history: unknown[] = [];
-  if (npcId) {
+  if (npcId && value.mode !== 'director') {
     const archived = await recallNpcEpisodes(db, campaignId, state, npcId, maximum);
     const current = state.npcBrains?.[npcId]?.living;
     if (current) {
@@ -101,15 +127,18 @@ export async function extendContextHistory<T extends object>(
     }
   } else {
     const director = (value.director ?? value) as { sharedAudience?: { id: string }[] };
-    const audience = [...new Set([actorId, ...(director.sharedAudience ?? []).map((a) => a.id)])];
+    const privateOutput = privateAudience !== undefined;
+    const audience = privateAudience ?? [
+      ...new Set([actorId, ...(director.sharedAudience ?? []).map((a) => a.id)]),
+    ];
     const rows = await db.query(
       `SELECT f.id,f.sequence,f.ordinal,f.entry->>'kind' AS kind,f.entry->>'authorId' AS "authorId",f.entry->>'text' AS text,
       f.entry->'speakerKnownToIds' AS "speakerKnownToIds"
       FROM game_story_feed f JOIN game_story_turns t ON t.id=f.turn_id
-      WHERE f.campaign_id=$1 AND t.erased_at IS NULL AND t.status='committed' AND f.channel='say'
+      WHERE f.campaign_id=$1 AND t.erased_at IS NULL AND t.status='committed' AND ($4::boolean OR f.channel='say')
       AND ('*'=ANY(f.audience_ids) OR f.audience_ids @> $2::text[])
       ORDER BY f.sequence DESC,f.ordinal DESC LIMIT $3`,
-      [campaignId, audience, maximum],
+      [campaignId, audience, maximum, privateOutput],
     );
     const legacy = await db.query(
       `SELECT id,input_text,narration FROM (

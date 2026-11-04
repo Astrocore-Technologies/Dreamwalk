@@ -1,3 +1,7 @@
+import {
+  verifyAcceptedTravelBatch,
+  type AcceptedTravelBatchProof,
+} from '../generation/travel-consent';
 import { imageProviderRequest } from './request-policy';
 import { quoteFunding, heldFunding } from '../generation/currency-funding';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
@@ -186,6 +190,14 @@ export class ImageGenerationEngine {
   ) {
     this.releaseResultAuthorizer = authorizer;
   }
+  private travelValidator?: (
+    c: PoolClient,
+    actorId: string,
+    input: GenerationRequest,
+  ) => Promise<void>;
+  attachTravelValidator(validator: NonNullable<ImageGenerationEngine['travelValidator']>) {
+    this.travelValidator = validator;
+  }
   private runtimeStateReader?: (
     campaignId: string,
   ) => { state: GameState; dbRevision: number } | undefined;
@@ -315,7 +327,11 @@ export class ImageGenerationEngine {
       ).rowCount
     )
       fail(401, 'UNAUTHORIZED', 'UNAUTHORIZED');
-    if (input.studioLocationContext)
+    if (input.travelContext) {
+      if (!this.travelValidator)
+        fail(409, 'LOCATION_MEDIA_UNAVAILABLE', 'LOCATION_MEDIA_UNAVAILABLE');
+      await this.travelValidator!(c, actorId, input);
+    } else if (input.studioLocationContext)
       await authorizeStudioLocationTx(c, this.assets, actorId, input, legacyFraming);
     else if (input.heroPortraitContext || (input.storyCoverContext && !input.adventureId)) {
       // No persisted hero is created or modified. The authenticated actor owns this draft scope.
@@ -838,6 +854,15 @@ export class ImageGenerationEngine {
     };
   }
   async enqueue(actorId: string, body: unknown) {
+    return this.db.tx((c) => this.enqueueTx(c, actorId, body));
+  }
+  /** Internal compound consent port: preserves the exact native quote and all native guards. */
+  async enqueueTx(
+    c: PoolClient,
+    actorId: string,
+    body: unknown,
+    acceptedTravel?: AcceptedTravelBatchProof,
+  ) {
     const b = z
       .object({
         quoteId: z.uuid(),
@@ -847,158 +872,193 @@ export class ImageGenerationEngine {
       })
       .strict()
       .parse(body);
-    return this.db.tx(async (c) => {
-      await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
-        `art-owner:${actorId}`,
-      ]);
-      // Read-only receipt recovery never creates a reservation or revives an old policy.
-      if (
-        !(
-          await c.query('SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE', [
-            actorId,
-          ])
-        ).rowCount
-      )
-        fail(401, 'UNAUTHORIZED', 'UNAUTHORIZED');
-      const previous = (
-        await c.query<Job>(
-          'SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_paid_reserved_subunits FROM image_generation_jobs WHERE actor_id=$1 AND operation_id=$2',
-          [actorId, b.operationId],
-        )
-      ).rows[0];
-      if (previous) {
-        if (previous.quote_id !== b.quoteId)
-          fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
-        if (
-          previous.mode === 'external' &&
-          previous.cost_basis === 'approved_estimate' &&
-          (previous.input.generationAuthorizationId ||
-            this.policy.generationMode === 'owner' ||
-            this.policy.generationMode === 'release') &&
-          b.estimateRiskConsent !== true
-        )
-          fail(409, 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED', 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED');
-        return this.dto(previous);
-      }
-
-      const q = (
-        await c.query('SELECT * FROM image_generation_quotes WHERE id=$1 AND actor_id=$2', [
-          b.quoteId,
+    await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [`art-owner:${actorId}`]);
+    // Read-only receipt recovery never creates a reservation or revives an old policy.
+    if (
+      !(
+        await c.query('SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE', [
           actorId,
         ])
-      ).rows[0];
-      if (!q) fail(404, 'NOT_FOUND', 'NOT_FOUND');
-      const input = generationRequestSchema.parse(q.input);
-      // A separate informed action is mandatory even on idempotent replay; ordinary consent is not estimate consent.
+      ).rowCount
+    )
+      fail(401, 'UNAUTHORIZED', 'UNAUTHORIZED');
+    const previous = (
+      await c.query<Job>(
+        'SELECT *,(SELECT status FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_status,(SELECT reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_reserved_subunits,(SELECT captured_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_captured_subunits,(SELECT sparks_reserved_subunits FROM spark_holds WHERE id=image_generation_jobs.spark_quote_id) AS spark_paid_reserved_subunits FROM image_generation_jobs WHERE actor_id=$1 AND operation_id=$2',
+        [actorId, b.operationId],
+      )
+    ).rows[0];
+    if (previous) {
+      if (previous.quote_id !== b.quoteId)
+        fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
       if (
-        input.mode === 'external' &&
-        (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release') &&
-        (q.cost_basis !== 'approved_estimate' || b.estimateRiskConsent !== true)
+        previous.mode === 'external' &&
+        previous.cost_basis === 'approved_estimate' &&
+        (previous.input.generationAuthorizationId ||
+          this.policy.generationMode === 'owner' ||
+          this.policy.generationMode === 'release') &&
+        b.estimateRiskConsent !== true
       )
         fail(409, 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED', 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED');
-      const authorization = await this.authorize(
-        c,
+      return this.dto(previous);
+    }
+
+    const q = (
+      await c.query('SELECT * FROM image_generation_quotes WHERE id=$1 AND actor_id=$2', [
+        b.quoteId,
         actorId,
-        input,
-        q.reference_hashes,
-        input.framingVersion === undefined,
-      );
-      this.liveGate(input);
-      this.assertQuotedProvider(q);
-      this.assertPolicyRevision(q, authorization.livePolicy);
-      await lockRasterQuota(c, actorId, MAX_RASTER_BYTES);
-      await c.query('SELECT id FROM image_generation_quotes WHERE id=$1 FOR UPDATE', [q.id]);
-      if (
-        q.policy_version !== this.policy.version ||
-        new Date(q.expires_at).getTime() <= Date.now()
+      ])
+    ).rows[0];
+    if (!q) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+    const input = generationRequestSchema.parse(q.input);
+    if (input.travelContext && !acceptedTravel)
+      fail(409, 'TRAVEL_BATCH_CONSENT_REQUIRED', 'TRAVEL_BATCH_CONSENT_REQUIRED');
+    if (
+      acceptedTravel &&
+      (acceptedTravel.nativeQuoteId !== b.quoteId || acceptedTravel.preparationId !== b.operationId)
+    )
+      fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+    if (acceptedTravel)
+      await verifyAcceptedTravelBatch(c, actorId, acceptedTravel, q.spark_quote_id ?? undefined);
+    // A separate informed action is mandatory even on idempotent replay; ordinary consent is not estimate consent.
+    if (
+      input.mode === 'external' &&
+      (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release') &&
+      (q.cost_basis !== 'approved_estimate' || b.estimateRiskConsent !== true)
+    )
+      fail(409, 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED', 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED');
+    const authorization = await this.authorize(
+      c,
+      actorId,
+      input,
+      q.reference_hashes,
+      input.framingVersion === undefined,
+    );
+    this.liveGate(input);
+    this.assertQuotedProvider(q);
+    this.assertPolicyRevision(q, authorization.livePolicy);
+    await lockRasterQuota(c, actorId, MAX_RASTER_BYTES);
+    await c.query('SELECT id FROM image_generation_quotes WHERE id=$1 FOR UPDATE', [q.id]);
+    if (
+      q.policy_version !== this.policy.version ||
+      (!acceptedTravel && new Date(q.expires_at).getTime() <= Date.now())
+    )
+      fail(409, 'QUOTE_EXPIRED', 'QUOTE_EXPIRED');
+    if ((await c.query('SELECT id FROM image_generation_jobs WHERE quote_id=$1', [q.id])).rowCount)
+      fail(409, 'QUOTE_CONSUMED', 'QUOTE_CONSUMED');
+    const count = (
+      await c.query(
+        "SELECT count(*)::int AS n FROM image_generation_jobs WHERE actor_id=$1 AND status IN ('queued','dispatched','unknown','generated')",
+        [actorId],
       )
-        fail(409, 'QUOTE_EXPIRED', 'QUOTE_EXPIRED');
-      if (
-        (await c.query('SELECT id FROM image_generation_jobs WHERE quote_id=$1', [q.id])).rowCount
-      )
-        fail(409, 'QUOTE_CONSUMED', 'QUOTE_CONSUMED');
-      const count = (
-        await c.query(
-          "SELECT count(*)::int AS n FROM image_generation_jobs WHERE actor_id=$1 AND status IN ('queued','dispatched','unknown','generated')",
-          [actorId],
-        )
-      ).rows[0].n;
-      if (count >= 4) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
-      const id = randomUUID(),
-        reservation = await reserveGenerationSpend(
-          c,
-          input.mode === 'mock' &&
-            (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release')
+    ).rows[0].n;
+    if (count >= 4) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
+    const id = randomUUID(),
+      reservation = await reserveGenerationSpend(
+        c,
+        input.mode === 'mock' &&
+          (this.policy.generationMode === 'owner' || this.policy.generationMode === 'release')
+          ? {
+              ...defaultImagePolicy,
+              version: 'image-fixtures-nonfinancial-v1',
+              scopeId: 'image-fixtures-nonfinancial-v1',
+              totalCapMicros: 0,
+              imageCapMicros: 0,
+              textCapMicros: 0,
+              mockUpperMicros: 0,
+            }
+          : input.mode === 'external' &&
+              (this.policy.generationMode === 'owner' ||
+                this.policy.generationMode === 'release' ||
+                (input.requestPolicyVersion === 2 && this.policy.costBasis === 'approved_estimate'))
             ? {
-                ...defaultImagePolicy,
-                version: 'image-fixtures-nonfinancial-v1',
-                scopeId: 'image-fixtures-nonfinancial-v1',
-                totalCapMicros: 0,
-                imageCapMicros: 0,
-                textCapMicros: 0,
-                mockUpperMicros: 0,
+                ...(authorization.livePolicy ?? this.policy),
+                estimatedTotalMicros: Number(q.estimated_total_micros),
+                operationalReserveMicros: Number(q.upper_micros),
               }
-            : input.mode === 'external' &&
-                (this.policy.generationMode === 'owner' ||
-                  this.policy.generationMode === 'release' ||
-                  (input.requestPolicyVersion === 2 &&
-                    this.policy.costBasis === 'approved_estimate'))
-              ? {
-                  ...(authorization.livePolicy ?? this.policy),
-                  estimatedTotalMicros: Number(q.estimated_total_micros),
-                  operationalReserveMicros: Number(q.upper_micros),
-                }
-              : (authorization.livePolicy ?? this.policy),
-          actorId,
-          'image',
-          id,
-          Number(q.upper_micros),
-          input.mode === 'mock',
-        );
-      if (input.mode === 'external')
-        await reserveSparks(c, actorId, q.spark_quote_id, reservation, {
-          required: this.policy.generationMode === 'release',
-        });
-      const job = (
-        await c.query<Job>(
-          "INSERT INTO image_generation_jobs(id,actor_id,adventure_id,operation_id,quote_id,request_hash,input,reference_hashes,mode,policy_version,status,reservation_id,upper_micros,expires_at,upload_id,family_id,revision_id,cost_basis,estimated_total_micros,estimate_snapshot,pricing_profile_snapshot,generation_policy_revision,generation_policy_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *",
-          [
-            id,
-            actorId,
-            input.adventureId ?? null,
-            b.operationId,
-            q.id,
-            q.request_hash,
-            input,
-            q.reference_hashes,
-            input.mode,
-            q.policy_version,
-            reservation,
-            q.upper_micros,
-            q.expires_at,
-            randomUUID(),
-            randomUUID(),
-            randomUUID(),
-            q.cost_basis,
-            q.estimated_total_micros,
-            q.estimate_snapshot ?? null,
-            q.pricing_profile_snapshot ?? null,
-            q.generation_policy_revision ?? null,
-            q.generation_policy_hash ?? null,
-          ],
-        )
-      ).rows[0];
-      await c.query('UPDATE image_generation_jobs SET spark_quote_id=$2 WHERE id=$1', [
+            : (authorization.livePolicy ?? this.policy),
+        actorId,
+        'image',
         id,
-        q.spark_quote_id ?? null,
-      ]);
-      job.spark_quote_id = q.spark_quote_id;
-      job.spark_status = q.spark_quote_id ? 'held' : undefined;
-      job.spark_funding = await quoteFunding(c, q.spark_quote_id);
-      job.spark_reserved_subunits = (await sparkQuoteView(c, q.spark_quote_id)).sparks
-        ?.reserveSubunits;
-      return this.dto(job);
-    });
+        Number(q.upper_micros),
+        input.mode === 'mock',
+      );
+    if (input.mode === 'external')
+      await reserveSparks(c, actorId, q.spark_quote_id, reservation, {
+        required: this.policy.generationMode === 'release',
+        ...(acceptedTravel ? { acceptedTravel } : {}),
+      });
+    const job = (
+      await c.query<Job>(
+        "INSERT INTO image_generation_jobs(id,actor_id,adventure_id,operation_id,quote_id,request_hash,input,reference_hashes,mode,policy_version,status,reservation_id,upper_micros,expires_at,upload_id,family_id,revision_id,cost_basis,estimated_total_micros,estimate_snapshot,pricing_profile_snapshot,generation_policy_revision,generation_policy_hash) VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,'queued',$11,$12,$13,$14,$15,$16,$17,$18,$19,$20,$21,$22) RETURNING *",
+        [
+          id,
+          actorId,
+          input.adventureId ?? null,
+          b.operationId,
+          q.id,
+          q.request_hash,
+          input,
+          q.reference_hashes,
+          input.mode,
+          q.policy_version,
+          reservation,
+          q.upper_micros,
+          q.expires_at,
+          randomUUID(),
+          randomUUID(),
+          randomUUID(),
+          q.cost_basis,
+          q.estimated_total_micros,
+          q.estimate_snapshot ?? null,
+          q.pricing_profile_snapshot ?? null,
+          q.generation_policy_revision ?? null,
+          q.generation_policy_hash ?? null,
+        ],
+      )
+    ).rows[0];
+    await c.query('UPDATE image_generation_jobs SET spark_quote_id=$2 WHERE id=$1', [
+      id,
+      q.spark_quote_id ?? null,
+    ]);
+    job.spark_quote_id = q.spark_quote_id;
+    job.spark_status = q.spark_quote_id ? 'held' : undefined;
+    job.spark_funding = await quoteFunding(c, q.spark_quote_id);
+    job.spark_reserved_subunits = (await sparkQuoteView(c, q.spark_quote_id)).sparks
+      ?.reserveSubunits;
+    return this.dto(job);
+  }
+  private async acceptedTravelJob(c: PoolClient, job: Job) {
+    if (!job.input.travelContext) return false;
+    const prep = (
+      await c.query('SELECT batch_id FROM game_location_travel_preparations WHERE id=$1', [
+        job.input.travelContext.preparationId,
+      ])
+    ).rows[0];
+    if (!prep?.batch_id) return false;
+    try {
+      await verifyAcceptedTravelBatch(
+        c,
+        job.actor_id,
+        {
+          batchId: prep.batch_id,
+          preparationId: job.input.travelContext.preparationId,
+          nativeQuoteId: job.quote_id,
+        },
+        job.spark_quote_id ?? undefined,
+        job.id,
+      );
+      return true;
+    } catch (error) {
+      if (
+        error instanceof Error &&
+        ['TRAVEL_BATCH_CONSENT_STALE', 'QUOTE_CONSUMED', 'LIVE_OUTCOME_UNRESOLVED'].includes(
+          error.message,
+        )
+      )
+        return false;
+      throw error;
+    }
   }
   async get(actorId: string, id: string) {
     z.uuid().parse(id);
@@ -1154,7 +1214,11 @@ export class ImageGenerationEngine {
           await c.query<Job>('SELECT * FROM image_generation_jobs WHERE id=$1 FOR UPDATE', [row.id])
         ).rows[0];
         if (!j) return;
-        if (j.status === 'queued' && (j.cancel_requested || j.expires_at.getTime() <= Date.now())) {
+        if (
+          j.status === 'queued' &&
+          (j.cancel_requested ||
+            (j.expires_at.getTime() <= Date.now() && !(await this.acceptedTravelJob(c, j))))
+        ) {
           await releaseUndispatchedGenerationSpend(c, j.reservation_id);
           await c.query(
             'UPDATE image_generation_jobs SET status=$2,quota_reserved_bytes=0,error_code=COALESCE(error_code,$3),updated_at=now() WHERE id=$1',
@@ -1225,6 +1289,8 @@ export class ImageGenerationEngine {
         this.liveGate(input);
         this.assertQuotedProvider(candidate);
         this.assertPolicyRevision(candidate, auth.livePolicy);
+        if (input.travelContext && !(await this.acceptedTravelJob(c, candidate)))
+          fail(409, 'TRAVEL_BATCH_CONSENT_STALE', 'TRAVEL_BATCH_CONSENT_STALE');
         await this.lockBudget(c, candidate);
         const j = (
           await c.query<Job>(
@@ -1233,7 +1299,10 @@ export class ImageGenerationEngine {
           )
         ).rows[0];
         if (!j || j.status !== 'queued' || j.cancel_requested) return undefined;
-        if (j.expires_at.getTime() <= Date.now() || j.policy_version !== this.policy.version)
+        if (
+          (j.expires_at.getTime() <= Date.now() && !(await this.acceptedTravelJob(c, j))) ||
+          j.policy_version !== this.policy.version
+        )
           fail(409, 'QUOTE_EXPIRED', 'QUOTE_EXPIRED');
         const dispatchId = randomUUID();
         await c.query(
@@ -1530,7 +1599,7 @@ export class ImageGenerationEngine {
         ).rows[0];
         if (j.status !== 'generated' || j.cancel_requested || j.actual_micros === null) return;
         if (
-          j.expires_at.getTime() <= Date.now() ||
+          (j.expires_at.getTime() <= Date.now() && !(await this.acceptedTravelJob(c, j))) ||
           Number(j.actual_micros) > Number(j.upper_micros)
         )
           fail(409, 'ADMISSION_EXPIRED', 'ADMISSION_EXPIRED');

@@ -1,4 +1,5 @@
 import {
+  isActorConscious,
   footprintDistance,
   adjacentFootprintAnchors,
   npcActionIntentSchema,
@@ -15,7 +16,7 @@ import { npcActionAllowed } from './living-policy';
 export function npcActionContext(state: GameState, npcId: string, audienceIds: string[]) {
   const npc = state.entities[npcId];
   if (
-    !npc ||
+    !isActorConscious(npc) ||
     audienceIds.some(
       (id) => !state.entities[id] || !observedVisible(state, state.entities[id], npc),
     )
@@ -75,6 +76,7 @@ export function prepareNpcActionIntent(
   audienceIds: string[],
   input: unknown,
 ): GameAction[] | undefined {
+  if (!isActorConscious(state.entities[npcId])) return undefined;
   const parsed = npcActionIntentSchema.safeParse(input);
   if (!parsed.success) return undefined;
   const npc = state.entities[npcId],
@@ -138,6 +140,7 @@ function withNpcActionOutcome(
 
 /** One ordinary action per world phase. Long paths continue, with fresh collision checks. */
 export function stepWorldNpcPlan(state: GameState, npcId: string): GameResult {
+  if (!isActorConscious(state.entities[npcId])) return { state, events: [] };
   if (state.turnController?.phase !== 'world') return { state, events: [], error: 'WRONG_MODE' };
   const original = state.npcBrains?.[npcId],
     entity = state.entities[npcId];

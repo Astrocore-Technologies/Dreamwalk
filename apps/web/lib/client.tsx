@@ -6,6 +6,11 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import type { User, Adventure } from '@dreamwalk/contracts';
 export type { User, Adventure, Hero, Asset, Settings } from '@dreamwalk/contracts';
 const errorKeys: Record<string, string> = {
+  STORY_MAP_COUNT_UNAVAILABLE:
+    'Не удалось подсчитать карту для оценки. Генерация не запускалась. Администратору нужно проверить доступ модели к подсчёту токенов.',
+  STORY_MAP_COUNT_UNRESOLVED:
+    'Результат подсчёта карты ещё не установлен. Генерация не запускалась; повторная отправка остановлена.',
+  STORY_MAP_QUOTE_CHANGED: 'Карта или состояние истории изменились. Получи новую оценку.',
   RUNTIME_MAP_COUNT_UNAVAILABLE:
     'Не удалось подсчитать карту для оценки. Генерация не запускалась. Администратору нужно проверить доступ модели к подсчёту токенов.',
   RUNTIME_MAP_COUNT_UNRESOLVED:

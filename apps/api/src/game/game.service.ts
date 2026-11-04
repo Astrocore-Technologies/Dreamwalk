@@ -1,3 +1,7 @@
+import { restorePublicNpcPresentation } from './public-npc-profile';
+import { LocationTravelGeneration } from './location-travel-generation';
+import { previewPendingStorySpeech } from './pending-story-speech';
+import { isActorConscious } from '@dreamwalk/contracts';
 import { forecastWorldRound } from './round-cost-forecast';
 import { stampNpcThoughtAudience, projectNpcInnerThought } from './npc-thought-access';
 import {
@@ -90,6 +94,7 @@ import {
   createNpcMemorySummarySelection,
   acceptNpcMemorySummary,
   buildNpcPublicSpeechContext,
+  selectNpcSpeechObservationIds,
   admittedNpcSpeechObservationId,
   npcReplyObservation,
   commitNpcPublicUtterance,
@@ -257,6 +262,7 @@ export class GameService implements OnModuleDestroy {
   private timer: ReturnType<typeof setInterval>;
   private unavailableArt = new Set<string>();
   private artCheckedAt = new Map<string, number>();
+  private travelGeneration?: LocationTravelGeneration;
   private stopping = false;
   private shutdownCallbacks = new Set<() => void>();
   onShutdown(fn: () => void) {
@@ -286,14 +292,23 @@ export class GameService implements OnModuleDestroy {
           preflight,
         ),
     });
-    this.worldGeneration = new WorldGenerationBatch(this.db, this.ai);
+    if (images) this.travelGeneration = new LocationTravelGeneration(this.db, images, this.art);
+    this.worldGeneration = new WorldGenerationBatch(this.db, this.ai, this.travelGeneration);
     this.story = new StoryTurnRuntime(this.db, this.ai, {
       serial: <T>(id: string, work: () => Promise<T>) => this.serial(id, work),
       access: (req, id) => this.access(req, id),
       load: (id) => this.load(id),
       touch: (id, live, actorId) => this.touch(id, live as Live, actorId),
-      persist: (id, live, state, kind, extra, preflight) =>
-        this.persist(id, live as Live, state, kind, undefined, extra, undefined, preflight),
+      persist: (id, live, state, kind, extra, preflight, prepare) =>
+        this.persist(id, live as Live, state, kind, undefined, extra, prepare, preflight),
+      canUseFrozenTravel: (id, turnId) =>
+        this.travelGeneration?.canUseFrozen(id, turnId) ?? Promise.resolve(false),
+      rebaseTravel: (id, turnId, state, input, proposal) =>
+        this.travelGeneration?.rebase(id, turnId, state, input, proposal) ?? Promise.resolve(null),
+      admitTravel: (id, turnId, proposal) =>
+        this.travelGeneration
+          ? this.travelGeneration.admitted(id, turnId, proposal)
+          : Promise.reject(new Error('LOCATION_MEDIA_UNAVAILABLE')),
       dispatch: (id) => this.dispatchAi(id),
       failWorldRequest: (id, requestId, code) =>
         this.worldGeneration.failUnspent(id, requestId, code),
@@ -366,7 +381,7 @@ export class GameService implements OnModuleDestroy {
     if (!row) fail(404, 'NOT_FOUND', 'NOT_FOUND');
     if (digest(row.snapshot_state) !== row.checksum || digest(row.state) !== row.checksum)
       fail(503, 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED');
-    const state = row.state as GameState;
+    let state = row.state as GameState;
     if (row.source_version_id && (!state.narrativePremise || !state.narrativeSource)) {
       if (digest(canonical(row.source_package)) !== row.source_checksum)
         fail(503, 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED');
@@ -384,6 +399,15 @@ export class GameService implements OnModuleDestroy {
         genre: String(published?.genre ?? ''),
       };
     }
+
+    // Only the checksum-verified pinned author source can restore public presentation.
+    // Never infer it from private memory biography or a mutable authoring record.
+    if (
+      row.source_version_id &&
+      row.source_package &&
+      digest(canonical(row.source_package)) === row.source_checksum
+    )
+      state = restorePublicNpcPresentation(state, row.source_package);
 
     // An input from a previous process can never resume after recovery.
     for (const entity of Object.values(state.entities))
@@ -574,6 +598,13 @@ export class GameService implements OnModuleDestroy {
       const a = await this.access(req, id),
         live = await this.load(id);
       await this.scheduleRoundRequests(id, live);
+      // Do not freeze a future map while earlier admitted narration can still change canon.
+      const progress = await this.worldGeneration.status(a.user.id, id, live.state);
+      if (progress.pending || progress.unknown)
+        fail(409, 'LIVE_OUTCOME_UNRESOLVED', 'LIVE_OUTCOME_UNRESOLVED');
+      // A semantic continuation can be staged after the original round roster was frozen.
+      await this.story.prepareWorldRequests(id, live);
+      await this.travelGeneration?.prepare(a.user.id, id, live.state);
       return this.worldGeneration.quote(a.user.id, id, live.state, body);
     });
   }
@@ -584,6 +615,16 @@ export class GameService implements OnModuleDestroy {
       const receipt = await this.worldGeneration.consent(a.user.id, id, live.state, body);
       live.decisionsPending = true;
       return receipt;
+    });
+  }
+  worldGenerationDecline(req: Request, id: string, body: unknown) {
+    return this.serial(id, async () => {
+      const a = await this.access(req, id),
+        live = await this.load(id);
+      const result = await this.worldGeneration.declineLocations(a.user.id, id, live.state, body);
+      this.ordinaryAdmissionChecks.delete(id);
+      live.decisionsPending = true;
+      return result;
     });
   }
   storyReplyQuote(req: Request, id: string, turnId: string, body: unknown) {
@@ -1316,7 +1357,9 @@ export class GameService implements OnModuleDestroy {
     if (deferredSpeechId && !deferred) fail(409, 'STALE_STATE', 'STALE_STATE');
     if (
       !npc ||
+      !isActorConscious(npc) ||
       !recipient ||
+      !isActorConscious(recipient) ||
       (!deferred && (npc.mapId !== recipient.mapId || footprintDistance(npc, recipient) > 1)) ||
       npc.encounterId ||
       recipient.encounterId
@@ -1351,13 +1394,13 @@ export class GameService implements OnModuleDestroy {
         : [];
     const observations =
       selected ??
-      [
-        ...new Set([
-          ...(replyToObservationId ? [replyToObservationId] : []),
-          ...requestedFactIds,
-          ...memory.observations.slice(-16).map((o) => o.id),
-        ]),
-      ].slice(0, 16);
+      selectNpcSpeechObservationIds(
+        state,
+        npcId,
+        audience,
+        replyToObservationId ? [replyToObservationId] : [],
+        requestedFactIds,
+      );
     const publicContext = buildNpcPublicSpeechContext(
       state,
       npcId,
@@ -1441,6 +1484,18 @@ export class GameService implements OnModuleDestroy {
     )
       return { next, accepted, intentOutcome, narrativeOutcome, decisionCode };
     const memory = state.npcBrains?.[job.npcId]?.living;
+    if (
+      memory &&
+      (!isActorConscious(state.entities[job.npcId]) ||
+        Number(job.context.lifeRevision ?? 0) !== (state.entities[job.npcId].lifeRevision ?? 0))
+    )
+      return {
+        next,
+        accepted,
+        intentOutcome,
+        narrativeOutcome,
+        decisionCode: 'NPC_LIFECYCLE_CHANGED',
+      };
     if (job.purpose === 'narrative') {
       const metadata = z
         .object({
@@ -1799,7 +1854,7 @@ export class GameService implements OnModuleDestroy {
           !!brain.living &&
           npc?.kind === 'npc' &&
           !npc.encounterId &&
-          (npc.vitality === undefined || npc.vitality > 0) &&
+          isActorConscious(npc) &&
           (maps.has(npc.mapId) || !!worldTurnCompanionContinuation(state, npcId))
         );
       })
@@ -1908,6 +1963,7 @@ export class GameService implements OnModuleDestroy {
       }) &&
       frozen.npcId === npcId &&
       !!npc &&
+      isActorConscious(npc) &&
       !!brain &&
       !npc.encounterId &&
       frozen.entityRevision === npc.revision &&
@@ -1934,12 +1990,16 @@ export class GameService implements OnModuleDestroy {
     // New unrelated observations/other NPC decisions cannot rewrite the paid body.
     return (
       frozen.npcId === npcId &&
+      Number(frozen.lifeRevision ?? 0) === Number(current.lifeRevision ?? 0) &&
       current.npcId === npcId &&
       digest(frozen.claims) === digest(current.claims) &&
       digest(frozen.audienceIds) === digest(current.audienceIds) &&
       frozen.recipientId === current.recipientId &&
       frozen.channel === current.channel &&
       digest(frozen.publicIdentity ?? null) === digest(current.publicIdentity ?? null) &&
+      digest(frozen.performance ?? null) === digest(current.performance ?? null) &&
+      digest(frozen.currentPlace ?? null) === digest(current.currentPlace ?? null) &&
+      digest(frozen.publicSpeechStyle ?? null) === digest(current.publicSpeechStyle ?? null) &&
       digest(frozen.requestedFactIds ?? []) === digest(current.requestedFactIds ?? [])
     );
   }
@@ -1965,6 +2025,7 @@ export class GameService implements OnModuleDestroy {
       const npc = live.state.entities[npcId];
       if (
         !b.living ||
+        !isActorConscious(npc) ||
         b.living.companionship ||
         npc.encounterId ||
         b.cursor < b.plan.length ||
@@ -2048,12 +2109,47 @@ export class GameService implements OnModuleDestroy {
   }
   private async processDecisionRequests(id: string, live: Live) {
     if (live.state.turnController && live.state.turnController.phase !== 'world') return;
+    await this.story.reconcileTerminalTravel(id);
     await this.reconcileIntents(id, live.state.tick);
     const requests = await this.db.query(
-      "SELECT * FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' ORDER BY CASE WHEN purpose='plan' AND context ? 'worldRoundDecision' THEN 0 WHEN purpose='story_turn' AND context->>'generationPolicy'='world-batch-v1' THEN 1 ELSE 2 END,CASE WHEN context ? 'turnOrder' THEN (context->>'turnOrder')::bigint ELSE 9223372036854775807 END,created_at,id LIMIT 8",
+      "SELECT * FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' ORDER BY CASE WHEN purpose='plan' AND context ? 'worldRoundDecision' THEN 0 WHEN purpose='story_turn' AND context ? 'travelSceneSpec' THEN 1 WHEN purpose='story_turn' AND context->>'generationPolicy'='world-batch-v1' THEN 2 ELSE 3 END,CASE WHEN context ? 'turnOrder' THEN (context->>'turnOrder')::bigint ELSE 9223372036854775807 END,created_at,id LIMIT 8",
       [id],
     );
     for (let r of requests) {
+      if (typeof r.context.awaitStoryDirector === 'string') {
+        const director = await this.db.query(
+          "SELECT status FROM game_npc_decision_requests WHERE campaign_id=$1 AND id=$2 AND purpose='story_turn'",
+          [id, r.context.awaitStoryDirector],
+        );
+        if (!director.length || ['queued', 'scheduled'].includes(String(director[0].status)))
+          continue;
+        if (
+          r.context.pendingStorySpeech &&
+          !live.state.turnController?.deferredSpeech.some(
+            (ref) => ref.id === r.id && !ref.pendingStoryTurnId,
+          )
+        ) {
+          await this.worldGeneration.failUnspent(id, r.id, 'STORY_SPEECH_NOT_ADMITTED');
+          continue;
+        }
+        if (
+          r.context.pendingStorySpeech &&
+          r.context.generationPolicy === 'world-batch-v1' &&
+          Number(r.context.pendingStorySpeechKnowledgeRevision) !==
+            live.state.npcBrains?.[r.npc_id]?.living?.knowledgeRevision
+        ) {
+          await this.worldGeneration.failUnspent(id, r.id, 'ROUND_CONTEXT_STALE');
+          continue;
+        }
+      }
+      const npc = live.state.entities[r.npc_id];
+      if (
+        npc?.kind === 'npc' &&
+        (!isActorConscious(npc) || Number(r.context.lifeRevision ?? 0) !== (npc.lifeRevision ?? 0))
+      ) {
+        await this.worldGeneration.failUnspent(id, r.id, 'NPC_LIFECYCLE_CHANGED');
+        continue;
+      }
       if (r.purpose === 'speech' && r.context.deferredSpeechId) {
         // Preserve the player's chronological conversation across different NPCs.
         // A queued reply must not overtake an earlier scheduled/busy reply merely
@@ -2182,6 +2278,17 @@ export class GameService implements OnModuleDestroy {
                   storyTurnId: r.context.storyTurnId,
                   segmentIndex: r.context.segmentIndex,
                   knowledgeRevision: r.context.knowledgeRevision,
+                  lifeRevision: r.context.lifeRevision ?? 0,
+                  ...(typeof r.context.awaitStoryDirector === 'string'
+                    ? { awaitStoryDirector: r.context.awaitStoryDirector }
+                    : {}),
+                  ...(r.context.pendingStorySpeech
+                    ? {
+                        pendingStorySpeech: r.context.pendingStorySpeech,
+                        pendingStorySpeechKnowledgeRevision:
+                          r.context.pendingStorySpeechKnowledgeRevision,
+                      }
+                    : {}),
                   deferredSpeechId: r.context.deferredSpeechId,
                   turnOrder: r.context.turnOrder,
                   ...(r.context.responseOptional ? { responseOptional: true } : {}),
@@ -2198,10 +2305,13 @@ export class GameService implements OnModuleDestroy {
             r = { ...r, context };
           }
         } catch {
-          await this.db.query(
-            "UPDATE game_npc_decision_requests SET status='failed',result_code='STALE_DEFERRED_SPEECH',context='{}' WHERE id=$1 AND status='queued'",
-            [r.id],
-          );
+          if (worldReply && r.context.generationPolicy === 'world-batch-v1')
+            await this.worldGeneration.failUnspent(id, r.id, 'STALE_DEFERRED_SPEECH');
+          else
+            await this.db.query(
+              "UPDATE game_npc_decision_requests SET status='failed',result_code='STALE_DEFERRED_SPEECH',context='{}' WHERE id=$1 AND status='queued'",
+              [r.id],
+            );
           continue;
         }
       }
@@ -2506,7 +2616,27 @@ export class GameService implements OnModuleDestroy {
       )
     ).map((r) => String(r.npc_id));
   }
+  /** Cancel only undispatched/received work through the existing financial sweep.
+   * Running calls settle normally; their eventual result fails the lifecycle fence. */
+  private async cancelStaleNpcLifecycleJobs(id: string, state: GameState) {
+    const npcs = Object.values(state.entities).filter((entity) => entity.kind === 'npc');
+    const inactive = npcs.filter((entity) => !isActorConscious(entity)).map((entity) => entity.id);
+    const changed = Object.fromEntries(
+      npcs
+        .filter((entity) => entity.lifeRevision)
+        .map((entity) => [entity.id, String(entity.lifeRevision)]),
+    );
+    if (!inactive.length && !Object.keys(changed).length) return;
+    await this.db.query(
+      `UPDATE npc_ai_jobs SET cancel_requested=true,result_code='NPC_LIFECYCLE_CHANGED'
+      WHERE campaign_id=$1 AND subject_kind='npc' AND status IN ('reserved','result_received','validated')
+      AND NOT cancel_requested AND (npc_id=ANY($2::text[]) OR
+        ($3::jsonb ? npc_id AND COALESCE(context->>'lifeRevision','0')<>($3::jsonb->>npc_id)))`,
+      [id, inactive, JSON.stringify(changed)],
+    );
+  }
   private async processAi(id: string, live: Live) {
+    await this.cancelStaleNpcLifecycleJobs(id, live.state);
     await this.ai.sweep(id);
     for (const job of await this.ai.ready(id)) {
       if (job.purpose === 'story_turn') {
@@ -2542,6 +2672,7 @@ export class GameService implements OnModuleDestroy {
         },
       );
     }
+    await this.cancelStaleNpcLifecycleJobs(id, live.state);
     live.aiPending = await this.ai.pending(id);
     if (live.aiPending) this.dispatchAi(id);
   }
@@ -3554,6 +3685,7 @@ export class GameService implements OnModuleDestroy {
   /** One admitted addressed message, kept distinct until the NPC/world phase. */
   private deferredSpeechContext(state: GameState, request: NpcDecisionRequest) {
     const r = request.context;
+    state = previewPendingStorySpeech(state, request.npcId, r);
     const current = this.speechContext(
       state,
       request.npcId,
@@ -3570,6 +3702,18 @@ export class GameService implements OnModuleDestroy {
       storyTurnId: r.storyTurnId,
       segmentIndex: r.segmentIndex,
       knowledgeRevision: r.knowledgeRevision,
+      lifeRevision: r.lifeRevision ?? 0,
+      ...(typeof r.awaitStoryDirector === 'string'
+        ? { awaitStoryDirector: r.awaitStoryDirector }
+        : {}),
+      ...(r.pendingStorySpeech
+        ? {
+            pendingStorySpeech: r.pendingStorySpeech,
+            pendingStorySpeechKnowledgeRevision:
+              r.pendingStorySpeechKnowledgeRevision ??
+              state.npcBrains?.[request.npcId]?.living?.knowledgeRevision,
+          }
+        : {}),
       deferredSpeechId: r.deferredSpeechId,
       turnOrder: r.turnOrder,
       ...(r.responseOptional ? { responseOptional: true } : {}),
@@ -3649,6 +3793,7 @@ export class GameService implements OnModuleDestroy {
           turnOrder: ref.sequence,
           responseOptional: true,
           knowledgeRevision: next.npcBrains![npcId].living!.knowledgeRevision,
+          lifeRevision: next.entities[npcId].lifeRevision ?? 0,
         },
       });
     }
@@ -3726,6 +3871,7 @@ export class GameService implements OnModuleDestroy {
         deferredSpeechId: requestId,
         turnOrder: ref.sequence,
         knowledgeRevision: next.npcBrains?.[npcId]?.living?.knowledgeRevision ?? 0,
+        lifeRevision: next.entities[npcId].lifeRevision ?? 0,
         mockProposal: createMockNpcPublicResponse(context),
       },
     };
@@ -3807,6 +3953,15 @@ export class GameService implements OnModuleDestroy {
           if (!authority) return;
           attemptedRoundId = roundId;
           await this.scheduleRoundRequests(id, live);
+          // End turn covers ordinary text only. A committed missing-location intent
+          // must keep its single explicit text+image consent, before any quoting.
+          const pendingLocations = await this.db.tx((c) =>
+            this.worldGeneration.pendingLocationCount(c, id, live.state),
+          );
+          if (pendingLocations > 0) {
+            await this.blockOrdinaryRound(id, roundId, 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED');
+            return;
+          }
           try {
             const result = await this.worldGeneration.quote(authority.owner_id, id, live.state, {
               operationId: authority.operation_id,

@@ -128,6 +128,11 @@ export const npcPersonalitySchema = z
   .strict();
 export type NpcPersonality = z.infer<typeof npcPersonalitySchema>;
 export type NpcObservationKind =
+  | 'died'
+  | 'lost_consciousness'
+  | 'regained_consciousness'
+  | 'revived'
+  | 'life_state_seen'
   | 'harmed'
   | 'pushed'
   | 'item_placed'
@@ -151,6 +156,7 @@ export interface NpcObservation {
   eventId: string;
   rootId: string;
   kind: NpcObservationKind;
+  lifeState?: import('./lifecycle').ActorLifeState;
   tick: number;
   mapId: string;
   point?: { x: number; y: number };

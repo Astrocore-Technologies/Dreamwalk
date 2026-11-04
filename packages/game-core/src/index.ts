@@ -1,4 +1,7 @@
+import { travelLocations, travelToLocation } from './location-travel';
+import { isActorConscious, actorLifeState } from '@dreamwalk/contracts';
 import { observedVisible } from './observation-visibility';
+import { narrativeTurnVisibleTo } from './narrative';
 import { consumeWorldItem } from './world-items';
 import { projectTurnController, applyTurnAction, applyWorldTurnAction, turnFence } from './turns';
 import { projectObjectives } from './objectives';
@@ -235,7 +238,8 @@ export function moveInput(state: GameState, id: string, input: GameMove): GameRe
   if (state.turnController) return fail(state, 'WRONG_MODE');
   if (!gameMoveSchema.safeParse(input).success) return fail(state, 'INVALID_ACTION');
   const a = state.entities[id];
-  if (!a || (a.kind !== 'player' && a.kind !== 'npc')) return fail(state, 'FORBIDDEN');
+  if (!a || !isActorConscious(a) || (a.kind !== 'player' && a.kind !== 'npc'))
+    return fail(state, 'FORBIDDEN');
   if (a.encounterId) return fail(state, 'WRONG_MODE');
   if (input.movementGeneration !== a.movementGeneration || input.inputSeq <= (a.lastInputSeq ?? 0))
     return fail(state, 'STALE_STATE');
@@ -272,7 +276,7 @@ export function tick(state: GameState, tickCount = 1): GameResult {
     s.tick++;
     if (s.tick % 4 !== 0) continue;
     for (const a of Object.values(s.entities).sort((a, b) => a.id.localeCompare(b.id))) {
-      if (a.encounterId || !a.path?.length) continue;
+      if (!isActorConscious(a) || a.encounterId || !a.path?.length) continue;
       const next = a.path[0];
       if (
         !walkable(s, a.mapId, next, a.id, !!s.npcBrains?.[a.id]?.living?.companionship) ||
@@ -341,10 +345,11 @@ function actionInternal(
   inRound = false,
 ): GameResult {
   const a = state.entities[id];
-  if (!a) return fail(state, 'FORBIDDEN');
+  if (!a || !isActorConscious(a)) return fail(state, 'FORBIDDEN');
   if (a.kind === 'npc' && !npcActionAllowed(state, id, action)) return fail(state, 'FORBIDDEN');
   if (a.encounterId && !inRound) return fail(state, 'WRONG_MODE');
   if (!gameActionSchema.safeParse(action).success) return fail(state, 'INVALID_ACTION');
+  if (action.kind === 'travel') return travelToLocation(state, id, action.targetId!);
   if (action.kind === 'consume') return consumeWorldItem(state, id, action.targetId!);
   if (action.kind === 'communicate') return communicateNpcObservations(state, id, action);
   if (action.kind === 'move_to') {
@@ -456,6 +461,12 @@ function actionInternal(
   const target = action.targetId ? state.entities[action.targetId] : undefined;
   if (!target || !visible(state, a, target)) return fail(state, 'TARGET_UNAVAILABLE');
   if (footprintDistance(a, target) > 1) return fail(state, 'OUT_OF_RANGE');
+  if (
+    ['talk', 'distract'].includes(action.kind) &&
+    target.kind === 'npc' &&
+    !isActorConscious(target)
+  )
+    return fail(state, 'TARGET_UNAVAILABLE');
   if (
     (target.encounterId && target.encounterId !== a.encounterId) ||
     Object.values(state.encounters).some(
@@ -577,7 +588,7 @@ export const applyAction = (state: GameState, id: string, action: GameAction): G
 };
 export function beginEncounter(state: GameState, id: string, nowMs = 0): GameResult {
   const actor = state.entities[id];
-  if (!actor || actor.encounterId) return fail(state, 'WRONG_MODE');
+  if (!actor || !isActorConscious(actor) || actor.encounterId) return fail(state, 'WRONG_MODE');
   const map = state.maps[actor.mapId];
   const area = {
     x: Math.max(0, Math.min(actor.x - 2, map.width - 5)),
@@ -594,6 +605,7 @@ export function beginEncounter(state: GameState, id: string, nowMs = 0): GameRes
       if (
         candidate.mapId !== actor.mapId ||
         !['player', 'npc'].includes(candidate.kind) ||
+        (candidate.kind === 'npc' && !isActorConscious(candidate)) ||
         !footprintIntersectsArea(candidate, area)
       )
         continue;
@@ -630,12 +642,21 @@ export function beginEncounter(state: GameState, id: string, nowMs = 0): GameRes
       .filter(
         (a) =>
           ['player', 'npc'].includes(a.kind) &&
+          (a.kind !== 'npc' || isActorConscious(a)) &&
           a.mapId === actor.mapId &&
           footprintIntersectsArea(a, area),
       )
       .map((a) => a.id)
       .sort(),
-    occupied = new Set<string>();
+    // Bodies retain their cells, but never enter actor normalization or initiative.
+    occupied = new Set<string>(
+      Object.values(s.entities)
+        .filter(
+          (entity) =>
+            entity.kind === 'npc' && !isActorConscious(entity) && entity.mapId === actor.mapId,
+        )
+        .flatMap((entity) => occupiedCells(entity).map(key)),
+    );
   if (participants.length > 24) return fail(state, 'RATE_LIMITED');
   for (const p of participants) {
     const a = s.entities[p];
@@ -680,7 +701,12 @@ export function beginEncounter(state: GameState, id: string, nowMs = 0): GameRes
 export function submitIntent(state: GameState, id: string, input: GameIntentInput): GameResult {
   if (!gameIntentSchema.safeParse(input).success) return fail(state, 'INVALID_ACTION');
   const e = state.encounters[input.encounterId];
-  if (!e || !e.participants.includes(id) || state.entities[id]?.encounterId !== e.id)
+  if (
+    !e ||
+    !isActorConscious(state.entities[id]) ||
+    !e.participants.includes(id) ||
+    state.entities[id]?.encounterId !== e.id
+  )
     return fail(state, 'FORBIDDEN');
   if (e.phase !== 'planning' || input.generation !== e.generation || input.round !== e.round)
     return fail(state, 'STALE_STATE');
@@ -716,7 +742,7 @@ export function resolveRound(state: GameState, encounterId: string, nowMs: numbe
   const events: GameEvent[] = [];
   if (s.rulesetVersion === 'hybrid-v3')
     for (const id of encounter.participants)
-      if (s.entities[id]?.kind === 'npc')
+      if (s.entities[id]?.kind === 'npc' && isActorConscious(s.entities[id]))
         s.encounters[encounterId].intents[id] = {
           revision: 1,
           ready: true,
@@ -732,6 +758,7 @@ export function resolveRound(state: GameState, encounterId: string, nowMs: numbe
       a.localeCompare(b),
   );
   for (const id of ordered) {
+    if (!isActorConscious(s.entities[id])) continue;
     const action = roundIntents[id]?.action ?? { kind: 'wait' as const };
     const r = actionInternal(s, id, action, true);
     if (r.error)
@@ -876,6 +903,8 @@ export function projectState(s: GameState, id: string): GameProjection {
     delete c.knownIds;
     delete c.inventory;
     delete c.itemStock;
+    delete c.lifeRevision;
+    if (['npc', 'player'].includes(c.kind)) c.lifeState = actorLifeState(c);
     if (c.id !== id) {
       delete c.movementTrace;
       delete c.lastInputSeq;
@@ -901,8 +930,16 @@ export function projectState(s: GameState, id: string): GameProjection {
           narrative: {
             revision: s.narrativeCanon.revision,
             turns: s.narrativeCanon.turns
+              .filter((turn) => narrativeTurnVisibleTo(turn, id))
               .slice(-16)
-              .map(({ id, tick, narration }) => ({ id, tick, narration })),
+              .map(({ id, tick, narration, channel, audienceIds }) => ({
+                id,
+                tick,
+                narration,
+                ...(channel === 'whisper' || audienceIds !== undefined
+                  ? { channel: 'whisper' as const }
+                  : {}),
+              })),
           },
         }
       : {}),
@@ -914,6 +951,7 @@ export function projectState(s: GameState, id: string): GameProjection {
     revision: s.revision,
     actorId: id,
     map: structuredClone(s.maps[actor.mapId]),
+    ...(s.rulesetVersion === 'hybrid-v3' ? { locations: travelLocations(s) } : {}),
     entities: Object.values(s.entities)
       .filter((e) => e.id === id || visible(s, actor, e))
       .map(clean),
@@ -922,7 +960,7 @@ export function projectState(s: GameState, id: string): GameProjection {
     ...(s.rulesetVersion === 'hybrid-v3'
       ? {
           npcFactTopics: Object.values(s.entities)
-            .filter((e) => e.kind === 'npc' && visible(s, actor, e))
+            .filter((e) => e.kind === 'npc' && isActorConscious(e) && visible(s, actor, e))
             .flatMap((e) => publicNpcFactTopics(s, e.id).map((t) => ({ npcId: e.id, ...t }))),
           npcUtterances: (s.npcUtterances ?? [])
             .filter(
@@ -1146,3 +1184,7 @@ export * from './world-items';
 export * from './runtime-map-view';
 
 export * from './story-items';
+export * from './location-travel';
+export * from './story-attacks';
+export * from './story-impact';
+export * from './lifecycle';

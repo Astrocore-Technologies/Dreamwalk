@@ -120,3 +120,52 @@ test('oversized bound utterance fails the context budget without truncating requ
   assert.deepEqual(packed.claims, [trigger]);
   assert.deepEqual(packed.currentUtterance, trigger);
 });
+
+test('packing prefers an admitted local answer to incidental recent chatter without exceeding the bound', () => {
+  const input = {
+    replyToObservationId: 'question',
+    claims: [
+      {
+        observationId: 'known-answer',
+        authoredFact: { title: 'Hours', text: 'The workshop opens after sunrise.' },
+      },
+      ...Array.from({ length: 12 }, (_, i) => ({
+        observationId: `chatter-${i}`,
+        untrustedUtterance: 'Unrelated words '.repeat(30),
+      })),
+      { observationId: 'question', untrustedUtterance: 'When does the workshop open?' },
+    ],
+  };
+  for (const packed of [
+    packNpcContext(input, 600),
+    packNpcContextWindow(input, (value) => JSON.stringify(value).length < 600),
+  ]) {
+    assert.equal(packed.budgetExceeded, false);
+    assert.ok(packed.claims.some((c) => c.observationId === 'question'));
+    assert.ok(packed.claims.some((c) => c.observationId === 'known-answer'));
+    assert.ok(packed.claims.length < input.claims.length);
+  }
+  const tooSmall = packNpcContext(input, 155);
+  assert.equal(tooSmall.budgetExceeded, false);
+  assert.deepEqual(
+    tooSmall.claims,
+    [input.claims.at(-1)],
+    'optional knowledge cannot displace the required question',
+  );
+  assert.equal(input.claims.length, 14);
+});
+
+test('token packing pins the explicit current claim rather than an arbitrary last old utterance', () => {
+  const current = { observationId: 'current', untrustedUtterance: 'When is the workshop open?' };
+  const input = {
+    replyToObservationId: 'current',
+    claims: [
+      current,
+      { observationId: 'answer', authoredFact: { text: 'After sunrise.' } },
+      { observationId: 'old-chatter', untrustedUtterance: 'Old unrelated text '.repeat(500) },
+    ],
+  };
+  const packed = packNpcContextWindow(input, (value) => JSON.stringify(value).length < 500);
+  assert.equal(packed.budgetExceeded, false);
+  assert.deepEqual(packed.claims, input.claims.slice(0, 2));
+});

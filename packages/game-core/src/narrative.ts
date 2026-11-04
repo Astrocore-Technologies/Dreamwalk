@@ -1,3 +1,5 @@
+import { travelLocations } from './location-travel';
+import { actorLifeState } from '@dreamwalk/contracts';
 import { observedVisible } from './observation-visibility';
 import { spatialContext } from './spatial-context';
 import {
@@ -12,6 +14,7 @@ import {
   type GameEntity,
   type GameResult,
   type NarrativeProposal,
+  type ConfirmedNarrativeTurn,
 } from '@dreamwalk/contracts';
 import { applyAction, findPath, visible, walkable } from './index';
 import { createLivingMemory, npcContextFingerprint, refreshLivingPerception } from './living';
@@ -24,6 +27,28 @@ const error = (state: GameState, code: GameResult['error']): GameResult => ({
 });
 const policy = (state: GameState) =>
   narrativeConstraintsSchema.parse(state.narrativeConstraints ?? {});
+export function narrativeTurnIsPublic(turn: ConfirmedNarrativeTurn): boolean {
+  // Any explicit audience restricts access, even for inconsistent legacy data.
+  return (
+    (turn.channel === undefined || turn.channel === 'public') && turn.audienceIds === undefined
+  );
+}
+export function narrativeTurnVisibleTo(turn: ConfirmedNarrativeTurn, readerId: string): boolean {
+  return (
+    narrativeTurnIsPublic(turn) ||
+    (Array.isArray(turn.audienceIds) && turn.audienceIds.includes(readerId))
+  );
+}
+function validNarrativeAudience(state: GameState, actorId: string, audienceIds: string[]): boolean {
+  return (
+    Array.isArray(audienceIds) &&
+    audienceIds.length > 0 &&
+    audienceIds.includes(actorId) &&
+    audienceIds.every(
+      (id) => typeof id === 'string' && ['player', 'npc'].includes(state.entities[id]?.kind),
+    )
+  );
+}
 function candidates(state: GameState, actorId: string) {
   const actor = state.entities[actorId],
     map = actor && state.maps[actor.mapId],
@@ -77,13 +102,27 @@ export function buildNarrativeContext(
   actorId: string,
   text: string,
   replyLocale: Locale = 'en',
+  audienceIds?: string[],
 ) {
+  if (audienceIds !== undefined && !validNarrativeAudience(state, actorId, audienceIds))
+    throw new Error('FORBIDDEN');
   const actor = state.entities[actorId],
     constraints = policy(state),
-    canon = state.narrativeCanon;
+    canon = state.narrativeCanon,
+    audience = audienceIds === undefined ? undefined : [...new Set(audienceIds)].sort(),
+    publicTurns = (canon?.turns ?? []).filter(narrativeTurnIsPublic),
+    accessibleTurns = audience
+      ? (canon?.turns ?? []).filter(
+          (turn) =>
+            narrativeTurnIsPublic(turn) ||
+            (audience.length > 0 &&
+              audience.every((readerId) => narrativeTurnVisibleTo(turn, readerId))),
+        )
+      : publicTurns;
   const context = {
     ...(spatialContext(state, actorId) ? { spatialContext: spatialContext(state, actorId) } : {}),
     actorId,
+    ...(audience ? { channel: 'whisper' as const, audienceIds: [...audience] } : {}),
     replyLocale: localeSchema.parse(replyLocale),
     ...(state.narrativePreferences?.[actorId]
       ? { narrativePreferences: readNarrativePreferences(state, actorId) }
@@ -98,12 +137,17 @@ export function buildNarrativeContext(
           id: actor.mapId,
           label: state.maps[actor.mapId]?.label,
           description:
-            canon?.turns.find((turn) => turn.sceneId === actor.mapId)?.introducedScene
+            publicTurns.find((turn) => turn.sceneId === actor.mapId)?.introducedScene
               ?.description ?? state.maps[actor.mapId]?.description,
           actorPosition: { x: actor.x, y: actor.y },
+          descriptionScope: 'whole_location' as const,
+          positionEvidence: 'committed_state' as const,
+          // A named building can include an exterior. Its description is not tile evidence.
+          terrainAnalysisAvailable: Boolean(spatialContext(state, actorId)),
         }
       : null,
     availableConnections: candidates(state, actorId),
+    existingLocations: travelLocations(state),
     visibleEntities: actor
       ? Object.values(state.entities)
           .filter((e) => e.id === actorId || observedVisible(state, actor, e))
@@ -115,22 +159,26 @@ export function buildNarrativeContext(
             x: e.x,
             y: e.y,
             revision: e.revision,
+            ...(['npc', 'player'].includes(e.kind) ? { lifeState: actorLifeState(e) } : {}),
             ...(e.supportingNpc?.generated ? { publicRole: e.supportingNpc.roleLabel } : {}),
             ...(e.kind === 'door' ? { open: e.open, locked: e.locked } : {}),
           }))
           .sort((a, b) => a.id.localeCompare(b.id))
       : [],
-    sharedAudience: actor
-      ? Object.values(state.entities)
-          .filter(
-            (e) => e.kind === 'player' && (e.id === actorId || observedVisible(state, actor, e)),
-          )
-          .map((e) => ({ id: e.id }))
-          .sort((a, b) => a.id.localeCompare(b.id))
-      : [],
-    confirmedTurns: (canon?.turns ?? []).slice(-16).map((t) => ({
+    sharedAudience: audience
+      ? audience.map((id) => ({ id }))
+      : actor
+        ? Object.values(state.entities)
+            .filter(
+              (e) => e.kind === 'player' && (e.id === actorId || observedVisible(state, actor, e)),
+            )
+            .map((e) => ({ id: e.id }))
+            .sort((a, b) => a.id.localeCompare(b.id))
+        : [],
+    confirmedTurns: accessibleTurns.slice(-16).map((t) => ({
       id: t.id,
       narration: t.narration,
+      ...(t.impact ? { impact: t.impact } : {}),
       introducedScene: t.introducedScene,
       introducedNpc: t.introducedNpc,
       introducedItem: t.introducedItem,
@@ -142,7 +190,7 @@ export function buildNarrativeContext(
         Object.values(state.entities).filter((e) => e.supportingNpc?.generated).length,
     ),
     remainingTurns: Math.max(0, constraints.maxTurns - (canon?.turns.length ?? 0)),
-    evidenceIds: (canon?.turns ?? []).map((t) => t.id).slice(-16),
+    evidenceIds: accessibleTurns.map((t) => t.id).slice(-16),
     supportedActions: [
       'inspect',
       'open',
@@ -153,8 +201,9 @@ export function buildNarrativeContext(
       'transition',
       'wait',
     ],
-    narrativePolicy:
-      'Shared campaign story only. Player intent and narrative flavor are not authoritative facts. Do not use private whispers, NPC secrets or unsupported mechanics. New content may extend, never retroactively replace, confirmed canon.',
+    narrativePolicy: audience
+      ? 'Private story for the server-stamped audience only. Use only canon accessible to every recipient. Player intent and narrative flavor are not authoritative facts. Do not reveal NPC secrets or use unsupported mechanics. No new scenes or NPCs. New content may extend, never retroactively replace, confirmed canon.'
+      : 'Shared campaign story only. Player intent and narrative flavor are not authoritative facts. Do not use private whispers, NPC secrets or unsupported mechanics. New content may extend, never retroactively replace, confirmed canon.',
   };
   const semantic = {
     ...context,
@@ -193,11 +242,19 @@ export function applyNarrativeProposal(
   input: unknown,
   intent: string,
   replyLocale: Locale = 'en',
+  audienceIds?: string[],
 ): GameResult {
   const parsed = narrativeProposalSchema.safeParse(input);
   if (!parsed.success) return error(state, 'INVALID_ACTION');
+  if (audienceIds !== undefined && !validNarrativeAudience(state, actorId, audienceIds))
+    return error(state, 'FORBIDDEN');
+  const audience = audienceIds === undefined ? undefined : [...new Set(audienceIds)].sort();
   const p = parsed.data,
-    requestHash = npcContextFingerprint({ actorId, proposal: p });
+    requestHash = npcContextFingerprint({
+      actorId,
+      proposal: p,
+      ...(audience ? { channel: 'whisper', audienceIds: audience } : {}),
+    });
   const previous = state.narrativeCanon?.turns.find((t) => t.id === p.turnId);
   if (previous)
     return previous.actorId === actorId && previous.requestHash === requestHash
@@ -209,7 +266,8 @@ export function applyNarrativeProposal(
   if (actor.encounterId) return error(state, 'WRONG_MODE');
   if (typeof intent !== 'string' || !intent.trim() || intent.length > 2000)
     return error(state, 'INVALID_ACTION');
-  const context = buildNarrativeContext(state, actorId, intent, replyLocale),
+  if (audience && (p.newScene || p.newNpc)) return error(state, 'FORBIDDEN');
+  const context = buildNarrativeContext(state, actorId, intent, replyLocale, audience),
     constraints = policy(state);
   if (context.contextHash !== p.contextHash) return error(state, 'STALE_STATE');
   if (!context.remainingTurns) return error(state, 'RATE_LIMITED');
@@ -250,6 +308,7 @@ export function applyNarrativeProposal(
     next.maps[sceneId!] = {
       id: sceneId!,
       label: scene.name,
+      description: scene.description,
       width: BATTLEMAP_CELLS,
       height: BATTLEMAP_CELLS,
       blocked,
@@ -364,6 +423,7 @@ export function applyNarrativeProposal(
     events.push({ kind: 'narrative.npc_created', actorId: npcId, mapId });
   }
   for (const action of p.actions) {
+    if (action.kind === 'travel') return error(state, 'FORBIDDEN');
     const r = applyAction(next, actorId, action);
     if (r.error) return error(state, r.error);
     next = r.state;
@@ -378,6 +438,7 @@ export function applyNarrativeProposal(
     tick: state.tick,
     narration: p.narration,
     evidenceIds: [...p.evidenceIds],
+    ...(audience ? { channel: 'whisper' as const, audienceIds: [...audience] } : {}),
     ...(sceneId
       ? {
           sceneId,
@@ -408,11 +469,12 @@ export function createMockNarrativeProposal(
   text: string,
   turnId: string,
   replyLocale: Locale = 'en',
+  audienceIds?: string[],
 ): NarrativeProposal | null {
-  const c = buildNarrativeContext(state, actorId, text, replyLocale);
+  const c = buildNarrativeContext(state, actorId, text, replyLocale, audienceIds);
   if (!c.currentScene || !c.availableConnections.length || !c.remainingTurns) return null;
   const next = (state.narrativeCanon?.revision ?? 0) + 1,
-    extend = c.constraints.allowNewScenes && c.remainingScenes > 0;
+    extend = !audienceIds && c.constraints.allowNewScenes && c.remainingScenes > 0;
   const copy = {
     en: {
       name: 'Mira',

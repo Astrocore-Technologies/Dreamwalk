@@ -42,9 +42,15 @@ export function packNpcContext<T extends object>(
       ? claims.find((c) => c.observationId === value.replyToObservationId)
       : claims.filter((c) => typeof c.untrustedUtterance === 'string').at(-1);
   if (question) asked.add(String(question.observationId));
-  for (let i = 0; i < claims.length && size() > maxBytes;) {
-    if (!asked.has(String(claims[i].observationId))) claims.splice(i, 1);
-    else i++;
+  while (size() > maxBytes) {
+    // Preserve selected known answers ahead of incidental dialogue, but never
+    // let optional facts displace a required question or exceed the allowance.
+    let index = claims.findIndex(
+      (claim) => !asked.has(String(claim.observationId)) && !claim.authoredFact,
+    );
+    if (index < 0) index = claims.findIndex((claim) => !asked.has(String(claim.observationId)));
+    if (index < 0) break;
+    claims.splice(index, 1);
   }
   const budgetExceeded = size() > maxBytes;
   value.budgetExceeded = budgetExceeded;
@@ -92,9 +98,11 @@ export function packNpcContextWindow<T extends object>(
     const latest =
       key === 'history'
         ? list.at(-1)
-        : list
-            .filter((o) => o.kind === 'said' || o.kind === 'addressed' || o.untrustedUtterance)
-            .at(-1);
+        : key === 'claims' && typeof value.replyToObservationId === 'string'
+          ? list.find((o) => o.observationId === value.replyToObservationId)
+          : list
+              .filter((o) => o.kind === 'said' || o.kind === 'addressed' || o.untrustedUtterance)
+              .at(-1);
     if (latest) {
       pinnedRecords.add(latest);
       const id = recordId(latest);
@@ -131,7 +139,8 @@ export function packNpcContextWindow<T extends object>(
     const list = value[key];
     if (!Array.isArray(list)) continue;
     while (!check()) {
-      const index = list.findIndex((o) => !isRequired(o));
+      let index = list.findIndex((o) => !isRequired(o) && (key !== 'claims' || !o.authoredFact));
+      if (index < 0) index = list.findIndex((o) => !isRequired(o));
       if (index < 0) break;
       list.splice(index, 1);
       selection.omittedRecords++;

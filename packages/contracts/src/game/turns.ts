@@ -54,6 +54,8 @@ export const deferredTurnSpeechSchema = z
   .strict();
 export type DeferredTurnSpeechInput = z.infer<typeof deferredTurnSpeechSchema>;
 export type DeferredTurnSpeech = DeferredTurnSpeechInput & {
+  /** Server-only dependency, not an admitted utterance or NPC memory. */
+  pendingStoryTurnId?: string;
   actorId: string;
   sequence: number;
   roundId: string;

@@ -1,8 +1,9 @@
+import { isActorConscious } from '@dreamwalk/contracts';
 import { occupiedCells, type GameEntity, type GameState } from '@dreamwalk/contracts';
 import { visible } from './index';
 /** Perception only. Never use image observations to authorize or block an action. */
 export function observedVisible(state: GameState, actor: GameEntity, target: GameEntity): boolean {
-  if (!visible(state, actor, target)) return false;
+  if (!isActorConscious(actor) || !visible(state, actor, target)) return false;
   const map = state.maps[actor.mapId],
     g = map?.spatialGrounding;
   const bound = state.artBindings?.find((b) => b.slot === `map:${map.id}:background`);

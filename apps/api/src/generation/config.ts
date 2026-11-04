@@ -60,16 +60,31 @@ const textSchema = z
     maxOutputTokens: z.number().int().min(16).max(32_000),
     storyPlanMaxOutputTokens: z.number().int().min(16).max(32_000).optional(),
     storyVision: z
-      .object({
-        model,
-        inputTokensPerImage: z.number().int().min(1).max(1048576),
-        maxImages: z.number().int().min(1).max(4),
-        detail: z.literal('high'),
-        billing: z.literal('text_input_rate'),
-        maxPricedInputTokens: z.number().int().min(1).max(1050000),
-        pricing: pricingSchema,
-      })
-      .strict()
+      .union([
+        z.literal(false),
+        z
+          .object({
+            model,
+            inputTokensPerImage: z.number().int().min(1).max(1048576),
+            maxImages: z.number().int().min(1).max(4),
+            detail: z.literal('high'),
+            billing: z.literal('text_input_rate'),
+            maxPricedInputTokens: z.number().int().min(1).max(1050000),
+            pricing: pricingSchema,
+          })
+          .strict(),
+        z
+          .object({
+            model,
+            counting: z.literal('operational_exact'),
+            maxImages: z.number().int().min(1).max(4),
+            detail: z.literal('high'),
+            billing: z.literal('text_input_rate'),
+            maxPricedInputTokens: z.number().int().min(1).max(1050000),
+            pricing: pricingSchema,
+          })
+          .strict(),
+      ])
       .optional(),
     runtimeVision: z
       .union([

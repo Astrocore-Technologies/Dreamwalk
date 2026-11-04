@@ -1,6 +1,8 @@
 import { authoringResultFailureCode } from './authoring-result-failure';
 import { quoteFunding, heldFunding } from '../generation/currency-funding';
 import { readStoryImages } from '../ai/story-vision';
+import { StoryMapCountRequired } from './story-map-count';
+import { resolveStoryMapCount } from './story-map-count-receipt';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import {
   quoteSparks,
@@ -180,7 +182,7 @@ export class AuthoringTextEngine {
     snapshot: TextReserveSnapshot | null | undefined,
     reserve?: number,
   ) {
-    const current = this.provider.prepareTextRequest?.(context)?.snapshot;
+    const current = this.provider.prepareTextRequest?.(context, snapshot)?.snapshot;
     if (snapshot) {
       if (
         !current ||
@@ -232,9 +234,49 @@ export class AuthoringTextEngine {
     try {
       snapshot = this.provider.prepareTextRequest?.(context)?.snapshot ?? null;
     } catch (error) {
-      if (error instanceof Error && error.message === 'MAP_VISION_POLICY_REQUIRED')
-        fail(409, 'MAP_VISION_POLICY_REQUIRED', 'MAP_VISION_POLICY_REQUIRED');
-      throw error;
+      if (error instanceof StoryMapCountRequired && this.definition.purpose === 'story_plan') {
+        const prior = (
+          await this.db.query(
+            'SELECT context_hash,provider_version,request_snapshot FROM live_authoring_text_quotes WHERE actor_id=$1 AND operation_id=$2',
+            [ownerId, input.operationId],
+          )
+        )[0];
+        if (prior) {
+          if (
+            prior.context_hash !== digest(context) ||
+            prior.provider_version !== this.provider.version
+          )
+            fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+          snapshot =
+            this.provider.prepareTextRequest?.(context, prior.request_snapshot)?.snapshot ?? null;
+        } else {
+          await resolveStoryMapCount(this.db, ownerId, error, async (c) => {
+            await this.lockSource(c, ownerId);
+            const sessionId =
+              this.live.mode === 'release'
+                ? await this.live.resolveAuthorizationId(c, ownerId, candidateBinding.sessionId)
+                : candidateBinding.sessionId;
+            const binding = bindingSchema.parse({ ...candidateBinding, sessionId });
+            if (
+              !(
+                await c.query('SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE', [
+                  ownerId,
+                ])
+              ).rowCount
+            )
+              fail(403, 'FORBIDDEN', 'FORBIDDEN');
+            await assertBoundedTextSource(c, binding.sessionId, binding.projectId);
+            await this.live.authorizeText(c, ownerId, binding.sessionId);
+            await this.activePolicy(c, binding.sessionId);
+            await validateFence(c, binding);
+          });
+          snapshot = this.provider.prepareTextRequest?.(context)?.snapshot ?? null;
+        }
+      } else {
+        if (error instanceof Error && error.message === 'MAP_VISION_POLICY_REQUIRED')
+          fail(409, 'MAP_VISION_POLICY_REQUIRED', 'MAP_VISION_POLICY_REQUIRED');
+        throw error;
+      }
     }
     return this.db.tx(async (c) => {
       await this.lockSource(c, ownerId);

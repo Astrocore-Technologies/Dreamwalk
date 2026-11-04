@@ -23,7 +23,7 @@ export async function eraseImageGeneration(c: PoolClient, userId: string) {
   const affected = (
     await c.query(
       `SELECT id,quarantine_filename,admitted_revision_id FROM image_generation_jobs
-    WHERE actor_id=$1 OR input->'campaignContext'->>'campaignId'=ANY($2::text[]) FOR UPDATE`,
+    WHERE actor_id=$1 OR (input->'campaignContext'->>'campaignId'=ANY($2::text[]) OR input->'travelContext'->>'preparationId' IN (SELECT id::text FROM game_location_travel_preparations WHERE campaign_id=ANY($2::uuid[]))) FOR UPDATE`,
       [userId, campaignIds],
     )
   ).rows;
@@ -71,7 +71,7 @@ export async function eraseImageGeneration(c: PoolClient, userId: string) {
     [jobIds],
   );
   await c.query(
-    `UPDATE image_generation_quotes SET estimate_snapshot=CASE WHEN estimate_snapshot IS NULL THEN NULL ELSE (estimate_snapshot-'promptSha256'-'id'-'fingerprint')||'{"privateInputErased":true}'::jsonb END,input='{}',reference_hashes='{}',request_hash='erased',expires_at=least(expires_at,now()) WHERE actor_id=$1 OR input->'campaignContext'->>'campaignId'=ANY($2::text[])`,
+    `UPDATE image_generation_quotes SET estimate_snapshot=CASE WHEN estimate_snapshot IS NULL THEN NULL ELSE (estimate_snapshot-'promptSha256'-'id'-'fingerprint')||'{"privateInputErased":true}'::jsonb END,input='{}',reference_hashes='{}',request_hash='erased',expires_at=least(expires_at,now()) WHERE actor_id=$1 OR (input->'campaignContext'->>'campaignId'=ANY($2::text[]) OR input->'travelContext'->>'preparationId' IN (SELECT id::text FROM game_location_travel_preparations WHERE campaign_id=ANY($2::uuid[])))`,
     [userId, campaignIds],
   );
   await c.query(
@@ -85,6 +85,10 @@ export async function eraseImageGeneration(c: PoolClient, userId: string) {
   ]);
   await c.query('DELETE FROM image_generation_cleanup WHERE job_id=ANY($1::uuid[])', [jobIds]);
 
+  await c.query(
+    "UPDATE game_location_travel_preparations SET state='failed',scene='{}',canon_snapshot='{}',image_input='{}',image_quote=NULL,input_hash='erased' WHERE owner_id=$1 OR campaign_id=ANY($2::uuid[])",
+    [userId, campaignIds],
+  );
   return { quarantineFilenames: files, derivedRasterFilenames };
 }
 export async function exportImageGeneration(c: PoolClient, userId: string) {

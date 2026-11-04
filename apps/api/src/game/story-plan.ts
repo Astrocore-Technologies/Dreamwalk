@@ -96,6 +96,8 @@ export type StoryPlanSource = {
     role: string;
     description: string;
     appearance: string;
+    personality?: string;
+    greeting?: string;
     characterProfile?: NpcCharacterProfile | null;
   }[];
   priorDraft?: AuthoredGameDraft | null;
@@ -240,7 +242,13 @@ export function compileStoryPlan(source: StoryPlanSource, value: unknown) {
         visual: 'keeper',
         goal: 'help',
         itemStock: n.stock,
-        publicProfile: { role: s.role, description: s.description, appearance: s.appearance },
+        publicProfile: {
+          role: s.role,
+          description: s.description,
+          appearance: s.appearance,
+          ...(s.personality ? { personality: s.personality.slice(0, 4000) } : {}),
+          ...(s.greeting ? { greeting: s.greeting.slice(0, 2000) } : {}),
+        },
       };
     }),
     roundPolicy: { maxRounds: 5, planningMs: 30000 },

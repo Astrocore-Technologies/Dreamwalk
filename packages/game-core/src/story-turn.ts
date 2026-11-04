@@ -1,17 +1,30 @@
+import { applyStoryOrderedAction } from './story-ordered-actions';
 import { explicitStoryPickup, materializeStoryItem, applyStoryPickup } from './story-items';
+import {
+  resolveTravelRequest,
+  resolveTravelDestination,
+  normalizeLocationName,
+  travelToLocation,
+} from './location-travel';
+import { isNpcStoryContact, storyContactOutcomeCode } from './story-attacks';
+import { applyStoryImpact, narrativeImpactOutcomeText, storyImpactContext } from './story-impact';
 import { observedVisible } from './observation-visibility';
 import {
+  actorLifeState,
+  isActorConscious,
   footprintDistance,
   occupiedCells,
   readNarrativePreferences,
   storyTurnInputSchema,
   storyTurnProposalSchema,
-  narrativeActionSchema,
+  storyActionSchema,
+  gameActionSchema,
   type StoryTurnInput,
   type Locale,
   type StorySegment,
   type StoryActionPreview,
   type StoryTurnProposal,
+  type StoryTravelIntent,
   type GameState,
   type GameAction,
   type GameResult,
@@ -24,10 +37,12 @@ import {
   applyNpcSpeech,
   admittedNpcSpeechObservationId,
   buildNpcPublicSpeechContext,
+  selectNpcSpeechObservationIds,
   commitNpcPublicUtterance,
   canNpcHear,
   npcSpeechListenerIds,
   npcSpeechProspectiveListenerIds,
+  npcSpeechHearingRange,
   npcContextFingerprint,
   publicNpcFactTopics,
   resolveNpcFactTopic,
@@ -84,8 +99,9 @@ const listeners = (s: GameState, speakerId: string) =>
     .map((e) => e.id)
     .sort();
 function allowedAction(state: GameState, actorId: string, input: unknown): GameAction | null {
-  const p = narrativeActionSchema.safeParse(input);
-  if (!p.success || p.data.kind === 'transition') return null;
+  const p = gameActionSchema.safeParse(input);
+  if (!p.success) return null;
+  if (p.data.kind === 'travel') return state.maps[p.data.targetId ?? ''] ? p.data : null;
   const actor = state.entities[actorId];
   if (actor?.kind !== 'player') return null;
   if (p.data.targetId) {
@@ -114,10 +130,16 @@ function safeSpeech(
   selectedObservationIds?: string[],
   replyLocale: Locale = 'en',
   sharedDirector = false,
+  audienceLimit?: string[],
+  preauthorizedObservationIds?: string[],
 ) {
   const identity = { turnId, segmentIndex: segment.index };
   const speech = { channel, text: segment.text };
-  const applied = applyNpcSpeech(state, actorId, npcId, speech, { suppressReply: true, identity });
+  const applied = applyNpcSpeech(state, actorId, npcId, speech, {
+    suppressReply: true,
+    identity,
+    audienceLimit,
+  });
   if (applied.error) throw new Error(applied.error);
   const next = recordNpcEvents(
     state,
@@ -127,7 +149,9 @@ function safeSpeech(
   ).state;
   const marker = admittedNpcSpeechObservationId(next, actorId, npcId, speech, identity);
   if (!marker) throw new Error('STALE_STATE');
-  const audience = npcSpeechProspectiveListenerIds(next, npcId, channel);
+  const audience = npcSpeechProspectiveListenerIds(next, npcId, channel).filter(
+    (id) => !audienceLimit || audienceLimit.includes(id),
+  );
   const topics = publicNpcFactTopics(next, npcId).filter(
     (t) => normalize(t.title) === normalize(segment.text),
   );
@@ -135,13 +159,24 @@ function safeSpeech(
     !sharedDirector && topics.length === 1 ? resolveNpcFactTopic(next, npcId, topics[0].id) : [];
   let ids =
     selectedObservationIds ??
-    [
-      ...new Set([
-        marker,
-        ...requested,
-        ...(next.npcBrains?.[npcId]?.living?.observations ?? []).slice(-16).map((o) => o.id),
-      ]),
-    ].slice(0, 16);
+    selectNpcSpeechObservationIds(
+      next,
+      npcId,
+      sharedDirector
+        ? [
+            ...new Set([
+              ...audience,
+              ...Object.values(next.entities)
+                .filter((entity) => entity.kind === 'player')
+                .map((entity) => entity.id),
+            ]),
+          ]
+        : audience,
+      [marker],
+      requested,
+    );
+  if (preauthorizedObservationIds)
+    ids = ids.filter((id) => id === marker || preauthorizedObservationIds.includes(id));
   if (sharedDirector) {
     // The director also writes globally visible narration. Local permission to hear
     // an old whisper or to release an asked secret must not become shared context.
@@ -158,12 +193,13 @@ function safeSpeech(
       );
     });
   }
+  const admittedRequested = requested.filter((id) => ids.includes(id));
   const safe = buildNpcPublicSpeechContext(
     next,
     npcId,
     audience,
     ids,
-    requested,
+    admittedRequested,
     undefined,
     replyLocale,
     actorId,
@@ -182,7 +218,7 @@ function safeSpeech(
       replyToObservationId: marker,
       currentUtterance: current,
       observationIds: safe.claims.map((c) => c.observationId),
-      requestedFactIds: requested,
+      requestedFactIds: admittedRequested,
       speechHash: npcContextFingerprint(safe),
     },
   };
@@ -192,6 +228,7 @@ function safeSpeech(
 function directorVoice(context: ReturnType<typeof safeSpeech>['context']) {
   const evidence = {
     npcId: context.npcId,
+    lifeRevision: 'lifeRevision' in context ? (context.lifeRevision ?? 0) : 0,
     replyLocale: context.replyLocale,
     claims: context.claims,
     segmentIndex: context.segmentIndex,
@@ -200,6 +237,7 @@ function directorVoice(context: ReturnType<typeof safeSpeech>['context']) {
     observationIds: context.observationIds,
     requestedFactIds: context.requestedFactIds,
     ...('publicIdentity' in context ? { publicIdentity: context.publicIdentity } : {}),
+    ...('currentPlace' in context ? { currentPlace: context.currentPlace } : {}),
     ...('publicSpeechStyle' in context ? { publicSpeechStyle: context.publicSpeechStyle } : {}),
     ...('performance' in context ? { performance: context.performance } : {}),
   };
@@ -208,6 +246,296 @@ function directorVoice(context: ReturnType<typeof safeSpeech>['context']) {
     audienceIds: context.audienceIds,
     speechHash: npcContextFingerprint(evidence),
   };
+}
+/** Disclosure is authorized against the original snapshot, not a simulated gift,
+ * recovery, relationship change or another branch visible to the same model. */
+function storyVoiceEvidenceIds(
+  state: GameState,
+  actorId: string,
+  npcId: string,
+  input: StoryTurnInput,
+  segment: StorySegment,
+) {
+  const audience =
+    storyPrivateAudience(actorId, input) ??
+    Object.values(state.entities)
+      .filter((entity) => entity.kind === 'player')
+      .map((entity) => entity.id);
+  const memory = state.npcBrains?.[npcId]?.living;
+  const active = isActorConscious(state.entities[npcId]);
+  const topics =
+    active && input.channel === 'whisper'
+      ? publicNpcFactTopics(state, npcId).filter(
+          (topic) => normalize(topic.title) === normalize(segment.text),
+        )
+      : [];
+  const requested = topics.length === 1 ? resolveNpcFactTopic(state, npcId, topics[0].id) : [];
+  return (memory?.observations ?? [])
+    .filter(
+      (observation) =>
+        observation.disclosure === 'public' ||
+        (observation.disclosure === 'participants' &&
+          audience.every((reader) => observation.audienceIds.includes(reader))) ||
+        (active &&
+          input.channel === 'whisper' &&
+          observation.disclosure === 'private' &&
+          ((observation.revealCondition === 'asked' && requested.includes(observation.id)) ||
+            (observation.revealCondition === 'trusted' &&
+              audience.every(
+                (reader) => reader === npcId || (memory?.relationships[reader]?.trust ?? 0) >= 1,
+              )))),
+    )
+    .map((observation) => observation.id);
+}
+type DirectorVoice = ReturnType<typeof directorVoice>;
+type ImpactVoiceVariant = {
+  afterImpact: { segmentIndex: number; targetId: string; effect: 'harm' | 'recover' | 'revive' };
+  baseSpeechHash: string;
+  changes: Partial<Omit<DirectorVoice, 'claims'>>;
+  replacedClaims: DirectorVoice['claims'];
+};
+function restoreImpactVoice(base: DirectorVoice, variant: ImpactVoiceVariant): DirectorVoice {
+  const fields = { ...base, ...variant.changes };
+  return {
+    ...fields,
+    claims: fields.observationIds.flatMap((id) => {
+      const claim =
+        variant.replacedClaims.find((claim) => claim.observationId === id) ??
+        base.claims.find((claim) => claim.observationId === id);
+      return claim ? [claim] : [];
+    }),
+  };
+}
+/** At most two conditional voices for the explicitly addressed NPC. Authorization
+ * comes from PRE-effect safe claims, never from hypothetical trust/revival. */
+function prospectiveImpactVoices(
+  state: GameState,
+  actorId: string,
+  input: StoryTurnInput,
+  turnId: string,
+  segments: StorySegment[],
+  actionPreview: StoryActionPreview[],
+  bases: DirectorVoice[],
+) {
+  const extraBases: DirectorVoice[] = [],
+    variants: ImpactVoiceVariant[] = [];
+  const npcId = input.targetNpcId;
+  if (!npcId) return { bases: extraBases, variants };
+  const target = storyImpactContext(state, actorId).find((entry) => entry.targetId === npcId);
+  const effect =
+    target?.lifeState === 'dead'
+      ? 'revive'
+      : target?.lifeState === 'unconscious'
+        ? 'recover'
+        : 'harm';
+  if (
+    !target?.allowedEffects.includes(effect) ||
+    (effect === 'harm' && target.vitality <= target.maxDamage)
+  )
+    return { bases: extraBases, variants };
+  const audience = storyPrivateAudience(actorId, input);
+  const director = buildNarrativeContext(state, actorId, input.text, input.replyLocale, audience);
+  const created = applyNarrativeProposal(
+    state,
+    actorId,
+    {
+      turnId,
+      contextHash: director.contextHash,
+      narration: 'Conditional current-scene outcome.',
+      newScene: null,
+      newNpc: null,
+      evidenceIds: [],
+      actions: [],
+    },
+    input.text,
+    input.replyLocale,
+    audience,
+  );
+  if (created.error) return { bases: extraBases, variants };
+  const seed = recordNpcEvents(state, created.state, created.events, `story:${turnId}`).state;
+  for (const attempt of segments.filter(
+    (segment) =>
+      segment.kind === 'attempt' &&
+      !actionPreview.some((entry) => entry.segmentIndex === segment.index),
+  )) {
+    const speech = segments.find(
+      (segment) => segment.index > attempt.index && segment.kind === 'speech',
+    );
+    if (!speech || variants.length >= 2) continue;
+    let before = structuredClone(seed),
+      after = structuredClone(seed);
+    const effectIds: string[] = [];
+    let valid = true;
+    for (const segment of segments.filter((entry) => entry.index < speech.index)) {
+      if (segment.index === attempt.index) {
+        const impacted = applyStoryImpact(
+          after,
+          actorId,
+          turnId,
+          segment.index,
+          { targetId: npcId, effect },
+          input,
+        );
+        if (impacted.error) {
+          valid = false;
+          break;
+        }
+        const oldIds = new Set(after.npcBrains?.[npcId]?.living?.observations.map((o) => o.id));
+        after = recordNpcEvents(
+          after,
+          impacted.state,
+          impacted.events,
+          `impact:${turnId}:${segment.index}`,
+        ).state;
+        effectIds.push(
+          ...(after.npcBrains?.[npcId]?.living?.observations ?? [])
+            .filter(
+              (o) =>
+                !oldIds.has(o.id) &&
+                ['harmed', 'revived', 'regained_consciousness', 'life_state_seen'].includes(o.kind),
+            )
+            .map((o) => o.id),
+        );
+      } else if (segment.kind === 'attempt') {
+        const action = actionPreview.find((entry) => entry.segmentIndex === segment.index)?.action;
+        if (!action) continue;
+        for (const key of ['before', 'after'] as const) {
+          const current = key === 'before' ? before : after;
+          const permitted = allowedAction(current, actorId, action);
+          if (!permitted) {
+            valid = false;
+            break;
+          }
+          const result =
+            permitted.kind === 'pick_up'
+              ? applyStoryPickup(current, actorId, permitted.targetId!, segment.text, input)
+              : applyStoryOrderedAction(current, actorId, permitted, input);
+          if (result.error) {
+            valid = false;
+            break;
+          }
+          const next = recordNpcEvents(
+            current,
+            result.state,
+            result.events,
+            `turn:${turnId}:${segment.index}`,
+          ).state;
+          if (key === 'before') before = next;
+          else after = next;
+        }
+      } else {
+        for (const key of ['before', 'after'] as const) {
+          const current = key === 'before' ? before : after;
+          const result = applyNpcSpeech(
+            current,
+            actorId,
+            isActorConscious(current.entities[npcId]) ? npcId : undefined,
+            { channel: input.channel, text: segment.text },
+            {
+              suppressReply: true,
+              identity: { turnId, segmentIndex: segment.index },
+              audienceLimit: audience,
+            },
+          );
+          if (result.error) {
+            valid = false;
+            break;
+          }
+          const next = recordNpcEvents(
+            current,
+            result.state,
+            result.events,
+            `turn:${turnId}:${segment.index}`,
+          ).state;
+          if (key === 'before') before = next;
+          else after = next;
+        }
+      }
+      if (!valid) break;
+    }
+    if (!valid) continue;
+    // A temporary active lens permits reading the dormant memory through unchanged
+    // pre-effect disclosure/relationships. It is never a committed wake or a reply.
+    before.entities[npcId].lifeState = 'conscious';
+    before.entities[npcId].vitality = Math.max(1, before.entities[npcId].vitality ?? 1);
+    try {
+      const base = directorVoice(
+        safeSpeech(
+          before,
+          actorId,
+          npcId,
+          input.channel,
+          speech,
+          turnId,
+          undefined,
+          input.replyLocale,
+          input.channel === 'say',
+          audience,
+          storyVoiceEvidenceIds(state, actorId, npcId, input, speech),
+        ).context,
+      );
+      const allowedIds = [...new Set([...base.observationIds, ...effectIds])];
+      const prospective = directorVoice(
+        safeSpeech(
+          after,
+          actorId,
+          npcId,
+          input.channel,
+          speech,
+          turnId,
+          allowedIds,
+          input.replyLocale,
+          input.channel === 'say',
+          audience,
+        ).context,
+      );
+      const changes: ImpactVoiceVariant['changes'] = {};
+      for (const key of Object.keys(prospective) as (keyof DirectorVoice)[]) {
+        if (key !== 'claims' && JSON.stringify(base[key]) !== JSON.stringify(prospective[key]))
+          Object.assign(changes, { [key]: prospective[key] });
+      }
+      const variant: ImpactVoiceVariant = {
+        afterImpact: { segmentIndex: attempt.index, targetId: npcId, effect },
+        baseSpeechHash: base.speechHash,
+        changes,
+        replacedClaims: prospective.claims.filter(
+          (claim) =>
+            JSON.stringify(base.claims.find((old) => old.observationId === claim.observationId)) !==
+            JSON.stringify(claim),
+        ),
+      };
+      const addBase = ![...bases, ...extraBases].some(
+        (entry) => entry.speechHash === base.speechHash,
+      );
+      const nextBases = addBase ? [...extraBases, base] : extraBases;
+      // Bounded additive context, independent of roster/target count. A missing voice
+      // omits a reply, never the admitted physical consequence or privacy guard.
+      if (
+        new TextEncoder().encode(
+          JSON.stringify({ bases: nextBases, variants: [...variants, variant] }),
+        ).byteLength > 8192
+      )
+        continue;
+      if (addBase) extraBases.push(base);
+      variants.push(variant);
+    } catch {
+      /* No safe, audible prospective voice. */
+    }
+  }
+  return { bases: extraBases, variants };
+}
+
+/** Routing follows the structured post, never a verb/weapon keyword list. */
+export function storyTurnMode(input: StoryTurnInput): 'npc' | 'director' {
+  return !input.targetNpcId ||
+    parseStorySegments(input.text).segments.some((segment) => segment.kind === 'attempt')
+    ? 'director'
+    : 'npc';
+}
+export function storyPrivateAudience(actorId: string, input: StoryTurnInput): string[] | undefined {
+  return input.channel === 'whisper'
+    ? [...new Set([actorId, ...(input.targetNpcId ? [input.targetNpcId] : [])])].sort()
+    : undefined;
 }
 export function buildStoryTurnContext(
   state: GameState,
@@ -220,23 +548,39 @@ export function buildStoryTurnContext(
   if (parsed.code) throw new Error(parsed.code);
   const actor = state.entities[actorId];
   if (actor?.kind !== 'player' || actor.encounterId) throw new Error('WRONG_MODE');
-  if (input.channel === 'whisper' && !input.targetNpcId) throw new Error('PRIVATE_STORY_EXTENSION');
+  if (
+    input.channel === 'whisper' &&
+    !input.targetNpcId &&
+    !parsed.segments.some((segment) => segment.kind === 'attempt')
+  )
+    throw new Error('PRIVATE_STORY_EXTENSION');
   if (input.expectedCanonRevision !== (state.narrativeCanon?.revision ?? 0))
     throw new Error('STALE_CANON');
-  const mode = input.targetNpcId ? ('npc' as const) : ('director' as const);
+  const mode = storyTurnMode(input),
+    privateAudience = storyPrivateAudience(actorId, input);
+  const travelRequests =
+    mode === 'director' && parsed.segments.length === 1
+      ? parsed.segments.flatMap((segment) => {
+          const request =
+            segment.kind === 'attempt' ? resolveTravelRequest(state, segment.text) : null;
+          return request ? [{ segmentIndex: segment.index, ...request }] : [];
+        })
+      : [];
   if (input.targetNpcId) {
     const npc = state.entities[input.targetNpcId];
     if (
       npc?.kind !== 'npc' ||
+      (mode === 'npc' && !isActorConscious(npc)) ||
       !state.npcBrains?.[npc.id]?.living ||
       npc.encounterId ||
-      !visible(state, actor, npc) ||
-      footprintDistance(npc, actor) > 1
+      !observedVisible(state, actor, npc) ||
+      (mode === 'npc' && footprintDistance(npc, actor) > 1)
     )
       throw new Error('OUT_OF_RANGE');
   }
   let simulated = structuredClone(state);
   const directorStates = new Map<number, GameState>();
+  const attemptStates = new Map<number, GameState>();
   const actionOutcomes: { segmentIndex: number; code: string }[] = [];
   const actionPreview: StoryActionPreview[] = [],
     dialogues: ReturnType<typeof safeSpeech>['context'][] = [];
@@ -244,19 +588,25 @@ export function buildStoryTurnContext(
     if (mode === 'director' && segment.kind === 'speech')
       directorStates.set(segment.index, structuredClone(simulated));
     if (segment.kind === 'attempt') {
+      if (mode === 'director') attemptStates.set(segment.index, structuredClone(simulated));
       const action = parsePlayerTextAction(simulated, actorId, segment.text);
-      if (action && action.kind !== 'move_to' && action.kind !== 'transition') {
+      if (mode === 'director' && isNpcStoryContact(simulated, action)) continue;
+      if (action) {
         const valid = allowedAction(simulated, actorId, action);
         if (!valid) throw new Error('UNSUPPORTED');
         const r =
           valid.kind === 'pick_up'
             ? applyStoryPickup(simulated, actorId, valid.targetId!, segment.text, input)
-            : applyAction(simulated, actorId, valid);
-        if (r.error === 'OUT_OF_RANGE' || r.error === 'PATH_BLOCKED') throw new Error('WALK_FIRST');
-        actionOutcomes.push({ segmentIndex: segment.index, code: r.error ?? 'ACTION_SUCCEEDED' });
+            : applyStoryOrderedAction(simulated, actorId, valid, input);
+        if (
+          (r.error === 'OUT_OF_RANGE' || r.error === 'PATH_BLOCKED') &&
+          !(mode === 'director' && state.turnController?.phase === 'world')
+        )
+          throw new Error('WALK_FIRST');
+        actionOutcomes.push({ segmentIndex: segment.index, code: storyContactOutcomeCode(r) });
         actionPreview.push({
           segmentIndex: segment.index,
-          action: narrativeActionSchema.parse(valid),
+          action: storyActionSchema.parse(valid),
         });
         if (!r.error)
           simulated = recordNpcEvents(
@@ -266,7 +616,7 @@ export function buildStoryTurnContext(
             `turn:${turnId}:${segment.index}`,
           ).state;
       }
-    } else if (input.targetNpcId) {
+    } else if (mode === 'npc' && input.targetNpcId) {
       const r = safeSpeech(
         simulated,
         actorId,
@@ -286,48 +636,66 @@ export function buildStoryTurnContext(
   // an existing character response may use. Newborns have no inherited conversation.
   const sceneSpeakers =
     mode === 'director'
-      ? Object.values(state.entities)
-          .filter(
-            (npc) =>
-              npc.kind === 'npc' &&
-              state.npcBrains?.[npc.id]?.living &&
-              visible(state, actor, npc) &&
-              !npc.encounterId,
-          )
-          .sort(
-            (a, b) =>
-              footprintDistance(actor, a) - footprintDistance(actor, b) || a.id.localeCompare(b.id),
-          )
-          .slice(0, 4)
-          .flatMap((npc) =>
-            parsed.segments
-              .filter((segment) => segment.kind === 'speech')
-              .flatMap((segment) => {
-                const checkpoint = directorStates.get(segment.index)!;
-                const approached = approachStoryNpc(checkpoint, actorId, npc.id);
-                if (approached.error) return [];
+      ? parsed.segments
+          .filter((segment) => segment.kind === 'speech')
+          .flatMap((segment) => {
+            const checkpoint = directorStates.get(segment.index)!;
+            const speaker = checkpoint.entities[actorId];
+            return Object.values(checkpoint.entities)
+              .filter(
+                (npc) =>
+                  npc.kind === 'npc' &&
+                  (input.channel !== 'whisper' || npc.id === input.targetNpcId) &&
+                  (!input.targetNpcId || npc.id === input.targetNpcId) &&
+                  isActorConscious(npc) &&
+                  checkpoint.npcBrains?.[npc.id]?.living &&
+                  visible(checkpoint, speaker, npc) &&
+                  !npc.encounterId,
+              )
+              .sort(
+                (a, b) =>
+                  footprintDistance(speaker, a) - footprintDistance(speaker, b) ||
+                  a.id.localeCompare(b.id),
+              )
+              .slice(0, 4)
+              .flatMap((npc) => {
                 try {
                   return [
                     directorVoice(
                       safeSpeech(
-                        approached.state,
+                        checkpoint,
                         actorId,
                         npc.id,
-                        'say',
+                        input.channel,
                         segment,
                         turnId,
                         undefined,
                         input.replyLocale,
-                        true,
+                        input.channel === 'say',
+                        privateAudience,
+                        // Moving into a scene changes perception, not permission to reveal memory.
+                        storyVoiceEvidenceIds(state, actorId, npc.id, input, segment),
                       ).context,
                     ),
                   ];
                 } catch {
                   return [];
                 }
-              }),
-          )
+              });
+          })
       : [];
+  const impactVoices =
+    mode === 'director'
+      ? prospectiveImpactVoices(
+          state,
+          actorId,
+          input,
+          turnId,
+          parsed.segments,
+          actionPreview,
+          sceneSpeakers,
+        )
+      : { bases: [], variants: [] };
   const view = projectState(state, actorId);
   const mechanics = view.entities
     .filter(
@@ -349,6 +717,7 @@ export function buildStoryTurnContext(
     actorId,
     mode,
     channel: input.channel,
+    ...(privateAudience ? { outputAudienceIds: privateAudience } : {}),
     replyLocale: input.replyLocale ?? 'en',
     ...(state.narrativePreferences?.[actorId]
       ? { narrativePreferences: readNarrativePreferences(state, actorId) }
@@ -373,10 +742,43 @@ export function buildStoryTurnContext(
       .map((item) => ({ id: item.id, label: item.label, alreadyCarried: true as const })),
     actionPreview,
     actionOutcomes,
-    dialogues,
-    ...(mode === 'director' ? { sceneSpeakers } : {}),
+    travelRequests,
     ...(mode === 'director'
-      ? { director: buildNarrativeContext(state, actorId, input.text, input.replyLocale) }
+      ? {
+          narrativeImpactPolicy: {
+            maxImpacts: 1,
+            allowedEffects: ['harm', 'blocked', 'unconscious', 'death', 'recover', 'revive'],
+            explicitLifecycle: true,
+            targets: storyImpactContext(state, actorId),
+            segmentTargets: parsed.segments
+              .filter((segment) => segment.kind === 'attempt')
+              .map((segment) => ({
+                segmentIndex: segment.index,
+                targets: storyImpactContext(attemptStates.get(segment.index)!, actorId),
+              })),
+            instructions:
+              'Adjudicate the current explicit attempt from its meaning and established fiction, not a keyword list or inventory gate. One visible existing NPC can receive harm, unconsciousness, death, recovery or revival according to its listed allowedEffects. Use segmentTargets for this exact attempt index: earlier ordered movement can change the reachable scene. Initial targets are context, not authority to affect someone left behind. Harm at zero vitality causes unconsciousness; death must be explicit. Recovery never revives a dead actor. Revival requires a distinct current attempt justified by the established fiction, never a retry, food, or old dialogue. Do not force travel, grant inventory or invent exceptional powers. Player targets keep their existing reaction mechanics. Use no action or reply on the same impact segment. Independent segments resolve in order; an inactive NPC cannot reply later.',
+          },
+        }
+      : {}),
+    dialogues,
+    ...(mode === 'director'
+      ? {
+          sceneSpeakers,
+          sceneSpeakerImpactBases: impactVoices.bases,
+          sceneSpeakerImpactVariants: impactVoices.variants,
+        }
+      : {}),
+    ...(mode === 'director'
+      ? {
+          director: buildNarrativeContext(
+            state,
+            actorId,
+            input.text,
+            input.replyLocale,
+            privateAudience,
+          ),
+        }
       : {}),
     allowedActions: [
       'inspect',
@@ -387,7 +789,9 @@ export function buildStoryTurnContext(
       'consume',
       'give',
       'wait',
+      ...(mode === 'director' ? ['move_to', 'transition'] : []),
       ...(mode === 'director' && !state.turnController ? ['approach'] : []),
+      ...(travelRequests.length ? ['travel'] : []),
     ],
     itemPolicy:
       mode === 'director'
@@ -417,18 +821,34 @@ export function createMockStoryTurnProposal(
   turnId: string,
 ): StoryTurnProposal {
   const context = buildStoryTurnContext(state, actorId, input, turnId);
-  const steps = context.segments.map((segment) => ({
+  const selectedVoice = context.mode === 'director' ? context.sceneSpeakers?.at(-1) : undefined;
+  const steps: StoryTurnProposal['steps'] = context.segments.map((segment) => ({
     segmentIndex: segment.index,
     action:
-      segment.kind === 'attempt'
-        ? (context.actionPreview.find((a) => a.segmentIndex === segment.index)?.action ?? null)
-        : null,
+      segment.kind === 'attempt' &&
+      context.travelRequests.some(
+        (request) => request.segmentIndex === segment.index && !request.ambiguous,
+      )
+        ? {
+            kind: 'travel' as const,
+            targetId:
+              context.travelRequests.find((request) => request.segmentIndex === segment.index)!
+                .mapId ?? 'new_scene',
+          }
+        : segment.kind === 'attempt'
+          ? (context.actionPreview.find((a) => a.segmentIndex === segment.index)?.action ?? null)
+          : null,
     reply:
       segment.kind === 'speech' && context.mode === 'npc'
         ? createMockNpcPublicResponse(
             context.dialogues.find((d) => d.segmentIndex === segment.index)!,
           )
-        : null,
+        : selectedVoice?.segmentIndex === segment.index
+          ? createMockNpcPublicResponse(selectedVoice)
+          : null,
+    ...(selectedVoice?.segmentIndex === segment.index
+      ? { replyNpcId: selectedVoice.npcId, replyContextHash: selectedVoice.speechHash }
+      : {}),
   }));
   if (
     (context.mode === 'npc' || !state.turnController) &&
@@ -444,8 +864,26 @@ export function createMockStoryTurnProposal(
     };
   const narrative =
     context.mode === 'director'
-      ? createMockNarrativeProposal(state, actorId, input.text, turnId, input.replyLocale)
+      ? createMockNarrativeProposal(
+          state,
+          actorId,
+          input.text,
+          turnId,
+          input.replyLocale,
+          storyPrivateAudience(actorId, input),
+        )
       : null;
+  const travel = context.travelRequests[0];
+  if (travel && narrative) {
+    narrative.newNpc = null;
+    if (travel.mapId) narrative.newScene = null;
+    else if (narrative.newScene) narrative.newScene.name = travel.destinationName;
+    narrative.narration = {
+      en: `The journey continues in ${travel.destinationName}.`,
+      ru: `История продолжается в локации «${travel.destinationName}».`,
+      uk: `Історія продовжується в локації «${travel.destinationName}».`,
+    }[input.replyLocale ?? 'en'];
+  }
   return {
     turnId,
     contextHash: context.contextHash,
@@ -466,6 +904,7 @@ export interface StoryTurnApplied extends GameResult {
   entries: StorySafeEntry[];
   actions: StoryActionPreview[];
   clarification?: string;
+  pendingTravel?: StoryTravelIntent;
 }
 export function applyStoryTurnProposal(
   state: GameState,
@@ -473,6 +912,10 @@ export function applyStoryTurnProposal(
   input: StoryTurnInput,
   turnId: string,
   raw: unknown,
+  options: {
+    speechAlreadyRecorded?: boolean;
+    sourceSpeechSegments?: { index: number; text: string }[];
+  } = {},
 ): StoryTurnApplied {
   const reject = (code: GameResult['error'] = 'STALE_STATE'): StoryTurnApplied => ({
     state,
@@ -489,10 +932,11 @@ export function applyStoryTurnProposal(
   } catch {
     return reject();
   }
+  const privateAudience = storyPrivateAudience(actorId, input);
   const p = parsed.data;
   if (p.turnId !== turnId || p.contextHash !== context.contextHash) return reject();
   if (p.status === 'clarification') {
-    if (!p.code || p.steps.length || p.narrative) return reject('INVALID_ACTION');
+    if (!p.code || p.steps.length || p.narrative || p.travelIntent) return reject('INVALID_ACTION');
     return { state, events: [], entries: [], actions: [], clarification: p.code };
   }
   if (
@@ -507,9 +951,43 @@ export function applyStoryTurnProposal(
     (!p.narrative || p.steps.filter((step) => step.reply).length > 1)
   )
     return reject('INVALID_ACTION');
+  if (
+    p.travelIntent &&
+    (context.mode !== 'director' ||
+      input.channel !== 'say' ||
+      !state.turnController ||
+      !context.segments.some(
+        (segment) => segment.kind === 'attempt' && segment.index === p.travelIntent!.segmentIndex,
+      ) ||
+      p.narrative?.newScene ||
+      p.steps.some((step) => step.action?.kind === 'travel'))
+  )
+    return reject('FORBIDDEN');
   const actions: StoryActionPreview[] = [];
+  if (
+    p.steps.filter((step) => step.narrativeImpact).length > 1 ||
+    (p.steps.some((step) => step.narrativeImpact) &&
+      (context.mode !== 'director' || !['say', 'whisper'].includes(input.channel)))
+  )
+    return reject('FORBIDDEN');
   for (const [i, segment] of context.segments.entries()) {
     const step = p.steps[i];
+    if (step.narrativeImpact) {
+      if (
+        segment.kind !== 'attempt' ||
+        step.action ||
+        step.reply ||
+        context.actionPreview.some((entry) => entry.segmentIndex === segment.index) ||
+        !context.narrativeImpactPolicy?.segmentTargets
+          .find((entry) => entry.segmentIndex === segment.index)
+          ?.targets.some(
+            (target) =>
+              target.targetId === step.narrativeImpact!.targetId &&
+              target.allowedEffects.includes(step.narrativeImpact!.effect),
+          )
+      )
+        return reject('FORBIDDEN');
+    }
     if (context.mode === 'director' && step.reply && 'text' in step.reply) {
       // Director voices carry public speech evidence, not private action targets.
       // A newborn has no provider-visible current observation before admission.
@@ -550,7 +1028,22 @@ export function applyStoryTurnProposal(
       context.mode === 'director' &&
       state.turnController &&
       step.action &&
-      step.action.kind !== 'pick_up'
+      !['pick_up', 'travel'].includes(step.action.kind) &&
+      !context.actionPreview.some(
+        (entry) =>
+          entry.segmentIndex === segment.index &&
+          JSON.stringify(entry.action) === JSON.stringify(step.action),
+      )
+    )
+      return reject('FORBIDDEN');
+    if (
+      step.action &&
+      ['move_to', 'transition'].includes(step.action.kind) &&
+      !context.actionPreview.some(
+        (entry) =>
+          entry.segmentIndex === segment.index &&
+          JSON.stringify(entry.action) === JSON.stringify(step.action),
+      )
     )
       return reject('FORBIDDEN');
     if (step.action?.kind === 'pick_up') {
@@ -564,6 +1057,33 @@ export function applyStoryTurnProposal(
           ? [target.name]
           : [target.id, target.label ?? '', ...Object.values(target.labelTranslations ?? {})]);
       if (step.action.itemId || !labels || !explicitStoryPickup(segment.text, labels))
+        return reject('FORBIDDEN');
+    }
+    if (step.action?.kind === 'travel') {
+      const request = context.travelRequests.find((value) => value.segmentIndex === segment.index);
+      const existingPreview =
+        !request &&
+        !p.narrative?.newScene &&
+        !!state.maps[step.action.targetId ?? ''] &&
+        context.actionPreview.some(
+          (entry) =>
+            entry.segmentIndex === segment.index &&
+            JSON.stringify(entry.action) === JSON.stringify(step.action),
+        );
+      // Mixed posts preserve parsed existing-location actions in their original order.
+      // An absent request never authorizes a new scene or a model-selected destination.
+      if (
+        !existingPreview &&
+        (!request ||
+          request.ambiguous ||
+          step.action.itemId ||
+          step.action.targetId !== (request.mapId ?? 'new_scene') ||
+          (!request.mapId &&
+            (!p.narrative?.newScene ||
+              normalizeLocationName(p.narrative.newScene.name) !==
+                normalizeLocationName(request.destinationName))) ||
+          (request.mapId && p.narrative?.newScene))
+      )
         return reject('FORBIDDEN');
     }
     if (
@@ -581,6 +1101,18 @@ export function applyStoryTurnProposal(
       ).length !== 1)
   )
     return reject('FORBIDDEN');
+  // A promised requested departure must have a committed travel effect, not narration alone.
+  if (
+    context.travelRequests.some(
+      (request) =>
+        !request.ambiguous &&
+        !p.travelIntent &&
+        p.steps.find((step) => step.segmentIndex === request.segmentIndex)?.action?.kind !==
+          'travel',
+    )
+  )
+    return reject('INVALID_ACTION');
+  if (context.travelRequests.length > 1) return reject('INVALID_ACTION');
   const knownFailure = (segmentIndex: number, action: GameAction, code: string) => {
     const quoted = context.actionPreview.find((a) => a.segmentIndex === segmentIndex)?.action;
     return (
@@ -623,7 +1155,13 @@ export function applyStoryTurnProposal(
   if (context.mode === 'director') {
     // Materialize the typed scene before resolving its ordered interactions. All mutations
     // remain in this local proposal until every action and speech admission succeeds.
-    const directorContext = buildNarrativeContext(next, actorId, input.text, input.replyLocale);
+    const directorContext = buildNarrativeContext(
+      next,
+      actorId,
+      input.text,
+      input.replyLocale,
+      privateAudience,
+    );
     const created = applyNarrativeProposal(
       next,
       actorId,
@@ -638,6 +1176,7 @@ export function applyStoryTurnProposal(
       },
       input.text,
       input.replyLocale,
+      privateAudience,
     );
     if (created.error) return reject(created.error);
     next = recordNpcEvents(next, created.state, created.events, `story:${turnId}`).state;
@@ -659,34 +1198,115 @@ export function applyStoryTurnProposal(
     }
     const resolveNpc = (id: string) =>
       id === 'new_npc' && p.narrative?.newNpc ? `support-${turnId}` : id;
+    let speechOrdinal = 0;
+    let advisoryReplyOmitted = false;
     for (const [i, segment] of context.segments.entries()) {
+      const originalSpeech =
+        segment.kind === 'speech' ? options.sourceSpeechSegments?.[speechOrdinal++] : undefined;
+      if (originalSpeech && originalSpeech.text !== segment.text) return reject('STALE_STATE');
       const audience =
-        segment.kind === 'speech'
-          ? npcSpeechListenerIds(next, actorId, { channel: 'say', text: segment.text })
-          : listeners(next, actorId);
+        privateAudience && !(segment.kind === 'speech' && !input.targetNpcId)
+          ? privateAudience
+          : segment.kind === 'speech'
+            ? npcSpeechListenerIds(next, actorId, { channel: input.channel, text: segment.text })
+            : listeners(next, actorId);
       push({
         kind: segment.kind,
-        channel: 'say',
+        channel: input.channel,
         authorId: actorId,
         authorLabel: next.entities[actorId].label,
         text: segment.text,
         audienceIds: audience,
       });
+      const admitCurrentSpeech = () => {
+        if (options.speechAlreadyRecorded) return undefined;
+        const addressed =
+          input.targetNpcId &&
+          isActorConscious(next.entities[input.targetNpcId]) &&
+          canNpcHear(
+            next,
+            next.entities[input.targetNpcId],
+            next.entities[actorId],
+            npcSpeechHearingRange({ channel: input.channel, text: segment.text }),
+          )
+            ? input.targetNpcId
+            : undefined;
+        const spoken = applyNpcSpeech(
+          next,
+          actorId,
+          addressed,
+          { channel: input.channel, text: segment.text },
+          {
+            suppressReply: true,
+            identity: { turnId, segmentIndex: originalSpeech?.index ?? segment.index },
+            audienceLimit: input.targetNpcId ? privateAudience : undefined,
+          },
+        );
+        if (spoken.error) return spoken.error;
+        const source = spoken.state.npcUtterances?.find(
+          (entry) =>
+            entry.speakerId === actorId && !next.npcUtterances?.some((old) => old.id === entry.id),
+        );
+        entries[entries.length - 1].sourceId = source?.id;
+        next = recordNpcEvents(
+          next,
+          spoken.state,
+          spoken.events,
+          `turn:${turnId}:${segment.index}`,
+        ).state;
+        events.push(...spoken.events);
+        return undefined;
+      };
       if (segment.kind === 'attempt') {
+        const impact = p.steps[i].narrativeImpact;
+        if (impact) {
+          const outcome = applyStoryImpact(next, actorId, turnId, segment.index, impact, input);
+          if (outcome.error) return reject(outcome.error);
+          next = recordNpcEvents(
+            next,
+            outcome.state,
+            outcome.events,
+            `impact:${turnId}:${segment.index}`,
+          ).state;
+          events.push(...outcome.events);
+          push({
+            kind: 'outcome',
+            channel: input.channel,
+            authorId: actorId,
+            code: `NARRATIVE_${impact.effect.toUpperCase()}`,
+            text: narrativeImpactOutcomeText(
+              impact.effect === 'harm' &&
+                actorLifeState(next.entities[impact.targetId]) === 'unconscious'
+                ? 'unconscious'
+                : impact.effect,
+              input.replyLocale,
+            ),
+            audienceIds: audience,
+          });
+          continue;
+        }
         const rawAction = p.steps[i].action;
         const proposed =
           rawAction?.targetId === 'new_item'
             ? { ...rawAction, targetId: `prop-${turnId}` }
             : rawAction;
         if (!proposed) continue; // Descriptive emote, not a mechanically completed action.
-        const action = proposed.kind === 'approach' ? null : allowedAction(next, actorId, proposed);
+        const resolved =
+          proposed.kind === 'travel' && proposed.targetId === 'new_scene'
+            ? { ...proposed, targetId: `scene-${turnId}` }
+            : proposed;
+        const action = proposed.kind === 'approach' ? null : allowedAction(next, actorId, resolved);
         if (!action && proposed.kind !== 'approach') return reject('FORBIDDEN');
         const outcome =
           proposed.kind === 'pick_up'
             ? applyStoryPickup(next, actorId, proposed.targetId!, segment.text, input)
-            : proposed.kind === 'approach'
-              ? approachStoryNpc(next, actorId, resolveNpc(proposed.targetId!))
-              : applyAction(next, actorId, action!);
+            : proposed.kind === 'travel'
+              ? proposed.targetId === 'new_scene'
+                ? travelToLocation(next, actorId, resolved.targetId!)
+                : applyStoryOrderedAction(next, actorId, action!, input)
+              : proposed.kind === 'approach'
+                ? approachStoryNpc(next, actorId, resolveNpc(proposed.targetId!))
+                : applyStoryOrderedAction(next, actorId, action!, input);
         if (outcome.error && (!action || !knownFailure(segment.index, action, outcome.error)))
           return unsupported();
         if (outcome.error === 'OUT_OF_RANGE' || outcome.error === 'PATH_BLOCKED')
@@ -702,60 +1322,105 @@ export function applyStoryTurnProposal(
         }
         push({
           kind: 'outcome',
-          channel: 'say',
+          channel: input.channel,
           authorId: actorId,
-          code: outcome.error ?? 'ACTION_SUCCEEDED',
+          code: storyContactOutcomeCode(outcome),
           // Hearers may not see the target or the giver's private inventory.
-          ...(action ? { action: { kind: narrativeActionSchema.parse(action).kind } } : {}),
+          ...(action ? { action: { kind: storyActionSchema.parse(action).kind } } : {}),
           audienceIds: audience,
         });
       } else if (p.steps[i].reply && p.steps[i].replyNpcId) {
         const npcId = resolveNpc(p.steps[i].replyNpcId!);
         const npc = next.entities[npcId];
+        const committedImpact = next.narrativeCanon?.turns.find(
+          (entry) => entry.id === turnId,
+        )?.impact;
+        const canOmitAdvisoryReply =
+          !!committedImpact && committedImpact.segmentIndex < segment.index;
         if (
           npc?.kind !== 'npc' ||
+          !isActorConscious(npc) ||
           !visible(next, next.entities[actorId], npc) ||
-          footprintDistance(npc, next.entities[actorId]) > 1
-        )
-          return reject('OUT_OF_RANGE');
+          !canNpcHear(
+            next,
+            npc,
+            next.entities[actorId],
+            npcSpeechHearingRange({ channel: input.channel, text: segment.text }),
+          )
+        ) {
+          if (!canOmitAdvisoryReply) return reject('OUT_OF_RANGE');
+          advisoryReplyOmitted = true;
+          const sourceError = admitCurrentSpeech();
+          if (sourceError) return reject(sourceError);
+          continue;
+        }
+        const variant = context.sceneSpeakerImpactVariants?.find(
+          (entry) =>
+            committedImpact &&
+            entry.afterImpact.segmentIndex === committedImpact.segmentIndex &&
+            entry.afterImpact.targetId === committedImpact.targetId &&
+            entry.afterImpact.effect === committedImpact.effect &&
+            entry.changes.speechHash === p.steps[i].replyContextHash,
+        );
+        const base =
+          variant &&
+          [...(context.sceneSpeakers ?? []), ...(context.sceneSpeakerImpactBases ?? [])].find(
+            (entry) => entry.speechHash === variant.baseSpeechHash,
+          );
         const preview =
-          p.steps[i].replyNpcId === 'new_npc'
-            ? undefined
-            : context.sceneSpeakers?.find(
-                (voice) => voice.npcId === npcId && voice.segmentIndex === segment.index,
-              );
+          base && variant
+            ? restoreImpactVoice(base, variant)
+            : p.steps[i].replyNpcId === 'new_npc'
+              ? undefined
+              : context.sceneSpeakers?.find(
+                  (voice) => voice.npcId === npcId && voice.segmentIndex === segment.index,
+                );
         let spoken: ReturnType<typeof safeSpeech>;
         try {
           spoken = safeSpeech(
             next,
             actorId,
             npcId,
-            'say',
+            input.channel,
             segment,
             turnId,
             preview?.observationIds,
             input.replyLocale,
-            true,
+            input.channel === 'say',
+            privateAudience,
           );
         } catch {
-          return reject('FORBIDDEN');
+          if (!canOmitAdvisoryReply) return reject('FORBIDDEN');
+          advisoryReplyOmitted = true;
+          const sourceError = admitCurrentSpeech();
+          if (sourceError) return reject(sourceError);
+          continue;
         }
         if (p.steps[i].replyNpcId === 'new_npc') {
           if (!p.narrative?.newNpc || p.steps[i].replyContextHash) return reject('FORBIDDEN');
         } else {
           if (
             !preview ||
+            preview.npcId !== npcId ||
+            preview.segmentIndex !== segment.index ||
             p.steps[i].replyContextHash !== preview.speechHash ||
             directorVoice(spoken.context).speechHash !== preview.speechHash
-          )
-            return reject('STALE_STATE');
+          ) {
+            if (!canOmitAdvisoryReply) return reject('STALE_STATE');
+            advisoryReplyOmitted = true;
+            const sourceError = admitCurrentSpeech();
+            if (sourceError) return reject(sourceError);
+            continue;
+          }
         }
         entries[entries.length - 1].sourceId = spoken.sourceId;
         next = spoken.state;
         events.push(...spoken.events);
         const response = commitNpcPublicUtterance(next, npcId, {
           ...p.steps[i].reply!,
-          channel: 'say',
+          audienceLimit: privateAudience,
+          allowAudibleRecipient: true,
+          channel: input.channel,
           recipientId: actorId,
           replyLocale: input.replyLocale ?? 'en',
           observationIds: spoken.context.observationIds,
@@ -763,7 +1428,11 @@ export function applyStoryTurnProposal(
           contextHash: spoken.context.speechHash,
           replyToObservationId: spoken.context.replyToObservationId,
         });
-        if (response.error) return reject(response.error);
+        if (response.error) {
+          if (!canOmitAdvisoryReply) return reject(response.error);
+          advisoryReplyOmitted = true;
+          continue; // Source speech is admitted; stale advisory reply is omitted, not queued.
+        }
         const responseUtterance = response.state.npcUtterances?.find(
           (u) => u.speakerId === npcId && !next.npcUtterances?.some((old) => old.id === u.id),
         );
@@ -772,16 +1441,38 @@ export function applyStoryTurnProposal(
         events.push(...response.events);
         push({
           kind: 'npc_reply',
-          channel: 'say',
+          channel: input.channel,
           sourceId,
           authorId: npcId,
           authorLabel: npc.label,
           ...p.steps[i].reply!,
           audienceIds: responseUtterance?.audienceIds ?? [],
         });
+      } else if (segment.kind === 'speech') {
+        const sourceError = admitCurrentSpeech();
+        if (sourceError) return reject(sourceError);
       }
     }
-    push({ kind: 'narration', channel: 'say', text: p.narrative!.narration, audienceIds: ['*'] });
+    let admittedNarration = p.narrative!.narration;
+    if (advisoryReplyOmitted) {
+      // Generated prose may repeat the unadmitted reply. Keep the real consequence,
+      // but never canonize fabricated words from an omitted advisory voice.
+      const admitted = next.narrativeCanon!.turns.find((entry) => entry.id === turnId)!;
+      const impact = admitted.impact!;
+      admittedNarration = narrativeImpactOutcomeText(
+        impact.effect === 'harm' && impact.lifeStateAfter === 'unconscious'
+          ? 'unconscious'
+          : impact.effect,
+        input.replyLocale,
+      );
+      admitted.narration = admittedNarration;
+    }
+    push({
+      kind: 'narration',
+      channel: input.channel,
+      text: admittedNarration,
+      audienceIds: privateAudience ?? ['*'],
+    });
   } else {
     const npcId = input.targetNpcId!;
     for (const [i, segment] of context.segments.entries()) {
@@ -823,8 +1514,8 @@ export function applyStoryTurnProposal(
           kind: 'outcome',
           channel: 'say',
           authorId: actorId,
-          code: r.error ?? 'ACTION_SUCCEEDED',
-          action: { kind: narrativeActionSchema.parse(step.action).kind },
+          code: storyContactOutcomeCode(r),
+          action: { kind: storyActionSchema.parse(step.action).kind },
           audienceIds: publicAudience,
         });
       } else {
@@ -877,7 +1568,43 @@ export function applyStoryTurnProposal(
       }
     }
   }
-  return { state: next, events, entries, actions };
+  let pendingTravel: StoryTravelIntent | undefined;
+  if (p.travelIntent) {
+    const destination = resolveTravelDestination(next, p.travelIntent.destinationName);
+    if (!destination.ambiguous && !destination.mapId) pendingTravel = p.travelIntent;
+    else if (destination.mapId) {
+      const outcome = travelToLocation(next, actorId, destination.mapId);
+      if (!outcome.error) {
+        next = recordNpcEvents(
+          next,
+          outcome.state,
+          outcome.events,
+          `turn:${turnId}:semantic-travel`,
+        ).state;
+        events.push(...outcome.events);
+        actions.push({
+          segmentIndex: p.travelIntent.segmentIndex,
+          action: { kind: 'travel', targetId: destination.mapId },
+        });
+      }
+      push({
+        kind: 'outcome',
+        channel: 'say',
+        authorId: actorId,
+        code: outcome.error ?? 'ACTION_SUCCEEDED',
+        audienceIds: [actorId],
+        action: { kind: 'travel' },
+      });
+    } else
+      push({
+        kind: 'outcome',
+        channel: 'say',
+        authorId: actorId,
+        code: 'AMBIGUOUS',
+        audienceIds: [actorId],
+      });
+  }
+  return { state: next, events, entries, actions, ...(pendingTravel ? { pendingTravel } : {}) };
 }
 
 /** Complete only a short, collision-checked approach explicitly proposed for a player attempt.

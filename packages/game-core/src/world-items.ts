@@ -1,3 +1,4 @@
+import { isActorConscious } from '@dreamwalk/contracts';
 import {
   footprintDistance,
   npcItemIntentsSchema,
@@ -57,7 +58,7 @@ function surface(
 /** Only the NPC's approved private stock is an item-creation capability. */
 export function npcItemContext(s: GameState, npcId: string) {
   const npc = s.entities[npcId];
-  if (npc?.kind !== 'npc') return {};
+  if (npc?.kind !== 'npc' || !isActorConscious(npc)) return {};
   if (s.npcBrains?.[npcId]?.living?.personality.taboos.includes('give_valuables'))
     return {
       itemProvisioning: {
@@ -248,6 +249,7 @@ export function consumeWorldItem(state: GameState, actorId: string, itemId: stri
     item = state.entities[itemId];
   if (
     !actor ||
+    !isActorConscious(actor) ||
     !['player', 'npc'].includes(actor.kind) ||
     item?.kind !== 'item' ||
     !item.item?.edible

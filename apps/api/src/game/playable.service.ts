@@ -352,6 +352,7 @@ export class PlayableService {
             description?: string;
             appearance?: string;
             personality?: string;
+            greeting?: string;
             biography?: string;
             characterProfile?: unknown;
             characterPackageVersionId?: string;
@@ -377,6 +378,8 @@ export class PlayableService {
         role: (source.role ?? '').slice(0, 120),
         description: (source.description ?? '').slice(0, 4000),
         appearance: (source.appearance ?? '').slice(0, 4000),
+        ...(source.personality ? { personality: source.personality.slice(0, 4000) } : {}),
+        ...(source.greeting ? { greeting: source.greeting.slice(0, 2000) } : {}),
       };
       const memory = compiled.playable!.npcBrains[npc.id].living;
       if (memory && (!source.characterProfile || memory.personality.biography === undefined))
@@ -558,6 +561,8 @@ export class PlayableService {
         role: n.data.role ?? '',
         description: n.data.description ?? '',
         appearance: n.data.appearance ?? '',
+        personality: n.data.personality ?? '',
+        greeting: n.data.greeting ?? '',
         characterProfile: n.data.characterProfile ?? null,
       })),
     };
@@ -628,6 +633,13 @@ export class PlayableService {
     );
     checked.playable.narrativePremise = sourcePackage.narrativePremise;
     for (const npc of sourcePackage.npcDefinitions ?? []) {
+      const entity = checked.playable.entities[npc.id];
+      if (entity?.kind === 'npc' && entity.publicProfile) {
+        if (typeof npc.data.personality === 'string')
+          entity.publicProfile.personality = npc.data.personality.slice(0, 4000);
+        if (typeof npc.data.greeting === 'string')
+          entity.publicProfile.greeting = npc.data.greeting.slice(0, 2000);
+      }
       const memory = checked.playable.npcBrains[npc.id]?.living;
       if (memory && (!npc.data.characterProfile || memory.personality.biography === undefined))
         memory.personality.biography = [npc.data.personality, npc.data.biography]

@@ -2,6 +2,48 @@
 import { useT } from '@/lib/i18n';
 export const storyMessages = {
   title: ['История', 'Story', 'Історія'],
+  declineLocation: [
+    'Продолжить без новой локации',
+    'Continue without the new location',
+    'Продовжити без нової локації',
+  ],
+  locationDeclined: [
+    'Создание локации «{name}» отменено. Предыдущие действия сохранены.',
+    'Location creation cancelled: {name}. Earlier actions are preserved.',
+    'Створення локації «{name}» скасовано. Попередні дії збережено.',
+  ],
+  declineUnknown: [
+    'Ответ на отмену ещё не получен. Повторим только ту же отмену, без генерации.',
+    'Cancellation result is not known yet. Retry the same cancellation without generating.',
+    'Відповідь на скасування ще не отримано. Повторимо лише те саме скасування, без генерації.',
+  ],
+  locationPreparing: [
+    'Подготавливается локация: {name}. Переход произойдёт после готовности карты и текста.',
+    'Preparing {name}. Arrival will happen after the map and text are ready.',
+    'Готується локація: {name}. Перехід відбудеться після готовності карти й тексту.',
+  ],
+  locationReady: ['Локация готова: {name}.', 'Location ready: {name}.', 'Локація готова: {name}.'],
+  locationFailed: [
+    'Переход в {name} не состоялся. Уже выполненная генерация может иметь стоимость; повторная оплата не запускается автоматически.',
+    'Travel to {name} did not complete. Completed generation may have a cost; another paid attempt will not start automatically.',
+    'Перехід до {name} не відбувся. Уже виконана генерація може мати вартість; повторна оплата не запускається автоматично.',
+  ],
+  locationUnknown: [
+    'Результат генерации {name} уточняется. Новый платный запрос не запускается.',
+    'The generation outcome for {name} is being reconciled. No new paid request will start.',
+    'Результат генерації {name} уточнюється. Новий платний запит не запускається.',
+  ],
+  locationImageCost: ['Карта: ', 'Map: ', 'Карта: '],
+  locationSeparatePost: [
+    'Отправь переход в новое место отдельным действием между звёздочками. Остальные действия и слова можно отправить отдельно; генерация ещё не оплачена.',
+    'Send travel to a new place as a separate action between asterisks. Send other actions or speech separately; no generation has been charged.',
+    'Надішли перехід до нового місця окремою дією між зірочками. Інші дії та слова можна надіслати окремо; генерацію ще не оплачено.',
+  ],
+  locationRequiresTurns: [
+    'Для создания новой локации с картой и единым подтверждением стоимости включи пошаговые ходы. Переходы в существующие локации доступны и сейчас.',
+    'Enable turn-based play to create a new illustrated location with one combined cost approval. Existing locations are available now.',
+    'Для створення нової локації з картою та єдиним підтвердженням вартості ввімкни покрокові ходи. Перехід до наявних локацій доступний зараз.',
+  ],
   ooc: ['Вне игры', 'Out of character', 'Поза грою'],
   mock: ['Тестовый ведущий', 'Test director', 'Тестовий ведучий'],
   external: ['AI-ведущий', 'AI director', 'AI-ведучий'],

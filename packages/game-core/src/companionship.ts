@@ -1,3 +1,4 @@
+import { isActorConscious } from '@dreamwalk/contracts';
 import {
   adjacentFootprintAnchors,
   footprintDistance,
@@ -10,7 +11,7 @@ import { findPath, visible } from './index';
 export function companionAction(state: GameState, npcId: string): GameAction | undefined {
   const npc = state.entities[npcId];
   const agreement = state.npcBrains?.[npcId]?.living?.companionship;
-  if (!npc || !agreement) return undefined;
+  if (!npc || !isActorConscious(npc) || !agreement) return undefined;
   const leader = state.entities[agreement.actorId];
   if (!leader || leader.kind !== 'player' || npc.encounterId || leader.encounterId)
     return { kind: 'wait' };

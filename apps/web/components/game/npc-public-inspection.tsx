@@ -18,6 +18,7 @@ export function NpcPublicInspection({
   appearance,
   portraitUrl,
   disabled,
+  lifeState = 'conscious',
   onClose,
   onTalk,
 }: {
@@ -30,6 +31,7 @@ export function NpcPublicInspection({
   appearance?: string;
   portraitUrl?: string;
   disabled: boolean;
+  lifeState?: 'conscious' | 'unconscious' | 'dead';
   onClose: () => void;
   onTalk: () => void;
 }) {
@@ -81,6 +83,11 @@ export function NpcPublicInspection({
       {portraitUrl && <img className={styles.portrait} src={portraitUrl} alt={name} />}
       <div className={styles.content}>
         <h2 id={titleId}>{name}</h2>
+        {lifeState !== 'conscious' && (
+          <p role="status" data-life-state={lifeState}>
+            {text(lifeState)} · {text('cannotRespond')}
+          </p>
+        )}
         {role && (
           <p className={styles.role}>
             <span>{t('Роль')}</span>
@@ -92,7 +99,7 @@ export function NpcPublicInspection({
         <Button
           type="button"
           className={styles.talk}
-          disabled={disabled}
+          disabled={disabled || lifeState !== 'conscious'}
           data-testid="npc-inspection-talk"
           onClick={() => {
             onTalk();

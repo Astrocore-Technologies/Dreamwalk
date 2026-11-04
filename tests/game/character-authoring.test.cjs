@@ -288,21 +288,26 @@ test('real freeze binds current complete author profile and lore into a new chec
       data: c.adventureSchema.parse({ title: f.source.title, content: f.source.content }),
     };
   delete rows[0].data.characterProfile.personality.biography;
-  rows[0].data.personality = 'PRIVATE_LEGACY_PERSONALITY';
+  // npcSchema.personality is explicit public metadata; biography and typed private
+  // personality fields remain separate and must not enter the projection.
+  rows[0].data.personality = 'PUBLIC_PERSONALITY';
   rows[0].data.biography = 'PRIVATE_BACKSTORY';
   const first = await service.freeze({ query }, story, 'private', 4, 0);
   assert.equal(
     versions[0].payload.compiled.npcBrains[f.ids[0]].living.personality.biography,
-    'PRIVATE_LEGACY_PERSONALITY\nPRIVATE_BACKSTORY',
+    'PUBLIC_PERSONALITY\nPRIVATE_BACKSTORY',
+  );
+  const projected = core.projectState(
+    core.createStateFromPlayable(versions[0].payload.compiled, ['player']),
+    'player',
+  );
+  assert.equal(
+    projected.entities.find((entity) => entity.id === f.ids[0]).publicProfile.personality,
+    'PUBLIC_PERSONALITY',
   );
   assert.doesNotMatch(
-    JSON.stringify(
-      core.projectState(
-        core.createStateFromPlayable(versions[0].payload.compiled, ['player']),
-        'player',
-      ),
-    ),
-    /PRIVATE_LEGACY_PERSONALITY|PRIVATE_BACKSTORY/,
+    JSON.stringify(projected),
+    /PRIVATE_BACKSTORY|PRIVATE_BIO|PRIVATE_EXAMPLE|PRIVATE_LORE/,
   );
   const immutable = JSON.stringify(versions[0]);
   rows[0].data.characterProfile.personality.characterization.publicVoice.cadence = 'elaborate';
@@ -540,4 +545,49 @@ test('lore relevance accepts the actual runtime map identifier domain', () => {
   });
   const built = compileStoryPlan(f.source, f.proposal);
   assert.equal(built.draft.npcs[0].initialFacts[0].relevanceMapId, mapId);
+});
+
+test('public personality and greeting survive story compilation without private biography', () => {
+  const { source, proposal } = fixture();
+  source.npcs[0].personality = 'Blunt, independent and curious; dislikes empty reassurance.';
+  source.npcs[0].greeting = 'Name your problem. I will decide whether it interests me.';
+  const checked = compileStoryPlan(source, proposal);
+  const id = source.npcs[0].id;
+  const profile = checked.playable.entities[id].publicProfile;
+  assert.equal(profile.personality, source.npcs[0].personality);
+  assert.equal(profile.greeting, source.npcs[0].greeting);
+  assert.doesNotMatch(JSON.stringify(profile), /PRIVATE_/);
+});
+
+test('pinned-source restoration only fills public fields by exact identity, without mutation', () => {
+  const { restorePublicNpcPresentation } = require('../../apps/api/dist/game/public-npc-profile');
+  const { source, proposal } = fixture();
+  const checked = compileStoryPlan(source, proposal);
+  const state = core.createStateFromPlayable(checked.playable, ['alice']);
+  const id = source.npcs[0].id;
+  const before = JSON.stringify(state);
+  const pinned = {
+    npcDefinitions: [
+      {
+        id,
+        data: {
+          personality: 'Skeptical and succinct',
+          greeting: 'What brings you here?',
+          biography: 'PRIVATE_BIO_SOURCE',
+          secrets: 'PRIVATE_SECRET_SOURCE',
+        },
+      },
+      { id: 'unbound-id', data: { name: source.npcs[1].name, personality: 'WRONG_ALIAS' } },
+    ],
+  };
+  const restored = restorePublicNpcPresentation(state, pinned);
+  assert.equal(JSON.stringify(state), before);
+  assert.equal(restored.entities[id].publicProfile.personality, 'Skeptical and succinct');
+  assert.equal(restored.entities[source.npcs[1].id].publicProfile.personality, undefined);
+  assert.doesNotMatch(JSON.stringify(restored.entities[id].publicProfile), /PRIVATE_|WRONG_ALIAS/);
+  assert.equal(restorePublicNpcPresentation(restored, pinned), restored);
+  const changed = restorePublicNpcPresentation(restored, {
+    npcDefinitions: [{ id, data: { personality: 'replacement' } }],
+  });
+  assert.equal(changed, restored);
 });

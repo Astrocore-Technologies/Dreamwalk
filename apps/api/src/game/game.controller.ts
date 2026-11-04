@@ -108,6 +108,13 @@ export class GameController {
   ) {
     return this.game.worldGenerationConsent(req, id, body);
   }
+  @Post('campaigns/:id/world-generation/decline') worldGenerationDecline(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.worldGenerationDecline(req, id, body);
+  }
   @Post('campaigns/:id/turns/:turnId/replies/quote') storyReplyQuote(
     @Req() req: Request,
     @Param('id') id: string,
