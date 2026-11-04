@@ -113,7 +113,7 @@ import type { ReadyDecision, AiPurpose, DecisionContext } from '../ai/types';
 import { insertNpcRequest, type NpcDecisionRequest } from './npc-requests';
 import { archiveNpcEpisodes, recallNpcEpisodes } from './npc-memory';
 import { Auth } from '../auth';
-import { fail } from '../errors';
+import { ApiException, fail } from '../errors';
 import { PlayableService, sourceAccessSql, sourceLiveSql } from './playable.service';
 
 export const commandSchema = z
@@ -156,6 +156,7 @@ export const commandSchema = z
     turnFence: turnFenceSchema.optional(),
     intent: gameIntentSchema.optional(),
     expectedRevision: z.number().int().nonnegative().optional(),
+    ordinaryGeneration: z.boolean().optional(),
   })
   .strict();
 export const moveSchema = gameMoveSchema
@@ -246,6 +247,8 @@ export class GameService implements OnModuleDestroy {
   private publications = new Map<string, Promise<void>>();
   private pending = new Map<string, number>();
   private scheduledAdvances = new Set<string>();
+  private ordinaryAdmissions = new Set<string>();
+  private ordinaryAdmissionChecks = new Map<string, number>();
   private listeners = new Set<(campaignId: string) => void>();
   private npcJobs = new Set<string>();
   private npcTimers = new Set<ReturnType<typeof setTimeout>>();
@@ -320,7 +323,12 @@ export class GameService implements OnModuleDestroy {
           .catch(() => {
             /* Database failure freezes durable mutation; next tick retries. */
           })
-          .finally(() => this.scheduledAdvances.delete(id));
+          .finally(() => {
+            this.scheduledAdvances.delete(id);
+            // Outside the campaign serial lock: native map-token preflight must
+            // release it before its bounded, non-generating count operation.
+            void this.admitOrdinaryRound(id);
+          });
       }
     }, 50);
     this.timer.unref();
@@ -550,7 +558,15 @@ export class GameService implements OnModuleDestroy {
           : await forecastWorldRound(this.db, this.ai, id, live.state, (state, request) =>
               this.deferredSpeechContext(state, request),
             );
-      return { ...status, forecast };
+      const ordinary =
+        (
+          await this.db.query(
+            `SELECT state,result_code AS code FROM game_ordinary_round_consents
+         WHERE campaign_id=$1 AND owner_id=$2 ORDER BY created_at DESC LIMIT 1`,
+            [id, a.user.id],
+          )
+        )[0] ?? null;
+      return { ...status, forecast, ordinary };
     });
   }
   worldGenerationQuote(req: Request, id: string, body: unknown) {
@@ -3268,6 +3284,15 @@ export class GameService implements OnModuleDestroy {
           };
         }
       }
+      const ordinaryRoundId =
+        !result.error &&
+        command.type === 'turn.end' &&
+        command.ordinaryGeneration === true &&
+        this.ai.releaseGeneration() &&
+        a.user.id === a.ownerId &&
+        live.state.turnController?.phase === 'player'
+          ? live.state.turnController.roundId
+          : undefined;
       const response = {
         ...(decisionRequest ? { decisionRequestId: decisionRequest.id } : {}),
         status: result.error ? 'rejected' : 'committed',
@@ -3289,6 +3314,12 @@ export class GameService implements OnModuleDestroy {
           response,
         },
         async (c) => {
+          if (ordinaryRoundId !== undefined)
+            await c.query(
+              `INSERT INTO game_ordinary_round_consents(campaign_id,round_id,owner_id,operation_id)
+               VALUES($1,$2,$3,$4) ON CONFLICT(campaign_id,round_id) DO NOTHING`,
+              [id, ordinaryRoundId, a.user.id, command.operationId],
+            );
           if (job)
             await c.query(
               "INSERT INTO game_npc_jobs(id,campaign_id,npc_id,requester_actor_id,proposal,due_at,deadline_at) VALUES($1,$2,$3,$4,$5,now()+interval '150 milliseconds',now()+interval '8 seconds')",
@@ -3728,6 +3759,95 @@ export class GameService implements OnModuleDestroy {
       [id],
     );
   }
+  private async blockOrdinaryRound(id: string, roundId: string, code: string) {
+    await this.db.tx(async (c) => {
+      const blocked = await c.query(
+        `UPDATE game_ordinary_round_consents SET state='blocked',result_code=$3,updated_at=now()
+         WHERE campaign_id=$1 AND round_id=$2 AND state='pending' RETURNING round_id`,
+        [id, roundId, code],
+      );
+      if (!blocked.rowCount || code === 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED') return;
+      const unspent = await c.query(
+        `SELECT id FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued'
+         AND context->'turnFence'->>'roundId'=$2`,
+        [id, roundId],
+      );
+      for (const request of unspent.rows)
+        await this.worldGeneration.failUnspent(id, request.id, code, c);
+    });
+  }
+  private async admitOrdinaryRound(id: string) {
+    const cached = this.live.get(id);
+    if (
+      this.stopping ||
+      !cached ||
+      cached.paused ||
+      cached.state.turnController?.phase !== 'world' ||
+      this.ordinaryAdmissions.has(id) ||
+      (this.ordinaryAdmissionChecks.get(id) ?? 0) > Date.now()
+    )
+      return;
+    this.ordinaryAdmissions.add(id);
+    this.ordinaryAdmissionChecks.set(id, Date.now() + 1000);
+    let attemptedRoundId: string | undefined;
+    try {
+      await this.withRuntimeVisionQuote(() =>
+        this.serial(id, async () => {
+          const live = this.live.get(id);
+          if (this.stopping || !live || live.paused || live.state.turnController?.phase !== 'world')
+            return;
+          const roundId = live.state.turnController.roundId;
+          const authority = (
+            await this.db.query(
+              `SELECT owner_id,operation_id FROM game_ordinary_round_consents
+           WHERE campaign_id=$1 AND round_id=$2 AND state='pending'`,
+              [id, roundId],
+            )
+          )[0];
+          if (!authority) return;
+          attemptedRoundId = roundId;
+          await this.scheduleRoundRequests(id, live);
+          try {
+            const result = await this.worldGeneration.quote(authority.owner_id, id, live.state, {
+              operationId: authority.operation_id,
+            });
+            await this.worldGeneration.consent(
+              authority.owner_id,
+              id,
+              live.state,
+              {
+                operationId: authority.operation_id,
+                quoteId: result.quote.id,
+                consent: true,
+              },
+              roundId,
+            );
+            live.decisionsPending = true;
+          } catch (error) {
+            // Preflight requests and transport/database uncertainty must reach the
+            // outer retry wrapper. Never turn an uncertain commit into a new quote.
+            if (!(error instanceof ApiException)) throw error;
+            const code = (error.getResponse() as { code: string }).code;
+            await this.blockOrdinaryRound(id, roundId, code);
+            live.decisionsPending = true;
+          }
+        }),
+      );
+    } catch (error) {
+      // A definitive count failure is terminal for this round, never a polling
+      // retry loop. Connection/commit uncertainty retains the same durable id.
+      if (attemptedRoundId !== undefined && error instanceof ApiException) {
+        const code = (error.getResponse() as { code: string }).code;
+        try {
+          await this.serial(id, () => this.blockOrdinaryRound(id, attemptedRoundId!, code));
+        } catch {
+          /* Database failure leaves the original authority unchanged. */
+        }
+      }
+    } finally {
+      this.ordinaryAdmissions.delete(id);
+    }
+  }
   private async advanceTurnWorld(id: string, live: Live) {
     const turn = live.state.turnController;
     if (!turn || turn.phase !== 'world') return;
@@ -3818,7 +3938,15 @@ export class GameService implements OnModuleDestroy {
       }
     }
     const finished = finishWorldPhase(state, turnFence(state)!);
-    if (!finished.error) await this.persist(id, live, finished.state, 'turn.world.completed');
+    if (!finished.error)
+      await this.persist(id, live, finished.state, 'turn.world.completed', undefined, async (c) => {
+        // A round with no paid work must not leave a fictitious pending charge.
+        await c.query(
+          `UPDATE game_ordinary_round_consents SET state='accepted',updated_at=now()
+           WHERE campaign_id=$1 AND round_id=$2 AND state='pending'`,
+          [id, turn.roundId],
+        );
+      });
     else if (state !== live.state) await this.persist(id, live, state, 'turn.world.actions');
   }
   private async advance(id: string) {
@@ -3832,6 +3960,7 @@ export class GameService implements OnModuleDestroy {
       this.live.delete(id);
       this.artCheckedAt.delete(id);
       this.npcCooldown.delete(id);
+      this.ordinaryAdmissionChecks.delete(id);
       for (const actor of Object.keys(live.state.entities))
         this.projections.delete(actor + ':' + live.state.seed);
       return;

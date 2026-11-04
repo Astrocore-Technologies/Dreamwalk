@@ -434,7 +434,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             activeName={
               members.data?.members.find((m) => m.actorId === p.turn?.activeActorId)?.username
             }
-            onEnd={() => void game.command({ type: 'turn.end' })}
+            onEnd={() => void game.command({ type: 'turn.end', ordinaryGeneration: true })}
             onReaction={(decision) => void game.command({ type: 'turn.reaction', decision })}
           />
         </div>

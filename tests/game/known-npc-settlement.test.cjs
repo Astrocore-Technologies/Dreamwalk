@@ -162,6 +162,7 @@ function fixture() {
     audit,
     sqls,
     service,
+    client,
     body,
     requestAs: (id) => {
       requester = id;
@@ -396,4 +397,194 @@ test('HTTP route is explicit, no-store and registered; service has no provider d
     source,
     /\.generate\(|\.enqueue\(|UPDATE game_|UPDATE npc_ai_|UPDATE generation_/,
   );
+});
+
+function ordinaryFixture() {
+  const f = fixture();
+  const { digest } = require('../../apps/api/dist/ai/context');
+  f.job.status = 'running';
+  f.job.npc_id = 'synthetic-npc';
+  f.job.purpose = 'plan';
+  f.job.provider_upper_micros = '2626';
+  f.job.context = { contextHash: 'exact', worldRoundDecision: true };
+  f.job.context_hash = 'exact';
+  f.job.policy_version = 'synthetic-v1';
+  f.job.request_meta = {
+    acceptedWorldBatchId: randomUUID(),
+    runtimeRequestId: randomUUID(),
+    consent: true,
+  };
+  f.hold.status = 'held';
+  f.hold.reason = null;
+  Object.assign(f.quote.price_snapshot.providerQuote, {
+    policyVersion: 'synthetic-v1',
+    contextHash: 'exact',
+  });
+  f.request = {
+    id: f.job.request_meta.runtimeRequestId,
+    job_id: f.job.id,
+    requester_user_id: f.owner,
+    campaign_id: f.campaign,
+    npc_id: f.job.npc_id,
+    purpose: 'plan',
+    context: structuredClone(f.job.context),
+  };
+  f.batch = {
+    id: f.job.request_meta.acceptedWorldBatchId,
+    state: 'accepted',
+    accepted_at: new Date(Date.now() - 2000),
+    expires_at: new Date(Date.now() - 1000),
+    owner_id: f.owner,
+    campaign_id: f.campaign,
+    quote: { ordinaryTurnConsentVersion: 'end-turn-v1' },
+    entries: [
+      {
+        requestId: f.request.id,
+        npcId: f.job.npc_id,
+        purpose: 'plan',
+        contextDigest: digest(f.job.context),
+        quote: { id: f.job.quote_id },
+      },
+    ],
+  };
+  const {
+    ordinaryFailureSettlement,
+  } = require('../../apps/api/dist/ai/ordinary-failure-settlement');
+  f.settlement = () => ordinaryFailureSettlement(f.job, f.batch, f.request, f.hold, f.quote);
+  return f;
+}
+
+test('ordinary known failure settles only its original held bill without new generation', () => {
+  const f = ordinaryFixture();
+  const result = f.settlement();
+  assert.deepEqual(result, {
+    outcome: 'success',
+    actualMicros: '743',
+    evidence: 'configured_rates',
+    receiptId: `ordinary-failure:${f.job.id}`,
+  });
+  const { planSparkSettlement } = require('../../apps/api/dist/generation/sparks-accounting');
+  const plan = planSparkSettlement(
+    { ...f.hold, spark_rate_version: 'api-cent-2-sparks-v2' },
+    result,
+  );
+  assert.equal(plan.captured, '1486');
+  assert.equal(plan.released, '3766');
+  assert.equal(plan.pending, false);
+  const settled = {
+    ...f.hold,
+    status: 'settled',
+    settlement_fingerprint: plan.fingerprint,
+    spark_rate_version: 'api-cent-2-sparks-v2',
+  };
+  assert.equal(planSparkSettlement(settled, result).duplicate, true);
+  assert.equal(f.ledger.length, 0); // This proof is read-only; existing accounting owns the one capture.
+});
+
+test('exact ordinary director bill can settle but never expands historical NPC recovery', () => {
+  const f = ordinaryFixture();
+  f.job.subject_kind = 'player';
+  f.job.purpose = f.request.purpose = f.batch.entries[0].purpose = 'story_turn';
+  assert.equal(f.settlement().actualMicros, '743');
+  f.job.status = 'stale';
+  f.hold.status = 'pending';
+  f.hold.reason = 'failure_policy_pending';
+  assert.throws(
+    () => knownNpcSettlementQuote(f.job, f.hold, f.quote),
+    /NPC_SETTLEMENT_UNAVAILABLE/,
+  );
+});
+
+for (const [name, change] of [
+  [
+    'player with non-director purpose',
+    (f) => {
+      f.job.subject_kind = 'player';
+    },
+  ],
+  ['legacy consent', (f) => delete f.batch.quote.ordinaryTurnConsentVersion],
+  [
+    'old pending hold',
+    (f) => {
+      f.hold.status = 'pending';
+      f.hold.reason = 'failure_policy_pending';
+    },
+  ],
+  [
+    'unknown provider cost',
+    (f) => {
+      f.job.provider_actual_micros = null;
+      f.job.provider_budget_status = 'unknown';
+    },
+  ],
+  ['unverified cache cost', (f) => (f.job.provider_usage.costVerifiedForSparks = false)],
+  ['changed price', (f) => (f.quote.price_snapshot.providerQuote.inputMicrosPerMillion = 999999)],
+  ['reserve overrun', (f) => (f.job.provider_upper_micros = '1')],
+  ['wrong owner', (f) => (f.batch.owner_id = randomUUID())],
+  ['wrong job', (f) => (f.request.job_id = randomUUID())],
+  ['changed request', (f) => (f.request.context.changed = true)],
+  ['duplicate entry', (f) => f.batch.entries.push(f.batch.entries[0])],
+  ['unaccepted batch', (f) => (f.batch.state = 'quoted')],
+  ['late consent', (f) => (f.batch.accepted_at = new Date(Date.now() + 1000))],
+  ['location image', (f) => (f.batch.quote.generatedLocationImages = 1)],
+  ['location media', (f) => (f.batch.media_entries = [{ kind: 'image' }])],
+  ['explicit estimate risk', (f) => (f.batch.quote.estimateRiskConsentRequired = true)],
+])
+  test(`ordinary failure stays closed for ${name}`, () => {
+    const f = ordinaryFixture();
+    change(f);
+    assert.equal(f.settlement(), undefined);
+    assert.equal(f.ledger.length, 0);
+  });
+
+test('real NPC finalize consumes an ordinary known failure once and leaves later rounds unblocked', async () => {
+  const f = ordinaryFixture();
+  const { NpcAiEngine } = require('../../apps/api/dist/ai/npc-ai.service');
+  const { ReleaseGenerationProvider } = require('../../apps/api/dist/generation/release-provider');
+  let calls = 0;
+  const provider = new ReleaseGenerationProvider(
+    {
+      id: 'synthetic',
+      version: 'fixture',
+      external: true,
+      generate: async () => {
+        calls++;
+        throw new Error('Must not generate');
+      },
+    },
+    { release: {}, lockAuthorization: async () => f.authorization },
+  );
+  const baseQuery = f.client.query;
+  const client = {
+    query: async (sql, values = []) => {
+      let rows;
+      if (sql.startsWith('SELECT * FROM npc_ai_jobs')) rows = [{ ...f.job }];
+      else if (sql.includes('FROM game_world_generation_batches')) rows = [f.batch];
+      else if (sql.includes('FROM game_npc_decision_requests')) rows = [f.request];
+      else if (sql.includes('FROM generation_budget_scopes'))
+        rows = [{ id: f.reservation.scope_id }];
+      else if (sql.includes('FROM spark_holds') && values.length === 1) rows = [{ ...f.hold }];
+      else if (sql.startsWith('UPDATE npc_ai_jobs')) {
+        f.job.status = values[1];
+        rows = [];
+      } else return baseQuery(sql, values);
+      return { rows, rowCount: rows.length };
+    },
+  };
+  const engine = new NpcAiEngine({ tx: (fn) => fn(client) }, provider);
+  await engine.finalize(client, f.job.id, 'stale');
+  assert.equal(f.job.status, 'stale');
+  assert.equal(f.hold.status, 'settled');
+  assert.equal(f.wallet.held_subunits, '0');
+  assert.deepEqual(
+    f.ledger.map(({ kind, amount }) => ({ kind, amount })),
+    [
+      { kind: 'capture', amount: '1486' },
+      { kind: 'release', amount: '3766' },
+    ],
+  );
+  await engine.finalize(client, f.job.id, 'stale');
+  assert.equal(f.ledger.length, 2);
+  assert.equal(calls, 0);
+  assert.equal(f.job.proposal.private, 'must remain unchanged');
 });

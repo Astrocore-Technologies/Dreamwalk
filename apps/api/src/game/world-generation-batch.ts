@@ -351,7 +351,13 @@ export class WorldGenerationBatch {
       return { status: 'quoted' as const, operationId: input.operationId, quote };
     });
   }
-  async consent(userId: string, campaignId: string, state: GameState, body: unknown) {
+  async consent(
+    userId: string,
+    campaignId: string,
+    state: GameState,
+    body: unknown,
+    ordinaryRoundId?: string,
+  ) {
     const input = consentInput.parse(body);
     return this.db.tx(async (c) => {
       await this.authorize(c, userId, campaignId);
@@ -365,6 +371,34 @@ export class WorldGenerationBatch {
       if (!batch) fail(404, 'NOT_FOUND', 'NOT_FOUND');
       if (batch.operation_id !== input.operationId)
         fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+      // This argument is server-only. Public request bodies cannot stamp this
+      // policy or authorize a future round, another payer, or image generation.
+      if (ordinaryRoundId !== undefined) {
+        const authority = (
+          await c.query(
+            `SELECT 1 FROM game_ordinary_round_consents
+           WHERE campaign_id=$1 AND round_id=$2 AND owner_id=$3 AND operation_id=$4
+           AND state IN ('pending','accepted') FOR UPDATE`,
+            [campaignId, ordinaryRoundId, userId, input.operationId],
+          )
+        ).rows[0];
+        if (
+          !authority ||
+          state.turnController?.phase !== 'world' ||
+          state.turnController.roundId !== ordinaryRoundId ||
+          batch.turn_fence?.roundId !== ordinaryRoundId
+        )
+          fail(409, 'ORDINARY_ROUND_NOT_AUTHORIZED', 'ORDINARY_ROUND_NOT_AUTHORIZED');
+        if (
+          batch.quote.generatedLocationImages > 0 ||
+          batch.quote.estimateRiskConsentRequired ||
+          (Array.isArray(batch.media_entries) && batch.media_entries.length > 0) ||
+          !(batch.entries as Entry[]).every((entry) =>
+            ['plan', 'summary', 'speech', 'story_turn'].includes(entry.purpose),
+          )
+        )
+          fail(409, 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED', 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED');
+      }
       if (batch.accepted_at) {
         const previous = await this.progress(c, campaignId);
         return {
@@ -451,9 +485,25 @@ export class WorldGenerationBatch {
           [entry.requestId, userId],
         );
       await c.query(
-        "UPDATE game_world_generation_batches SET state='accepted',accepted_at=now() WHERE id=$1",
-        [batch.id],
+        "UPDATE game_world_generation_batches SET state='accepted',accepted_at=now(),quote=$2::jsonb WHERE id=$1",
+        [
+          batch.id,
+          JSON.stringify(
+            ordinaryRoundId === undefined
+              ? batch.quote
+              : {
+                  ...batch.quote,
+                  ordinaryTurnConsentVersion: 'end-turn-v1',
+                },
+          ),
+        ],
       );
+      if (ordinaryRoundId !== undefined)
+        await c.query(
+          `UPDATE game_ordinary_round_consents SET state='accepted',batch_id=$3,updated_at=now()
+           WHERE campaign_id=$1 AND round_id=$2 AND state='pending'`,
+          [campaignId, ordinaryRoundId, batch.id],
+        );
       return { accepted: true as const, pending: true };
     });
   }

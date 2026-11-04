@@ -2,6 +2,8 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { transformSync } from 'esbuild';
+import * as storyGuards from '../../apps/web/components/game/story-turn-guards.ts';
+import { projectionTurnFence } from '../../apps/web/components/game/turn-ui.ts';
 import {
   formatSparkSubunits,
   providerMicrosToSparkSubunits,
@@ -25,6 +27,7 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
     tree,
     props;
   const react = {
+    useId: () => 'hint',
     useCallback(fn, deps) {
       const index = cursor++;
       const old = cells[index];
@@ -64,11 +67,20 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
   const module = { exports: {} };
   const imports = {
     react,
+    'lucide-react': { Send: 'send-icon' },
+    '../visual-authoring/sparks-cost': { SparkReceiptCost: 'receipt' },
+    '@/components/ui': { Button: 'button', ErrorBox: 'error', Textarea: 'textarea' },
+    './world-generation-confirmation': { WorldGenerationConfirmation: 'world-status' },
+    './living-notices': { noticeLabels: {} },
+    './use-story-scroll': { useStoryScroll: () => ({}) },
+    './story-turn-guards': storyGuards,
+    './turn-ui': { projectionTurnFence },
+    './turn-messages': { useTurnText: () => copy },
     'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
     '../visual-authoring/spark-equivalent': { providerSparkSubunits },
     '@dreamwalk/contracts': { formatSparkSubunits, providerMicrosToSparkSubunits },
     '@/lib/client': { api, ApiError, errorMessage: (error) => error.message },
-    '@/lib/i18n': { useT: () => ({ locale }) },
+    '@/lib/i18n': { useT: () => ({ locale, t: copy }), getLocale: () => locale },
     '../ui': { Button: 'button', ErrorBox: 'error' },
     './story-reply-confirmation': { StoryReplyConfirmation: 'reply-confirmation' },
     './story-cost': { StoryCost: 'cost', RuntimeMapQuoteNotice: 'map-notice' },
@@ -85,6 +97,7 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
     'clearTimeout',
     'setInterval',
     'clearInterval',
+    'window',
     code,
   )(
     (name) => {
@@ -103,6 +116,7 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
       return nextTimer;
     },
     (id) => timers.delete(id),
+    { addEventListener() {}, removeEventListener() {} },
   );
   const Component =
     module.exports[
@@ -115,22 +129,26 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
     while (effects.length) effects.shift()();
     return tree;
   }
-  const nodes = (node = tree) =>
+  const nodes = (node) =>
     node == null || typeof node !== 'object'
       ? []
-      : [node, ...[].concat(node.props?.children ?? []).flatMap(nodes)];
+      : Array.isArray(node)
+        ? node.flatMap(nodes)
+        : [node, ...[].concat(node.props?.children ?? []).flatMap(nodes)];
   return {
     render,
     apiError(status) {
       return Object.assign(new ApiError(`HTTP_${status}`), { status });
     },
     button(label) {
-      const found = nodes().find((node) => node.type === 'button' && node.props.children === label);
+      const found = nodes(tree).find(
+        (node) => node.type === 'button' && node.props.children === label,
+      );
       assert.ok(found, `Button ${label} exists`);
       return found.props.onClick;
     },
     elements(type) {
-      return nodes().filter((node) => node.type === type);
+      return nodes(tree).filter((node) => node.type === type);
     },
     async flush() {
       await Promise.resolve();
@@ -138,10 +156,10 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
       render();
     },
     has(label) {
-      return nodes().some((node) => node.props?.children === label);
+      return nodes(tree).some((node) => node.props?.children === label);
     },
     text() {
-      return nodes()
+      return nodes(tree)
         .map((node) => (typeof node.props?.children === 'string' ? node.props.children : ''))
         .filter(Boolean)
         .join(' ');
@@ -436,9 +454,15 @@ test('currency-aware story estimates pass the original allocation through withou
   assert.doesNotMatch(ui.text(), /estimatedHold|estimatedCost/);
 });
 
-test('world waiting shows metadata and preserves the standard consent action without automatic writes', async () => {
+test('new-location world waiting preserves explicit consent without automatic writes', async () => {
   const calls = [];
-  let status = { available: true, pending: false, unknown: false, reason: 'awaiting_consent' };
+  let status = {
+    available: true,
+    pending: false,
+    unknown: false,
+    reason: 'awaiting_consent',
+    generatedLocationImages: 1,
+  };
   const ui = await harness('world-generation-confirmation', async (...args) => {
     calls.push(args);
     return status;
@@ -825,4 +849,219 @@ test('a returned invalid quote is retired rather than indefinitely replayed', as
   assert.notEqual(calls[1].body.operationId, calls[0].body.operationId);
   assert.equal(ui.has('confirm'), true);
   ui.unmount();
+});
+
+test('ordinary world status never mounts consent or makes writes, including across polling', async () => {
+  const calls = [];
+  const ui = await harness('world-generation-confirmation', async (...args) => {
+    calls.push(args);
+    return { available: true, pending: false, forecast: { estimatedSparkSubunits: '12500' } };
+  });
+  ui.render({ campaignId: 'campaign', scope: 'round-22', disabled: false, access: 'owner' });
+  await ui.flush();
+  assert.equal(ui.elements('reply-confirmation').length, 0);
+  assert.equal(ui.has('worldCostForecastHint'), true);
+  ui.expire();
+  await ui.flush();
+  assert.equal(ui.elements('reply-confirmation').length, 0);
+  assert.ok(
+    calls.every((args) => args.length === 1),
+    'polling only reads status',
+  );
+  ui.unmount();
+});
+
+const composerProps = () => ({
+  campaignId: 'campaign',
+  disabled: false,
+  recipient: null,
+  projection: {
+    actorId: 'hero',
+    map: { id: 'room', exits: [] },
+    entities: [],
+    inventory: [],
+    turn: { roundId: 'round', phaseEpoch: 1, phase: 'player' },
+  },
+  onClearRecipient() {},
+  onWorldRefresh() {},
+});
+const localPostQuote = () => ({
+  status: 'quoted',
+  turnId: 'turn-one',
+  actionPreview: [],
+  quote: {
+    id: 'local-quote',
+    provider: 'local-turn-resolver',
+    requiresConsent: false,
+    external: false,
+    credits: 0,
+    expiresAt: new Date(Date.now() + 60000).toISOString(),
+  },
+});
+
+test('one Send quotes and posts once without mounting confirmation, with immutable uncertain retry', async () => {
+  const calls = [];
+  let releaseQuote;
+  const ui = await harness('unified-story', async (path, options) => {
+    if (!options?.body)
+      return { canSubmit: true, canonRevision: 4, entries: [], turns: [], configuration: {} };
+    const body = JSON.parse(options.body);
+    calls.push({ path, body });
+    if (path.endsWith('/quote'))
+      return new Promise((resolve) => {
+        releaseQuote = resolve;
+      });
+    throw new Error('NETWORK_ERROR');
+  });
+  ui.render(composerProps());
+  await ui.flush();
+  ui.elements('textarea')[0].props.onChange({ target: { value: 'Я осматриваю дверь' } });
+  ui.render();
+  const send = ui.elements('form')[0].props.onSubmit;
+  send({ preventDefault() {} });
+  send({ preventDefault() {} });
+  assert.equal(calls.length, 1);
+  releaseQuote(localPostQuote());
+  await tick();
+  ui.render();
+  assert.equal(calls.length, 2, 'the first Send also submits');
+  assert.equal(ui.has('confirm'), false);
+  assert.equal(ui.has('retrySame'), true);
+  assert.equal(calls[1].body.text, calls[0].body.text);
+  assert.equal(calls[1].body.operationId, calls[0].body.operationId);
+  ui.button('retrySame')();
+  await tick();
+  ui.render();
+  assert.deepEqual(calls[2], calls[1], 'unknown outcome retries the exact submission');
+  ui.unmount();
+});
+
+test('ordinary ambiguous quote displays an error without clarification or automatic submission', async () => {
+  const calls = [];
+  const ui = await harness('unified-story', async (path, options) => {
+    if (!options?.body)
+      return { canSubmit: true, canonRevision: 4, entries: [], turns: [], configuration: {} };
+    calls.push(path);
+    return { status: 'clarification', code: 'AMBIGUOUS' };
+  });
+  ui.render(composerProps());
+  await ui.flush();
+  ui.elements('textarea')[0].props.onChange({ target: { value: '*неоднозначно*' } });
+  ui.render();
+  ui.elements('form')[0].props.onSubmit({ preventDefault() {} });
+  await tick();
+  ui.render();
+  assert.equal(calls.length, 1);
+  assert.equal(ui.has('confirm'), false);
+  assert.equal(ui.has('ambiguous'), false);
+  assert.ok(ui.elements('error').some((node) => node.props.message === 'postingRejected'));
+  ui.unmount();
+});
+
+test('new-location Send retains one explicit quote confirmation', async () => {
+  const writes = [];
+  const ui = await harness('unified-story', async (path, options) => {
+    if (!options?.body)
+      return { canSubmit: true, canonRevision: 4, entries: [], turns: [], configuration: {} };
+    writes.push(path);
+    const result = localPostQuote();
+    result.quote.generatedLocationImages = 1;
+    result.quote.estimateRiskConsentRequired = true;
+    return result;
+  });
+  ui.render(composerProps());
+  await ui.flush();
+  ui.elements('textarea')[0].props.onChange({ target: { value: 'Новая локация' } });
+  ui.render();
+  ui.elements('form')[0].props.onSubmit({ preventDefault() {} });
+  await tick();
+  ui.render();
+  assert.equal(writes.length, 1);
+  assert.equal(ui.has('confirm'), true);
+  ui.unmount();
+});
+
+for (const [state, copy] of [
+  ['pending', 'worldPending'],
+  ['blocked', 'worldGenerationBlocked'],
+]) {
+  test('ordinary world ' + state + ' is informational without consent', async () => {
+    const ui = await harness('world-generation-confirmation', async () => ({
+      available: true,
+      pending: false,
+      ordinary: { state, code: null },
+    }));
+    ui.render({ campaignId: 'campaign', scope: 'round', disabled: false, access: 'owner' });
+    await ui.flush();
+    assert.equal(ui.elements('reply-confirmation').length, 0);
+    assert.ok(ui.has(copy) || ui.elements('error').some((node) => node.props.message === copy));
+    ui.unmount();
+  });
+}
+
+for (const state of ['blocked', 'pending']) {
+  test('unknown world outcome overrides ordinary ' + state, async () => {
+    const ui = await harness('world-generation-confirmation', async () => ({
+      available: true,
+      pending: false,
+      unknown: true,
+      ordinary: { state, code: 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED' },
+      generatedLocationImages: 1,
+    }));
+    ui.render({ campaignId: 'campaign', scope: 'round', disabled: false, access: 'owner' });
+    await ui.flush();
+    assert.equal(ui.has('worldCostUnresolved'), true);
+    assert.equal(ui.elements('reply-confirmation').length, 0);
+    ui.unmount();
+  });
+}
+test('media-required block retains explicit confirmation while ordinary blocks explain cause', async () => {
+  for (const [code, expected] of [
+    ['IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED', null],
+    ['INSUFFICIENT_SPARKS', 'Недостаточно искр для этой операции.'],
+    ['PROVIDER_UNAVAILABLE', 'worldProviderUnavailable'],
+    ['PROVIDER_BUDGET_EXCEEDED', 'worldProviderBudget'],
+  ]) {
+    const ui = await harness('world-generation-confirmation', async () => ({
+      available: true,
+      pending: false,
+      ordinary: { state: 'blocked', code },
+    }));
+    ui.render({ campaignId: 'campaign', scope: 'round', disabled: false, access: 'owner' });
+    await ui.flush();
+    assert.equal(ui.elements('reply-confirmation').length, expected === null ? 1 : 0);
+    if (expected) assert.ok(ui.elements('error').some((node) => node.props.message === expected));
+    ui.unmount();
+  }
+});
+
+test('contradictory local quote never auto-posts or offers ordinary consent', async () => {
+  for (const contradiction of [
+    { requiresConsent: true },
+    { requiresConsent: undefined },
+    { chargeUnit: 'sparks' },
+    { sparkReservedSubunits: '1' },
+    { sparkReservedSubunits: 'invalid' },
+  ]) {
+    const writes = [];
+    const ui = await harness('unified-story', async (path, options) => {
+      if (!options?.body)
+        return { canSubmit: true, canonRevision: 4, entries: [], turns: [], configuration: {} };
+      writes.push(path);
+      const result = localPostQuote();
+      Object.assign(result.quote, contradiction);
+      return result;
+    });
+    ui.render(composerProps());
+    await ui.flush();
+    ui.elements('textarea')[0].props.onChange({ target: { value: 'Осматриваю дверь' } });
+    ui.render();
+    ui.elements('form')[0].props.onSubmit({ preventDefault() {} });
+    await tick();
+    ui.render();
+    assert.equal(writes.length, 1);
+    assert.equal(ui.has('confirm'), false);
+    assert.ok(ui.elements('error').some((node) => node.props.message === 'postingRejected'));
+    ui.unmount();
+  }
 });

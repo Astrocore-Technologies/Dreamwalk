@@ -161,8 +161,10 @@ export function UnifiedStory({
           } else
             setNotice(
               copy.current(
-                clarificationKeys[receipt.code || ''] ||
-                  (receipt.status === 'stale' ? 'changed' : 'failed'),
+                sent.input.turnFence && clarificationKeys[receipt.code || '']
+                  ? 'postingRejected'
+                  : clarificationKeys[receipt.code || ''] ||
+                      (receipt.status === 'stale' ? 'changed' : 'failed'),
               ),
             );
         }
@@ -283,14 +285,38 @@ export function UnifiedStory({
         return;
       }
       if (result.status === 'clarification') {
-        setNotice(h(clarificationKeys[result.code || ''] || 'ambiguous'));
+        if (projection.turn) setError(h('postingRejected'));
+        else setNotice(h(clarificationKeys[result.code || ''] || 'ambiguous'));
         return;
       }
       if (!result.quote || !result.turnId) {
         setError(h('failed'));
         return;
       }
-      setPrepared({ input, result, mapId: projection.map.id, key });
+      const captured = { input, result, mapId: projection.map.id, key };
+      const media = result.quote as typeof result.quote & {
+        generatedLocationImages?: number;
+        estimateRiskConsentRequired?: boolean;
+      };
+      if (
+        projection.turn &&
+        !((media.generatedLocationImages ?? 0) > 0 || media.estimateRiskConsentRequired)
+      ) {
+        // Send records a free local post. Paid world work belongs to End turn,
+        // never a quote response or a polling effect.
+        if (
+          result.quote.provider !== 'local-turn-resolver' ||
+          result.quote.external ||
+          result.quote.credits !== 0 ||
+          result.quote.requiresConsent !== false ||
+          result.quote.chargeUnit === 'sparks' ||
+          (result.quote.sparkReservedSubunits != null && result.quote.sparkReservedSubunits !== '0')
+        ) {
+          setError(h('postingRejected'));
+          return;
+        }
+        await submit(false, captured);
+      } else setPrepared(captured);
     } catch (err) {
       if (current === epoch.current) setError(errorMessage(err));
     } finally {
@@ -298,17 +324,17 @@ export function UnifiedStory({
       if (current === epoch.current) setBusy(false);
     }
   }
-  async function submit(recover = false) {
-    const sent = recover ? submitted.current : prepared,
+  async function submit(recover = false, immediate?: Prepared) {
+    const sent = recover ? submitted.current : (immediate ?? prepared),
       quote = sent?.result.quote;
     if (
       !sent ||
       !quote ||
       !sent.result.turnId ||
-      actionLock.current ||
+      (actionLock.current && !immediate) ||
       disabled ||
       (!recover &&
-        (sent !== preparedCurrent.current ||
+        ((!immediate && sent !== preparedCurrent.current) ||
           !available ||
           !targetValid ||
           pending ||
@@ -633,7 +659,7 @@ export function UnifiedStory({
                 />
               )}
               {feed?.turns
-                .filter((turn) => turn.generationNeedsConfirmation)
+                .filter((turn) => !projection.turn && turn.generationNeedsConfirmation)
                 .map((turn) => (
                   <StoryReplyConfirmation
                     key={turn.id}
@@ -659,7 +685,7 @@ export function UnifiedStory({
               )}
               {pendingTurns.map((turn) => (
                 <div key={turn.id} className={styles.quote} data-story-pending={turn.status}>
-                  {turn.status === 'awaiting_confirmation' ? (
+                  {turn.status === 'awaiting_confirmation' && !projection.turn ? (
                     <>
                       <p>{h('actionHint')}</p>
                       {actionsPreview(turn.actions || [])}
@@ -685,7 +711,15 @@ export function UnifiedStory({
                       </div>
                     </>
                   ) : (
-                    <p role="status">{h(turn.jobStatus === 'unknown' ? 'unknown' : 'pending')}</p>
+                    <p role="status">
+                      {h(
+                        turn.status === 'awaiting_confirmation'
+                          ? 'postingRejected'
+                          : turn.jobStatus === 'unknown'
+                            ? 'unknown'
+                            : 'pending',
+                      )}
+                    </p>
                   )}
                 </div>
               ))}

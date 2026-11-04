@@ -71,6 +71,15 @@ export interface ProviderResult {
   proposal: unknown;
   requestId: string;
   failureCode?: string;
+  /** Bounded adapter stage only. Never provider text, Zod messages, paths or private context. */
+  failureStage?:
+    | 'output_envelope'
+    | 'json'
+    | 'response_schema'
+    | 'plan_actions'
+    | 'plan_context'
+    | 'plan_beliefs'
+    | 'plan_proposal';
   usage: {
     inputTokens: number;
     outputTokens: number;
