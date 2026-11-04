@@ -270,3 +270,63 @@ test('actual Studio publish waits for save, aborts failed save and submits only 
   await makePublish(async () => null, blocked)();
   assert.deepEqual(blocked, [], 'Invalid/conflicted/interrupted save must not submit stale state');
 });
+
+test('actual Studio invalid manual save uses existing status without a stale untranslated error', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const { default: ts } = await import('typescript');
+  const source = await readFile(
+    new URL('../../apps/web/components/studio.tsx', import.meta.url),
+    'utf8',
+  );
+  const start = source.indexOf('async function save()');
+  const end = source.indexOf('async function publish()', start);
+  assert.ok(start >= 0 && end > start);
+  const code = ts.transpileModule(source.slice(start, end), {
+    compilerOptions: { target: ts.ScriptTarget.ES2022 },
+  }).outputText;
+  const run = async (flush) => {
+    const errors = [],
+      busy = [],
+      translated = [],
+      toasts = [];
+    const save = new Function(
+      'autosave',
+      'setError',
+      'setBusy',
+      't',
+      'errorMessage',
+      'toast',
+      'isNew',
+      `${code}; return save;`,
+    )(
+      { flush },
+      (value) => errors.push(value),
+      (value) => busy.push(value),
+      (value) => {
+        translated.push(value);
+        return value;
+      },
+      (error) => error.message,
+      (value) => toasts.push(value),
+      false,
+    );
+    return { result: await save(), errors, busy, translated, toasts };
+  };
+  const invalid = await run(async () => {
+    throw new Error('INVALID_DRAFT');
+  });
+  assert.equal(invalid.result, null);
+  assert.deepEqual(invalid.errors, ['', '']);
+  assert.deepEqual(invalid.translated, []);
+  assert.deepEqual(invalid.toasts, []);
+  assert.deepEqual(invalid.busy, [true, false]);
+  const failure = await run(async () => {
+    throw new Error('Visible save error');
+  });
+  assert.equal(failure.result, null);
+  assert.deepEqual(failure.errors, ['', 'Visible save error']);
+  const acknowledged = { id: 'saved-story', editRevision: 7 };
+  const saved = await run(async () => acknowledged);
+  assert.equal(saved.result, acknowledged);
+  assert.deepEqual(saved.errors, ['']);
+});

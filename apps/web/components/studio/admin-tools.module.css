@@ -1,0 +1,204 @@
+/* Remaining admin tools only. Shared navigation and other admin pages are independent. */
+.reports,
+.models,
+.credits,
+.audit,
+.taxonomy {
+  min-width: 0;
+  margin-top: 26px;
+  color: var(--text);
+}
+.reports h2,
+.models h2,
+.credits h2,
+.audit h2,
+.taxonomy h2 {
+  font-size: clamp(24px, 2.1vw, 34px);
+  line-height: 1.2;
+}
+.reports :global(.panel),
+.models :global(.panel),
+.credits :global(.panel),
+.toolPanel,
+.audit,
+.taxonomy fieldset {
+  border: 1px solid color-mix(in srgb, var(--accent) 35%, var(--border));
+  border-radius: 20px;
+  background: linear-gradient(125deg, var(--surface-soft), var(--surface));
+  padding: clamp(18px, 2vw, 28px);
+  min-width: 0;
+}
+.reportList {
+  display: grid;
+  gap: 20px;
+}
+.reportCard {
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) auto;
+  align-items: center;
+  gap: 28px;
+  min-height: 160px;
+}
+.reportBody {
+  min-width: 0;
+  overflow-wrap: anywhere;
+  padding-right: 26px;
+  border-right: 1px solid var(--border);
+}
+.reportBody p {
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.reportBody small {
+  font-size: 14px;
+}
+.models {
+  display: grid;
+  gap: 24px;
+}
+.toolPanel > div:first-child {
+  margin-top: 0;
+}
+.profileGrid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+  margin-top: 24px;
+}
+.profileGrid :global(.panel) {
+  display: flex;
+  flex-direction: column;
+  gap: 16px;
+  padding: 22px;
+}
+.profileGrid h3 {
+  margin: 0;
+  font-size: 23px;
+  overflow-wrap: anywhere;
+}
+.profileGrid :global(.row) {
+  flex-wrap: wrap;
+}
+.profileGrid p {
+  margin: 0;
+  line-height: 1.65;
+  overflow-wrap: anywhere;
+}
+.profileGrid button {
+  margin-top: auto;
+  align-self: flex-start;
+}
+.credits :global(.stack) {
+  gap: 26px;
+}
+.credits :global(.field) > span,
+.credits :global(.field) > label {
+  font-size: 18px;
+}
+.credits textarea {
+  min-height: 125px;
+}
+.credits h3 {
+  font-size: 28px;
+  margin-top: 0;
+}
+.credits li {
+  padding-bottom: 20px;
+  border-bottom: 1px solid var(--border);
+  font-size: 17px;
+}
+.credits li:last-child {
+  border: 0;
+}
+.credits li svg {
+  width: 25px;
+  height: 25px;
+}
+.audit {
+  min-height: 520px;
+}
+.audit > div:first-child {
+  margin-top: 0;
+}
+.audit > input {
+  margin: 8px 0 24px;
+  min-height: 50px;
+}
+.audit :global(.table-wrap),
+.models :global(.table-wrap),
+.taxonomy :global(.table-wrap) {
+  border: 1px solid var(--border);
+  border-radius: 14px;
+  max-width: 100%;
+  overflow: auto;
+}
+.audit th,
+.models th,
+.taxonomy th {
+  background: var(--surface-soft);
+  color: var(--muted);
+}
+.audit td,
+.models td,
+.taxonomy td {
+  padding-top: 19px;
+  padding-bottom: 19px;
+}
+.audit code {
+  font-size: 13px;
+}
+.taxonomy > :global(.panel) {
+  background: transparent;
+  padding: 0;
+  border: 0;
+}
+.taxonomy fieldset {
+  margin: 0;
+}
+.taxonomy legend {
+  font-size: 26px;
+  font-weight: 700;
+  padding: 0 10px;
+}
+.taxonomy td {
+  overflow-wrap: anywhere;
+}
+.taxonomy :global(.table) {
+  min-width: 620px;
+}
+.taxonomy :global(.table) button {
+  white-space: nowrap;
+}
+.taxonomy :global(.stack) {
+  gap: 20px;
+}
+@media (max-width: 1100px) {
+  .profileGrid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  .profileGrid,
+  .reportCard {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .reportBody {
+    border-right: 0;
+    padding-right: 0;
+  }
+  .reportCard > button {
+    justify-self: start;
+  }
+  .audit {
+    min-height: 380px;
+  }
+  .audit :global(.table) {
+    min-width: 660px;
+  }
+  .models :global(.table) {
+    min-width: 620px;
+  }
+  .taxonomy fieldset {
+    padding: 14px;
+  }
+}

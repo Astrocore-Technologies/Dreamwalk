@@ -117,7 +117,7 @@ jobs:
         run: node --test tests/mail-integration.test.mjs tests/google-auth.test.mjs tests/mail-brevo.test.mjs
 
   browser_1:
-    name: Browser shard 1 of 2
+    name: Browser shard 1 of 3
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Each shard has a separate runner, database, application and asset directory.
@@ -145,7 +145,7 @@ jobs:
       - run: npm ci
       - name: Browser dependencies
         run: npx playwright install --with-deps chromium
-      - name: Browser end-to-end tests (shard 1 of 2)
+      - name: Browser end-to-end tests (shard 1 of 3)
         env:
           ASSET_DIR: ${{ runner.temp }}/dreamwalk-browser-1-assets
         run: |
@@ -172,7 +172,7 @@ jobs:
             echo "Application did not become ready" >&2
             exit 1
           fi
-          node scripts/browser-shard.mjs 1/2
+          node scripts/browser-shard.mjs 1/3
       # Retain the initial failure trace even if its one configured retry succeeds.
       - uses: actions/upload-artifact@v4
         if: always()
@@ -226,7 +226,7 @@ jobs:
           retention-days: 7
 
   browser_2:
-    name: Browser shard 2 of 2
+    name: Browser shard 2 of 3
     runs-on: ubuntu-latest
     timeout-minutes: 20
     # Each shard has a separate runner, database, application and asset directory.
@@ -254,7 +254,7 @@ jobs:
       - run: npm ci
       - name: Browser dependencies
         run: npx playwright install --with-deps chromium
-      - name: Browser end-to-end tests (shard 2 of 2)
+      - name: Browser end-to-end tests (shard 2 of 3)
         env:
           ASSET_DIR: ${{ runner.temp }}/dreamwalk-browser-2-assets
         run: |
@@ -281,7 +281,7 @@ jobs:
             echo "Application did not become ready" >&2
             exit 1
           fi
-          node scripts/browser-shard.mjs 2/2
+          node scripts/browser-shard.mjs 2/3
       # Retain the initial failure trace even if its one configured retry succeeds.
       - uses: actions/upload-artifact@v4
         if: always()
@@ -334,6 +334,115 @@ jobs:
           if-no-files-found: ignore
           retention-days: 7
 
+  browser_3:
+    name: Browser shard 3 of 3
+    runs-on: ubuntu-latest
+    timeout-minutes: 20
+    # Each shard has a separate runner, database, application and asset directory.
+    # Keep one worker; multi-player WebGL journeys already use several contexts.
+    services:
+      postgres:
+        image: postgres:17.10-alpine
+        env:
+          POSTGRES_USER: dreamwalk
+          POSTGRES_DB: dreamwalk_test
+          POSTGRES_PASSWORD: ${{ github.run_id }}-${{ github.run_attempt }}-browser-3-ephemeral
+        ports:
+          - 55432:5432
+        options: >-
+          --health-cmd "pg_isready -U dreamwalk -d dreamwalk_test"
+          --health-interval 5s --health-timeout 5s --health-retries 10
+    env:
+      DATABASE_URL: postgresql://dreamwalk:${{ github.run_id }}-${{ github.run_attempt }}-browser-3-ephemeral@127.0.0.1:55432/dreamwalk_test
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24'
+          cache: npm
+      - run: npm ci
+      - name: Browser dependencies
+        run: npx playwright install --with-deps chromium
+      - name: Browser end-to-end tests (shard 3 of 3)
+        env:
+          ASSET_DIR: ${{ runner.temp }}/dreamwalk-browser-3-assets
+        run: |
+          # Compile this exact checkout once, rather than compiling each route
+          # during browser journeys. API mock gates and shard isolation stay intact.
+          NODE_ENV=production npm run build:web
+          setsid env NODE_ENV=development npm run dev -- --prebuilt-web > "$RUNNER_TEMP/dreamwalk-web.log" 2>&1 &
+          APP_PID=$!
+          trap 'kill -- "-$APP_PID" 2>/dev/null || true' EXIT
+          ready=false
+          for attempt in $(seq 1 90); do
+            if ! kill -0 "$APP_PID" 2>/dev/null; then
+              echo "Application exited before becoming ready" >&2
+              exit 1
+            fi
+            if curl --max-time 2 -sf http://127.0.0.1:3000/ > /dev/null && \
+               curl --max-time 2 -sf http://127.0.0.1:4000/api/v1/auth/me > /dev/null; then
+              ready=true
+              break
+            fi
+            sleep 1
+          done
+          if [ "$ready" != true ]; then
+            echo "Application did not become ready" >&2
+            exit 1
+          fi
+          node scripts/browser-shard.mjs 3/3
+      # Retain the initial failure trace even if its one configured retry succeeds.
+      - uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: platform-test-evidence-shard-3
+          path: |
+            test-results/
+            playwright-report/
+            ${{ runner.temp }}/dreamwalk-web.log
+          if-no-files-found: ignore
+          retention-days: 3
+      - name: Save actual reusable-art canvas preview
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: reusable-art-preview-shard-3
+          path: test-results/**/custom-art-scene.png
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Save actual homepage desktop and mobile previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: homepage-preview-shard-3
+          path: test-results/**/home-*.png
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Save actual complete-adventure scene previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: complete-adventure-preview-shard-3
+          path: test-results/**/sample-adventure-*.png
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Save actual evolving-story and media previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: narrative-director-preview-shard-3
+          path: test-results/**/director-*.png
+          if-no-files-found: ignore
+          retention-days: 7
+      - name: Save actual unified story desktop and mobile previews
+        uses: actions/upload-artifact@v4
+        if: always()
+        with:
+          name: unified-story-preview-shard-3
+          path: test-results/**/unified-story-*.png
+          if-no-files-found: ignore
+          retention-days: 7
+
   # Keep the former required check's exact name. Explicit shard jobs let this
   # gate inspect every result, rather than trusting one matrix aggregate result.
   platform:
@@ -341,14 +450,14 @@ jobs:
     runs-on: ubuntu-latest
     timeout-minutes: 5
     if: ${{ always() }}
-    needs: [static, integration, browser_1, browser_2]
+    needs: [static, integration, browser_1, browser_2, browser_3]
     steps:
       - name: Require every check and browser shard to succeed
         env:
           REQUIRED_RESULTS: ${{ toJSON(needs) }}
         run: |
           node <<'NODE'
-          const expected = ['static', 'integration', 'browser_1', 'browser_2'];
+          const expected = ['static', 'integration', 'browser_1', 'browser_2', 'browser_3'];
           const results = JSON.parse(process.env.REQUIRED_RESULTS);
           if (Object.keys(results).length !== expected.length ||
               expected.some((name) => results[name]?.result !== 'success')) {

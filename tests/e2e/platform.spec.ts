@@ -13,7 +13,7 @@ async function register(page: Page) {
   await page.goto('/auth/sign-up');
   await page.getByLabel('Логин').fill(credentials.handle);
   await page.getByLabel('Email', { exact: true }).fill(credentials.email);
-  await page.getByLabel('Пароль').fill(credentials.password);
+  await page.getByLabel('Пароль', { exact: true }).fill(credentials.password);
   await page.getByRole('button', { name: 'Создать аккаунт', exact: true }).click();
   await expect(page).toHaveURL(/\/onboarding$/);
   await page.getByRole('button', { name: 'Открыть Dreamwalk' }).click();
@@ -92,13 +92,19 @@ test('author: NPC and complete adventure draft survive reload and submit confirm
   await page
     .getByRole('combobox', { name: 'Стартовая сцена', exact: true })
     .selectOption({ label: 'Прибытие' });
-  await page.getByRole('button', { name: /Просмотр$/ }).click();
+  await page
+    .getByRole('navigation', { name: 'Шаги создания приключения', exact: true })
+    .getByRole('button', { name: 'Просмотр', exact: true })
+    .click();
   // Narrative-only, not-yet-created drafts cannot launch a playable campaign.
   await expect(
     page.getByText(/История без карты остаётся литературным черновиком\./),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Подготовить план', exact: true })).toHaveCount(0);
-  await page.getByRole('button', { name: /Публикация$/ }).click();
+  await page
+    .getByRole('navigation', { name: 'Шаги создания приключения', exact: true })
+    .getByRole('button', { name: 'Публикация', exact: true })
+    .click();
   await page
     .getByRole('combobox', { name: 'Режим публикации', exact: true })
     .selectOption('public');
@@ -110,7 +116,10 @@ test('author: NPC and complete adventure draft survive reload and submit confirm
   await page.getByRole('button', { name: 'Сохранить и отправить' }).click();
   await expect(page).toHaveURL(/\/studio\/adventures\/[a-f0-9-]+$/);
   await page.reload();
-  await page.getByRole('button', { name: /Публикация$/ }).click();
+  await page
+    .getByRole('navigation', { name: 'Шаги создания приключения', exact: true })
+    .getByRole('button', { name: 'Публикация', exact: true })
+    .click();
   await expect(page.getByRole('button', { name: 'Ожидает проверки' })).toBeDisabled();
 });
 
@@ -149,11 +158,11 @@ test('interface locale switches and survives account login', async ({ page }) =>
         response.request().method() === 'PATCH' &&
         response.ok(),
     ),
-    page.locator('header').getByRole('combobox').selectOption('en'),
+    page.locator('.locale-select').selectOption('en'),
   ]);
   await expect(page.getByRole('heading', { name: 'Make yourself at home' })).toBeVisible();
   await page.reload();
-  await expect(page.locator('header').getByRole('combobox')).toHaveValue('en');
+  await expect(page.locator('.locale-select')).toHaveValue('en');
   await expect(page.getByRole('button', { name: 'Save preferences' })).toBeEnabled();
   await Promise.all([
     page.waitForResponse(
@@ -162,16 +171,16 @@ test('interface locale switches and survives account login', async ({ page }) =>
         response.request().method() === 'PATCH' &&
         response.ok(),
     ),
-    page.locator('header').getByRole('combobox').selectOption('uk'),
+    page.locator('.locale-select').selectOption('uk'),
   ]);
   await expect(page.getByRole('heading', { name: 'Налаштувати під себе' })).toBeVisible();
   await page.getByRole('button', { name: 'Вийти', exact: true }).click();
   await page.goto('/auth/sign-in');
   await page.getByLabel('Email', { exact: true }).fill(credentials.email);
-  await page.getByLabel('Пароль').fill(credentials.password);
+  await page.getByLabel('Пароль', { exact: true }).fill(credentials.password);
   await page.getByRole('button', { name: 'Увійти', exact: true }).click();
   await expect(page).toHaveURL(/\/home$/);
-  await expect(page.locator('header').getByRole('combobox')).toHaveValue('uk');
+  await expect(page.locator('.locale-select')).toHaveValue('uk');
   await expect(page.locator('html')).toHaveAttribute('lang', 'uk');
 });
 
@@ -191,7 +200,10 @@ test('explicit private playable release invitation accepts and revokes without p
     await ownerPage
       .getByLabel('Синопсис')
       .fill('Этот мир доступен только лично приглашённым участникам.');
-    await ownerPage.getByRole('button', { name: /Публикация$/ }).click();
+    await ownerPage
+      .getByRole('navigation', { name: 'Шаги создания приключения', exact: true })
+      .getByRole('button', { name: 'Публикация', exact: true })
+      .click();
     await expect(
       ownerPage.getByRole('combobox', { name: 'Режим публикации', exact: true }),
     ).toHaveValue('private');
@@ -200,7 +212,10 @@ test('explicit private playable release invitation accepts and revokes without p
     const storyId = new URL(ownerPage.url()).pathname.split('/').at(-1)!;
     await savePrivateFixture(ownerPage, storyId, createAuthoredDraft('courtyard'));
     await ownerPage.reload();
-    await ownerPage.getByRole('button', { name: /Публикация$/ }).click();
+    await ownerPage
+      .getByRole('navigation', { name: 'Шаги создания приключения', exact: true })
+      .getByRole('button', { name: 'Публикация', exact: true })
+      .click();
     await ownerPage
       .getByLabel('Опубликовать эту готовую версию приватно, без общего каталога', { exact: true })
       .check();

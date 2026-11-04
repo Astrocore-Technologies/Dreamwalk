@@ -98,6 +98,8 @@ test('public cards and auth retain real content in the art-first layout', async 
   assert.match(css, /character-orb:not\(:has\(img\)\)/);
 });
 
+// Shared-rail reference and preserved interaction invariants.
+import './shared-shell-design.test.mjs';
 test('notification and missing-page composition keeps authorized content and explicit read actions', async () => {
   const notifications = await read('components/notifications.tsx');
   const missing = await read('components/missing-page.tsx');

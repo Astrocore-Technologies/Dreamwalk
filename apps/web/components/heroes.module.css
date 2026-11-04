@@ -1,0 +1,260 @@
+.page {
+  min-width: 0;
+}
+.page > :global(.page-heading) {
+  margin-bottom: 14px;
+}
+.workshop {
+  display: flex;
+  justify-content: flex-end;
+  margin-bottom: 18px;
+}
+.grid {
+  align-items: start;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 18px;
+}
+.card {
+  padding: 0;
+  overflow: hidden;
+  border-radius: 20px;
+  min-width: 0;
+}
+.card .portrait {
+  height: auto;
+  aspect-ratio: 1.12;
+  border-radius: 0;
+  background-color: var(--bg);
+}
+.portrait img {
+  object-fit: cover;
+  object-position: center 25%;
+}
+.cardBody {
+  padding: 18px;
+  display: flex;
+  flex-direction: column;
+  gap: 17px;
+}
+.cardBody h2 {
+  font-size: clamp(24px, 2.2vw, 36px);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.traits {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+}
+.traits :global(.badge),
+.traitChip {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 7px 11px;
+  background: var(--surface-hover, var(--surface));
+  color: var(--text);
+  font-size: 13px;
+  overflow-wrap: anywhere;
+  max-width: 100%;
+}
+.card .backstory {
+  font-size: 15px;
+  line-height: 1.55;
+  margin: 0;
+  min-height: 70px;
+}
+.appearance summary {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  cursor: pointer;
+  color: var(--accent);
+  text-decoration: underline;
+  text-underline-offset: 4px;
+  padding: 5px 0;
+}
+.appearance[open] summary {
+  margin-bottom: 16px;
+}
+.card .appearance p {
+  display: block;
+  overflow: visible;
+  min-height: 0;
+  font-size: 13px;
+}
+.cardActions {
+  display: grid;
+  grid-template-columns: 1fr 1fr;
+  gap: 10px;
+  margin-top: 10px;
+}
+.cardActions :global(.button) {
+  padding: 10px;
+  min-width: 0;
+  text-align: center;
+  white-space: normal;
+}
+.remove {
+  align-self: flex-end;
+  font-size: 12px;
+  min-height: 30px;
+  padding: 4px 8px;
+  color: var(--muted);
+}
+.editor {
+  max-width: min(1048px, calc(100vw - 32px));
+  padding: 28px;
+  max-height: 92dvh;
+  overflow: hidden;
+}
+.editor[open] {
+  display: flex;
+  flex-direction: column;
+}
+.editor > :global(.dialog-header) {
+  flex: none;
+}
+.editor > :global(.dialog-header) h2 {
+  font-size: clamp(24px, 3vw, 40px);
+}
+.editorScroll {
+  overflow: auto;
+  min-height: 0;
+  padding-right: 6px;
+}
+.editorForm {
+  display: grid;
+  grid-template-columns: minmax(0, 0.8fr) minmax(0, 1.2fr);
+  gap: 30px;
+  align-items: start;
+}
+.portraitColumn {
+  display: grid;
+  gap: 12px;
+  min-width: 0;
+}
+.editorPortrait {
+  border: 1px solid var(--line);
+  border-radius: 19px;
+  overflow: hidden;
+  aspect-ratio: 0.7;
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  color: var(--accent);
+  background: radial-gradient(ellipse at center, #9f758c33, transparent), var(--bg);
+}
+.editorPortrait :global(.upload-preview) {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 25%;
+  border-radius: 0;
+}
+.portraitColumn :global(.upload-button) {
+  width: 100%;
+  justify-content: center;
+}
+.portraitColumn small {
+  display: block;
+  margin-top: 6px;
+  text-align: center;
+}
+.fields {
+  display: grid;
+  gap: 18px;
+  min-width: 0;
+}
+.fields :global(.field) {
+  margin: 0;
+}
+.fields textarea {
+  min-height: 100px;
+}
+.traitEditor {
+  display: grid;
+  gap: 10px;
+}
+.traitChip {
+  cursor: pointer;
+  text-align: left;
+}
+.traitChip svg {
+  flex: none;
+}
+.editorScroll > section {
+  margin-top: 18px;
+}
+.editorActions {
+  flex: none;
+  margin-top: 20px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.editorActions :global(.button) {
+  min-width: 150px;
+}
+.appearance summary:focus-visible,
+.traitChip:focus-visible {
+  outline: 2px solid var(--accent);
+  outline-offset: 4px;
+}
+@media (max-width: 1200px) {
+  .grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+}
+@media (max-width: 700px) {
+  .grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .editor {
+    padding: 18px;
+  }
+  .editorForm {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 20px;
+  }
+  .editorPortrait {
+    aspect-ratio: 1.1;
+    max-height: 300px;
+  }
+  .editorActions {
+    gap: 8px;
+  }
+  .editorActions :global(.button) {
+    min-width: 0;
+    flex: 1;
+  }
+}
+.fields :global(.field) > span {
+  font-size: 17px;
+}
+.fields :global(.input) {
+  font-size: 16px;
+  border-radius: 12px;
+}
+/* Keep the gallery's selected quiet backdrop separate from the illustrated home shell. */
+:global(.app-shell[data-surface='my-characters']):has(.page)::before {
+  background-image: none;
+}
+:global(.app-shell[data-surface='my-characters']) :global(.main-content):has(.page) {
+  background: transparent;
+  padding-inline: 0;
+}
+.cardBody .traits {
+  margin: 0;
+}
+.cardBody .traits:empty {
+  display: none;
+}
+.page > :global(.page-heading) h1 {
+  font-size: clamp(32px, 3.4vw, 52px);
+}
+.workshop {
+  margin-top: 18px;
+  margin-bottom: 0;
+}

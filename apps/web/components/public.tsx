@@ -1,52 +1,18 @@
 'use client';
-import { StoryMetrics, StoryLikeButton } from './story-metrics';
+import { DiscoveryWorldCard } from './public-discovery';
+import './public-discovery.css';
+import { StoryMetrics } from './story-metrics';
+export { AdventurePage } from './story/story-detail-page';
 import { isDiscoveryStory } from '@/lib/discovery';
-import { storyReturnPath, withStoryReturn } from './story-return';
-import { AdventureLaunch } from './game/adventure-launch';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
-import {
-  selectAdventureText,
-  selectAdventureTags,
-  selectNpcText,
-  type ControlledTag,
-} from '@dreamwalk/contracts';
+import { selectAdventureText } from '@dreamwalk/contracts';
 import { formatCount } from '@/lib/locales';
-import { useRouter, useSearchParams } from 'next/navigation';
+import { useSearchParams } from 'next/navigation';
 import { useState, useEffect } from 'react';
-import {
-  ArrowUpRight,
-  ArrowRight,
-  UsersRound,
-  Heart,
-  Compass,
-  Search,
-  SlidersHorizontal,
-  Shield,
-} from 'lucide-react';
-import {
-  api,
-  useResource,
-  useClient,
-  coverUrl,
-  assetUrl,
-  errorMessage,
-  useDate,
-  type Adventure,
-} from '@/lib/client';
-import {
-  Badge,
-  Button,
-  ButtonLink,
-  Empty,
-  ErrorBox,
-  Field,
-  Input,
-  Loading,
-  Modal,
-  Select,
-  Textarea,
-} from './ui';
+import { ArrowUpRight, UsersRound, Search, SlidersHorizontal } from 'lucide-react';
+import { useResource, coverUrl, assetUrl, type Adventure } from '@/lib/client';
+import { Badge, Button, Empty, ErrorBox, Input, Loading, Select } from './ui';
 function discoveryCover(adventure: Adventure) {
   // Custom uploads retain their authenticated asset URL and access checks.
   if (adventure.coverAssetId) return coverUrl(adventure);
@@ -181,7 +147,7 @@ export function ExplorePage() {
       ) : data?.length ? (
         <div className="adventure-grid discovery-grid">
           {data.map((a) => (
-            <AdventureCard discovery key={a.id} adventure={a} />
+            <DiscoveryWorldCard key={a.id} adventure={a} />
           ))}
         </div>
       ) : (
@@ -206,256 +172,6 @@ export function ExplorePage() {
     </div>
   );
 }
-export function AdventurePage({ slug }: { slug: string }) {
-  const date = useDate();
-  const { t: tr, locale, taxonomy } = useT();
-  const router = useRouter();
-  const { user, toast } = useClient();
-  const {
-    data: a,
-    loading,
-    error,
-    reload,
-  } = useResource<Adventure>(`/adventures/${encodeURIComponent(slug)}`);
-  const library = useResource<{ favorites: Adventure[] }>(user ? '/library' : null);
-  const tagDefinitions = useResource<ControlledTag[]>('/tags');
-  const [saved, setSaved] = useState(false),
-    [busy, setBusy] = useState(false),
-    [report, setReport] = useState(false),
-    [reason, setReason] = useState(''),
-    [reportError, setReportError] = useState('');
-  useEffect(() => {
-    if (a && library.data) setSaved(library.data.favorites.some((item) => item.id === a.id));
-  }, [a, library.data]);
-  if (loading) return <Loading />;
-  if (error || !a)
-    return <ErrorBox message={error || tr('Приключение не найдено')} retry={reload} />;
-  const text = selectAdventureText(a, locale);
-  return (
-    <div className="discovery-page discovery-detail">
-      <Link
-        className="back-link"
-        href={a.access === 'invited' ? '/library?tab=shared' : '/explore'}
-      >
-        {a.access === 'invited' ? tr('← К приглашённым мирам') : tr('← К приключениям')}
-      </Link>
-      {a.access === 'invited' && (
-        <div className="notice private-access-note">
-          <Shield size={18} />
-          {tr(
-            'Это частный мир. Ты получил доступ по личному приглашению автора — только для просмотра, без права редактирования. Не передавай содержимое без разрешения.',
-          )}
-        </div>
-      )}
-      {a.access === 'owner' && a.visibility === 'private' && (
-        <div className="notice private-access-note">
-          {tr(
-            'Частный мир: доступ есть только у тебя и приглашённых пользователей. В каталоге он не отображается.',
-          )}
-        </div>
-      )}
-      <section className="story-overview">
-        <div className="story-poster" style={{ backgroundImage: `url('${coverUrl(a)}')` }}>
-          <img src={discoveryCover(a)} alt="" />
-        </div>
-        <div className="story-intro">
-          <div className="story-kicker">
-            <span>{taxonomy(a.genre)}</span>
-            {a.visibility === 'private' && <Badge>{tr('Частный мир')}</Badge>}
-          </div>
-          <h1>{text.title}</h1>
-          <Link className="discovery-author" href={`/creators/${a.author.handle}`}>
-            <span className="tiny-avatar">{a.author.handle[0]}</span>
-            {a.author.handle}
-            <ArrowUpRight size={14} />
-          </Link>
-          <p className="story-synopsis">{text.synopsis}</p>
-          <StoryMetrics adventure={a} />
-          <div className="story-tags">
-            {selectAdventureTags(a, locale, tagDefinitions.data || []).map((tag, index) => (
-              <span key={index}>#{tag}</span>
-            ))}
-          </div>
-        </div>
-        <aside className="story-actions">
-          <div className="prepare-panel">
-            <h2>{tr('Перед приключением')}</h2>
-            <div className="detail-facts">
-              <span>
-                <UsersRound size={18} />
-                {tr('Группа')}
-                <strong>
-                  {a.playersMin}–{formatCount(locale, a.playersMax, 'player')}
-                </strong>
-              </span>
-              <span>
-                <Compass size={18} />
-                {tr('Сложность')}
-                <strong>{taxonomy(a.difficulty)}</strong>
-              </span>
-            </div>
-            {user &&
-              a.visibility === 'public' &&
-              (a.access === 'public' || a.status === 'published') && (
-                <StoryLikeButton key={a.id} adventure={a} onChanged={reload} />
-              )}
-            <ButtonLink
-              variant="secondary"
-              href={withStoryReturn('/my-characters', storyReturnPath(a.slug))}
-            >
-              {tr('Подготовить героя')}
-              <ArrowRight size={17} />
-            </ButtonLink>
-            {a.visibility !== 'private' ? (
-              <Button
-                variant="secondary"
-                busy={busy}
-                onClick={async () => {
-                  if (!user) {
-                    router.push('/auth/sign-in');
-                    return;
-                  }
-                  setBusy(true);
-                  try {
-                    await api(`/favorites/${a.id}`, {
-                      method: saved ? 'DELETE' : 'PUT',
-                      body: '{}',
-                    });
-                    setSaved(!saved);
-                    toast(
-                      saved ? tr('Удалено из библиотеки') : tr('Приключение в твоей библиотеке'),
-                    );
-                  } catch (e) {
-                    toast(errorMessage(e));
-                  } finally {
-                    setBusy(false);
-                  }
-                }}
-              >
-                <Heart size={17} fill={saved ? 'currentColor' : 'none'} />
-                {saved ? tr('В библиотеке') : tr('В мою библиотеку')}
-              </Button>
-            ) : a.access === 'owner' ? (
-              <ButtonLink href={`/studio/adventures/${a.id}`} variant="secondary">
-                {tr('Редактировать в студии')}
-              </ButtonLink>
-            ) : a.access === 'invited' ? (
-              <ButtonLink href="/library?tab=shared" variant="secondary">
-                {tr('В приглашённых мирах')}
-              </ButtonLink>
-            ) : (
-              <ButtonLink href="/admin/adventures" variant="secondary">
-                {tr('Управление')}
-              </ButtonLink>
-            )}
-            <AdventureLaunch adventure={a} />
-          </div>
-          <button
-            className="subtle-button"
-            onClick={() => {
-              if (!user) {
-                router.push('/auth/sign-in');
-                return;
-              }
-              setReport(true);
-            }}
-          >
-            {tr('Сообщить о нарушении')}
-          </button>
-        </aside>
-      </section>
-      <div className="story-body">
-        <div className="story-sections">
-          {!!a.npcs?.length && (
-            <section className="story-section">
-              <h2>{tr('Ты встретишь')}</h2>
-              <div className="npc-preview-grid">
-                {a.npcs.map((n) => (
-                  <div key={n.id} className="npc-preview">
-                    <span className="character-orb">
-                      {n.portraitAssetId ? (
-                        <img src={assetUrl(n.portraitAssetId)} alt="" />
-                      ) : (
-                        selectNpcText(n, locale).name[0]
-                      )}
-                    </span>
-                    <h3>{selectNpcText(n, locale).name}</h3>
-                    <span className="muted">{selectNpcText(n, locale).role}</span>
-                    {selectNpcText(n, locale).description && (
-                      <p>{selectNpcText(n, locale).description}</p>
-                    )}
-                    {selectNpcText(n, locale).greeting && (
-                      <p>«{selectNpcText(n, locale).greeting}»</p>
-                    )}
-                  </div>
-                ))}
-              </div>
-            </section>
-          )}
-          <section className="story-section">
-            <h2>{tr('За порогом истории')}</h2>
-            <p className="prose">{text.synopsis}</p>
-          </section>
-          {a.access !== 'invited' && (
-            <details className="story-versions">
-              <summary>{tr('Версии')}</summary>
-              <p className="muted">
-                {tr('Опубликованные версии сохраняются отдельно от новых черновиков.')}
-              </p>
-              {(a.versions || [{ version: a.version, createdAt: a.updatedAt }]).map((v, i) => (
-                <div className="list-row" key={i}>
-                  <span>{tr('Версия {version}', { version: v.version })}</span>
-                  <small>{date(v.createdAt)}</small>
-                </div>
-              ))}
-            </details>
-          )}
-        </div>
-      </div>
-      {report && (
-        <Modal title={tr('Сообщить о нарушении')} onClose={() => setReport(false)}>
-          <form
-            method="post"
-            onSubmit={async (e) => {
-              e.preventDefault();
-              setReportError('');
-              setBusy(true);
-              try {
-                await api('/reports', {
-                  method: 'POST',
-                  body: JSON.stringify({ adventureId: a.id, reason }),
-                });
-                setReport(false);
-                toast(tr('Жалоба отправлена на проверку'));
-              } catch (e) {
-                setReportError(errorMessage(e));
-              } finally {
-                setBusy(false);
-              }
-            }}
-          >
-            <Field label={tr('Что стоит проверить?')}>
-              <Textarea
-                required
-                minLength={5}
-                maxLength={2000}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-              />
-            </Field>
-            <ErrorBox message={reportError} />
-            <div className="form-actions">
-              <Button type="button" variant="secondary" onClick={() => setReport(false)}>
-                {tr('Отмена')}
-              </Button>
-              <Button busy={busy}>{tr('Отправить жалобу')}</Button>
-            </div>
-          </form>
-        </Modal>
-      )}
-    </div>
-  );
-}
 export function CreatorPage({ handle }: { handle: string }) {
   const { t: tr } = useT();
   const { data, loading, error, reload } = useResource<{
@@ -471,7 +187,14 @@ export function CreatorPage({ handle }: { handle: string }) {
   if (!data) return <ErrorBox message={error} retry={reload} />;
   return (
     <div className="discovery-page creator-page">
+      <header className="creator-page-heading">
+        <h1>{tr('Автор миров')}</h1>
+      </header>
       <div className="creator-header creator-banner">
+        <picture className="creator-decoration" aria-hidden="true">
+          <source srcSet="/images/dreamwalk-world-night.webp" />
+          <img src="/images/dreamwalk-world-night.webp" alt="" />
+        </picture>
         <span className="avatar large">
           {data.creator.avatarAssetId ? (
             <img src={assetUrl(data.creator.avatarAssetId)} alt="" />
@@ -480,9 +203,7 @@ export function CreatorPage({ handle }: { handle: string }) {
           )}
         </span>
         <div>
-          <span className="eyebrow">{tr('АВТОР МИРОВ')}</span>
-          <h1>{data.creator.handle}</h1>
-          <p>@{data.creator.handle}</p>
+          <h2>@{data.creator.handle}</h2>
           <p className="creator-bio">
             {data.creator.bio || tr('Истории говорят об авторе лучше любых слов.')}
           </p>
@@ -491,7 +212,7 @@ export function CreatorPage({ handle }: { handle: string }) {
       <h2 className="section-title">{tr('Опубликованные приключения')}</h2>
       <div className="adventure-grid discovery-grid">
         {data.adventures.map((a) => (
-          <AdventureCard adventure={a} key={a.id} />
+          <DiscoveryWorldCard adventure={a} key={a.id} portrait />
         ))}
       </div>
       {!data.adventures.length && (

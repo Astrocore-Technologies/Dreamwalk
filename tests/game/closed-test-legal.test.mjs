@@ -10,6 +10,10 @@ const source = await readFile(
   new URL('../../apps/web/components/static.tsx', import.meta.url),
   'utf8',
 );
+const legalSource = await readFile(
+  new URL('../../apps/web/components/legal-page.tsx', import.meta.url),
+  'utf8',
+);
 // Source and copy checks only; these do not establish legal compliance or browser rendering.
 test('all three reviewed closed-test pages exist in all supported locales with draft labels', () => {
   assert.deepEqual(Object.keys(closedTestLegalCopy).sort(), ['en', 'ru', 'uk']);
@@ -52,6 +56,20 @@ test('content policy uses the same draft rules and pages render escaped text wit
   assert.match(source, /closedTestLegalCopy\[locale\]\[legalPath\]/);
   assert.match(source, /eyebrow=\{closedTestDraftLabel\[locale\]\}/);
   assert.match(source, /<strong key=\{segment\}>\{part.slice\(2, -2\)\}<\/strong>/);
+  assert.match(
+    source,
+    /if \(legalPath === '\/terms' \|\| legalPath === '\/privacy'\) return <LegalPage path=\{legalPath\} \/>/,
+  );
+  assert.match(legalSource, /closedTestLegalCopy\[locale\]\[path\]/);
+  assert.match(legalSource, /closedTestDraftLabel\[locale\]/);
+  assert.match(legalSource, /<InlineCopy text=\{page.paragraphs\[0\]\} \/>/);
+  assert.match(legalSource, /page.paragraphs.slice\(1\).map/);
+  assert.match(legalSource, /<strong key=\{index\}>\{part.slice\(2, -2\)\}<\/strong>/);
+  assert.match(legalSource, /<InlineCopy text=\{body\} \/>/);
+  assert.doesNotMatch(
+    legalSource,
+    /<form|<input|<button|onClick|onSubmit|dangerouslySetInnerHTML|fetch\(|localStorage|sessionStorage|document.cookie/,
+  );
   assert.doesNotMatch(
     source,
     /dangerouslySetInnerHTML|type="checkbox"|onSubmit|fetch\(|method:|Платные AI-провайдеры сейчас не получают данные|Игровой движок, AI-ведущий и совместные сессии ещё не подключены/,

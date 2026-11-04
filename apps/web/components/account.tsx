@@ -9,7 +9,20 @@ import { readStoryReturn, withStoryReturn, storyAfterAuth, authFormKey } from '.
 import { StoryReturnLink } from './story-return-link';
 import { useLaunchGate } from './game/use-launch-gate';
 import { useState, useEffect, type FormEvent } from 'react';
-import { ArrowRight, Fingerprint, Laptop, ShieldCheck, UserRound } from 'lucide-react';
+import {
+  ArrowRight,
+  Fingerprint,
+  Laptop,
+  ShieldCheck,
+  UserRound,
+  SlidersHorizontal,
+  LockKeyhole,
+  Download,
+  Trash2,
+  Mail,
+  Eye,
+  EyeOff,
+} from 'lucide-react';
 import {
   api,
   useClient,
@@ -71,6 +84,7 @@ function AuthForm({
   const [error, setError] = useState(''),
     [busy, setBusy] = useState(false),
     [result, setResult] = useState('');
+  const [passwordVisible, setPasswordVisible] = useState(false);
   async function submit(event: FormEvent<HTMLFormElement>) {
     event.preventDefault();
     const lease = authGate.begin();
@@ -124,7 +138,7 @@ function AuthForm({
     }
   }
   return (
-    <div className="auth-layout">
+    <div className="auth-layout" data-auth-mode={reset ? 'reset' : signup ? 'signup' : 'signin'}>
       <div className="auth-art">
         <div className="eyebrow">{tr('ПЕРВАЯ СТРАНИЦА ТВОЕЙ ИСТОРИИ')}</div>
         <h1>
@@ -191,39 +205,64 @@ function AuthForm({
               </Field>
             </>
           )}
-          <Field
-            label={localAlias ? localText.identifier : 'Email'}
-            hint={localAlias ? localText.hint : undefined}
-          >
-            <Input
-              name="email"
-              type={localAlias ? 'text' : 'email'}
-              autoComplete={localAlias ? 'username' : 'email'}
-              required
-              maxLength={254}
-              placeholder={localAlias ? 'admin' : 'you@example.com'}
-            />
-          </Field>
-          {!reset && (
-            <Field
-              label={tr('Пароль')}
-              hint={
-                signup
-                  ? tr('Не менее 10 символов. Не используй пароль от других сервисов.')
-                  : undefined
-              }
-            >
+          <div className="field auth-field">
+            <label className="auth-field-label" htmlFor="auth-email">
+              {localAlias ? localText.identifier : 'Email'}
+            </label>
+            <div className="auth-input-wrap">
+              <Mail aria-hidden="true" size={28} />
               <Input
-                aria-label={tr('Пароль')}
-                name="password"
-                type="password"
-                autoComplete={signup ? 'new-password' : 'current-password'}
+                id="auth-email"
+                name="email"
+                type={localAlias ? 'text' : 'email'}
+                autoComplete={localAlias ? 'username' : 'email'}
                 required
-                minLength={signup ? 10 : 1}
-                maxLength={128}
-                placeholder="••••••••••"
+                maxLength={254}
+                placeholder={localAlias ? localText.identifier : 'Email'}
+                aria-describedby={localAlias ? 'auth-local-hint' : undefined}
               />
-            </Field>
+            </div>
+            {localAlias && <small id="auth-local-hint">{localText.hint}</small>}
+          </div>
+          {!reset && (
+            <div className="field auth-field">
+              <label className="auth-field-label" htmlFor="auth-password">
+                {tr('Пароль')}
+              </label>
+              <div className="auth-input-wrap auth-password-wrap">
+                <LockKeyhole aria-hidden="true" size={28} />
+                <Input
+                  id="auth-password"
+                  name="password"
+                  type={passwordVisible ? 'text' : 'password'}
+                  autoComplete={signup ? 'new-password' : 'current-password'}
+                  required
+                  minLength={signup ? 10 : 1}
+                  maxLength={128}
+                  placeholder={tr('Пароль')}
+                  aria-describedby={signup ? 'auth-password-hint' : undefined}
+                />
+                <button
+                  type="button"
+                  className="auth-password-toggle"
+                  aria-label={passwordVisible ? tr('Скрыть пароль') : tr('Показать пароль')}
+                  aria-pressed={passwordVisible}
+                  aria-controls="auth-password"
+                  onClick={() => setPasswordVisible((visible) => !visible)}
+                >
+                  {passwordVisible ? (
+                    <EyeOff size={26} aria-hidden="true" />
+                  ) : (
+                    <Eye size={26} aria-hidden="true" />
+                  )}
+                </button>
+              </div>
+              {signup && (
+                <small id="auth-password-hint">
+                  {tr('Не менее 10 символов. Не используй пароль от других сервисов.')}
+                </small>
+              )}
+            </div>
           )}
           <ErrorBox message={error} />
           {result && (
@@ -233,7 +272,6 @@ function AuthForm({
           )}
           <Button busy={busy}>
             {reset ? tr('Проверить восстановление') : signup ? tr('Создать аккаунт') : tr('Войти')}
-            <ArrowRight size={17} />
           </Button>
         </form>
         {!reset && !signup && (
@@ -242,10 +280,12 @@ function AuthForm({
           </Link>
         )}
         <div className="auth-switch">
-          {signup ? tr('Уже есть аккаунт?') : tr('Впервые здесь?')}{' '}
-          <Link href={withStoryReturn(signup ? '/auth/sign-in' : '/auth/sign-up', returnTo)}>
-            {signup ? tr('Войти') : tr('Создать аккаунт')}
-          </Link>
+          <span>
+            {signup ? tr('Уже есть аккаунт?') : tr('Впервые здесь?')}{' '}
+            <Link href={withStoryReturn(signup ? '/auth/sign-in' : '/auth/sign-up', returnTo)}>
+              {signup ? tr('Войти') : tr('Создать аккаунт')}
+            </Link>
+          </span>
         </div>
         <StoryReturnLink intent={returnTo} />
         <p className="legal-note">
@@ -390,21 +430,24 @@ export function AccountPage({ path }: { path: string }) {
   const { t: tr } = useT();
   const tab = path.split('/')[2] || 'profile';
   return (
-    <>
+    <div className="account-design">
       <PageHeading
         eyebrow={tr('ТВОЁ ПРОСТРАНСТВО')}
         title={tr('Настроить под себя')}
         description={tr('Имя, привычки и границы. Здесь всё по-твоему.')}
       />
       <Tabs
-        items={[
-          ['profile', tr('Профиль')],
-          ['settings', tr('Предпочтения')],
-          ['privacy', tr('Приватность')],
-          ['sessions', tr('Безопасность')],
-        ].map(([key, label]) => ({
+        items={(
+          [
+            ['profile', tr('Профиль'), UserRound],
+            ['settings', tr('Предпочтения'), SlidersHorizontal],
+            ['privacy', tr('Приватность'), ShieldCheck],
+            ['sessions', tr('Безопасность'), LockKeyhole],
+          ] as const
+        ).map(([key, label, Icon]) => ({
           href: `/account/${key}`,
           label,
+          icon: <Icon size={24} aria-hidden="true" />,
           active: tab === key,
         }))}
       />
@@ -415,7 +458,7 @@ export function AccountPage({ path }: { path: string }) {
       ) : (
         <SettingsForm key={tab} privacy={tab === 'privacy'} />
       )}
-    </>
+    </div>
   );
 }
 function ProfileForm() {
@@ -489,8 +532,14 @@ function ProfileForm() {
           </div>
         </form>
       </Panel>
-      <Panel className="quiet-panel">
-        <UserRound size={28} />
+      <Panel className="quiet-panel account-profile-story">
+        <img
+          className="account-story-art"
+          src="/images/account-castle.webp"
+          alt=""
+          width={1672}
+          height={941}
+        />
         <h3>{tr('Это ты. А герой — отдельная история.')}</h3>
         <p>
           {tr(
@@ -528,7 +577,11 @@ function SettingsForm({ privacy }: { privacy: boolean }) {
   }
   return (
     <>
-      <Panel className="form-panel">
+      <Panel
+        className={
+          privacy ? 'form-panel account-privacy-panel' : 'form-panel account-preferences-panel'
+        }
+      >
         <form
           method="post"
           className="stack"
@@ -664,12 +717,25 @@ function SettingsForm({ privacy }: { privacy: boolean }) {
             <Button busy={busy}>{tr('Сохранить настройки')}</Button>
           </div>
         </form>
+        {privacy && (
+          <img
+            className="account-privacy-art"
+            src="/images/account-observatory.webp"
+            alt=""
+            width={1536}
+            height={1024}
+          />
+        )}
       </Panel>
       {privacy && (
-        <Panel className="form-panel">
+        <Panel className="form-panel account-data-panel">
           <h2>{tr('Управление данными')}</h2>
-          <AccountExports />
-          <div className="row">
+          <div className="account-data-row">
+            <Download aria-hidden="true" size={30} />
+            <AccountExports />
+          </div>
+          <div className="row account-delete-row">
+            <Trash2 aria-hidden="true" size={30} />
             <Button variant="danger" onClick={() => setDeleting(true)}>
               {tr('Удалить аккаунт')}
             </Button>
@@ -750,7 +816,7 @@ function SecurityForm() {
   const [busy, setBusy] = useState(false),
     [error, setError] = useState('');
   return (
-    <div className="account-layout">
+    <div className="account-layout account-security-layout">
       <EmailVerification />
       <Panel>
         <h2>
@@ -816,7 +882,7 @@ function SecurityForm() {
               <Laptop size={24} />
               <div>
                 <strong>{s.current ? tr('Это устройство') : tr('Браузер')}</strong>
-                <small title={s.userAgent}>{s.userAgent.slice(0, 65)}</small>
+                <small title={s.userAgent}>{sessionDeviceLabel(s.userAgent)}</small>
                 <small>
                   {tr('Последняя активность: {date}', {
                     date: date(s.lastSeenAt),
@@ -847,4 +913,28 @@ function SecurityForm() {
       </Panel>
     </div>
   );
+}
+
+function sessionDeviceLabel(agent: string) {
+  const browser = /Edg\/|EdgiOS\/|EdgA\//.test(agent)
+    ? 'Edge'
+    : /Firefox\/|FxiOS\//.test(agent)
+      ? 'Firefox'
+      : /Chrome\/|CriOS\//.test(agent)
+        ? 'Chrome'
+        : /Safari\//.test(agent)
+          ? 'Safari'
+          : agent.slice(0, 65);
+  const platform = /Android/.test(agent)
+    ? 'Android'
+    : /iPhone|iPad/.test(agent)
+      ? 'iOS'
+      : /Windows/.test(agent)
+        ? 'Windows'
+        : /Macintosh/.test(agent)
+          ? 'macOS'
+          : /Linux/.test(agent)
+            ? 'Linux'
+            : '';
+  return platform ? `${browser} · ${platform}` : browser;
 }

@@ -1221,3 +1221,352 @@ td {
 .game-toolbar-slot:has([data-game-toolbar]) > .game-return {
   display: none;
 }
+
+/* Selected account/admin compositions. Scoped to avoid changing gameplay or authoring. */
+.app-shell:is([data-surface='account'], [data-surface='admin'])::before {
+  background:
+    radial-gradient(
+      ellipse at 70% 0,
+      color-mix(in srgb, var(--accent) 6%, transparent),
+      transparent 60%
+    ),
+    var(--bg);
+}
+.app-shell:is([data-surface='account'], [data-surface='admin']) .main-content {
+  background: transparent;
+  border-radius: 0;
+}
+:is(.account-design, .admin-design) {
+  --account-border: color-mix(in srgb, var(--accent) 42%, var(--line));
+}
+:is(.account-design, .admin-design) > .page-heading {
+  margin: 0 0 28px;
+}
+:is(.account-design, .admin-design) > .page-heading .eyebrow {
+  display: none;
+}
+:is(.account-design, .admin-design) > .page-heading h1 {
+  font-size: clamp(30px, 3.2vw, 48px);
+  line-height: 1.12;
+}
+:is(.account-design, .admin-design) > .page-heading p {
+  max-width: none;
+  font-size: 18px;
+  line-height: 1.5;
+}
+:is(.account-design, .admin-design) > .tabs {
+  border-color: var(--account-border);
+  padding: 6px;
+  margin-bottom: 28px;
+  gap: 8px;
+}
+:is(.account-design, .admin-design) > .tabs a {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 12px;
+  min-height: 48px;
+  padding: 10px 16px;
+  font-size: 17px;
+  flex: 1 0 auto;
+  white-space: nowrap;
+}
+:is(.account-design, .admin-design) > .tabs a.active {
+  color: #241a29;
+  background: linear-gradient(120deg, #f8d789, #dfad57);
+  border-bottom-color: transparent;
+  box-shadow: inset 0 0 0 1px #ffe6b3;
+}
+:is(.account-design, .admin-design) .panel {
+  border-color: var(--account-border);
+  background: linear-gradient(
+    135deg,
+    color-mix(in srgb, var(--surface-raised) 60%, var(--surface)),
+    var(--surface)
+  );
+}
+.account-design .panel {
+  padding: 28px;
+}
+.account-design .panel h2 {
+  font-size: clamp(24px, 2.2vw, 34px);
+  line-height: 1.2;
+}
+.account-design .panel h3 {
+  font-size: 28px;
+  line-height: 1.25;
+}
+.account-design .field {
+  font-size: 17px;
+  gap: 8px;
+}
+.account-design .input {
+  font-size: 16px;
+  min-height: 48px;
+  border-color: var(--account-border);
+  background: color-mix(in srgb, var(--surface-raised) 55%, var(--surface));
+}
+.account-design .field small,
+.account-design .muted {
+  font-size: 14px;
+}
+.account-design .form-panel {
+  max-width: none;
+}
+.account-design .form-actions {
+  justify-content: flex-start;
+}
+.account-design .button {
+  font-size: 16px;
+  min-height: 46px;
+}
+.account-design .account-layout {
+  grid-template-columns: minmax(0, 1.6fr) minmax(260px, 1fr);
+  align-items: start;
+}
+.account-design .profile-upload .avatar {
+  width: 150px;
+  height: 150px;
+  flex: 0 0 150px;
+  border: 2px solid var(--accent);
+  font-size: 48px;
+}
+.account-design .profile-upload {
+  gap: 24px;
+  flex-wrap: wrap;
+}
+.account-design .profile-upload > div {
+  min-width: 0;
+}
+.account-design .profile-upload + .field-grid {
+  grid-template-columns: minmax(0, 1fr);
+}
+.account-design .account-profile-story {
+  padding: 0 0 28px;
+  overflow: hidden;
+}
+.account-story-art {
+  display: block;
+  width: 100%;
+  height: auto;
+  aspect-ratio: 1.65;
+  object-fit: cover;
+}
+.account-profile-story > :not(img) {
+  margin-inline: 26px;
+}
+.account-profile-story h3 {
+  margin-block: 26px 16px;
+}
+.account-profile-story p {
+  font-size: 17px;
+  line-height: 1.6;
+}
+.account-profile-story .button {
+  margin-top: 16px;
+}
+.account-privacy-panel {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(250px, 1fr);
+  overflow: hidden;
+}
+.account-privacy-panel form {
+  min-width: 0;
+  padding-right: 28px;
+}
+.account-privacy-art {
+  max-width: none;
+  width: calc(100% + 28px);
+  height: calc(100% + 56px);
+  min-height: 360px;
+  object-fit: cover;
+  margin: -28px -28px -28px 0;
+}
+.account-data-row {
+  display: grid;
+  grid-template-columns: 44px minmax(0, 1fr);
+  gap: 20px;
+  margin: 24px 0;
+}
+.account-data-row > svg,
+.account-delete-row > svg {
+  color: var(--accent);
+}
+.account-delete-row {
+  border-top: 1px solid var(--account-border);
+  padding-top: 24px;
+}
+.account-delete-row .button {
+  margin-left: auto;
+}
+.account-design .account-security-layout {
+  grid-template-columns: minmax(0, 0.9fr) minmax(0, 1.1fr);
+}
+.account-security-layout .account-email-banner {
+  grid-column: 1 / -1;
+  min-height: 180px;
+  padding: 30px 26% 30px 22%;
+  background: #23162e url('/images/account-envelope.webp') center / cover;
+  color: #fff7ed;
+}
+.account-email-banner p {
+  font-size: 17px;
+}
+.account-email-banner .button {
+  color: #fff1cf;
+  border-color: #dfb870;
+  background: #21172de8;
+}
+.account-design .session-row {
+  gap: 16px;
+}
+.account-design .session-row strong {
+  font-size: 17px;
+}
+.account-design .session-row small {
+  font-size: 14px;
+  overflow-wrap: anywhere;
+}
+.account-design .session-row .button {
+  font-size: 14px;
+  padding: 8px 12px;
+  flex-shrink: 0;
+}
+.admin-design th,
+.admin-design td {
+  font-size: 15px;
+}
+.admin-design th {
+  text-transform: none;
+  letter-spacing: 0;
+}
+.admin-design .table-wrap {
+  border-color: var(--account-border);
+}
+.admin-design .admin-overview-art {
+  padding: 0 24px 24px;
+  overflow: hidden;
+}
+.admin-overview-art > img {
+  display: block;
+  width: calc(100% + 48px);
+  max-width: none;
+  margin: 0 -24px 24px;
+  height: auto;
+  aspect-ratio: 2.1;
+  object-fit: cover;
+}
+.admin-overview-art .button {
+  margin-top: 20px;
+}
+.admin-overview-art p {
+  font-size: 16px;
+  line-height: 1.6;
+}
+@media (max-width: 1100px) {
+  .account-design .account-layout {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .account-profile-story .account-story-art {
+    max-height: 300px;
+  }
+  .account-privacy-panel {
+    grid-template-columns: minmax(0, 1.3fr) minmax(210px, 1fr);
+  }
+}
+@media (max-width: 650px) {
+  :is(.account-design, .admin-design) > .page-heading p {
+    font-size: 15px;
+  }
+  :is(.account-design, .admin-design) > .tabs {
+    display: grid;
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+    overflow: visible;
+  }
+  :is(.account-design, .admin-design) > .tabs a {
+    font-size: 14px;
+    padding: 8px;
+    gap: 8px;
+    white-space: normal;
+    min-width: 0;
+  }
+  .account-design .panel {
+    padding: 20px;
+  }
+  .account-design .field-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .account-design .profile-upload .avatar {
+    width: 110px;
+    height: 110px;
+    flex-basis: 110px;
+  }
+  .account-design .account-profile-story {
+    padding: 0 0 20px;
+  }
+  .account-design .account-privacy-panel {
+    display: flex;
+    flex-direction: column-reverse;
+    padding-top: 0;
+  }
+  .account-privacy-panel form {
+    padding: 0;
+  }
+  .account-privacy-art {
+    width: calc(100% + 40px);
+    height: 200px;
+    min-height: 0;
+    margin: 0 -20px 24px;
+  }
+  .account-security-layout .account-email-banner {
+    padding: 160px 20px 24px;
+    background-position: left top;
+    background-size: auto 180px;
+    background-repeat: no-repeat;
+  }
+  .account-design .session-row {
+    flex-wrap: wrap;
+  }
+  .account-design .session-row .button {
+    margin-left: auto;
+  }
+  .account-data-row {
+    grid-template-columns: minmax(0, 1fr);
+    gap: 12px;
+  }
+  .account-data-row .row {
+    align-items: stretch;
+    flex-direction: column;
+  }
+  .account-design .form-actions .button {
+    width: 100%;
+  }
+}
+.account-email-copy {
+  color: #fff7ed;
+  padding: 16px 20px;
+  border-radius: 12px;
+  background: #21172ded;
+  box-shadow: 0 0 28px #21172d44;
+}
+.account-email-copy h2 {
+  margin-top: 0;
+}
+.account-email-copy p {
+  color: #fff7ed;
+}
+.account-design .profile-upload > div small {
+  display: block;
+  margin-top: 8px;
+}
+.account-email-copy p:last-child {
+  margin-bottom: 0;
+}
+
+.account-design .toggle-row strong {
+  font-size: 17px;
+}
+.account-design .toggle-row small {
+  font-size: 14px;
+  line-height: 1.5;
+}
