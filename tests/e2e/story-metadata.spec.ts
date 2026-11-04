@@ -14,12 +14,18 @@ test('public story detail omits duration and story boundaries without changing s
   const before = await (await page.request.get(`/api/v1/adventures/${slug}?view=published`)).json();
   await page.setViewportSize({ width: 390, height: 844 });
   await page.goto(`/adventures/${slug}`);
-  await expect(page.locator('.discovery-detail')).toBeVisible();
+  await expect(page.getByTestId('story-detail')).toBeVisible();
   await expect(page.getByText('Длительность', { exact: true })).toHaveCount(0);
   await expect(page.getByRole('heading', { name: 'Границы истории', exact: true })).toHaveCount(0);
-  await expect(
-    page.getByRole('heading', { name: 'За порогом истории', exact: true }),
-  ).toBeVisible();
+  const about = page.getByTestId('story-detail').locator('.sd-story-about');
+  const summary = about.locator('summary');
+  await expect(summary).toHaveText('За порогом истории');
+  await expect(summary).toBeVisible();
+  await expect(about).not.toHaveAttribute('open', '');
+  await summary.click();
+  await expect(about).toHaveAttribute('open', '');
+  await expect(about.locator('.prose')).toBeVisible();
+  await expect(about.locator('.prose')).not.toBeEmpty();
   const after = await (await page.request.get(`/api/v1/adventures/${slug}?view=published`)).json();
   expect(after.duration).toEqual(before.duration);
   expect(after.content?.boundaries).toEqual(before.content?.boundaries);

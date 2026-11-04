@@ -1,0 +1,304 @@
+/* Scoped to discovery/profile. Covers and identities always come from the readable API. */
+.discovery-catalog .catalog-heading,
+.creator-page .creator-page-heading {
+  margin: 0 0 24px;
+  padding: 0;
+  background: transparent;
+}
+.discovery-catalog .catalog-heading h1,
+.creator-page .creator-page-heading h1 {
+  margin: 0;
+  font-size: clamp(30px, 3.5vw, 50px);
+  line-height: 1.16;
+  letter-spacing: -0.035em;
+}
+.discovery-catalog .catalog-tools {
+  gap: 22px;
+  margin-bottom: 20px;
+}
+.discovery-catalog .catalog-tools .input {
+  min-height: 54px;
+  border-radius: 17px;
+  font-size: 18px;
+  background: var(--surface);
+}
+.discovery-catalog .search-field > svg {
+  top: 17px;
+  left: 20px;
+}
+.discovery-catalog .search-field .input {
+  padding-left: 55px;
+}
+.discovery-catalog .sort-control {
+  min-width: 225px;
+}
+.discovery-catalog .sort-control > svg {
+  display: none;
+}
+.discovery-catalog .sort-control select {
+  width: 100%;
+}
+.discovery-catalog .filter-chips {
+  gap: 16px;
+  margin-bottom: 22px;
+}
+.discovery-catalog .filter-chips button {
+  padding: 9px 28px;
+  min-height: 44px;
+  border-radius: 999px;
+  font-size: 17px;
+}
+.discovery-catalog .discovery-grid,
+.creator-page .discovery-grid {
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 16px;
+}
+.discovery-page .discovery-grid > .world-card {
+  position: relative;
+  isolation: isolate;
+  display: flex;
+  justify-content: flex-end;
+  min-height: 344px;
+  border: 1px solid #80677e;
+  border-radius: 18px;
+  overflow: hidden;
+  background: #211728;
+  color: #fff8ff;
+  transition:
+    transform 160ms ease,
+    border-color 160ms ease;
+}
+.discovery-page .world-card:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 4px;
+}
+.world-card .world-card-image {
+  position: absolute;
+  inset: 0;
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+  object-position: center 35%;
+  z-index: -2;
+}
+.world-card::before {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(180deg, transparent 25%, #21172866 47%, #211728 75%);
+  pointer-events: none;
+}
+.world-card .world-card-content {
+  min-width: 0;
+  padding: 180px 17px 15px;
+  background: linear-gradient(180deg, transparent 125px, #211728f5 180px, #211728);
+}
+.world-card .world-card-content .card-art-title {
+  position: static;
+  padding: 0;
+  border-radius: 0;
+  background: transparent;
+  margin: 0 0 7px;
+  color: #fff8ff;
+  font-size: clamp(22px, 1.8vw, 28px);
+  line-height: 1.22;
+  letter-spacing: -0.025em;
+  overflow-wrap: anywhere;
+  -webkit-line-clamp: 3;
+}
+.world-card .world-card-synopsis {
+  display: -webkit-box;
+  -webkit-box-orient: vertical;
+  -webkit-line-clamp: 2;
+  overflow: hidden;
+  overflow-wrap: anywhere;
+  font-size: 14px;
+  line-height: 1.5;
+  color: #ead8ef;
+  margin: 0 0 11px;
+}
+.world-card .world-card-byline {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 10px;
+  color: #ead8ef;
+  font-size: 12px;
+}
+.world-card .world-card-byline .card-author {
+  display: flex;
+  align-items: center;
+  gap: 9px;
+  margin: 0;
+  font-size: 13px;
+  color: #fff8ff;
+  min-width: 0;
+  overflow-wrap: anywhere;
+}
+.world-author-initial {
+  display: grid;
+  place-items: center;
+  flex-shrink: 0;
+  width: 32px;
+  height: 32px;
+  border: 1px solid #e8c178;
+  border-radius: 50%;
+  background: #3d2a48;
+  color: #f4d89e;
+  text-transform: uppercase;
+}
+.world-card-genre {
+  border-left: 1px solid #80677e;
+  padding-left: 10px;
+}
+.world-card-facts {
+  display: flex;
+  align-items: center;
+  flex-wrap: wrap;
+  gap: 6px 14px;
+  margin-top: 9px;
+  color: #ead8ef;
+  font-size: 11px;
+}
+.world-card .world-card-facts .story-metrics {
+  margin: 0;
+  color: inherit;
+  font-size: inherit;
+}
+.world-card-players {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+.creator-page .creator-banner {
+  position: relative;
+  isolation: isolate;
+  overflow: hidden;
+  min-height: 282px;
+  padding: 32px;
+  gap: 32px;
+  margin: 0 0 28px;
+  background: var(--surface);
+  border-radius: 20px;
+}
+.creator-page .creator-decoration {
+  position: absolute;
+  inset: 0;
+  z-index: -2;
+}
+.creator-page .creator-decoration img {
+  width: 100%;
+  height: 100%;
+  object-fit: cover;
+}
+.creator-page .creator-banner::after {
+  content: '';
+  position: absolute;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(
+    90deg,
+    var(--surface) 10%,
+    color-mix(in srgb, var(--surface) 95%, transparent) 50%,
+    transparent
+  );
+}
+.creator-page .creator-banner .avatar,
+.creator-page .creator-banner .avatar:not(:has(img)) {
+  width: 200px;
+  height: 200px;
+  font-size: 64px;
+  background: var(--surface);
+}
+.creator-page .creator-banner > div {
+  max-width: 510px;
+}
+.creator-page .creator-banner h2 {
+  font-size: clamp(30px, 3.4vw, 46px);
+  margin: 0;
+  overflow-wrap: anywhere;
+}
+.creator-page .creator-banner .creator-bio {
+  font-size: 19px;
+  line-height: 1.6;
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.creator-page > .section-title {
+  font-size: clamp(26px, 3vw, 40px);
+  margin: 0 0 24px;
+}
+.creator-page .discovery-grid > .world-card-portrait {
+  min-height: 475px;
+}
+.world-card-portrait .world-card-content {
+  padding-top: 295px;
+  background: linear-gradient(180deg, transparent 240px, #211728f5 295px, #211728);
+}
+@media (max-width: 1200px) {
+  .discovery-catalog .discovery-grid,
+  .creator-page .discovery-grid {
+    grid-template-columns: repeat(2, minmax(0, 1fr));
+  }
+  .creator-page .creator-banner {
+    padding: 26px;
+    gap: 24px;
+  }
+  .creator-page .creator-banner .avatar,
+  .creator-page .creator-banner .avatar:not(:has(img)) {
+    width: 140px;
+    height: 140px;
+    font-size: 48px;
+  }
+}
+@media (max-width: 700px) {
+  .discovery-catalog .discovery-grid,
+  .creator-page .discovery-grid {
+    grid-template-columns: minmax(0, 1fr);
+  }
+  .discovery-catalog .catalog-tools {
+    flex-direction: column;
+    gap: 12px;
+  }
+  .discovery-catalog .sort-control {
+    min-width: 0;
+  }
+  .discovery-catalog .catalog-tools .input {
+    font-size: 16px;
+  }
+  .discovery-catalog .filter-chips {
+    gap: 8px;
+    flex-wrap: wrap;
+    overflow: visible;
+  }
+  .discovery-catalog .filter-chips button {
+    padding: 8px 16px;
+    font-size: 14px;
+  }
+  .creator-page .creator-banner {
+    flex-direction: column;
+    align-items: flex-start;
+    padding: 24px;
+  }
+  .creator-page .creator-banner::after {
+    background: color-mix(in srgb, var(--surface) 92%, transparent);
+  }
+  .creator-page .creator-banner .avatar,
+  .creator-page .creator-banner .avatar:not(:has(img)) {
+    width: 112px;
+    height: 112px;
+    font-size: 42px;
+  }
+  .creator-page .creator-banner .creator-bio {
+    font-size: 16px;
+  }
+}
+@media (prefers-reduced-motion: reduce) {
+  .discovery-page .discovery-grid > .world-card {
+    transition: none;
+  }
+  .discovery-page .discovery-grid > .world-card:hover {
+    transform: none;
+  }
+}

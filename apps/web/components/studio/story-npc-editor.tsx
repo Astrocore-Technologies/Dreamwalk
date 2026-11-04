@@ -1,13 +1,31 @@
 'use client';
+import { UserRound, Pencil, Plus, ShieldCheck } from 'lucide-react';
+import styles from './story-authoring.module.css';
 import { NpcTemplateField } from './npc-template-field';
 import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { npcSchema, type Adventure, type Npc } from '@dreamwalk/contracts';
 import { api, ApiError, assetUrl, errorMessage, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
-import { Button, ErrorBox, Field, Input, Modal, Panel, Select, Textarea, UploadField } from '../ui';
+import {
+  Button,
+  ErrorBox,
+  Field,
+  Input,
+  Modal,
+  Panel,
+  Select,
+  Textarea,
+  UploadField,
+  Loading,
+} from '../ui';
 import { CharacterSpriteControl } from '../visual-authoring/character-sprite-control';
 
 const messages = {
+  privacy: [
+    'Секреты персонажа не видны игрокам.',
+    'Character secrets are not visible to players.',
+    'Таємниці персонажа не видимі гравцям.',
+  ],
   continue: ['Продолжить редактирование', 'Continue editing', 'Продовжити редагування'],
   title: ['Персонажи этой истории', 'Characters in this story', 'Персонажі цієї історії'],
   intro: [
@@ -115,6 +133,7 @@ export function StoryNpcEditor({
   }));
   const [baseline, setBaseline] = useState('');
   const [templateId, setTemplateId] = useState('');
+  const [previewId, setPreviewId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [notice, setNotice] = useState('');
@@ -153,6 +172,7 @@ export function StoryNpcEditor({
       npc === 'new'
         ? { ...npcSchema.parse({ name: 'New NPC', sourceLanguage: locale }), name: '' }
         : draftFrom(npc);
+    if (npc !== 'new') setPreviewId(npc.id);
     setEditing(npc);
     setDraft(next);
     setBaseline(JSON.stringify(next));
@@ -227,6 +247,7 @@ export function StoryNpcEditor({
       onChanged();
       if (kind !== 'export') {
         const next = draftFrom(result.npc);
+        setPreviewId(result.npc.id);
         setEditing(result.npc);
         setDraft(next);
         setBaseline(JSON.stringify(next));
@@ -256,8 +277,9 @@ export function StoryNpcEditor({
   }
   const existing = locals.data?.npcs ?? [];
   const legacy = templates.data?.filter((npc) => selectedNpcIds.includes(npc.id)) ?? [];
+  const previewNpc = existing.find((npc) => npc.id === previewId) ?? existing[0];
   return (
-    <Panel className="stack">
+    <Panel className={`stack ${styles.npcPanel}`}>
       <h2 data-testid="story-npc-editor">{text('title')}</h2>
       <p className="muted">{text('intro')}</p>
       <ErrorBox
@@ -269,16 +291,103 @@ export function StoryNpcEditor({
       />
       {!editing && (
         <>
-          {!existing.length && !legacy.length && <p>{text('empty')}</p>}
-          {existing.map((npc) => (
-            <div className="row" key={npc.id}>
-              <strong>{npc.name}</strong>
-              {!selectedNpcIds.includes(npc.id) && <small>{text('removed')}</small>}
-              <Button type="button" disabled={busy} onClick={() => open(npc)}>
-                {text('edit')}
-              </Button>
+          {locals.loading && !locals.data && <Loading />}
+          {!locals.loading &&
+            !templates.loading &&
+            !locals.error &&
+            !templates.error &&
+            !existing.length &&
+            !legacy.length && <p>{text('empty')}</p>}
+          <div className={styles.npcWorkspace}>
+            <div className={styles.npcList}>
+              <div className={styles.npcActions}>
+                <Button type="button" disabled={busy} onClick={() => open('new')}>
+                  <Plus size={20} />
+                  {text('create')}
+                </Button>
+                <Field label={text('library')}>
+                  <Select
+                    aria-label={text('library')}
+                    value={templateId}
+                    disabled={busy}
+                    onChange={(event) => setTemplateId(event.target.value)}
+                  >
+                    <option value="">{text('choose')}</option>
+                    {templates.data?.map((npc) => (
+                      <option key={npc.id} value={npc.id}>
+                        {npc.name}
+                      </option>
+                    ))}
+                  </Select>
+                </Field>
+                <Button
+                  type="button"
+                  disabled={!templateId || busy}
+                  onClick={() => void mutate('import', templateId)}
+                >
+                  {text('import')}
+                </Button>
+              </div>
+              {existing.map((npc) => (
+                <div
+                  className={`row ${styles.npcCard}`}
+                  key={npc.id}
+                  data-selected={previewNpc?.id === npc.id}
+                >
+                  <button
+                    type="button"
+                    className={styles.npcChoice}
+                    aria-label={npc.name}
+                    aria-pressed={previewNpc?.id === npc.id}
+                    onClick={() => setPreviewId(npc.id)}
+                  >
+                    {npc.portraitAssetId ? (
+                      <img src={assetUrl(npc.portraitAssetId)} alt="" />
+                    ) : (
+                      <span className={styles.portraitFallback}>
+                        <UserRound size={38} />
+                      </span>
+                    )}
+                    <span>
+                      <strong>{npc.name}</strong>
+                      <span>{npc.role}</span>
+                      <small>{npc.description}</small>
+                    </span>
+                  </button>
+                  {!selectedNpcIds.includes(npc.id) && <small>{text('removed')}</small>}
+                  <Button
+                    type="button"
+                    variant="secondary"
+                    disabled={busy}
+                    onClick={() => open(npc)}
+                  >
+                    <Pencil size={16} />
+                    {text('edit')}
+                  </Button>
+                </div>
+              ))}
             </div>
-          ))}
+            {previewNpc && (
+              <aside className={styles.npcPreview} data-testid="story-npc-preview">
+                {previewNpc.portraitAssetId ? (
+                  <img src={assetUrl(previewNpc.portraitAssetId)} alt={t('Портрет NPC')} />
+                ) : (
+                  <div className={styles.previewFallback}>
+                    <UserRound size={80} />
+                  </div>
+                )}
+                <div>
+                  <h3>{previewNpc.name}</h3>
+                  <p className="muted">{t('Публичное описание NPC')}</p>
+                  <p>{previewNpc.description}</p>
+                </div>
+              </aside>
+            )}
+          </div>
+          <p className={styles.privacyNote}>
+            <ShieldCheck size={18} />
+            {text('privacy')}
+          </p>
           {legacy.map((npc) => (
             <div className="row" key={npc.id}>
               <strong>{npc.name}</strong>
@@ -287,31 +396,6 @@ export function StoryNpcEditor({
               </Button>
             </div>
           ))}
-          <Button type="button" disabled={busy} onClick={() => open('new')}>
-            {text('create')}
-          </Button>
-          <Field label={text('library')}>
-            <Select
-              aria-label={text('library')}
-              value={templateId}
-              disabled={busy}
-              onChange={(event) => setTemplateId(event.target.value)}
-            >
-              <option value="">{text('choose')}</option>
-              {templates.data?.map((npc) => (
-                <option key={npc.id} value={npc.id}>
-                  {npc.name}
-                </option>
-              ))}
-            </Select>
-          </Field>
-          <Button
-            type="button"
-            disabled={!templateId || busy}
-            onClick={() => void mutate('import', templateId)}
-          >
-            {text('import')}
-          </Button>
         </>
       )}
       {editing && (

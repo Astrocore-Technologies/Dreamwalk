@@ -1,3 +1,4 @@
+import { campaignDetails } from './support/campaign-details';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 import {
@@ -55,6 +56,7 @@ test('two independent browser sessions share one key, preserve it on reload, and
     await owner.goto(`/game/${campaignId}`);
     await expect(owner.getByText('Подключено', { exact: true })).toBeVisible();
     await expect(owner.locator('canvas')).toBeVisible();
+    await campaignDetails(owner);
     await owner.getByLabel('Пригласить по имени пользователя').fill(guestAccount.handle);
     await owner.getByRole('button', { name: 'Пригласить игрока', exact: true }).click();
     await expect(owner.getByText('Игрок приглашён', { exact: true })).toBeVisible();
@@ -62,6 +64,7 @@ test('two independent browser sessions share one key, preserve it on reload, and
     await guest.getByRole('button', { name: 'Принять приглашение в кампанию' }).click();
     await expect(guest).toHaveURL(new RegExp(`/game/${campaignId}$`));
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
+    await campaignDetails(owner, false);
     await expect(guest.locator('canvas')).toBeVisible();
     const ownerActorId = (await readProjection(owner, campaignId)).actorId;
     expect(
@@ -86,6 +89,7 @@ test('two independent browser sessions share one key, preserve it on reload, and
     await Promise.all([owner.reload(), guest.reload()]);
     await expect(owner.getByText('Подключено', { exact: true })).toBeVisible();
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
+    await campaignDetails(owner, false);
     await expect((await inventory(owner)).locator('[data-inventory-id="key"]')).toHaveCount(1);
     await expect((await inventory(guest)).locator('[data-inventory-id="key"]')).toHaveCount(0);
     expect((await readProjection(owner, campaignId)).inventory.map((e) => e.id)).toEqual(['key']);

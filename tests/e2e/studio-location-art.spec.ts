@@ -407,6 +407,8 @@ test('a permitted library image can be stored and recovered for a location witho
     .click();
   await dialog
     .getByRole('region', { name: 'Art library', exact: true })
+    .locator('[data-art-revision]')
+    .first()
     .getByRole('button', { name: 'Use revision', exact: true })
     .click();
   const selected = dialog.getByTestId('location-image-selection');

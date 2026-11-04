@@ -195,3 +195,31 @@ test('ordinary gameplay offers one compact composer estimate instead of diagnost
   );
   assert.match(messages, /Искры не списываются/);
 });
+
+test('viewport layout separates history from stable composer and removes the scene-media control only', async () => {
+  const read = (file) => readFile(new URL(`../../apps/web/${file}`, import.meta.url), 'utf8');
+  const story = await read('components/game/unified-story.tsx');
+  assert.doesNotMatch(story, /SceneMedia|styles\.media|nearBottom/);
+  assert.match(story, /useStoryScroll/);
+  assert.match(story, /className=\{styles\.history\}/);
+  assert.match(story, /className=\{styles\.composerFeedback\}/);
+  const scroll = await read('components/game/use-story-scroll.ts');
+  assert.match(scroll, /new ResizeObserver\(restore\)/);
+  assert.match(scroll, /saved\.anchor\.offset/);
+  assert.doesNotMatch(scroll, /scrollIntoView|window\.scroll/);
+  const page = await read('components/game/game-page.tsx');
+  assert.doesNotMatch(page, /fitPlaySurface/);
+  assert.match(page, /data-testid="campaign-details"/);
+  assert.match(page, /if \(encounter\?\.id\) setExtrasOpen\(true\)/);
+  const css = await read('components/game/story-feed.module.css');
+  assert.match(css, /scrollbar-gutter: stable/);
+  assert.match(css, /overflow-anchor: none/);
+  assert.match(css, /resize: none/);
+  const shell = await read('app/design-system.css');
+  assert.match(shell, /height: 100dvh/);
+  assert.match(shell, /\.main-content > \[data-locale\]/);
+  assert.match(shell, /\.game-shell:has\(\[data-testid='game-room'\]\)/);
+  // Underlying explicit image generation / binding and cost-consent components remain.
+  assert.match(await read('components/game/scene-media.tsx'), /media-preparation/);
+  assert.match(story, /<WorldGenerationConfirmation|<StoryReplyConfirmation/);
+});

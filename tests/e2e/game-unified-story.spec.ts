@@ -1,3 +1,4 @@
+import { campaignDetails } from './support/campaign-details';
 import { approachTarget, legacyRealtimeLaunch } from './support/map-actions';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
@@ -55,6 +56,7 @@ test('legacy realtime composer keeps audience, order and scene input coherent', 
     await expect(owner).toHaveURL(/\/game\/[a-f0-9-]+$/);
     const id = new URL(owner.url()).pathname.split('/').at(-1)!;
     await expect(owner.getByText('Подключено', { exact: true })).toBeVisible();
+    await campaignDetails(owner);
     await owner.getByLabel('Пригласить по имени пользователя').fill(guestHandle);
     await owner.getByRole('button', { name: 'Пригласить игрока', exact: true }).click();
     await guest.goto('/game');
@@ -62,6 +64,7 @@ test('legacy realtime composer keeps audience, order and scene input coherent', 
       .getByRole('button', { name: 'Принять приглашение в кампанию', exact: true })
       .click();
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
+    await campaignDetails(owner, false);
     const story = owner.getByTestId('unified-story');
     await approachTarget(owner, id, 'keeper');
     await expect

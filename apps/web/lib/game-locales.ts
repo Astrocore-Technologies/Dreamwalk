@@ -2,6 +2,7 @@ import { livingMessages } from './living-locales';
 /** Game UI and curated prototype names; never used to translate author content. */
 export const gameMessages = {
   ...livingMessages,
+  Кампания: { ru: 'Кампания', en: 'Campaign', uk: 'Кампанія' },
   'Сервис генерации обновляется. Обнови страницу чуть позже.': {
     ru: 'Сервис генерации обновляется. Обнови страницу чуть позже.',
     en: 'Generation is being updated. Refresh the page shortly.',

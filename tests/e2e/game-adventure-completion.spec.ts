@@ -1,3 +1,4 @@
+import { campaignDetails } from './support/campaign-details';
 import {
   approachTarget,
   mapAction,
@@ -102,10 +103,11 @@ test('four players retain the legacy realtime Observatory ending with owned hero
       await expect(guest).toHaveURL(new RegExp(`/game/${id}$`));
       await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
       // Each guest reads their hero/party while the next guest joins. This is
-      // normal user scrolling, not renderer manipulation: avoid three idle
+      // normal narrow-screen user scrolling, not renderer manipulation: avoid three idle
       // full-height WebGL scenes competing with the owner's active scene.
       // The privacy and renderer-suspension assertions below remain unchanged.
-      await guest.setViewportSize({ width: 1440, height: 600 });
+      await guest.setViewportSize({ width: 700, height: 600 });
+      await campaignDetails(guest);
       await guest
         .getByTestId('campaign-hero')
         .evaluate((element) => element.scrollIntoView({ block: 'start', behavior: 'instant' }));
@@ -132,6 +134,7 @@ test('four players retain the legacy realtime Observatory ending with owned hero
           if (i !== index + 1)
             await expect(page.getByText(`PRIVATE_HERO_${i}`, { exact: true })).toHaveCount(0);
         }
+        await campaignDetails(page);
         const privateDetails = page.getByTestId('campaign-hero').locator('details');
         const ownNote = privateDetails.getByText(`PRIVATE_HERO_${index + 1}`, { exact: true });
         await expect(ownNote).toHaveCount(1);
@@ -142,10 +145,9 @@ test('four players retain the legacy realtime Observatory ending with owned hero
         await privateDetails.locator('summary').click();
         await expect(ownNote).not.toBeVisible();
         if (index > 0) {
-          // Guests keep reading their hero/party while the owner explores. A shorter
-          // reader window puts the map fully outside the viewport after objectives
-          // were removed; keep the socket live and verify normal renderer suspension.
-          await page.setViewportSize({ width: 1440, height: 600 });
+          // Guests keep reading their hero/party while the owner explores. A narrow
+          // reader window retains document scrolling, unlike the fixed desktop layout; keep the socket live and verify normal renderer suspension.
+          await page.setViewportSize({ width: 700, height: 600 });
           await page
             .getByTestId('campaign-hero')
             .evaluate((element) => element.scrollIntoView({ block: 'start', behavior: 'instant' }));
@@ -158,6 +160,7 @@ test('four players retain the legacy realtime Observatory ending with owned hero
         }
       }),
     );
+    await campaignDetails(owner, false);
     await test.step(
       'Capture the initial rendered room',
       async () => {
@@ -285,7 +288,14 @@ test('four players retain the legacy realtime Observatory ending with owned hero
       // Inspect the restored map temporarily without changing this player's reading position.
       const viewport = await page.locator('[data-renderer-active]').evaluate((element) => {
         const rect = element.getBoundingClientRect();
-        return { x: scrollX, y: scrollY, offscreen: rect.bottom <= 0 || rect.top >= innerHeight };
+        return {
+          x: scrollX,
+          y: scrollY,
+          offscreen: rect.bottom <= 0 || rect.top >= innerHeight,
+          detailsOpen: document
+            .querySelector('[data-testid="campaign-details"]')
+            ?.hasAttribute('open'),
+        };
       });
       const finishProfile = index === 0 ? await profileOwnerReload(page, test.info()) : undefined;
       try {
@@ -338,6 +348,7 @@ test('four players retain the legacy realtime Observatory ending with owned hero
         )
         .toBe('achieved');
       await expect(page.getByTestId('campaign-objectives')).toHaveCount(0);
+      if (viewport.detailsOpen) await campaignDetails(page);
       await page.evaluate(
         ({ x, y }) => window.scrollTo({ left: x, top: y, behavior: 'instant' }),
         viewport,

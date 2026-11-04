@@ -5,10 +5,14 @@ import { formatSparkSubunits, selectAdventureText, selectNpcText } from '@dreamw
 import { readSparksWallet, type SparksWallet } from '@/lib/sparks-wallet';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
-import { useCallback, useState, type FormEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   Activity,
   ArrowRight,
+  ArrowRightLeft,
+  Clock3,
+  Crown,
+  UserRound,
   BookOpen,
   Check,
   ClipboardList,
@@ -42,7 +46,12 @@ import {
 import { useLiveTestStatus } from './live-test/live-test-panel';
 import { useLiveText } from './live-test/messages';
 import styles from './studio/admin.module.css';
+import toolStyles from './studio/admin-tools.module.css';
+import { useToolDialog } from './studio/admin-tool-dialog';
+import { adminToolCopy } from './studio/admin-tool-copy';
 import { AdminTaxonomy } from './studio/admin-taxonomy';
+import detailStyles from './studio/admin-detail.module.css';
+import { AdminAvatar, AdminCover } from './studio/admin-detail-media';
 
 type Report = {
   id: string;
@@ -120,7 +129,7 @@ export function AdminPage({ path }: { path: string }) {
       />
     );
   return (
-    <>
+    <div className="admin-design">
       <PageHeading
         eyebrow={t('DREAMWALK / УПРАВЛЕНИЕ')}
         title={t('Панель администратора')}
@@ -150,7 +159,7 @@ export function AdminPage({ path }: { path: string }) {
       ) : (
         <AdminOverview />
       )}
-    </>
+    </div>
   );
 }
 function AdminOverview() {
@@ -208,7 +217,8 @@ function AdminOverview() {
         )
       )}
       <div className={styles.overviewGrid}>
-        <Panel>
+        <Panel className="admin-overview-art">
+          <img src="/images/admin-library.webp" alt="" width={1672} height={941} />
           <div className={styles.sectionHeading}>
             <Shield size={22} />
             <h2>{t('Безопасная публикация')}</h2>
@@ -218,12 +228,13 @@ function AdminOverview() {
               'Черновики не попадают в каталог автоматически. Проверяйте мир, предупреждения и персонажей перед одобрением. Отклонение сопровождается понятной автору причиной.',
             )}
           </p>
-          <Link className="text-link" href="/admin/adventures">
+          <Link className="button primary" href="/admin/adventures">
             {t('Открыть очередь')}
             <ArrowRight size={16} />
           </Link>
         </Panel>
-        <Panel>
+        <Panel className="admin-overview-art">
+          <img src="/images/admin-explorer.webp" alt="" width={1672} height={941} />
           <div className={styles.sectionHeading}>
             <Layers size={22} />
             <h2>{t('Стиль не равен модели')}</h2>
@@ -231,7 +242,7 @@ function AdminOverview() {
           <p className="muted">
             {liveText(live.status?.mode === 'owner' ? 'ownerProfiles' : 'adminProfiles')}
           </p>
-          <Link className="text-link" href="/admin/models">
+          <Link className="button primary" href="/admin/models">
             {t('Каталог профилей')}
             <ArrowRight size={16} />
           </Link>
@@ -240,6 +251,21 @@ function AdminOverview() {
     </>
   );
 }
+// Keep the two admin dialogs' launchers stable without changing shared Modal behavior.
+function useAdminDialogFocus(open: boolean) {
+  const launcher = useRef<HTMLButtonElement | null>(null);
+  useEffect(() => {
+    if (open || !launcher.current) return;
+    const target = launcher.current;
+    launcher.current = null;
+    // A detached native dialog cannot restore focus during passive cleanup.
+    // Do not steal focus from a newer control or restore a removed table row.
+    if (document.activeElement === document.body && target.isConnected)
+      target.focus({ preventScroll: true });
+  }, [open]);
+  return launcher;
+}
+
 function AdminUsers() {
   const date = useDate();
   const { t } = useT();
@@ -250,8 +276,14 @@ function AdminUsers() {
     [target, setTarget] = useState<User | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState('');
+  const launcher = useAdminDialogFocus(!!target);
+  const pending = useRef(false);
+  const close = () => {
+    if (!pending.current) setTarget(null);
+  };
   async function changeRole() {
-    if (!target) return;
+    if (!target || pending.current) return;
+    pending.current = true;
     setBusy(true);
     setError('');
     try {
@@ -267,23 +299,25 @@ function AdminUsers() {
     } catch (e) {
       setError(t(errorMessage(e)));
     } finally {
+      pending.current = false;
       setBusy(false);
     }
   }
   return (
-    <>
-      <div className={styles.sectionHeading}>
+    <section className={detailStyles.surface}>
+      <div className={detailStyles.heading}>
         <Users size={22} />
         <h2>{t('Пользователи')}</h2>
       </div>
       <form
         method="post"
-        className={styles.search}
+        className={detailStyles.search}
         onSubmit={(e) => {
           e.preventDefault();
           setSearch(query);
         }}
       >
+        <Search size={22} aria-hidden="true" />
         <Input
           aria-label={t('Поиск пользователей')}
           placeholder={t('Имя, handle или email')}
@@ -291,7 +325,6 @@ function AdminUsers() {
           onChange={(e) => setQuery(e.target.value)}
         />
         <Button type="submit" variant="secondary">
-          <Search size={16} />
           {t('Найти')}
         </Button>
       </form>
@@ -299,8 +332,8 @@ function AdminUsers() {
       {users.loading ? (
         <Loading />
       ) : users.data?.length ? (
-        <div className="table-wrap">
-          <table className="table">
+        <div className={`table-wrap ${detailStyles.tableWrap}`}>
+          <table className={`table ${detailStyles.table}`}>
             <thead>
               <tr>
                 <th>{t('Пользователь')}</th>
@@ -314,25 +347,38 @@ function AdminUsers() {
               {users.data.map((u) => (
                 <tr key={u.id}>
                   <td>
-                    <strong>{u.name}</strong>
-                    <small className={styles.secondary}>@{u.handle}</small>
+                    <div className={detailStyles.person}>
+                      <AdminAvatar name={u.name} assetId={u.avatarAssetId} />
+                      <span>
+                        <strong>{u.name}</strong>
+                        <small className={detailStyles.secondary}>@{u.handle}</small>
+                      </span>
+                    </div>
                   </td>
                   <td>{u.email}</td>
                   <td>
-                    <Badge tone={u.role === 'admin' ? 'green' : ''}>
+                    <span className={detailStyles.role} data-admin={u.role === 'admin'}>
+                      {u.role === 'admin' ? (
+                        <Crown size={20} aria-hidden="true" />
+                      ) : (
+                        <UserRound size={20} aria-hidden="true" />
+                      )}
                       {u.role === 'admin' ? t('Администратор') : t('Пользователь')}
-                    </Badge>
+                    </span>
                   </td>
                   <td>{date(u.createdAt)}</td>
                   <td>
                     <Button
                       variant="ghost"
+                      className={detailStyles.roleAction}
                       disabled={u.id === user?.id}
-                      onClick={() => {
+                      onClick={(event) => {
+                        launcher.current = event.currentTarget;
                         setError('');
                         setTarget(u);
                       }}
                     >
+                      <ArrowRightLeft size={20} aria-hidden="true" />
                       {u.id === user?.id ? t('Это вы') : t('Изменить роль')}
                     </Button>
                   </td>
@@ -347,7 +393,7 @@ function AdminUsers() {
         )
       )}
       {target && (
-        <Modal title={t('Изменить роль пользователя?')} onClose={() => setTarget(null)}>
+        <Modal title={t('Изменить роль пользователя?')} onClose={close}>
           <p>
             <strong>{target.name}</strong> {t(' получит роль «')}
             {target.role === 'admin' ? t('Пользователь') : t('Администратор')}».
@@ -361,7 +407,7 @@ function AdminUsers() {
           )}
           <ErrorBox message={error} />
           <div className="form-actions">
-            <Button variant="secondary" onClick={() => setTarget(null)}>
+            <Button variant="secondary" disabled={busy} onClick={close}>
               {t('Отмена')}
             </Button>
             <Button busy={busy} onClick={() => void changeRole()}>
@@ -370,13 +416,13 @@ function AdminUsers() {
           </div>
         </Modal>
       )}
-    </>
+    </section>
   );
 }
 
 function AdminContent() {
   const date = useDate();
-  const { t, locale } = useT();
+  const { t, locale, taxonomy } = useT();
   const [tab, setTab] = useState<'adventures' | 'npcs'>('adventures'),
     [filter, setFilter] = useState('pending_review'),
     [query, setQuery] = useState('');
@@ -392,17 +438,23 @@ function AdminContent() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     { toast } = useClient();
+  const launcher = useAdminDialogFocus(!!target);
+  const pending = useRef(false);
+  const close = () => {
+    if (!pending.current) setTarget(null);
+  };
   const onPlayableReviewed = useCallback((value: boolean, versionId: string | null) => {
     setPlayableReviewed(value);
     setReviewedVersionId(versionId);
   }, []);
   async function moderate(e: FormEvent) {
     e.preventDefault();
-    if (!target) return;
+    if (!target || pending.current) return;
     if (decision === 'approve' && !playableReviewed) {
       setError(t('Сначала проверь отправленную игровую версию.'));
       return;
     }
+    pending.current = true;
     setBusy(true);
     setError('');
     try {
@@ -424,6 +476,7 @@ function AdminContent() {
         setError(t('Заявка изменилась. Обнови игровую версию и проверь её заново.'));
       } else setError(t(errorMessage(e)));
     } finally {
+      pending.current = false;
       setBusy(false);
     }
   }
@@ -433,12 +486,12 @@ function AdminContent() {
       .includes(query.toLowerCase()),
   );
   return (
-    <>
-      <div className={styles.sectionHeading}>
+    <section className={detailStyles.surface}>
+      <div className={detailStyles.heading}>
         <Shield size={22} />
         <h2>{t('Модерация контента')}</h2>
       </div>
-      <div className="row">
+      <div className={detailStyles.contentTabs}>
         <Button
           variant={tab === 'adventures' ? 'primary' : 'secondary'}
           onClick={() => setTab('adventures')}
@@ -449,13 +502,16 @@ function AdminContent() {
           NPC
         </Button>
       </div>
-      <div className={styles.filters}>
-        <Input
-          aria-label={t('Поиск контента')}
-          placeholder={t('Поиск по названию или автору')}
-          value={query}
-          onChange={(e) => setQuery(e.target.value)}
-        />
+      <div className={detailStyles.filters}>
+        <div className={detailStyles.filterSearch}>
+          <Search size={22} aria-hidden="true" />
+          <Input
+            aria-label={t('Поиск контента')}
+            placeholder={t('Поиск по названию или автору')}
+            value={query}
+            onChange={(e) => setQuery(e.target.value)}
+          />
+        </div>
         {tab === 'adventures' && (
           <Select
             aria-label={t('Статус публикации')}
@@ -476,8 +532,8 @@ function AdminContent() {
           {adventures.loading ? (
             <Loading />
           ) : filtered.length ? (
-            <div className="table-wrap">
-              <table className="table">
+            <div className={`table-wrap ${detailStyles.tableWrap}`}>
+              <table className={`table ${detailStyles.table}`}>
                 <thead>
                   <tr>
                     <th>{t('Приключение')}</th>
@@ -491,21 +547,36 @@ function AdminContent() {
                   {filtered.map((a) => (
                     <tr key={a.id}>
                       <td>
-                        <strong>{selectAdventureText(a, locale).title}</strong>
-                        <small className={styles.secondary}>
-                          {a.genre} {t(' · версия ')}
-                          {a.version || '—'}
-                        </small>
+                        <div className={detailStyles.story}>
+                          <AdminCover assetId={a.coverAssetId} />
+                          <span>
+                            <strong>{selectAdventureText(a, locale).title}</strong>
+                            <small className={detailStyles.secondary}>
+                              {taxonomy(a.genre)} {t(' · версия ')}
+                              {a.version || '—'}
+                            </small>
+                          </span>
+                        </div>
                       </td>
-                      <td>{a.author?.name || a.ownerId}</td>
                       <td>
-                        <Badge>{t(statusLabel[a.status])}</Badge>
+                        <div className={detailStyles.author}>
+                          <AdminAvatar name={a.author?.name || ''} />
+                          <span>{a.author?.name || a.ownerId}</span>
+                        </div>
+                      </td>
+                      <td>
+                        <span className={detailStyles.status} data-status={a.status}>
+                          {a.status === 'pending_review' && <Clock3 size={18} aria-hidden="true" />}
+                          {a.status === 'published' && <Check size={18} aria-hidden="true" />}
+                          {t(statusLabel[a.status])}
+                        </span>
                       </td>
                       <td>{date(a.updatedAt)}</td>
                       <td>
                         <Button
-                          variant="secondary"
-                          onClick={() => {
+                          variant="primary"
+                          onClick={(event) => {
+                            launcher.current = event.currentTarget;
                             setTarget(a);
                             setPlayableReviewed(false);
                             setReviewedVersionId(null);
@@ -521,6 +592,7 @@ function AdminContent() {
                           }}
                         >
                           {t('Рассмотреть')}
+                          <ArrowRight size={18} aria-hidden="true" />
                         </Button>
                       </td>
                     </tr>
@@ -596,126 +668,159 @@ function AdminContent() {
         </>
       )}
       {target && (
-        <Modal
-          title={t('Проверка: {title}', { title: target.title })}
-          onClose={() => setTarget(null)}
-        >
-          <div className={styles.reviewContent}>
-            <Badge>{t(statusLabel[target.status])}</Badge>
-            <p className="muted">
-              {t('Оригинал')} · {(target.sourceLanguage || 'ru').toUpperCase()}
-            </p>
-            <p>{target.synopsis}</p>
-            <p>
-              {t('Теги')}: {target.tags.join(' · ')}
-            </p>
-            {Object.entries(target.translations || {}).some(
-              ([, entry]) => entry?.sourceRevision === target.sourceRevision,
-            ) && (
-              <details>
-                <summary>{t('Переводы метаданных')}</summary>
-                {(['uk', 'en', 'ru'] as const).map((language) => {
-                  const translation = target.translations?.[language];
-                  if (!translation || translation.sourceRevision !== target.sourceRevision)
-                    return null;
-                  const text = selectAdventureText(target, language);
-                  return (
-                    <section key={language}>
-                      <Badge>
-                        {language.toUpperCase()} · {t('Актуальный перевод')}
-                      </Badge>
-                      <h4>{text.title}</h4>
-                      <p>{text.synopsis}</p>
-                      <p>
-                        {t('Теги')}:{' '}
-                        {Object.entries(translation.tags ?? {})
-                          .map(([original, label]) => `${original} → ${label}`)
-                          .join(' · ')}
-                      </p>
-                    </section>
-                  );
-                })}
+        <Modal title={t('Проверка: {title}', { title: target.title })} onClose={close}>
+          <div className={detailStyles.reviewLayout}>
+            <article className={detailStyles.reviewContent}>
+              <div className={detailStyles.reviewHero}>
+                <AdminCover key={target.coverAssetId} assetId={target.coverAssetId} />
+                <div>
+                  <span className={detailStyles.status} data-status={target.status}>
+                    {t(statusLabel[target.status])}
+                  </span>
+                  <p className={detailStyles.secondary}>
+                    {t('Оригинал')} · {(target.sourceLanguage || 'ru').toUpperCase()}
+                  </p>
+                  <h3>{target.title}</h3>
+                </div>
+              </div>
+              <h4>{t('Синопсис')}</h4>
+              <p>{target.synopsis || t('Не указаны')}</p>
+              <h4>{t('Теги')}</h4>
+              <div className={detailStyles.tags}>
+                {target.tags.map((tag) => (
+                  <span key={tag}>{tag}</span>
+                ))}
+                {!target.tags.length && <span>{t('Не указаны')}</span>}
+              </div>
+              {Object.entries(target.translations || {}).some(
+                ([, entry]) => entry?.sourceRevision === target.sourceRevision,
+              ) && (
+                <details>
+                  <summary>{t('Переводы метаданных')}</summary>
+                  {(['uk', 'en', 'ru'] as const).map((language) => {
+                    const translation = target.translations?.[language];
+                    if (!translation || translation.sourceRevision !== target.sourceRevision)
+                      return null;
+                    const text = selectAdventureText(target, language);
+                    return (
+                      <section key={language}>
+                        <Badge>
+                          {language.toUpperCase()} · {t('Актуальный перевод')}
+                        </Badge>
+                        <h4>{text.title}</h4>
+                        <p>{text.synopsis}</p>
+                        <p>
+                          {t('Теги')}:{' '}
+                          {Object.entries(translation.tags ?? {})
+                            .map(([original, label]) => `${original} → ${label}`)
+                            .join(' · ')}
+                        </p>
+                      </section>
+                    );
+                  })}
+                </details>
+              )}
+              <details open>
+                <summary>{t('Мир и правила')}</summary>
+                <p>{target.content.world}</p>
+                <p>{target.content.rules}</p>
               </details>
-            )}
-            <details open>
-              <summary>{t('Мир и правила')}</summary>
-              <p>{target.content.world}</p>
-              <p>{target.content.rules}</p>
-            </details>
-            <details>
-              <summary>{t('Локации и сцены')}</summary>
-              {target.content.locations.map((l) => (
-                <div key={l.id}>
-                  <h4>{l.name}</h4>
-                  <p>{l.description}</p>
-                </div>
-              ))}
-              {target.content.scenes.map((s) => (
-                <div key={s.id}>
-                  <h4>{s.name}</h4>
-                  <p>{s.description}</p>
-                </div>
-              ))}
-            </details>
-            <p>
-              <strong>{t('Предупреждения:')}</strong>{' '}
-              {target.content.boundaries.join(', ') || t('Не указаны')}
-            </p>
-            <p className="muted">
-              NPC: {target.content.npcIds.length}
-              {t('. Содержимое персонажей можно проверить в отдельной вкладке NPC.')}
-            </p>
-          </div>
-          {target.status === 'pending_review' && target.visibility === 'public' && (
-            <PlayableReview
-              key={target.id}
-              adventureId={target.id}
-              onReviewed={onPlayableReviewed}
-            />
-          )}
-          <form method="post" className="stack" onSubmit={(e) => void moderate(e)}>
-            <Field label={t('Решение')}>
-              <Select
-                value={decision}
-                onChange={(e) => setDecision(e.target.value as typeof decision)}
+              <details>
+                <summary>{t('Локации и сцены')}</summary>
+                {target.content.locations.map((l) => (
+                  <div key={l.id}>
+                    <h4>{l.name}</h4>
+                    <p>{l.description}</p>
+                  </div>
+                ))}
+                {target.content.scenes.map((s) => (
+                  <div key={s.id}>
+                    <h4>{s.name}</h4>
+                    <p>{s.description}</p>
+                  </div>
+                ))}
+              </details>
+              <p>
+                <strong>{t('Предупреждения:')}</strong>{' '}
+                {target.content.boundaries.join(', ') || t('Не указаны')}
+              </p>
+              <p className="muted">
+                NPC: {target.content.npcIds.length}
+                {t('. Содержимое персонажей можно проверить в отдельной вкладке NPC.')}
+              </p>
+            </article>
+            <aside className={detailStyles.decision}>
+              <h3>{t('Решение')}</h3>
+              <form
+                id="admin-moderation-decision"
+                method="post"
+                className={detailStyles.decisionForm}
+                onSubmit={(e) => void moderate(e)}
               >
-                <option
-                  value="approve"
-                  disabled={target.status !== 'pending_review' || target.visibility !== 'public'}
+                <Field label={t('Решение')}>
+                  <Select
+                    value={decision}
+                    onChange={(e) => setDecision(e.target.value as typeof decision)}
+                  >
+                    <option
+                      value="approve"
+                      disabled={
+                        target.status !== 'pending_review' || target.visibility !== 'public'
+                      }
+                    >
+                      {t('Одобрить и опубликовать версию')}
+                    </option>
+                    <option value="reject">{t('Вернуть автору на доработку')}</option>
+                    <option value="quarantine">{t('Убрать из каталога (карантин)')}</option>
+                  </Select>
+                </Field>
+                <Field label={t('Причина решения')}>
+                  <Textarea
+                    required
+                    minLength={3}
+                    maxLength={2000}
+                    value={reason}
+                    onChange={(e) => setReason(e.target.value)}
+                    placeholder={t('Что проверено или что нужно исправить?')}
+                  />
+                </Field>
+                <ErrorBox message={error} />
+              </form>
+              <section
+                className={detailStyles.readiness}
+                aria-label={t('Проверка игровой готовности')}
+              >
+                <h3>{t('Проверка игровой готовности')}</h3>
+                {target.status === 'pending_review' && target.visibility === 'public' ? (
+                  <PlayableReview
+                    key={target.id}
+                    adventureId={target.id}
+                    onReviewed={onPlayableReviewed}
+                  />
+                ) : (
+                  <p className="muted">
+                    {t('Проверка игровой версии доступна для публичной заявки на модерации.')}
+                  </p>
+                )}
+              </section>
+              <div className={detailStyles.decisionActions}>
+                <Button variant="secondary" type="button" disabled={busy} onClick={close}>
+                  {t('Отмена')}
+                </Button>
+                <Button
+                  busy={busy}
+                  disabled={decision === 'approve' && !playableReviewed}
+                  type="submit"
+                  form="admin-moderation-decision"
                 >
-                  {t('Одобрить и опубликовать версию')}
-                </option>
-                <option value="reject">{t('Вернуть автору на доработку')}</option>
-                <option value="quarantine">{t('Убрать из каталога (карантин)')}</option>
-              </Select>
-            </Field>
-            <Field label={t('Причина решения')}>
-              <Textarea
-                required
-                minLength={3}
-                maxLength={2000}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder={t('Что проверено или что нужно исправить?')}
-              />
-            </Field>
-            <ErrorBox message={error} />
-            <div className="form-actions">
-              <Button variant="secondary" type="button" onClick={() => setTarget(null)}>
-                {t('Отмена')}
-              </Button>
-              <Button
-                busy={busy}
-                disabled={decision === 'approve' && !playableReviewed}
-                type="submit"
-              >
-                {t('Сохранить решение')}
-              </Button>
-            </div>
-          </form>
+                  {t('Сохранить решение')}
+                </Button>
+              </div>
+            </aside>
+          </div>
         </Modal>
       )}
-    </>
+    </section>
   );
 }
 
@@ -729,9 +834,11 @@ function AdminReports() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     { toast } = useClient();
+  const dialog = useToolDialog(!!target, () => setTarget(null));
   async function resolve(e: FormEvent) {
     e.preventDefault();
-    if (!target) return;
+    if (!target || dialog.pending.current) return;
+    dialog.pending.current = true;
     setBusy(true);
     setError('');
     try {
@@ -745,11 +852,12 @@ function AdminReports() {
     } catch (e) {
       setError(t(errorMessage(e)));
     } finally {
+      dialog.pending.current = false;
       setBusy(false);
     }
   }
   return (
-    <>
+    <section className={toolStyles.reports} data-admin-tool="reports">
       <div className={styles.sectionHeading}>
         <ClipboardList size={22} />
         <h2>{t('Жалобы пользователей')}</h2>
@@ -758,28 +866,34 @@ function AdminReports() {
       {reports.loading ? (
         <Loading />
       ) : reports.data?.length ? (
-        <div className={styles.modelList}>
+        <div className={toolStyles.reportList}>
           {reports.data.map((r) => (
-            <Panel key={r.id}>
-              <div className="row">
-                <Badge>{t(statusLabel[r.status] || r.status)}</Badge>
-                <small className="muted">{date(r.createdAt)}</small>
+            <Panel key={r.id} className={toolStyles.reportCard}>
+              <div className={toolStyles.reportBody}>
+                <div className="row">
+                  <Badge tone={r.status === 'resolved' ? 'green' : ''}>
+                    {t(statusLabel[r.status] || r.status)}
+                  </Badge>
+                  <small className="muted">{date(r.createdAt)}</small>
+                </div>
+                <p>{r.reason}</p>
+                <small className={styles.secondary}>
+                  {t('История: ')}
+                  {r.adventureId}
+                </small>
+                {r.resolution && (
+                  <p className="muted">
+                    {t('Решение: ')}
+                    {r.resolution}
+                  </p>
+                )}
               </div>
-              <p>{r.reason}</p>
-              <small className={styles.secondary}>
-                {t('История: ')}
-                {r.adventureId}
-              </small>
-              {r.resolution && (
-                <p className="muted">
-                  {t('Решение: ')}
-                  {r.resolution}
-                </p>
-              )}
               <Button
                 variant="secondary"
                 disabled={r.status !== 'open'}
-                onClick={() => {
+                onClick={(e) => {
+                  dialog.launcher.current = e.currentTarget;
+                  setStatus('resolved');
                   setTarget(r);
                   setError('');
                   setResolution('');
@@ -801,7 +915,7 @@ function AdminReports() {
         )
       )}
       {target && (
-        <Modal title={t('Решение по жалобе')} onClose={() => setTarget(null)}>
+        <Modal title={t('Решение по жалобе')} onClose={dialog.close}>
           <p>{target.reason}</p>
           <form method="post" className="stack" onSubmit={(e) => void resolve(e)}>
             <Field label={t('Результат')}>
@@ -826,7 +940,7 @@ function AdminReports() {
             </div>
             <ErrorBox message={error} />
             <div className="form-actions">
-              <Button variant="secondary" type="button" onClick={() => setTarget(null)}>
+              <Button variant="secondary" type="button" onClick={dialog.close} disabled={busy}>
                 {t('Отмена')}
               </Button>
               <Button type="submit" busy={busy}>
@@ -836,7 +950,7 @@ function AdminReports() {
           </form>
         </Modal>
       )}
-    </>
+    </section>
   );
 }
 
@@ -882,7 +996,16 @@ function AdminModels() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     { toast } = useClient();
+  const dialog = useToolDialog(!!kind, () => setKind(null));
+  const saveErrorRef = useRef<HTMLDivElement>(null);
+  useEffect(() => {
+    if (!error) return;
+    // A guarded Close click can leave the long editor scrolled above the failed save.
+    saveErrorRef.current?.focus({ preventScroll: true });
+    saveErrorRef.current?.scrollIntoView({ block: 'center', behavior: 'instant' });
+  }, [error]);
   function openModel(item?: ModelProfile) {
+    dialog.capture();
     setKind('model');
     setEditId(item?.id || null);
     setModel(
@@ -899,6 +1022,7 @@ function AdminModels() {
     setError('');
   }
   function openRuntime(item?: RuntimeProfile) {
+    dialog.capture();
     setKind('runtime');
     setEditId(item?.id || null);
     setRuntime(
@@ -920,6 +1044,8 @@ function AdminModels() {
   }
   async function save(e: FormEvent) {
     e.preventDefault();
+    if (dialog.pending.current) return;
+    dialog.pending.current = true;
     setBusy(true);
     setError('');
     try {
@@ -934,110 +1060,119 @@ function AdminModels() {
     } catch (e) {
       setError(t(errorMessage(e)));
     } finally {
+      dialog.pending.current = false;
       setBusy(false);
     }
   }
   return (
-    <>
-      <AdminDirector />
-      <div className={styles.sectionHeading}>
-        <Layers size={22} />
-        <h2>{t('Поведенческие профили')}</h2>
-        <Button variant="secondary" onClick={() => openModel()}>
-          <Plus size={16} />
-          {t('Новый профиль')}
-        </Button>
-      </div>
-      <p className="muted">
-        {t(
-          'Стиль подачи, а не личность NPC и не техническая модель. Каждое изменение создаёт новую версию профиля.',
-        )}
-      </p>
-      <ErrorBox message={models.error} retry={models.reload} />
-      {models.loading ? (
-        <Loading />
-      ) : (
-        <div className={styles.modelList}>
-          {models.data?.map((m) => (
-            <Panel key={m.id}>
-              <div className="row">
-                <div className={styles.profileIcon}>{m.key === 'cookie' ? '◉' : '◈'}</div>
-                <div>
-                  <h3>{m.name}</h3>
-                  <small className="muted">
-                    {m.key} {t(' · версия ')}
-                    {m.version}
-                  </small>
+    <section className={toolStyles.models} data-admin-tool="models">
+      <div className={toolStyles.toolPanel}>
+        <div className={styles.sectionHeading}>
+          <Layers size={22} />
+          <h2>{t('Поведенческие профили')}</h2>
+          <Button variant="secondary" onClick={() => openModel()}>
+            <Plus size={16} />
+            {t('Новый профиль')}
+          </Button>
+        </div>
+        <p className="muted">
+          {t(
+            'Стиль подачи, а не личность NPC и не техническая модель. Каждое изменение создаёт новую версию профиля.',
+          )}
+        </p>
+        <ErrorBox message={models.error} retry={models.reload} />
+        {models.loading ? (
+          <Loading />
+        ) : !models.error && !models.data?.length ? (
+          <p role="status">{adminToolCopy[locale].noProfiles}</p>
+        ) : (
+          <div className={toolStyles.profileGrid}>
+            {models.data?.map((m) => (
+              <Panel key={m.id}>
+                <div className="row">
+                  <div className={styles.profileIcon}>{m.key === 'cookie' ? '◉' : '◈'}</div>
+                  <div>
+                    <h3>{m.name}</h3>
+                    <small className="muted">
+                      {m.key} {t(' · версия ')}
+                      {m.version}
+                    </small>
+                  </div>
+                  <Badge tone={m.enabled ? 'green' : ''}>
+                    {m.enabled ? t('Доступен') : t('Отключён')}
+                  </Badge>
                 </div>
-                <Badge tone={m.enabled ? 'green' : ''}>
-                  {m.enabled ? t('Доступен') : t('Отключён')}
-                </Badge>
-              </div>
-              <p className="muted">{m.description}</p>
-              <Button variant="secondary" onClick={() => openModel(m)}>
-                <Settings2 size={15} />
-                {t('Настроить профиль')}
-              </Button>
-            </Panel>
-          ))}
-        </div>
-      )}
-      <div className={styles.sectionHeading}>
-        <Activity size={22} />
-        <h2>{t('Технические runtime-профили')}</h2>
-        <Button variant="secondary" onClick={() => openRuntime()}>
-          <Plus size={16} />
-          {t('Новая конфигурация')}
-        </Button>
-      </div>
-      <div className="notice">
-        {t(
-          'OpenAI и local можно подготовить как отключённые конфигурации. Внешние вызовы в текущем этапе запрещены. Endpoint выбирается только из серверного списка, API-ключи здесь не хранятся.',
+                <p className="muted">{m.description}</p>
+                <Button variant="secondary" onClick={() => openModel(m)}>
+                  <Settings2 size={15} />
+                  {t('Настроить профиль')}
+                </Button>
+              </Panel>
+            ))}
+          </div>
         )}
       </div>
-      <ErrorBox message={runtimes.error} retry={runtimes.reload} />
-      {runtimes.loading ? (
-        <Loading />
-      ) : (
-        <div className="table-wrap">
-          <table className="table">
-            <thead>
-              <tr>
-                <th>{t('Конфигурация')}</th>
-                <th>{t('Провайдер')}</th>
-                <th>{t('Лимиты токенов')}</th>
-                <th>{t('Статус')}</th>
-                <th>{t('Настройки')}</th>
-              </tr>
-            </thead>
-            <tbody>
-              {runtimes.data?.map((r) => (
-                <tr key={r.id}>
-                  <td>
-                    <strong>{r.name}</strong>
-                    <small className={styles.secondary}>{r.model}</small>
-                  </td>
-                  <td>{r.provider}</td>
-                  <td>
-                    {r.maxInputTokens.toLocaleString(locale)} /{' '}
-                    {r.maxOutputTokens.toLocaleString(locale)}
-                  </td>
-                  <td>
-                    <Badge tone={r.enabled ? 'green' : ''}>
-                      {r.enabled ? t('Mock активен') : t('Отключён')}
-                    </Badge>
-                  </td>
-                  <td>
-                    <Button variant="ghost" onClick={() => openRuntime(r)}>
-                      {t('Изменить')}
-                    </Button>
-                  </td>
-                </tr>
-              ))}
-            </tbody>
-          </table>
+      <div className={toolStyles.toolPanel}>
+        <div className={styles.sectionHeading}>
+          <Activity size={22} />
+          <h2>{t('Технические runtime-профили')}</h2>
+          <Button variant="secondary" onClick={() => openRuntime()}>
+            <Plus size={16} />
+            {t('Новая конфигурация')}
+          </Button>
         </div>
-      )}
+        <div className="notice">
+          {t(
+            'OpenAI и local можно подготовить как отключённые конфигурации. Внешние вызовы в текущем этапе запрещены. Endpoint выбирается только из серверного списка, API-ключи здесь не хранятся.',
+          )}
+        </div>
+        <ErrorBox message={runtimes.error} retry={runtimes.reload} />
+        {runtimes.loading ? (
+          <Loading />
+        ) : !runtimes.error && !runtimes.data?.length ? (
+          <p role="status">{adminToolCopy[locale].noRuntimes}</p>
+        ) : (
+          <div className="table-wrap">
+            <table className="table">
+              <thead>
+                <tr>
+                  <th>{t('Конфигурация')}</th>
+                  <th>{t('Провайдер')}</th>
+                  <th>{t('Лимиты токенов')}</th>
+                  <th>{t('Статус')}</th>
+                  <th>{t('Настройки')}</th>
+                </tr>
+              </thead>
+              <tbody>
+                {runtimes.data?.map((r) => (
+                  <tr key={r.id}>
+                    <td>
+                      <strong>{r.name}</strong>
+                      <small className={styles.secondary}>{r.model}</small>
+                    </td>
+                    <td>{r.provider}</td>
+                    <td>
+                      {r.maxInputTokens.toLocaleString(locale)} /{' '}
+                      {r.maxOutputTokens.toLocaleString(locale)}
+                    </td>
+                    <td>
+                      <Badge tone={r.enabled ? 'green' : ''}>
+                        {r.enabled ? t('Mock активен') : t('Отключён')}
+                      </Badge>
+                    </td>
+                    <td>
+                      <Button variant="ghost" onClick={() => openRuntime(r)}>
+                        {t('Изменить')}
+                      </Button>
+                    </td>
+                  </tr>
+                ))}
+              </tbody>
+            </table>
+          </div>
+        )}
+      </div>
+      <AdminDirector />
       {kind && (
         <Modal
           title={
@@ -1049,7 +1184,7 @@ function AdminModels() {
                 ? t('Настройки runtime')
                 : t('Новый runtime')
           }
-          onClose={() => setKind(null)}
+          onClose={dialog.close}
         >
           <form method="post" className="stack" onSubmit={(e) => void save(e)}>
             {kind === 'model' ? (
@@ -1216,9 +1351,13 @@ function AdminModels() {
                 )}
               </>
             )}
-            <ErrorBox message={error} />
+            {error && (
+              <div ref={saveErrorRef} tabIndex={-1}>
+                <ErrorBox message={error} />
+              </div>
+            )}
             <div className="form-actions">
-              <Button variant="secondary" type="button" onClick={() => setKind(null)}>
+              <Button variant="secondary" type="button" onClick={dialog.close} disabled={busy}>
                 {t('Отмена')}
               </Button>
               <Button type="submit" busy={busy}>
@@ -1228,7 +1367,7 @@ function AdminModels() {
           </form>
         </Modal>
       )}
-    </>
+    </section>
   );
 }
 
@@ -1244,7 +1383,10 @@ function AdminCredits() {
     [confirm, setConfirm] = useState(false),
     [result, setResult] = useState<SparksWallet | null>(null),
     { toast } = useClient();
+  const dialog = useToolDialog(confirm, () => setConfirm(false));
   async function grant() {
+    if (dialog.pending.current) return;
+    dialog.pending.current = true;
     setBusy(true);
     setError('');
     try {
@@ -1259,11 +1401,12 @@ function AdminCredits() {
     } catch (e) {
       setError(t(errorMessage(e)));
     } finally {
+      dialog.pending.current = false;
       setBusy(false);
     }
   }
   return (
-    <>
+    <section className={toolStyles.credits} data-admin-tool="credits">
       <div className={styles.sectionHeading}>
         <Coins size={22} />
         <h2>{t('Искры')}</h2>
@@ -1276,6 +1419,7 @@ function AdminCredits() {
             onSubmit={(e) => {
               e.preventDefault();
               setError('');
+              dialog.capture();
               setConfirm(true);
             }}
           >
@@ -1359,7 +1503,7 @@ function AdminCredits() {
         </Panel>
       </div>
       {confirm && (
-        <Modal title={t('Подтвердить операцию с искрами?')} onClose={() => setConfirm(false)}>
+        <Modal title={t('Подтвердить операцию с искрами?')} onClose={dialog.close}>
           <p>
             {users.data?.find((u) => u.id === userId)?.name}:{' '}
             <strong>
@@ -1370,7 +1514,7 @@ function AdminCredits() {
           <p>{reason}</p>
           <ErrorBox message={error} />
           <div className="form-actions">
-            <Button variant="secondary" onClick={() => setConfirm(false)} disabled={busy}>
+            <Button variant="secondary" onClick={dialog.close} disabled={busy}>
               {t('Отмена')}
             </Button>
             <Button busy={busy} onClick={() => void grant()}>
@@ -1379,19 +1523,19 @@ function AdminCredits() {
           </div>
         </Modal>
       )}
-    </>
+    </section>
   );
 }
 function AdminAudit() {
   const date = useDate();
-  const { t } = useT();
+  const { t, locale } = useT();
   const audit = useResource<AuditEntry[]>('/admin/audit'),
     [query, setQuery] = useState('');
   const rows = (audit.data || []).filter((a) =>
     `${a.action} ${a.actorId} ${a.targetId || ''}`.toLowerCase().includes(query.toLowerCase()),
   );
   return (
-    <>
+    <section className={toolStyles.audit} data-admin-tool="audit">
       <div className={styles.sectionHeading}>
         <Activity size={22} />
         <h2>{t('Журнал действий')}</h2>
@@ -1456,11 +1600,15 @@ function AdminAudit() {
       ) : (
         !audit.error && (
           <Empty
-            title={t('Журнал пока пуст')}
-            description={t('Административные изменения появятся здесь после сохранения.')}
+            title={query ? adminToolCopy[locale].noMatches : t('Журнал пока пуст')}
+            description={
+              query
+                ? adminToolCopy[locale].tryQuery
+                : t('Административные изменения появятся здесь после сохранения.')
+            }
           />
         )
       )}
-    </>
+    </section>
   );
 }

@@ -39,9 +39,11 @@ test('public art layouts preserve long titles, theme, locale and mobile reachabi
     await page.setViewportSize({ width, height: 973 });
     for (const theme of ['dark', 'light']) {
       await page.goto('/explore');
+      if (width <= 900) await page.locator('.mobile-menu').click();
       await page.locator('.locale-select').selectOption('ru');
       if ((await page.locator('html').getAttribute('data-theme')) !== theme)
         await page.locator('.theme-button').click();
+      if (width <= 900) await page.keyboard.press('Escape');
       for (const route of routes) {
         await page.goto(route);
         await expect(page.locator('#main-content')).toBeVisible();
@@ -62,16 +64,22 @@ test('public art layouts preserve long titles, theme, locale and mobile reachabi
           await expect(page.locator('.theme-button')).toBeVisible();
         }
         if (route.startsWith('/adventures/')) {
-          await expect(page.locator('.story-intro h1')).toBeVisible();
+          await expect(
+            page.getByTestId('story-detail').locator('.sd-story-intro h1'),
+          ).toBeVisible();
           if (width === 390) {
-            expect((await page.locator('.story-intro').boundingBox())!.width).toBeGreaterThan(300);
-            expect((await page.locator('.story-actions').boundingBox())!.width).toBeGreaterThan(
-              300,
-            );
+            expect(
+              (await page.getByTestId('story-detail').locator('.sd-story-intro').boundingBox())!
+                .width,
+            ).toBeGreaterThan(300);
+            expect(
+              (await page.getByTestId('story-detail').locator('.sd-story-actions').boundingBox())!
+                .width,
+            ).toBeGreaterThan(300);
           }
-          await expect(page.locator('.prepare-panel a[href^="/my-characters"]')).toHaveClass(
-            /secondary/,
-          );
+          await expect(
+            page.getByTestId('story-detail').locator('.sd-prepare-panel a[href^="/my-characters"]'),
+          ).toHaveClass(/secondary/);
         }
         if (route === '/home') await expect(page.getByTestId('home-featured')).toBeVisible();
         if (route.startsWith('/creators/'))

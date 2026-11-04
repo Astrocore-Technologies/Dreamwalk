@@ -1,3 +1,4 @@
+import { campaignDetails } from './support/campaign-details';
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 async function register(page: Page) {
@@ -38,6 +39,7 @@ test('owned heroes launch and independently join, with pinned private snapshots 
     await owner.getByRole('button', { name: 'Новая кампания', exact: true }).click();
     await expect(owner).toHaveURL(/\/game\/[a-f0-9-]+$/);
     const campaignId = new URL(owner.url()).pathname.split('/').at(-1)!;
+    await campaignDetails(owner);
     await expect(
       owner.getByTestId('campaign-hero').getByRole('heading', { name: 'Лира', exact: true }),
     ).toBeVisible();
@@ -60,6 +62,7 @@ test('owned heroes launch and independently join, with pinned private snapshots 
       .getByRole('button', { name: 'Принять приглашение в кампанию', exact: true })
       .click();
     await expect(guest).toHaveURL(new RegExp(`/game/${campaignId}$`));
+    await campaignDetails(guest);
     await expect(
       guest.getByTestId('campaign-hero').getByRole('heading', { name: 'Орест', exact: true }),
     ).toBeVisible();
@@ -79,10 +82,12 @@ test('owned heroes launch and independently join, with pinned private snapshots 
       ).ok(),
     ).toBeTruthy();
     await Promise.all([owner.reload(), guest.reload()]);
+    await campaignDetails(owner);
     await expect(
       owner.getByTestId('campaign-hero').getByRole('heading', { name: 'Лира', exact: true }),
     ).toBeVisible();
     await owner.getByTestId('campaign-hero').locator('summary').click();
+    await campaignDetails(owner);
     await expect(
       owner.getByTestId('campaign-hero').getByText('Личный секрет Лиры', { exact: true }),
     ).toBeVisible();
@@ -92,6 +97,7 @@ test('owned heroes launch and independently join, with pinned private snapshots 
       await guest.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
     await guest.locator('header').getByRole('combobox').selectOption('uk');
+    await campaignDetails(guest);
     await expect(
       guest
         .getByTestId('campaign-hero')

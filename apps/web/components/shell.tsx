@@ -1,4 +1,6 @@
 'use client';
+import './shell.css';
+import { AuthMark } from './auth-mark';
 import { DreamsBalance, useDreamsText } from './dreams-wallet';
 import { SparksBalance } from './sparks-balance';
 import { useT } from '@/lib/i18n';
@@ -6,7 +8,9 @@ import Link from 'next/link';
 import { usePathname, useRouter } from 'next/navigation';
 import { useState, useEffect } from 'react';
 import {
-  Compass,
+  BookOpen,
+  Wrench,
+  ChevronRight,
   ArrowLeft,
   MoonStar,
   House,
@@ -29,14 +33,13 @@ import {
 import { api, assetUrl, useClient, type User } from '@/lib/client';
 const nav = [
   { href: '/home', label: 'Главная', icon: House },
-  { href: '/explore', label: 'Открыть миры', icon: Compass },
+  { href: '/explore', label: 'Открыть миры', icon: BookOpen },
   { href: '/library', label: 'Моя библиотека', icon: Library },
   { href: '/my-characters', label: 'Мои герои', icon: UsersRound },
 ];
 export function Shell({ children }: { children: React.ReactNode }) {
-  const { t: tr } = useT();
+  const { t: tr, locale } = useT();
   const { text: dreamsText } = useDreamsText();
-  const { locale, setLocale } = useT();
   const path = usePathname(),
     router = useRouter(),
     { user, setUser, toast } = useClient();
@@ -46,12 +49,43 @@ export function Shell({ children }: { children: React.ReactNode }) {
   const [query, setQuery] = useState('');
   useEffect(() => setMenu(false), [path]);
   useEffect(() => {
+    const desktop = matchMedia('(min-width: 901px)');
+    const closeOnDesktop = () => {
+      if (desktop.matches) setMenu(false);
+    };
+    desktop.addEventListener('change', closeOnDesktop);
+    return () => desktop.removeEventListener('change', closeOnDesktop);
+  }, []);
+  useEffect(() => {
     if (!menu) return;
+    const previousFocus = document.activeElement as HTMLElement | null;
+    const sidebar = document.getElementById('main-sidebar');
+    const focusable = () =>
+      Array.from(
+        sidebar?.querySelectorAll<HTMLElement>(
+          'a[href], button:not([disabled]), input:not([disabled]), select:not([disabled])',
+        ) ?? [],
+      ).filter((element) => element.getClientRects().length > 0);
+    sidebar?.querySelector<HTMLButtonElement>('.mobile-close')?.focus();
     const listener = (event: KeyboardEvent) => {
       if (event.key === 'Escape') setMenu(false);
+      if (event.key !== 'Tab') return;
+      const elements = focusable();
+      const first = elements[0],
+        last = elements[elements.length - 1];
+      if (event.shiftKey && document.activeElement === first) {
+        event.preventDefault();
+        last?.focus();
+      } else if (!event.shiftKey && document.activeElement === last) {
+        event.preventDefault();
+        first?.focus();
+      }
     };
     document.addEventListener('keydown', listener);
-    return () => document.removeEventListener('keydown', listener);
+    return () => {
+      document.removeEventListener('keydown', listener);
+      if (previousFocus?.isConnected) previousFocus.focus();
+    };
   }, [menu]);
   const active = (href: string) =>
     path === href ||
@@ -69,7 +103,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
         <aside id="main-sidebar" className={`sidebar ${menu ? 'open' : ''}`}>
           <Link href="/" className="brand" onClick={() => setMenu(false)}>
             <span className="brand-mark" aria-hidden="true">
-              <MoonStar size={33} strokeWidth={1.4} />
+              <AuthMark />
             </span>
             <span>Dreamwalk</span>
           </Link>
@@ -80,7 +114,6 @@ export function Shell({ children }: { children: React.ReactNode }) {
           >
             <X />
           </button>
-          <span className="nav-caption">{tr('ТВОЁ ПРИКЛЮЧЕНИЕ')}</span>
           <nav>
             {nav.map(({ href, label, icon: Icon }) => (
               <Link
@@ -90,29 +123,36 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 aria-current={active(href) ? 'page' : undefined}
                 onClick={() => setMenu(false)}
               >
-                <Icon size={19} />
-                {tr(label)}
-                {active(href) && <span className="nav-dot" />}
+                <Icon size={24} />
+                {href === '/explore'
+                  ? { ru: 'Истории', uk: 'Історії', en: 'Stories' }[locale]
+                  : tr(label)}
               </Link>
             ))}
           </nav>
-          <div className="nav-divider" />
-          <span className="nav-caption">{tr('СОЗДАВАЙ БОЛЬШЕ')}</span>
           <nav>
             <Link
-              className={`nav-item ${path.startsWith('/studio') ? 'active' : ''}`}
+              className={`nav-item ${path.startsWith('/studio') && !active('/studio/visuals') ? 'active' : ''}`}
               href="/studio"
               onClick={() => setMenu(false)}
             >
-              <Feather size={19} />
-              {tr('Студия автора')}
+              <Sparkles size={24} />
+              {tr('Студия')}
+            </Link>
+            <Link
+              className={`nav-item ${active('/studio/visuals') ? 'active' : ''}`}
+              href="/studio/visuals"
+              onClick={() => setMenu(false)}
+            >
+              <Wrench size={24} />
+              {{ ru: 'Мастерская', uk: 'Майстерня', en: 'Workshop' }[locale]}
             </Link>
             <Link
               className={`nav-item ${active('/wallet') ? 'active' : ''}`}
               href="/wallet"
               onClick={() => setMenu(false)}
             >
-              <Sparkles size={19} />
+              <Sparkles size={24} />
               {dreamsText.title}
             </Link>
             {user?.role === 'admin' && (
@@ -121,11 +161,31 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 href="/admin"
                 onClick={() => setMenu(false)}
               >
-                <ShieldCheck size={19} />
+                <ShieldCheck size={24} />
                 {tr('Управление')}
               </Link>
             )}
           </nav>
+          <form
+            className="top-search rail-search"
+            role="search"
+            onSubmit={(e) => {
+              e.preventDefault();
+              setMenu(false);
+              router.push(`/explore?q=${encodeURIComponent(query)}`);
+            }}
+          >
+            <Search size={17} />
+            <input
+              aria-label={tr('Поиск миров')}
+              placeholder={tr('Найти своё следующее приключение')}
+              value={query}
+              onChange={(e) => setQuery(e.target.value)}
+            />
+            <button className="icon-button" type="submit" aria-label={tr('Поиск миров')}>
+              <ChevronRight size={18} />
+            </button>
+          </form>
           <div className="sidebar-bottom">
             <Link className="nav-item" href="/account/settings" onClick={() => setMenu(false)}>
               <Settings size={18} />
@@ -135,6 +195,26 @@ export function Shell({ children }: { children: React.ReactNode }) {
               <CircleHelp size={18} />
               {tr('Помощь и поддержка')}
             </Link>
+            {user && (
+              <Link
+                className={`nav-item rail-profile ${active('/account/profile') ? 'active' : ''}`}
+                href="/account/profile"
+                onClick={() => setMenu(false)}
+              >
+                <span className="avatar">
+                  {user.avatarAssetId ? (
+                    <img src={assetUrl(user.avatarAssetId)} alt="" />
+                  ) : (
+                    user.handle.slice(0, 1)
+                  )}
+                </span>
+                <span>{tr('Профиль')}</span>
+                <ChevronRight size={18} />
+              </Link>
+            )}
+            <div className="rail-preferences">
+              <ShellPreferences />
+            </div>
           </div>
         </aside>
       )}
@@ -160,7 +240,7 @@ export function Shell({ children }: { children: React.ReactNode }) {
           )}
           {inAuth ? (
             <Link href="/" className="auth-brand">
-              <MoonStar size={30} aria-hidden="true" />
+              <AuthMark />
               Dreamwalk
             </Link>
           ) : inGame ? (
@@ -170,56 +250,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
                 {tr('К кампаниям')}
               </Link>
             </div>
-          ) : path === '/explore' ? (
-            <span className="catalog-shell-label">{tr('Открыть миры')}</span>
-          ) : (
-            <form
-              className="top-search"
-              onSubmit={(e) => {
-                e.preventDefault();
-                router.push(`/explore?q=${encodeURIComponent(query)}`);
-              }}
-            >
-              <Search size={17} />
-              <input
-                aria-label={tr('Поиск миров')}
-                placeholder={tr('Найти своё следующее приключение')}
-                value={query}
-                onChange={(e) => setQuery(e.target.value)}
-              />
-              <kbd>⌕</kbd>
-            </form>
-          )}
+          ) : null}
           <div className="top-actions">
-            <select
-              className="locale-select"
-              aria-label={tr('Язык интерфейса')}
-              value={locale}
-              onChange={(e) => setLocale(e.target.value as 'ru' | 'en' | 'uk')}
-            >
-              <option value="ru">RU</option>
-              <option value="uk">UK</option>
-              <option value="en">EN</option>
-            </select>
-            <button
-              className="icon-button theme-button"
-              aria-label={tr('Переключить тему')}
-              onClick={() => {
-                const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
-                document.documentElement.dataset.theme = theme;
-                localStorage.setItem('dreamwalk-theme', theme);
-                if (user)
-                  void api<User>('/account/settings', {
-                    method: 'PATCH',
-                    body: JSON.stringify({ theme }),
-                  })
-                    .then(setUser)
-                    .catch(() => toast(tr('Тема изменена на этом устройстве.')));
-              }}
-            >
-              <Sun size={18} />
-              <Moon size={18} />
-            </button>
+            {(inAuth || inGame) && <ShellPreferences />}
             {!inAuth &&
               (user ? (
                 <>
@@ -239,9 +272,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
                     className="icon-button"
                     aria-label={tr('Уведомления')}
                   >
-                    <Bell size={19} />
+                    <Bell size={24} />
                   </Link>
-                  <Link href="/account/profile" className="profile-chip">
+                  <Link href="/account/profile" className="profile-chip" aria-label={tr('Профиль')}>
                     <span className="avatar">
                       {user.avatarAssetId ? (
                         <img src={assetUrl(user.avatarAssetId)} alt="" />
@@ -310,5 +343,44 @@ export function Shell({ children }: { children: React.ReactNode }) {
         </nav>
       )}
     </div>
+  );
+}
+
+function ShellPreferences() {
+  const { t: tr, locale, setLocale } = useT();
+  const { user, setUser, toast } = useClient();
+  return (
+    <>
+      {' '}
+      <select
+        className="locale-select"
+        aria-label={tr('Язык интерфейса')}
+        value={locale}
+        onChange={(e) => setLocale(e.target.value as 'ru' | 'en' | 'uk')}
+      >
+        <option value="ru">RU</option>
+        <option value="uk">UK</option>
+        <option value="en">EN</option>
+      </select>
+      <button
+        className="icon-button theme-button"
+        aria-label={tr('Переключить тему')}
+        onClick={() => {
+          const theme = document.documentElement.dataset.theme === 'dark' ? 'light' : 'dark';
+          document.documentElement.dataset.theme = theme;
+          localStorage.setItem('dreamwalk-theme', theme);
+          if (user)
+            void api<User>('/account/settings', {
+              method: 'PATCH',
+              body: JSON.stringify({ theme }),
+            })
+              .then(setUser)
+              .catch(() => toast(tr('Тема изменена на этом устройстве.')));
+        }}
+      >
+        <Sun size={18} />
+        <Moon size={18} />
+      </button>
+    </>
   );
 }
