@@ -172,6 +172,19 @@ test('synthetic provider round-trips speech and plan cognition without granting 
   });
   assert.equal(bad.proposal, null);
   assert.equal(bad.failureCode, 'PROVIDER_INVALID_RESULT');
+  assert.equal(bad.failureStage, 'response_schema');
+  const malformedPlan = await generate('plan', {
+    actions: [{ kind: 'wait', targetId: 'unexpected', itemId: null, target: null }],
+  });
+  assert.equal(malformedPlan.failureCode, 'PROVIDER_INVALID_RESULT');
+  assert.equal(malformedPlan.failureStage, 'plan_actions');
+  assert.deepEqual(Object.keys(malformedPlan).sort(), [
+    'failureCode',
+    'failureStage',
+    'proposal',
+    'requestId',
+    'usage',
+  ]);
   const silent = {
     silent: true,
     text: null,
@@ -209,4 +222,63 @@ test('optional overheard reply and already-handled director dialogue have explic
     /Every step must have reply=null, replyNpcId=null and replyContextHash=null/,
   );
   assert.match(director.instructions, /do not suppress narrative coauthoring/);
+});
+
+test('plan structured output excludes the action combinations rejected by the executable contract', () => {
+  const { gameActionSchema } = require('@dreamwalk/contracts');
+  const variants = openAiOutputSchema('plan').properties.actions.items.anyOf;
+  const variantsByKind = new Map(
+    variants.flatMap((v) => v.properties.kind.enum.map((kind) => [kind, v])),
+  );
+  assert.deepEqual([...variantsByKind.keys()].sort(), [
+    'close',
+    'communicate',
+    'give',
+    'hit',
+    'inspect',
+    'lock',
+    'move_to',
+    'open',
+    'push',
+    'unlock',
+    'wait',
+  ]);
+  for (const [kind, schema] of variantsByKind) {
+    const sample = {
+      kind,
+      channel: null,
+      observationIds: null,
+      targetId: null,
+      itemId: null,
+      target: null,
+    };
+    const p = schema.properties;
+    assert.deepEqual(schema.required.sort(), Object.keys(sample).sort());
+    assert.equal(schema.additionalProperties, false);
+    if (p.targetId.type === 'string') sample.targetId = 'synthetic-target';
+    if (p.itemId.type === 'string') sample.itemId = 'synthetic-item';
+    if (kind === 'move_to') {
+      sample.target = { x: 4, y: 5 };
+      assert.equal(p.target.properties.x.maximum, 63);
+      assert.equal(p.targetId.type, 'null');
+      assert.equal(p.itemId.type, 'null');
+    }
+    if (kind === 'communicate') {
+      sample.channel = 'say';
+      sample.observationIds = ['synthetic-observation'];
+      assert.equal(p.observationIds.minItems, 1);
+    } else {
+      assert.equal(p.channel.type, 'null');
+      assert.equal(p.observationIds.type, 'null');
+    }
+    if (kind === 'wait') {
+      for (const field of ['targetId', 'itemId', 'target']) assert.equal(p[field].type, 'null');
+    }
+    assert.equal(
+      gameActionSchema.safeParse(
+        Object.fromEntries(Object.entries(sample).filter(([, value]) => value !== null)),
+      ).success,
+      true,
+    );
+  }
 });

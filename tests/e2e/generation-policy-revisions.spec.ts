@@ -1370,11 +1370,14 @@ for (const locale of ['ru', 'en', 'uk'] as const)
     const consents: Record<string, unknown>[] = [];
     let pending = false;
     let unknown = false;
+    let media = false;
     let estimate = '12500';
     await page.route(`**/api/v1/game/campaigns/${f.id}/world-generation`, (route) =>
       route.fulfill({
         json: {
           available: f.projection.turn!.phase === 'world' && !pending,
+          generatedLocationImages: media ? 1 : 0,
+          estimateRiskConsentRequired: media,
           pending,
           unknown,
           forecast: {
@@ -1458,7 +1461,7 @@ for (const locale of ['ru', 'en', 'uk'] as const)
     expect(quotes).toHaveLength(0);
     expect(consents).toHaveLength(0);
 
-    // A complete world roster is auto-priced; only the explicit click admits it.
+    // Ordinary world processing is informational. Polling never requests a quote or consent.
     pending = false;
     unknown = false;
     f.projection.turn = {
@@ -1468,6 +1471,13 @@ for (const locale of ['ru', 'en', 'uk'] as const)
       ownTurn: false,
       phaseEpoch: f.projection.turn!.phaseEpoch + 1,
     };
+    await page.reload();
+    await expect(forecast).toContainText(formatSparkSubunits(estimate, locale));
+    await expect(page.getByTestId('story-reply-confirmation')).toHaveCount(0);
+    expect(quotes).toHaveLength(0);
+    expect(consents).toHaveLength(0);
+    // New-location media remains the explicit-confirmation exception.
+    media = true;
     await page.reload();
     const confirmation = page.getByTestId('story-reply-confirmation');
     const confirm = confirmation.getByRole('button', {

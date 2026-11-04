@@ -41,6 +41,7 @@ import { NpcSponsorship, type SponsorGrant } from './sponsorship';
 import { readNpcAiConfiguration } from './config';
 import { cacheKey, digest, validateDecisionContext } from './context';
 import { MockNpcProvider, validateProviderResult } from './provider';
+import { ordinaryFailureSettlement } from './ordinary-failure-settlement';
 import {
   ProviderFailure,
   type AiPolicy,
@@ -1546,6 +1547,11 @@ export class NpcAiEngine {
         );
         if (['cancelled', 'stale', 'failed', 'committed'].includes(j.status)) return;
         if (result.failureCode) {
+          if (result.failureStage)
+            await c.query(
+              "UPDATE npc_ai_jobs SET request_meta=jsonb_set(COALESCE(request_meta,'{}'::jsonb),'{failureStage}',to_jsonb($2::text)) WHERE id=$1",
+              [id, result.failureStage],
+            );
           if (
             result.failureCode === 'PROVIDER_LIMIT_VIOLATION' &&
             !(this.provider instanceof ReleaseGenerationProvider)
@@ -1625,6 +1631,33 @@ export class NpcAiEngine {
     // Terminal replay is a no-op; unknown/failure outcomes require explicit reconciliation.
     if (!hold || ['settled', 'released', 'pending'].includes(hold.status)) return;
     await new SparksAccounting().settle(c, j.payer_user_id, j.spark_hold_id, settlement);
+  }
+  private async ordinaryFailureSettlement(c: PoolClient, j: Job) {
+    if (
+      !(this.provider instanceof ReleaseGenerationProvider) ||
+      !j.spark_hold_id ||
+      !j.request_meta?.acceptedWorldBatchId ||
+      !j.request_meta?.runtimeRequestId ||
+      j.provider_budget_status !== 'spent'
+    )
+      return;
+    // Read immutable consent and linkage. Existing job serialization and the
+    // accounting callback retain provider -> authorization -> wallet lock order.
+    const batch = (
+      await c.query('SELECT * FROM game_world_generation_batches WHERE id=$1', [
+        j.request_meta.acceptedWorldBatchId,
+      ])
+    ).rows[0];
+    const request = (
+      await c.query('SELECT * FROM game_npc_decision_requests WHERE id=$1', [
+        j.request_meta.runtimeRequestId,
+      ])
+    ).rows[0];
+    const hold = (await c.query('SELECT * FROM spark_holds WHERE id=$1', [j.spark_hold_id]))
+      .rows[0];
+    const quote = (await c.query('SELECT * FROM spark_quotes WHERE id=$1', [j.spark_hold_id]))
+      .rows[0];
+    return ordinaryFailureSettlement(j, batch, request, hold, quote);
   }
   private async settleProvider(c: PoolClient, j: Job, actual: number | null, unknown: boolean) {
     // Wrapped settlement can acquire authorization/scope -> global fence. Enqueue
@@ -1813,10 +1846,15 @@ export class NpcAiEngine {
         ],
       );
     } else {
-      await this.settleNpcSparks(c, j, {
-        outcome: j.status === 'reserved' ? 'not_dispatched' : 'failure_policy_pending',
-        receiptId: `finalize:${j.id}:${status}`,
-      });
+      const knownFailure = await this.ordinaryFailureSettlement(c, j);
+      await this.settleNpcSparks(
+        c,
+        j,
+        knownFailure ?? {
+          outcome: j.status === 'reserved' ? 'not_dispatched' : 'failure_policy_pending',
+          receiptId: `finalize:${j.id}:${status}`,
+        },
+      );
       if (j.provider_budget_status === 'reserved')
         await this.settleProvider(c, j, j.status === 'running' ? null : 0, j.status === 'running');
     }

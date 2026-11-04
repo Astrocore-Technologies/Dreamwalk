@@ -42,8 +42,8 @@ test('story quotes and uncertain resubmissions retain the captured reply locale,
     'utf8',
   );
   assert.match(source, /replyLocale: getLocale\(\)/);
-  assert.match(source, /setPrepared\(\{ input, result, mapId: projection.map.id, key \}\)/);
-  assert.match(source, /const sent = recover \? submitted.current : prepared/);
+  assert.match(source, /const captured = \{ input, result, mapId: projection.map.id, key \}/);
+  assert.match(source, /const sent = recover \? submitted.current : \(immediate \?\? prepared\)/);
   assert.match(source, /\.\.\.sent.input,/);
   assert.match(source, /data-testid="story-reply-language"/);
   assert.match(source, /prepared.input.replyLocale/);

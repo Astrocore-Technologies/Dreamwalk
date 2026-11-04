@@ -1,8 +1,20 @@
 import { test, expect, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+import { createAuthoredDraft } from '@dreamwalk/game-core';
+import {
+  authoringRequest,
+  savePrivateFixture,
+  publishPrivateFixture,
+} from './support/private-authoring';
 
 /** Browser-only quotes and submissions: no external provider or wallet mutation is reachable. */
-async function setup(page: Page, expired = false, failFirstSubmission = false, dualWallet = false) {
+async function setup(
+  page: Page,
+  expired = false,
+  failFirstSubmission = false,
+  dualWallet = false,
+  turnBased = false,
+) {
   const handle = `simple_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
   const registered = await page.request.post('/api/v1/auth/register', {
     data: {
@@ -14,8 +26,19 @@ async function setup(page: Page, expired = false, failFirstSubmission = false, d
   });
   expect(registered.ok()).toBeTruthy();
   await page.addInitScript(() => localStorage.setItem('dreamwalk-language', 'ru'));
+  // Legacy paid-confirmation tests require a supported hybrid save without turns.
+  const adventure = await authoringRequest(page, '/studio/adventures', {
+    title: 'Synthetic confirmation fixture',
+  });
+  const draft = createAuthoredDraft('courtyard');
+  if (!turnBased) {
+    draft.npcBehavior = 'reactive-v1';
+    delete draft.turnRules;
+  }
+  await savePrivateFixture(page, adventure.id, draft);
+  const release = await publishPrivateFixture(page, adventure.id);
   const created = await page.request.post('/api/v1/game/campaigns', {
-    data: { template: 'observatory-v1', turnBased: true },
+    data: { playableVersionId: release.playableVersionId, turnBased },
   });
   expect(created.ok()).toBeTruthy();
   const id = (await created.json()).campaignId;
@@ -52,6 +75,17 @@ async function setup(page: Page, expired = false, failFirstSubmission = false, d
           providerUpperMicros: 12500,
           chargeUnit: 'sparks',
           sparkReservedSubunits: '12500',
+          ...(turnBased
+            ? {
+                demo: true,
+                external: false,
+                requiresConsent: false,
+                provider: 'local-turn-resolver',
+                providerUpperMicros: 0,
+                chargeUnit: undefined,
+                sparkReservedSubunits: undefined,
+              }
+            : {}),
           ...(dualWallet
             ? {
                 funding: {
@@ -79,6 +113,23 @@ async function setup(page: Page, expired = false, failFirstSubmission = false, d
       json: { id: input.turnId, operationId: input.operationId, status: 'queued' },
     });
   });
+  if (turnBased) {
+    await page.route(`**/api/v1/game/campaigns/${id}/turns/feed`, async (route) => {
+      const response = await route.fetch();
+      const feed = await response.json();
+      await route.fulfill({
+        response,
+        json: {
+          ...feed,
+          turns: submissions.map((input) => ({
+            id: input.turnId,
+            operationId: input.operationId,
+            status: 'committed',
+          })),
+        },
+      });
+    });
+  }
   await page.goto(`/game/${id}`);
   await expect(page.getByText('Подключено', { exact: true })).toBeVisible();
   const story = page.getByTestId('unified-story');
@@ -281,5 +332,38 @@ test('dual-wallet estimate shows both balances and paid ceiling with the same si
   await story.getByRole('button', { name: 'Подтвердить ход', exact: true }).click();
   await expect.poll(() => submissions.length).toBe(1);
   expect(quotes).toHaveLength(1);
+  expect(forbidden).toEqual([]);
+});
+
+test('ordinary play sends once then ends turn without another confirmation', async ({ page }) => {
+  const { id, story, quotes, submissions, forbidden } = await setup(
+    page,
+    false,
+    false,
+    false,
+    true,
+  );
+  const commands: Record<string, unknown>[] = [];
+  await page.route(`**/api/v1/game/campaigns/${id}/commands`, async (route) => {
+    const input = route.request().postDataJSON();
+    commands.push(input);
+    await route.fulfill({ json: { status: 'committed', operationId: input.operationId } });
+  });
+  await page.route(`**/api/v1/game/campaigns/${id}/world-generation/**`, async (route) => {
+    forbidden.push(route.request().url());
+    await route.abort();
+  });
+  const input = story.getByRole('textbox', { name: 'Твой ход', exact: true });
+  await input.fill('Осматриваю двор');
+  await story.getByRole('button', { name: 'Отправить', exact: true }).click();
+  await expect.poll(() => submissions.length).toBe(1);
+  await expect(input).toHaveValue('');
+  await expect(story.getByTestId('story-quote')).toHaveCount(0);
+  await expect(story.getByRole('button', { name: 'Подтвердить ход', exact: true })).toHaveCount(0);
+  expect(quotes).toHaveLength(1);
+  expect(submissions[0].operationId).toBe(quotes[0].operationId);
+  await page.getByRole('button', { name: 'Завершить ход', exact: true }).click();
+  await expect.poll(() => commands.length).toBe(1);
+  expect(commands[0]).toMatchObject({ type: 'turn.end', ordinaryGeneration: true });
   expect(forbidden).toEqual([]);
 });

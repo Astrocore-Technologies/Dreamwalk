@@ -43,6 +43,7 @@ export type CommandBody = {
     | 'npc.promise'
     | 'turn.end'
     | 'turn.reaction';
+  ordinaryGeneration?: boolean;
   promiseId?: string;
   decision?: 'accept' | 'decline' | 'defend';
   turnFence?: { roundId: string; phaseEpoch: number; rulesetVersion: 1 };

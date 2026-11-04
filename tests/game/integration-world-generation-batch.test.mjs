@@ -33,7 +33,7 @@ await test(
       const owner = await client().registerLegacyFixture();
       const source = await owner.request('/adventures/old-observatory?view=published');
       const ids = [];
-      for (let i = 0; i < 13; i++) {
+      for (let i = 0; i < 15; i++) {
         const made = await owner.request('/game/campaigns', {
           turnBased: true,
           playableVersionId: source.playableVersionId,
@@ -764,6 +764,101 @@ await test(
             ).rows[0].count,
             1,
           );
+        },
+      );
+      await t.test(
+        'ordinary End turn admits the exact native batch once without a second confirmation',
+        async () => {
+          const id = ids[13],
+            live = await setup(id),
+            operationId = randomUUID();
+          live.paused = false;
+          const roundId = live.state.turnController.roundId;
+          const command = {
+            protocolVersion: 1,
+            operationId,
+            type: 'turn.end',
+            turnFence: turnFence(live.state),
+            ordinaryGeneration: true,
+          };
+          const beforeCalls = calls,
+            funds = await wallet();
+          assert.equal((await game.command(req, id, command)).status, 'committed');
+          const authorityBefore = (
+            await db.query(
+              'SELECT * FROM game_ordinary_round_consents WHERE campaign_id=$1 AND round_id=$2',
+              [id, roundId],
+            )
+          ).rows[0];
+          assert.equal(authorityBefore.owner_id, owner.user.id);
+          assert.equal(authorityBefore.operation_id, operationId);
+          assert.equal(authorityBefore.state, 'pending');
+          await game.admitOrdinaryRound(id);
+          const admitted = (
+            await db.query(
+              `SELECT a.state,a.batch_id,b.quote,b.entries FROM game_ordinary_round_consents a
+           JOIN game_world_generation_batches b ON b.id=a.batch_id WHERE a.campaign_id=$1`,
+              [id],
+            )
+          ).rows[0];
+          assert.equal(admitted?.state, 'accepted');
+          assert.equal(admitted.quote.ordinaryTurnConsentVersion, 'end-turn-v1');
+          assert.ok(admitted.entries.length > 0);
+          assert.equal(calls, beforeCalls, 'admission itself never calls the generator');
+          assert.deepEqual(await wallet(), funds, 'native queue alone owns financial holds');
+          await game.command(req, id, command);
+          game.ordinaryAdmissionChecks.clear();
+          await game.admitOrdinaryRound(id);
+          assert.equal(
+            (
+              await db.query(
+                'SELECT count(*)::int AS n FROM game_world_generation_batches WHERE campaign_id=$1',
+                [id],
+              )
+            ).rows[0].n,
+            1,
+          );
+          assert.equal(
+            (
+              await db.query('SELECT count(*)::int AS n FROM npc_ai_jobs WHERE campaign_id=$1', [
+                id,
+              ])
+            ).rows[0].n,
+            0,
+          );
+        },
+      );
+      await t.test(
+        'read-only status and a legacy world phase never create ordinary payment authority',
+        async () => {
+          const id = ids[14],
+            live = await pendingWorld(id);
+          live.paused = false;
+          await addRequest(id, live);
+          const beforeCalls = calls,
+            funds = await wallet();
+          await game.worldGenerationStatus(req, id);
+          await game.admitOrdinaryRound(id);
+          assert.equal(
+            (
+              await db.query(
+                'SELECT count(*)::int AS n FROM game_ordinary_round_consents WHERE campaign_id=$1',
+                [id],
+              )
+            ).rows[0].n,
+            0,
+          );
+          assert.equal(
+            (
+              await db.query(
+                'SELECT count(*)::int AS n FROM game_world_generation_batches WHERE campaign_id=$1',
+                [id],
+              )
+            ).rows[0].n,
+            0,
+          );
+          assert.equal(calls, beforeCalls);
+          assert.deepEqual(await wallet(), funds);
         },
       );
     } finally {

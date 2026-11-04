@@ -9,7 +9,7 @@ import {
 } from './support/private-authoring';
 
 for (const locale of ['ru', 'en', 'uk'] as const) {
-  // Isolate each request/confirmation journey so a slow channel cannot consume the
+  // Isolate each single-Send journey so a slow channel cannot consume the
   // next channel's test deadline or leave it with an earlier post's state.
   for (const speech of [
     { mode: 'normal speech', text: 'Good morning', channel: 'say' },
@@ -102,6 +102,21 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
       await input.fill(speech.text);
       const send = composer.getByRole('button', { name: copy.send, exact: true });
       await expect(send).toBeEnabled();
+      // Repeated inspection preserves the unsent draft and channel, never a target.
+      for (let click = 0; click < 2; click++) {
+        await inspection.getByTestId('npc-inspection-talk').click();
+        await expect(input).toBeFocused();
+        await expect(input).toHaveValue(speech.text);
+        await expect(composer.getByTestId('story-audience')).toHaveText(
+          speech.channel === 'whisper' ? copy.nearbyWhisper : copy.nearby,
+        );
+        await expect(composer.getByTestId('story-quote')).toHaveCount(0);
+      }
+      const submitResponse = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          response.url().endsWith(`/game/campaigns/${id}/turns`),
+      );
       const quoted = page.waitForResponse((response) =>
         response.url().endsWith(`/game/campaigns/${id}/turns/quote`),
       );
@@ -112,24 +127,6 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
       expect(quoteInput.targetNpcId).toBeUndefined();
       expect(quoteInput.channel).toBe(speech.channel);
       expect(quoteInput.text).toBe(speech.text);
-      await expect(composer.getByTestId('story-quote')).toBeVisible();
-      // Even after a quote is prepared, repeated inspection actions preserve the draft,
-      // channel and authorization instead of binding the post to that NPC.
-      for (let click = 0; click < 2; click++) {
-        await inspection.getByTestId('npc-inspection-talk').click();
-        await expect(input).toBeFocused();
-        await expect(input).toHaveValue(speech.text);
-        await expect(composer.getByTestId('story-audience')).toHaveText(
-          speech.channel === 'whisper' ? copy.nearbyWhisper : copy.nearby,
-        );
-        await expect(composer.getByTestId('story-quote')).toBeVisible();
-      }
-      const submitResponse = page.waitForResponse(
-        (response) =>
-          response.request().method() === 'POST' &&
-          response.url().endsWith(`/game/campaigns/${id}/turns`),
-      );
-      await composer.getByRole('button', { name: copy.confirm, exact: true }).click();
       const submitted = await submitResponse;
       expect(submitted.ok()).toBeTruthy();
       const submittedInput = submitted.request().postDataJSON();
@@ -137,6 +134,10 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
       expect(submittedInput.targetNpcId).toBeUndefined();
       expect(submittedInput.channel).toBe(speech.channel);
       await expect(input).toHaveValue('');
+      await expect(composer.getByTestId('story-quote')).toHaveCount(0);
+      await expect(composer.getByRole('button', { name: copy.confirm, exact: true })).toHaveCount(
+        0,
+      );
       // Nothing ends the player turn here: no world generation or paid provider call is needed.
     });
   }

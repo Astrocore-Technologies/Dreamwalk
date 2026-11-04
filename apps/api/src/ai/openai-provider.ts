@@ -97,31 +97,37 @@ const cognitionOutput = {
     { type: 'null' },
   ],
 };
-const actionSchema = object({
-  kind: {
-    type: 'string',
-    enum: [
-      'move_to',
-      'wait',
-      'inspect',
-      'give',
-      'open',
-      'close',
-      'lock',
-      'unlock',
-      'communicate',
-      'hit',
-      'push',
-    ],
-  },
-  channel: { type: ['string', 'null'], enum: ['say', 'whisper', null] },
-  observationIds: {
-    anyOf: [{ type: 'array', items: string, minItems: 1, maxItems: 4 }, { type: 'null' }],
-  },
-  targetId: nullableString,
-  itemId: nullableString,
-  target: { anyOf: [object({ x: { type: 'integer' }, y: { type: 'integer' } }), { type: 'null' }] },
-});
+// Match the executable contract, rather than asking the model for combinations
+// that are schema-valid at the provider but guaranteed to fail gameActionSchema.
+const actionOutput = (kinds: string[], fields: Record<string, unknown> = {}) =>
+  object({
+    kind: { type: 'string', enum: kinds },
+    channel: { type: 'null' },
+    observationIds: { type: 'null' },
+    targetId: { type: 'null' },
+    itemId: { type: 'null' },
+    target: { type: 'null' },
+    ...fields,
+  });
+const actionSchema = {
+  anyOf: [
+    actionOutput(['wait']),
+    actionOutput(['move_to'], {
+      target: object({
+        x: { type: 'integer', minimum: 0, maximum: 63 },
+        y: { type: 'integer', minimum: 0, maximum: 63 },
+      }),
+    }),
+    actionOutput(['inspect', 'open', 'close', 'hit', 'push'], { targetId: string }),
+    actionOutput(['give'], { targetId: string, itemId: string }),
+    actionOutput(['lock', 'unlock'], { targetId: string, itemId: nullableString }),
+    actionOutput(['communicate'], {
+      targetId: string,
+      channel: { type: 'string', enum: ['say', 'whisper'] },
+      observationIds: { type: 'array', items: string, minItems: 1, maxItems: 4 },
+    }),
+  ],
+};
 const beliefSchema = object({
   beliefId: nullableString,
   expectedRevision: { type: 'integer', minimum: 0 },
@@ -1110,11 +1116,13 @@ export class OpenAiNpcProvider implements NpcProvider {
       }),
       costEvidence: 'configured_rates' as const,
     };
+    let failureStage: ProviderResult['failureStage'] = 'output_envelope';
     const failed = (code: string): ProviderResult => ({
       requestId: value.id,
       usage,
       proposal: null,
       failureCode: code,
+      failureStage,
     });
     if (
       (this.config.contextBudgetTokens !== undefined &&
@@ -1141,7 +1149,9 @@ export class OpenAiNpcProvider implements NpcProvider {
     });
     if (texts.length !== 1) return failed('PROVIDER_INVALID_RESULT');
     try {
+      failureStage = 'json';
       const parsed = JSON.parse(texts[0]);
+      failureStage = 'response_schema';
       let proposal: unknown;
       if (request.purpose === 'story_turn') {
         const raw = z
@@ -1390,11 +1400,13 @@ export class OpenAiNpcProvider implements NpcProvider {
           })
           .strict()
           .parse(parsed);
+        failureStage = 'plan_actions';
         const actions = plan.actions.map((a) =>
           gameActionSchema.parse(
             Object.fromEntries(Object.entries(a).filter(([, v]) => v !== null)),
           ),
         );
+        failureStage = 'plan_context';
         const base = npcPlanProposalSchema.parse(mockProposal),
           targetRevisions: Record<string, number> = {};
         const entities = z
@@ -1424,6 +1436,7 @@ export class OpenAiNpcProvider implements NpcProvider {
           if (references?.some((id) => !selectedObservationIds.has(id)))
             return failed('PROVIDER_INVALID_EVIDENCE');
         }
+        failureStage = 'plan_beliefs';
         const revisions = z
           .array(z.record(z.string(), z.unknown()))
           .max(4)
@@ -1438,6 +1451,7 @@ export class OpenAiNpcProvider implements NpcProvider {
           .parse(context.observations ?? []);
         if (revisions.some((r) => r.evidenceIds.some((id) => !evidence.some((e) => e.id === id))))
           return failed('PROVIDER_INVALID_EVIDENCE');
+        failureStage = 'plan_proposal';
         proposal = npcPlanProposalSchema.parse({
           ...base,
           actions,

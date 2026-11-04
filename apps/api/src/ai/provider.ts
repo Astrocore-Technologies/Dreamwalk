@@ -17,6 +17,17 @@ const resultSchema = z
       .regex(/^[A-Z_]+$/)
       .max(80)
       .optional(),
+    failureStage: z
+      .enum([
+        'output_envelope',
+        'json',
+        'response_schema',
+        'plan_actions',
+        'plan_context',
+        'plan_beliefs',
+        'plan_proposal',
+      ])
+      .optional(),
     usage: z
       .object({
         inputTokens: z.number().int().nonnegative().max(10000000),

@@ -41,16 +41,18 @@ async function clickCell(page: Page, x: number, y: number, button: 'left' | 'rig
 async function say(page: Page, text: string) {
   const composer = page.getByTestId('unified-story');
   await composer.getByLabel('Твой ход', { exact: true }).fill(text);
-  await composer.getByRole('button', { name: 'Отправить', exact: true }).click();
-  await expect(composer.getByTestId('story-quote')).toBeVisible();
   const submitted = page.waitForResponse(
     (response) =>
       response.request().method() === 'POST' && /\/turns$/.test(new URL(response.url()).pathname),
   );
-  await composer.getByRole('button', { name: 'Подтвердить ход', exact: true }).click();
+  await composer.getByRole('button', { name: 'Отправить', exact: true }).click();
   const response = await submitted;
   expect(response.ok()).toBeTruthy();
   expect(response.request().postDataJSON().targetNpcId).toBeUndefined();
+  await expect(composer.getByTestId('story-quote')).toHaveCount(0);
+  await expect(composer.getByRole('button', { name: 'Подтвердить ход', exact: true })).toHaveCount(
+    0,
+  );
   const receipt = await response.json();
   await expect(composer.getByLabel('Твой ход', { exact: true })).toHaveValue('');
   return receipt.id as string;

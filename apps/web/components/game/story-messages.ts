@@ -51,20 +51,25 @@ export const storyMessages = {
     'Everyone nearby can hear your whisper: within 1 cell, subject to obstacles.',
     'Шепіт почують усі, хто поруч: до 1 клітинки з урахуванням перешкод.',
   ],
+  postingRejected: [
+    'Не удалось применить сообщение. Изменения не подтверждены.',
+    'The message could not be applied. No changes are confirmed.',
+    'Не вдалося застосувати повідомлення. Зміни не підтверджені.',
+  ],
   send: ['Отправить', 'Send', 'Надіслати'],
   confirm: ['Подтвердить ход', 'Confirm turn', 'Підтвердити хід'],
   dismiss: ['Отмена', 'Cancel', 'Скасувати'],
   estimatedCost: ['Примерно {amount} Искр', 'About {amount} Sparks', 'Приблизно {amount} Іскор'],
   freeTurn: ['Искры не списываются', 'No Sparks charge', 'Іскри не списуються'],
   worldBatchPosting: [
-    'Сообщение фиксирует твои слова и проверенные действия без платы за генерацию. После завершения ходов игроков решения NPC, их ответы и продолжение ведущего оцениваются вместе.',
-    'Posting records your speech and validated actions without a generation charge. After players end their turns, NPC decisions, replies and the director’s continuation are estimated together.',
-    'Повідомлення фіксує твої слова й перевірені дії без плати за генерацію. Після завершення ходів гравців рішення NPC, їхні відповіді та продовження ведучого оцінюються разом.',
+    'Отправь сообщение, затем заверши ход. Обычный ход оплачивается без дополнительного подтверждения: сначала Грёзы, затем Искры. Новая локация с изображением требует отдельного подтверждения.',
+    'Send your message, then end your turn. Normal turn costs are charged without another confirmation: Dreams first, then Sparks. A new location with an image requires separate confirmation.',
+    'Надішли повідомлення, потім заверши хід. Звичайний хід оплачується без додаткового підтвердження: спочатку Мрії, потім Іскри. Нова локація із зображенням потребує окремого підтвердження.',
   ],
   worldBatchCost: [
-    'За отправку Искры не списываются. Ответы мира ждут завершения ходов игроков и отдельного подтверждения общей стоимости.',
-    'Posting costs no Sparks. World responses wait for players to end their turns and for approval of the combined cost.',
-    'За надсилання Іскри не списуються. Відповіді світу чекають завершення ходів гравців і окремого підтвердження загальної вартості.',
+    'Отправка бесплатна. Завершение хода запускает обычную генерацию; сначала используются Грёзы, затем Искры.',
+    'Posting is free. Ending your turn starts normal generation, using Dreams first, then Sparks.',
+    'Надсилання безкоштовне. Завершення ходу запускає звичайну генерацію: спочатку Мрії, потім Іскри.',
   ],
   worldMembersError: [
     'Не удалось проверить участников и владельца кампании. Повторяем проверку; подтверждение генерации пока недоступно.',
@@ -77,9 +82,9 @@ export const storyMessages = {
     'Перевіряємо власника кампанії…',
   ],
   worldOwnerReview: [
-    'Идёт ход мира. Если дополнительные ответы ждут согласия, их стоимость подтверждает владелец кампании.',
-    'The world turn is in progress. The campaign owner reviews the cost of any additional responses awaiting consent.',
-    'Триває хід світу. Якщо додаткові відповіді очікують згоди, їхню вартість підтверджує власник кампанії.',
+    'Идёт ход мира. Обычная генерация запускается после завершения ходов игроков.',
+    'The world turn is in progress. Normal generation starts after players end their turns.',
+    'Триває хід світу. Звичайна генерація запускається після завершення ходів гравців.',
   ],
   worldCheckingStatus: [
     'Проверяем состояние хода мира…',
@@ -96,10 +101,40 @@ export const storyMessages = {
     'No generation is pending. The world turn can finish after game actions are processed.',
     'Генерація не очікується. Хід світу завершиться після обробки ігрових дій.',
   ],
+  worldProviderUnavailable: [
+    'Провайдер AI недоступен. Ход мира не запущен.',
+    'The AI provider is unavailable. The world turn has not started.',
+    'Провайдер ШІ недоступний. Хід світу не запущено.',
+  ],
+  worldProviderBudget: [
+    'Достигнут лимит расходов на генерацию. Ход мира не запущен.',
+    'The generation spending limit has been reached. The world turn has not started.',
+    'Досягнуто ліміту витрат на генерацію. Хід світу не запущено.',
+  ],
+  worldContextBudget: [
+    'Контекст хода превышает допустимый размер. Генерация не запущена.',
+    'The turn context exceeds the allowed size. Generation has not started.',
+    'Контекст ходу перевищує допустимий розмір. Генерацію не запущено.',
+  ],
+  worldPriceUnverified: [
+    'Стоимость генерации не проверена. Ход мира не запущен.',
+    'Generation pricing is unverified. The world turn has not started.',
+    'Вартість генерації не перевірена. Хід світу не запущено.',
+  ],
+  worldWalletUnavailable: [
+    'Кошелёк Искр недоступен. Ход мира не запущен.',
+    'The Sparks wallet is unavailable. The world turn has not started.',
+    'Гаманець Іскор недоступний. Хід світу не запущено.',
+  ],
+  worldGenerationBlocked: [
+    'Не удалось запустить ход мира. Проверь баланс и доступность генерации.',
+    'The world turn could not start. Check your balance and generation availability.',
+    'Не вдалося запустити хід світу. Перевір баланс і доступність генерації.',
+  ],
   worldGenerationUnavailable: [
-    'Ход мира ещё ожидает обработки. Сейчас нет доступной сметы для подтверждения; это не подтверждает запуск AI.',
-    'The world turn is still waiting. No cost estimate is currently available to confirm; this does not confirm that AI work has started.',
-    'Хід світу ще очікує обробки. Зараз немає доступного кошторису для підтвердження; це не підтверджує запуск AI.',
+    'Ход мира ожидает обработки. Генерация пока недоступна.',
+    'The world turn is waiting for processing. Generation is currently unavailable.',
+    'Хід світу очікує обробки. Генерація поки недоступна.',
   ],
   worldEstimate: [
     'Мир готовит следующий ход. Проверь общую стоимость ожидающих решений NPC, ответов и продолжения ведущего.',
@@ -112,9 +147,9 @@ export const storyMessages = {
     'Хід: приблизно {amount} в еквіваленті Іскор',
   ],
   worldCostForecastHint: [
-    'Предварительно, без анализа карты. Грёзы используются первыми. Полная смета появится автоматически перед подтверждением.',
-    'Preliminary, before map analysis. Dreams are used first. The full estimate appears automatically before confirmation.',
-    'Попередньо, без аналізу мапи. Мрії використовуються першими. Повний кошторис з’явиться автоматично перед підтвердженням.',
+    'Предварительно, без анализа карты. Завершение хода оплачивает обычную генерацию: сначала Грёзы, затем Искры.',
+    'Preliminary, before map analysis. Ending your turn pays for normal generation: Dreams first, then Sparks.',
+    'Попередньо, без аналізу мапи. Завершення ходу оплачує звичайну генерацію: спочатку Мрії, потім Іскри.',
   ],
   worldCostUnavailable: [
     'Стоимость хода пока недоступна',

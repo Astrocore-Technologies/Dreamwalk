@@ -39,7 +39,9 @@ function harness() {
   } finally {
     global.setInterval = original;
   }
-  service.live.set('campaign', {});
+  // A loaded campaign always has state. This scheduler-only fixture is not a
+  // turn-based round and must never authorize generation through the timer.
+  service.live.set('campaign', { state: {} });
   return { service, tick };
 }
 
@@ -104,7 +106,7 @@ test('an executing world step is coalesced and a failed step can retry', async (
 
 test('campaigns schedule independently without bypassing their serial queues', async () => {
   const { service, tick } = harness();
-  service.live.set('other', {});
+  service.live.set('other', { state: {} });
   const calls = [];
   let release;
   const blocked = service.serial(

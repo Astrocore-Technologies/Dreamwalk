@@ -58,13 +58,21 @@ export function knownNpcSettlementQuote(
   job: QueryResultRow,
   hold: QueryResultRow,
   quote: QueryResultRow,
+  lifecycle: 'recovery' | 'ordinary-failure' = 'recovery',
 ) {
   if (
-    !['stale', 'failed'].includes(job.status) ||
+    !(lifecycle === 'recovery'
+      ? ['stale', 'failed'].includes(job.status)
+      : ['running', 'result_received'].includes(job.status)) ||
     job.provider_budget_status !== 'spent' ||
     job.provider_external !== true ||
     job.provider_cost_evidence !== 'configured_rates' ||
-    job.subject_kind !== 'npc' ||
+    !(
+      job.subject_kind === 'npc' ||
+      (lifecycle === 'ordinary-failure' &&
+        job.subject_kind === 'player' &&
+        job.purpose === 'story_turn')
+    ) ||
     job.credits !== 0 ||
     job.sponsor_id ||
     !job.provider_id?.startsWith('release:') ||
@@ -78,10 +86,10 @@ export function knownNpcSettlementQuote(
     hold.source_kind !== 'npc' ||
     hold.source_id !== job.quote_id ||
     String(quote.reserve_subunits) !== String(hold.reserved_subunits) ||
-    !(
-      (hold.status === 'pending' && hold.reason === 'failure_policy_pending') ||
-      ['settled', 'released'].includes(hold.status)
-    )
+    !(lifecycle === 'ordinary-failure'
+      ? hold.status === 'held'
+      : (hold.status === 'pending' && hold.reason === 'failure_policy_pending') ||
+        ['settled', 'released'].includes(hold.status))
   )
     unavailable();
   const usage = usageSchema.safeParse(job.provider_usage);
