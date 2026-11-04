@@ -43,7 +43,7 @@ import { InvitationsController } from './invitations';
 import { DataRequestsController } from './data-requests';
 import { Errors, fail } from './errors';
 import { config } from './config';
-import { ingressAllowed } from './ingress';
+import { ingressAllowed, ENFORCE_BROWSER_ORIGIN } from './ingress';
 import { PlayableService } from './game/playable.service';
 import { PlayableController } from './game/playable.controller';
 import { GameService } from './game/game.service';
@@ -198,7 +198,7 @@ async function bootstrap() {
     const mutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
     if (mutation) {
       const origin = req.headers.origin;
-      if (origin && origin !== config.WEB_ORIGIN) {
+      if (ENFORCE_BROWSER_ORIGIN && origin && origin !== config.WEB_ORIGIN) {
         res
           .status(403)
           .json({ code: 'FORBIDDEN', message: 'Недопустимый источник запроса.', retryable: false });

@@ -28,7 +28,7 @@ const request = (headers = {}) =>
       },
     },
   );
-test('relay target is fixed; only allowlisted headers forwarded and malformed origins/secrets rejected', () => {
+test('relay target and headers stay fixed while the owner-approved origin pause preserves session and secret checks', () => {
   const target = socketRelayTarget(
     request({ authorization: 'ignored', 'x-dreamwalk-ingress': 'spoof' }),
     env,
@@ -36,7 +36,10 @@ test('relay target is fixed; only allowlisted headers forwarded and malformed or
   assert.equal(target.url, `wss://api.example.test/api/v1/game/socket?campaignId=${campaign}`);
   assert.deepEqual(Object.keys(target.headers).sort(), ['cookie', 'origin', 'x-dreamwalk-ingress']);
   assert.equal(target.headers['x-dreamwalk-ingress'], env.DREAMWALK_INGRESS_SECRET);
-  assert.throws(() => socketRelayTarget(request({ origin: 'https://attacker.test' }), env));
+  assert.equal(
+    socketRelayTarget(request({ origin: 'https://attacker.test' }), env).headers.origin,
+    env.WEB_ORIGIN,
+  );
   assert.throws(() => socketRelayTarget(request({ cookie: '' }), env));
   assert.throws(() => socketRelayTarget(request(), { ...env, DREAMWALK_INGRESS_SECRET: '' }));
   assert.throws(() =>
