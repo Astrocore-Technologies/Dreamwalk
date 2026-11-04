@@ -223,3 +223,38 @@ test('viewport layout separates history from stable composer and removes the sce
   assert.match(await read('components/game/scene-media.tsx'), /media-preparation/);
   assert.match(story, /<WorldGenerationConfirmation|<StoryReplyConfirmation/);
 });
+
+test('public NPC inspection occupies history without replacing the composer or issuing a command', async () => {
+  const read = (file) =>
+    readFile(new URL(`../../apps/web/components/game/${file}`, import.meta.url), 'utf8');
+  const page = await read('game-page.tsx');
+  const story = await read('unified-story.tsx');
+  const card = await read('npc-public-inspection.tsx');
+  const css = await read('story-feed.module.css');
+  assert.equal((page.match(/<UnifiedStory/g) || []).length, 1);
+  assert.match(page, /inspection=\{/);
+  assert.match(page, /publicProfile\?\.role \|\| inspectedNpc\.supportingNpc\?\.roleLabel/);
+  assert.match(page, /portraitUrl=\{inspectedPortraitUrl\}/);
+  assert.match(page, /if \(npc && !controlsDisabled && !storyBusy\)/);
+  assert.match(story, /data-inspecting=\{!!inspection\}/);
+  assert.match(story, /aria-hidden=\{!!inspection\}/);
+  assert.match(story, /tabIndex=\{inspection \? -1 : 0\}/);
+  assert.match(
+    story,
+    /inspection && <div className=\{styles\.inspectionLayer\}>\{inspection\}<\/div>/,
+  );
+  assert.match(css, /visibility: hidden/);
+  assert.match(
+    css,
+    /\.inspectionLayer\s*\{[^}]*position: absolute;[^}]*inset: 0;[^}]*overflow-y: auto;/s,
+  );
+  assert.doesNotMatch(
+    card,
+    /dangerouslySetInnerHTML|\bapi\(|\bfetch\(|\bcommand\(|\bprepare\(|\bsubmit\(|secrets|personality|roleId/,
+  );
+  assert.match(card, /role &&/);
+  assert.match(card, /portraitUrl &&/);
+  assert.match(card, /event.key === 'Escape'/);
+  assert.match(card, /focus\(\{ preventScroll: true \}\)/);
+  assert.match(card, /onTalk\(\);/);
+});

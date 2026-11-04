@@ -356,3 +356,17 @@
     min-height: 0;
   }
 }
+
+/* Keep the mounted history geometry and reading anchor while inspecting a public NPC. */
+.history[data-inspecting='true'] > .feed,
+.history[data-inspecting='true'] > .newEvents {
+  visibility: hidden;
+}
+.inspectionLayer {
+  position: absolute;
+  inset: 0;
+  overflow-y: auto;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  background: var(--surface);
+}
