@@ -1,3 +1,4 @@
+import { forecastWorldRound } from './round-cost-forecast';
 import { stampNpcThoughtAudience, projectNpcInnerThought } from './npc-thought-access';
 import {
   campaignDirectorUpdateSchema,
@@ -34,6 +35,7 @@ import {
   gameIntentSchema,
   gameMoveSchema,
   npcSpeechSchema,
+  npcPlanProposalSchema,
   type GameState,
   type GameResult,
   type GameProjection,
@@ -54,7 +56,6 @@ import {
   worldTurnCompanionContinuation,
   companionAction,
   stepWorldNpcPlan,
-  npcConditionsMet,
   turnFence,
   matchesTurnFence,
   createStateFromPlayable,
@@ -513,7 +514,16 @@ export class GameService implements OnModuleDestroy {
     return this.serial(id, async () => {
       const a = await this.access(req, id),
         live = await this.load(id);
-      return this.worldGeneration.status(a.user.id, id, live.state);
+      const status = await this.worldGeneration.status(a.user.id, id, live.state);
+      // Owner authorization above precedes private context inspection. Reading
+      // this forecast must not schedule, preflight, quote, or settle a request.
+      const forecast =
+        status.pending || status.unknown || !live.state.turnController
+          ? null
+          : await forecastWorldRound(this.db, this.ai, id, live.state, (state, request) =>
+              this.deferredSpeechContext(state, request),
+            );
+      return { ...status, forecast };
     });
   }
   worldGenerationQuote(req: Request, id: string, body: unknown) {
@@ -1369,6 +1379,7 @@ export class GameService implements OnModuleDestroy {
     let next = state,
       accepted = false;
     let cognitionCommitted = false;
+    let decisionCode: string | undefined;
     let intentOutcome:
       | {
           id: string;
@@ -1385,7 +1396,7 @@ export class GameService implements OnModuleDestroy {
         !matchesTurnFence(state, job.context.turnFence as TurnFence) ||
         state.turnController.phase !== 'world')
     )
-      return { next, accepted, intentOutcome, narrativeOutcome };
+      return { next, accepted, intentOutcome, narrativeOutcome, decisionCode };
     const memory = state.npcBrains?.[job.npcId]?.living;
     if (job.purpose === 'narrative') {
       const metadata = z
@@ -1584,7 +1595,37 @@ export class GameService implements OnModuleDestroy {
           job.contextHash)
     ) {
       if (job.purpose === 'plan') {
-        const result = acceptNpcPlan(state, job.npcId, job.proposal);
+        let result = acceptNpcPlan(state, job.npcId, job.proposal);
+        if (result.error && this.frozenRoundContext(state, job.npcId, job.context)) {
+          const proposal = npcPlanProposalSchema.safeParse(job.proposal);
+          if (proposal.success && proposal.data.turnFence) {
+            // The model completed a valid deliberation; an impossible or forbidden
+            // intention is an in-world blocked outcome, not an unknown provider bill.
+            // Re-run the SAME core envelope/cognition checks with no executable intent.
+            // Stale actor/map/brain/round/deadline and malformed proposals still fail.
+            const blocked = result.error;
+            const considered = acceptNpcPlan(state, job.npcId, {
+              ...proposal.data,
+              actions: [{ kind: 'wait' }],
+              targetRevisions: {},
+              beliefRevisions: undefined,
+            });
+            if (!considered.error) {
+              const brain = considered.state.npcBrains![job.npcId];
+              brain.plan = [];
+              brain.cursor = 0;
+              brain.living!.lastActionOutcome = {
+                actionKind: proposal.data.actions[0]?.kind ?? 'wait',
+                status: 'blocked',
+                code: blocked,
+                tick: state.tick,
+                roundId: state.turnController!.roundId,
+              };
+              result = considered;
+              decisionCode = `NPC_INTENTION_BLOCKED:${blocked}`;
+            }
+          }
+        }
         if (!result.error) {
           cognitionCommitted = !!(job.proposal as { cognition?: unknown } | null)?.cognition;
           next = recordNpcEvents(state, result.state, result.events, `ai-${job.id}`).state;
@@ -1627,7 +1668,7 @@ export class GameService implements OnModuleDestroy {
       const resolved = markTurnSpeechResolved(next, job.context.deferredSpeechId, turnFence(next)!);
       if (!resolved.error) next = resolved.state;
     }
-    return { next, accepted, intentOutcome, narrativeOutcome };
+    return { next, accepted, intentOutcome, narrativeOutcome, decisionCode };
   }
   private async saveNarrativeOutcome(
     c: import('pg').PoolClient,
@@ -1758,54 +1799,10 @@ export class GameService implements OnModuleDestroy {
         continue;
       }
       const context = await this.decisionContext(id, state, npcId, 'plan');
-      const urgent = brain.living!.causes.some(
-        (cause) => cause.priority >= 2 && cause.notBeforeTick <= state.tick,
-      );
-      const memory = brain.living!;
-      const prior = memory.cognition;
-      const outcome = memory.lastActionOutcome;
-      const pendingPlan =
-        brain.cursor < brain.plan.length &&
-        (!brain.planMapId || brain.planMapId === npc.mapId) &&
-        (brain.movementGeneration === undefined ||
-          brain.movementGeneration === (npc.movementGeneration ?? 0));
-      const source =
-        brain.planSource &&
-        memory.observations.find(
-          (observation) => observation.id === brain.planSource!.sourceObservationId,
-        );
-      const newCommitment = (tick: number) =>
-        (!outcome || tick >= outcome.tick) && (!prior || tick >= prior.tick);
-      const obligation = memory.obligations.find(
-        (item) =>
-          item.status === 'accepted' &&
-          item.dueTick > state.tick &&
-          npcConditionsMet(state, npcId, item.conditions ?? [], item.toActorId, item.createdTick) &&
-          newCommitment(item.acceptedTick ?? item.createdTick),
-      );
-      const firstKey =
-        pendingPlan && ((!prior && !outcome) || (!!source && newCommitment(source.tick)))
-          ? `plan:${brain.generation}:${brain.planSource?.sourceObservationId ?? 'existing'}`
-          : obligation
-            ? `obligation:${obligation.id}:${obligation.acceptedTick ?? obligation.createdTick}`
-            : undefined;
-      // A persisted identity, rather than wall-clock/game ticks, gives each new
-      // commitment one opportunity. Same-tick later rounds cannot renew this lease.
-      const firstOpportunity = !!firstKey && memory.continuationOpportunity?.key !== firstKey;
-      const continuation =
-        !urgent &&
-        (firstOpportunity ||
-          (outcome?.status !== 'blocked' &&
-            !!prior &&
-            prior.roundNumber !== undefined &&
-            turn.roundNumber < prior.roundNumber + prior.reconsiderAfterRounds &&
-            prior.knowledgeRevision === memory.knowledgeRevision &&
-            (pendingPlan || !!npc.path?.length || !!memory.companionship)));
-      if (continuation && firstOpportunity)
-        state.npcBrains![npcId].living!.continuationOpportunity = {
-          key: firstKey!,
-          roundId: turn.roundId,
-        };
+      // Every active-scene NPC deliberates once per player round, including empty
+      // turns. Existing plans, obligations and thoughts are context, not permission
+      // to silently skip this round's model decision. Off-map agreed crossings above
+      // remain mechanical continuation and never wake dormant NPC minds.
       const requestId = randomUUID();
       requests.push({
         id: requestId,
@@ -1825,7 +1822,6 @@ export class GameService implements OnModuleDestroy {
           mockProposal: createMockNpcPlan(state, npcId),
         },
       });
-      if (continuation) continuing.push(requestId);
     }
     await this.persist(id, live, state, 'npc.round.considered', undefined, async (c) => {
       await c.query(
@@ -1837,11 +1833,7 @@ export class GameService implements OnModuleDestroy {
           JSON.stringify(
             roster.map(([npcId]) => ({
               npcId,
-              consideration: offmapCompanions.has(npcId)
-                ? 'companion'
-                : requests.some((r) => r.npcId === npcId && continuing.includes(r.id))
-                  ? 'continue'
-                  : 'plan',
+              consideration: offmapCompanions.has(npcId) ? 'companion' : 'plan',
             })),
           ),
         ],
@@ -2480,11 +2472,8 @@ export class GameService implements OnModuleDestroy {
         await this.story.complete(id, live, job);
         continue;
       }
-      const { next, accepted, intentOutcome, narrativeOutcome } = await this.evaluateDecision(
-        id,
-        live.state,
-        job,
-      );
+      const { next, accepted, intentOutcome, narrativeOutcome, decisionCode } =
+        await this.evaluateDecision(id, live.state, job);
       await this.persist(
         id,
         live,
@@ -2493,6 +2482,11 @@ export class GameService implements OnModuleDestroy {
         undefined,
         async (c) => {
           await this.ai.finalize(c, job.id, accepted ? 'committed' : 'stale');
+          if (decisionCode)
+            await c.query('UPDATE npc_ai_jobs SET result_code=$2 WHERE id=$1', [
+              job.id,
+              decisionCode,
+            ]);
           if (accepted && job.purpose === 'speech' && job.context.deferredSpeechId)
             await this.story.writeDeferredReply(
               c,
@@ -3765,6 +3759,14 @@ export class GameService implements OnModuleDestroy {
       roundRoster?.map((entry) => entry.npcId) ?? Object.keys(state.npcBrains ?? {})
     ).sort()) {
       const brain = state.npcBrains![npcId];
+      // A rejected round intention remains blocked feedback for the next decision.
+      // Do not replace it with an old companion action or a fabricated successful wait.
+      if (
+        !brain.plan.length &&
+        brain.living?.lastActionOutcome?.status === 'blocked' &&
+        brain.living.lastActionOutcome.roundId === state.turnController!.roundId
+      )
+        continue;
       const companion =
         worldTurnCompanionContinuation(state, npcId) ??
         (brain.cursor >= brain.plan.length ? companionAction(state, npcId) : undefined);

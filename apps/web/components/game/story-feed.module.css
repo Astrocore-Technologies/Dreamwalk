@@ -383,3 +383,18 @@
   scrollbar-gutter: stable;
   background: var(--surface);
 }
+
+.liveCost {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.liveCost p {
+  margin: 0;
+}
+.liveCost > small {
+  color: var(--muted);
+  font-size: 10px;
+}

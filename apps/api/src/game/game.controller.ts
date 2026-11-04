@@ -12,9 +12,28 @@ import {
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { GameService } from './game.service';
+import { KnownNpcSettlement } from './known-npc-settlement';
 @Controller('api/v1/game')
 export class GameController {
-  constructor(@Inject(GameService) private game: GameService) {}
+  constructor(
+    @Inject(GameService) private game: GameService,
+    @Inject(KnownNpcSettlement) private knownNpcSettlement: KnownNpcSettlement,
+  ) {}
+  @Get('campaigns/:id/ai/jobs/:jobId/settlement')
+  @Header('Cache-Control', 'no-store')
+  npcSettlementQuote(@Req() req: Request, @Param('id') id: string, @Param('jobId') jobId: string) {
+    return this.knownNpcSettlement.handle(req, id, jobId);
+  }
+  @Post('campaigns/:id/ai/jobs/:jobId/settlement')
+  @Header('Cache-Control', 'no-store')
+  npcSettlementConsent(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('jobId') jobId: string,
+    @Body() body: unknown,
+  ) {
+    return this.knownNpcSettlement.handle(req, id, jobId, body ?? {});
+  }
   @Get('directors') directors() {
     return this.game.directors();
   }

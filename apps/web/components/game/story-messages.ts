@@ -105,7 +105,29 @@ export const storyMessages = {
     'The world is preparing its next turn. Review the combined cost of pending NPC decisions, replies and the director’s continuation.',
     'Світ готує наступний хід. Перевір загальну вартість очікуваних рішень NPC, відповідей і продовження ведучого.',
   ],
-  estimateWorld: ['Узнать стоимость', 'Estimate cost', 'Дізнатися вартість'],
+  worldCostForecast: [
+    'Ход: примерно {amount} в эквиваленте Искр',
+    'Turn: about {amount} Sparks equivalent',
+    'Хід: приблизно {amount} в еквіваленті Іскор',
+  ],
+  worldCostForecastHint: [
+    'Предварительно, без анализа карты. Грёзы используются первыми. Полная смета появится автоматически перед подтверждением.',
+    'Preliminary, before map analysis. Dreams are used first. The full estimate appears automatically before confirmation.',
+    'Попередньо, без аналізу мапи. Мрії використовуються першими. Повний кошторис з’явиться автоматично перед підтвердженням.',
+  ],
+  worldCostUnavailable: [
+    'Стоимость хода пока недоступна',
+    'Turn estimate is currently unavailable',
+    'Вартість ходу поки недоступна',
+  ],
+  worldCostUnresolved: [
+    'Стоимость прошлого запроса ещё на сверке. Новая генерация приостановлена, повторно подтверждать ход не нужно.',
+    'The previous request’s cost is still being reconciled. New generation is paused; do not confirm the turn again.',
+    'Вартість попереднього запиту ще на звірці. Нову генерацію призупинено, повторно підтверджувати хід не потрібно.',
+  ],
+  worldCostTitle: ['Стоимость хода', 'Turn cost', 'Вартість ходу'],
+  worldCostCalculating: ['Рассчитываем стоимость…', 'Calculating cost…', 'Розраховуємо вартість…'],
+  retryEstimate: ['Повторить расчёт', 'Retry estimate', 'Повторити розрахунок'],
   worldPending: [
     'Мир обдумывает ход…',
     'The world is considering its turn…',

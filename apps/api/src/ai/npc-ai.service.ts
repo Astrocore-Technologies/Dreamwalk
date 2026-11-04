@@ -337,6 +337,33 @@ export class NpcAiEngine {
       this.policy.providerUpperMicros === 0
     );
   }
+  /** Local text-only planning preview. Never quote, count remotely, hold, or admit work.
+   * The final body adds history/map analysis and still needs its normal exact quote. */
+  localRequestForecast(purpose: AiScope['purpose'], context: DecisionContext): number | null {
+    if (this.isFreeBuiltInSimulation()) return 0;
+    if (!this.provider.external || !this.provider.prepareTextRequest) return null;
+    try {
+      // Runtime images need explicit provider preflight. Neither images nor stale
+      // exact-count evidence belong in this strictly local, provisional preview.
+      const {
+        runtimeMapImage: _image,
+        textContextCandidate: _candidate,
+        textCountEvidence: _evidence,
+        ...text
+      } = context;
+      const snapshot = this.provider.prepareTextRequest(purpose ?? 'plan', text)?.snapshot;
+      if (!snapshot?.pricing || snapshot.costBasis !== 'operator_estimate') return null;
+      const reviewed = Date.parse(snapshot.pricing.reviewedAt),
+        until = Date.parse(snapshot.pricing.validUntil),
+        now = Date.now();
+      if (!(reviewed <= now && now < until && reviewed < until)) return null;
+      const amount = snapshot.estimatedTotalMicros;
+      return Number.isSafeInteger(amount) && amount >= 0 ? amount : null;
+    } catch {
+      // Oversized/unpriced/unsupported contexts cannot become a partial low total.
+      return null;
+    }
+  }
   private async requestPlan(
     scope: AiScope,
     context: DecisionContext,

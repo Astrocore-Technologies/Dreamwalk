@@ -49,6 +49,7 @@ import { PlayableController } from './game/playable.controller';
 import { GameService } from './game/game.service';
 import { NpcAiService } from './ai/npc-ai.service';
 import { GameController } from './game/game.controller';
+import { KnownNpcSettlement } from './game/known-npc-settlement';
 import { attachGameSockets } from './game/game.socket';
 const releaseReadiness = new ReleaseDeploymentReadiness(process.env.GENERATION_MODE === 'release');
 @Controller('api/v1')
@@ -145,6 +146,7 @@ class Health {
     ImageGenerationService,
     NpcAiService,
     GameService,
+    KnownNpcSettlement,
     PlayableService,
   ],
 })

@@ -609,9 +609,10 @@ export function UnifiedStory({
                 </p>
               )}
               {feed && !available && <p className={styles.status}>{h('unavailable')}</p>}
-              {projection.turn?.phase === 'world' && (
+              {projection.turn && (
                 <WorldGenerationConfirmation
                   campaignId={campaignId}
+                  phase={projection.turn.phase}
                   access={
                     worldGenerationAllowed
                       ? 'owner'

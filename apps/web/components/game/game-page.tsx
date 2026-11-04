@@ -25,6 +25,7 @@ import { localizedProjection } from './localized-projection';
 import { NarrativePreferences } from './narrative-preferences';
 import { GameCanvas } from './game-canvas';
 import { TurnControls } from './turn-controls';
+import { GameWallet } from './game-wallet';
 import { useTurnText } from './turn-messages';
 import { playerControlsAvailable } from './turn-ui';
 import { UnifiedStory, type StoryRecipient } from './unified-story';
@@ -420,6 +421,12 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
               )}
             </span>
           </div>
+          {user && (
+            <GameWallet
+              ownerId={user.id}
+              scope={`${campaignId}:${p.turn?.roundId ?? ''}:${p.turn?.phase ?? ''}`}
+            />
+          )}
           <TurnControls
             projection={p}
             connected={connected}

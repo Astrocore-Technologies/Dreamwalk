@@ -115,7 +115,7 @@ test('an agreed witnessed off-map crossing is free and never builds a private mo
   assert.equal(applied.state.entities.keeper.mapId, exit.destinationMapId);
   assert.equal(applied.state.entities['npc-1'].mapId, 'observatory');
 });
-test('continuing an admitted plan records free consideration without suppressing other NPCs', async () => {
+test('an admitted plan still gets a fresh model decision every active round', async () => {
   const { game, requests } = service(),
     live = { state: world(2) };
   live.state.npcBrains.keeper.plan = [{ kind: 'wait' }];
@@ -130,7 +130,7 @@ test('continuing an admitted plan records free consideration without suppressing
     tick: 0,
   };
   await game.scheduleRoundRequests('campaign', live);
-  assert.equal(requests.find((r) => r.npc_id === 'keeper').status, 'fallback');
+  assert.equal(requests.find((r) => r.npc_id === 'keeper').status, 'queued');
   assert.equal(requests.find((r) => r.npc_id === 'npc-1').status, 'queued');
 });
 test('more than 32 present NPCs are all considered without a silent cap', async () => {
@@ -642,7 +642,7 @@ test('departed-speaker replies stay unpaid and drain after a real exit, includin
   }
 });
 
-test('existing commitments get one bounded opportunity before private reconsideration', async () => {
+test('existing commitments remain context and never skip an active round decision', async () => {
   for (const intent of ['plan', 'public-plan', 'obligation']) {
     const { game, requests, rosters } = service();
     const live = { state: world(1) };
@@ -684,8 +684,8 @@ test('existing commitments get one bounded opportunity before private reconsider
       }
     }
     await game.scheduleRoundRequests('campaign', live);
-    assert.equal(requests[0].status, 'fallback', intent);
-    assert.equal(rosters[0].roster[0].consideration, 'continue', intent);
+    assert.equal(requests[0].status, 'queued', intent);
+    assert.equal(rosters[0].roster[0].consideration, 'plan', intent);
     const completed = structuredClone(live.state);
     completed.npcBrains.keeper.living.lastActionOutcome = {
       actionKind: 'move_to',
@@ -703,7 +703,7 @@ test('existing commitments get one bounded opportunity before private reconsider
   }
 });
 
-test('same-tick continuation cannot renew, but a new accepted source can recover after a block', async () => {
+test('repeated empty same-tick rounds and renewed commitments each get model decisions', async () => {
   const live = { state: world(1) };
   const brain = live.state.npcBrains.keeper;
   brain.plan = [{ kind: 'move_to', target: { x: 3, y: 6 } }];
@@ -725,7 +725,7 @@ test('same-tick continuation cannot renew, but a new accepted source can recover
   });
   const initial = service();
   await initial.game.scheduleRoundRequests('campaign', live);
-  assert.equal(initial.requests[0].status, 'fallback');
+  assert.equal(initial.requests[0].status, 'queued');
   // Round advancement is not a tick advance, and serialization retains the consumed opportunity.
   live.state = JSON.parse(JSON.stringify(live.state));
   live.state.turnController.roundNumber = 2;
@@ -755,7 +755,7 @@ test('same-tick continuation cannot renew, but a new accepted source can recover
   });
   const renewed = service();
   await renewed.game.scheduleRoundRequests('campaign', live);
-  assert.equal(renewed.requests[0].status, 'fallback');
+  assert.equal(renewed.requests[0].status, 'queued');
 });
 
 test('a busy earlier reply blocks later NPC replies without blocking private round decisions', async () => {
@@ -811,4 +811,243 @@ test('a busy earlier reply blocks later NPC replies without blocking private rou
   visited.length = 0;
   await game.processDecisionRequests('campaign', { state: JSON.parse(JSON.stringify(state)) });
   assert.deepEqual(visited, ['private-plan', 'second']);
+});
+
+test('distant whisper intention is blocked without discarding valid cognition or the following player reply', async () => {
+  const { state, game, runtime } = speechFixture();
+  game.ai = { contextBudgetBytes: () => 64000 };
+  const id = require('node:crypto').randomUUID();
+  const posted = runtime.simulateTurnPost(
+    state,
+    'alice',
+    {
+      operationId: id,
+      text: 'Mira, can you hear me?',
+      channel: 'say',
+      targetNpcId: 'keeper',
+      expectedCanonRevision: 0,
+      turnFence: g.turnFence(state),
+    },
+    id,
+    'owner',
+  );
+  const speech = posted.requests.find((r) => r.npcId === 'keeper');
+  const worldState = g.endPlayerTurn(posted.state, 'alice', g.turnFence(posted.state)).state;
+  const speechContext = {
+    ...game.deferredSpeechContext(worldState, speech),
+    generationPolicy: 'world-batch-v1',
+    worldPrepared: true,
+  };
+  const round = service();
+  const live = { state: worldState };
+  await round.game.scheduleRoundRequests('campaign', live);
+  const request = round.requests.find((r) => r.npc_id === 'keeper');
+  const thought = {
+    motive: 'Speak quietly.',
+    belief: 'The other NPC may know.',
+    intent: 'Ask nearby.',
+    innerThought: 'I should ask, if they can hear me.',
+    reconsiderAfterRounds: 1,
+  };
+  const proposal = {
+    ...g.createMockNpcPlan(live.state, 'keeper'),
+    actions: [
+      {
+        kind: 'communicate',
+        channel: 'whisper',
+        targetId: 'six',
+        observationIds: [speech.context.replyToObservationId],
+      },
+    ],
+    targetRevisions: { six: live.state.entities.six.revision },
+    cognition: thought,
+    knowledgeRevision: live.state.npcBrains.keeper.living.knowledgeRevision,
+  };
+  assert.equal(g.acceptNpcPlan(live.state, 'keeper', proposal).error, 'TARGET_UNAVAILABLE');
+  const considered = await game.evaluateDecision('campaign', live.state, {
+    id: 'blocked-plan',
+    npcId: 'keeper',
+    purpose: 'plan',
+    context: request.context,
+    contextHash: request.context.contextHash,
+    proposal,
+  });
+  assert.equal(considered.accepted, true);
+  assert.equal(considered.decisionCode, 'NPC_INTENTION_BLOCKED:TARGET_UNAVAILABLE');
+  assert.deepEqual(considered.next.npcBrains.keeper.plan, []);
+  assert.equal(
+    considered.next.npcBrains.keeper.living.cognition.innerThought,
+    thought.innerThought,
+  );
+  assert.equal(considered.next.npcBrains.keeper.living.lastActionOutcome.status, 'blocked');
+  assert.deepEqual(considered.next.npcUtterances, live.state.npcUtterances);
+  assert.deepEqual(considered.next.entities, {
+    ...live.state.entities,
+    keeper: {
+      ...live.state.entities.keeper,
+      path: [],
+      movementGeneration: (live.state.entities.keeper.movementGeneration ?? 0) + 1,
+    },
+  });
+  const reply = await game.evaluateDecision('campaign', considered.next, {
+    id: speech.id,
+    npcId: 'keeper',
+    purpose: 'speech',
+    context: speechContext,
+    contextHash: speechContext.contextHash,
+    proposal: { text: 'Yes, I hear you.' },
+  });
+  assert.equal(reply.accepted, true);
+  assert.equal(reply.next.npcUtterances.at(-1).text, 'Yes, I hear you.');
+  assert.ok(reply.next.npcUtterances.at(-1).audienceIds.includes('alice'));
+  assert.equal(reply.next.npcBrains.keeper.living.cognition.innerThought, thought.innerThought);
+});
+
+test('blocked-intention admission cannot bypass malformed cognition or stale round, entity, map, brain, deadline and knowledge fences', async () => {
+  const { game, requests } = service();
+  const live = { state: world(1) };
+  await game.scheduleRoundRequests('campaign', live);
+  const request = requests[0];
+  const base = {
+    ...g.createMockNpcPlan(live.state, 'keeper'),
+    actions: [{ kind: 'give', targetId: 'alice', itemId: 'imaginary' }],
+    targetRevisions: { alice: live.state.entities.alice.revision },
+    cognition: {
+      motive: 'Share.',
+      belief: 'I can help.',
+      intent: 'Give an item.',
+      innerThought: 'Perhaps I can help.',
+      reconsiderAfterRounds: 1,
+    },
+    knowledgeRevision: live.state.npcBrains.keeper.living.knowledgeRevision,
+  };
+  for (const mutate of [
+    (p) => {
+      p.cognition.innerThought = 'x'.repeat(481);
+    },
+    (p) => {
+      p.turnFence.phaseEpoch++;
+    },
+    (p) => {
+      p.entityRevision++;
+    },
+    (p) => {
+      p.mapRevision++;
+    },
+    (p) => {
+      p.brainGeneration++;
+    },
+    (p) => {
+      p.deadlineTick = -1;
+    },
+    (p) => {
+      p.knowledgeRevision++;
+    },
+    (p) => {
+      delete p.turnFence;
+    },
+  ]) {
+    const proposal = structuredClone(base);
+    mutate(proposal);
+    const evaluated = await game.evaluateDecision('campaign', live.state, {
+      id: 'bad',
+      npcId: 'keeper',
+      purpose: 'plan',
+      context: request.context,
+      contextHash: request.context.contextHash,
+      proposal,
+    });
+    assert.equal(evaluated.accepted, false);
+    assert.deepEqual(evaluated.next, live.state);
+  }
+});
+
+test('planner communication guidance exposes only adjacent recipients and actual prospective audiences', () => {
+  const { state } = speechFixture();
+  const context = g.buildNpcDecisionContext(state, 'keeper');
+  assert.ok(context.communicationPolicy.adjacentRecipientIds.includes('alice'));
+  assert.ok(!context.communicationPolicy.adjacentRecipientIds.includes('six'));
+  assert.deepEqual(
+    context.communicationPolicy.whisperAudienceIds,
+    g.npcSpeechProspectiveListenerIds(state, 'keeper', 'whisper'),
+  );
+  assert.deepEqual(
+    context.communicationPolicy.publicAudienceIds,
+    g.npcSpeechProspectiveListenerIds(state, 'keeper', 'say'),
+  );
+});
+
+test('blocked private communication never publishes the secret or applies an unsupported belief', async () => {
+  const { game, requests } = service();
+  const live = { state: world(1) };
+  Object.assign(live.state.entities.alice, {
+    mapId: live.state.entities.keeper.mapId,
+    x: live.state.entities.keeper.x + 1,
+    y: live.state.entities.keeper.y,
+  });
+  live.state.npcBrains.keeper.living.observations.push({
+    id: 'private-source',
+    eventId: 'private-source',
+    rootId: 'private-source',
+    kind: 'said',
+    tick: live.state.tick,
+    mapId: live.state.entities.keeper.mapId,
+    channel: 'report',
+    confidence: 'reported',
+    actorId: 'alice',
+    depth: 0,
+    disclosure: 'private',
+    audienceIds: ['keeper'],
+    revealCondition: 'never',
+    text: 'SECRET_NOT_FOR_PLAYER',
+  });
+  await game.scheduleRoundRequests('campaign', live);
+  const request = requests[0];
+  const proposal = {
+    ...g.createMockNpcPlan(live.state, 'keeper'),
+    actions: [
+      {
+        kind: 'communicate',
+        targetId: 'alice',
+        channel: 'whisper',
+        observationIds: ['private-source'],
+      },
+    ],
+    targetRevisions: { alice: live.state.entities.alice.revision },
+    cognition: {
+      motive: 'Consider a reply.',
+      belief: 'I must keep the confidence.',
+      intent: 'Remain quiet.',
+      innerThought: 'I should not reveal this.',
+      reconsiderAfterRounds: 1,
+    },
+    knowledgeRevision: live.state.npcBrains.keeper.living.knowledgeRevision,
+  };
+  const before = structuredClone(live.state);
+  assert.equal(g.acceptNpcPlan(live.state, 'keeper', proposal).error, 'FORBIDDEN');
+  const result = await game.evaluateDecision('campaign', live.state, {
+    id: 'private-blocked',
+    npcId: 'keeper',
+    purpose: 'plan',
+    context: request.context,
+    contextHash: request.context.contextHash,
+    proposal,
+  });
+  assert.equal(result.accepted, true);
+  assert.equal(result.decisionCode, 'NPC_INTENTION_BLOCKED:FORBIDDEN');
+  assert.deepEqual(result.next.npcUtterances, before.npcUtterances);
+  assert.deepEqual(
+    result.next.npcBrains.keeper.living.beliefs,
+    before.npcBrains.keeper.living.beliefs,
+  );
+  assert.deepEqual(
+    result.next.npcBrains.keeper.living.observations,
+    before.npcBrains.keeper.living.observations,
+  );
+  assert.ok(
+    !JSON.stringify(g.projectState(result.next, 'alice')).includes('SECRET_NOT_FOR_PLAYER'),
+  );
+  assert.ok(
+    !JSON.stringify(g.projectState(result.next, 'alice')).includes('I should not reveal this.'),
+  );
 });

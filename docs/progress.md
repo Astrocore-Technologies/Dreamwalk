@@ -1291,3 +1291,11 @@ Independent source review completed.70 focused hero/start/return/metadata/NPC/au
 checks passed, changed source lint/format and whitespace checks passed. Full types,
 build, isolated DB and browser execution were not rerun locally because resources are
 constrained. Fresh exact-head remote checks and rendered evidence still gate merge.
+
+## NPC round response regression — 2026-11-04
+
+- Every active-scene NPC now receives a model consideration on each completed player round, including empty turns; only bounded agreed off-map companion crossings stay mechanical.
+- A valid, correctly fenced decision with an impossible action is retained as private cognition plus a blocked intention, with no action or belief mutation. The same known-usage job completes normally instead of creating an unresolved failure-policy hold. Malformed/stale results and unknown financial liability remain protected.
+- Added explicit adjacent communication targets and full whisper-bystander guidance. The regression exercises a distant whisper, the subsequent player reply, fences and exact one-job settlement.
+- Added live player-phase cost forecasts, automatic exact world-quote preparation without consent, own-account Sparks/Dreams visibility and persistent unresolved-cost messaging. Local mock tests do not establish live provider roleplay quality.
+- Added a narrow owner-confirmed known-cost settlement route with exact amounts, original tariff/cache-usage proof, append-only capture/refund, concurrent replay and restart safety. It never retries a provider or rewrites historical gameplay.

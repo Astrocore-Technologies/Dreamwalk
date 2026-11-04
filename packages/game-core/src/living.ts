@@ -1283,7 +1283,19 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
       mood: m.affect?.mood ?? 'calm',
     },
     communicationPolicy: {
-      publicAudienceIds: npcSpeechListenerIds(state, npcId, { channel: 'say' }),
+      adjacentRecipientIds: Object.values(state.entities)
+        .filter(
+          (entity) =>
+            entity.id !== npcId &&
+            ['player', 'npc'].includes(entity.kind) &&
+            !entity.encounterId &&
+            near(npc, entity) &&
+            observedVisible(state, npc, entity),
+        )
+        .map((entity) => entity.id)
+        .sort(),
+      publicAudienceIds: npcSpeechProspectiveListenerIds(state, npcId, 'say'),
+      whisperAudienceIds: npcSpeechProspectiveListenerIds(state, npcId, 'whisper'),
       privateEvidenceRequiresOriginalAudience: true,
       plannerCannotGrantDisclosure: true,
     },

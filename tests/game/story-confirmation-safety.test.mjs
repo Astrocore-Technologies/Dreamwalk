@@ -326,11 +326,9 @@ test('a malformed reply quote expiry cannot be consented even before its timer f
   ui.button('refreshEstimate')();
   await tick();
   ui.render();
-  ui.button('confirm')();
-  await tick();
-  ui.render();
   assert.equal(calls.length, 1);
   assert.equal(ui.has('confirm'), false);
+  assert.equal(ui.elements('error')[0].props.message, 'expired');
 });
 
 test('world batch uses one aggregate quote and one immutable consent, never per-request approval', async () => {
@@ -345,7 +343,8 @@ test('world batch uses one aggregate quote and one immutable consent, never per-
     worldBatch: true,
   });
   ui.render();
-  ui.button('estimateWorld')();
+  assert.equal(ui.has('estimateWorld'), false);
+  ui.expire();
   await tick();
   ui.render();
   ui.button('confirm')();
@@ -466,6 +465,13 @@ test('world waiting shows metadata and preserves the standard consent action wit
   );
   ui.render(props);
   assert.equal(ui.elements('reply-confirmation')[0].props.disabled, false);
+  ui.render({ ...props, scope: 'new-world-revision' });
+  assert.equal(
+    ui.elements('reply-confirmation').length,
+    1,
+    'scope refresh retains the immutable consent controller',
+  );
+  await ui.flush();
   ui.unmount();
   for (const [reason, copy] of [
     ['manual_authorization_required', 'worldManualAuthorization'],
@@ -487,7 +493,7 @@ test('world waiting shows metadata and preserves the standard consent action wit
   }));
   unknown.render(props);
   await unknown.flush();
-  assert.equal(unknown.has('unknown'), true);
+  assert.equal(unknown.has('worldCostUnresolved'), true);
   assert.equal(unknown.elements('reply-confirmation').length, 0);
   unknown.unmount();
 });
@@ -520,4 +526,203 @@ test('game page propagates membership revalidation instead of treating cleared r
     source,
     /members\.error\s*\? 'error'\s*:\s*members\.loading \|\| !members\.data \|\| !user\s*\? 'loading'/,
   );
+});
+
+test('live world pricing prepares once per scope, refreshes after expiry, and never consents itself', async () => {
+  const calls = [];
+  const ui = await harness('story-reply-confirmation', async (path, options) => {
+    calls.push({ path, body: JSON.parse(options.body) });
+    return quote();
+  });
+  const initial = { ...props(), worldBatch: true };
+  ui.render(initial);
+  assert.equal(calls.length, 0, 'the calculation is debounced');
+  assert.equal(ui.has('worldCostCalculating'), true);
+  ui.expire();
+  await tick();
+  ui.render();
+  assert.equal(calls.length, 1);
+  assert.equal(ui.has('confirm'), true);
+  assert.equal(ui.has('dismiss'), false, 'no redundant quote panel/cancel in the live row');
+  ui.render();
+  await tick();
+  assert.equal(calls.length, 1);
+  ui.expire();
+  ui.render();
+  ui.expire();
+  await tick();
+  ui.render();
+  assert.equal(calls.length, 2);
+  assert.notEqual(calls[1].body.operationId, calls[0].body.operationId);
+  ui.render({ ...initial, scope: 'round-two' });
+  ui.expire();
+  await tick();
+  ui.render();
+  assert.equal(calls.length, 3);
+  assert.ok(calls.every((call) => call.path.endsWith('/quote')));
+  ui.unmount();
+});
+
+test('a failed live quote stops retrying until requested and reuses its uncertain operation', async () => {
+  const calls = [];
+  const ui = await harness('story-reply-confirmation', async (path, options) => {
+    calls.push({ path, body: JSON.parse(options.body) });
+    if (calls.length === 1) throw new Error('NETWORK_ERROR');
+    return quote();
+  });
+  ui.render({ ...props(), worldBatch: true });
+  ui.expire();
+  await tick();
+  ui.render();
+  assert.equal(ui.has('retryEstimate'), true);
+  ui.expire();
+  await tick();
+  ui.render();
+  assert.equal(calls.length, 1);
+  ui.button('retryEstimate')();
+  await tick();
+  ui.render();
+  assert.equal(calls[1].body.operationId, calls[0].body.operationId);
+  assert.equal(ui.has('confirm'), true);
+  ui.unmount();
+});
+
+test('live quote drops a late old-scope result and pauses while membership is disabled', async () => {
+  const calls = [];
+  let resolve;
+  const ui = await harness('story-reply-confirmation', async (path, options) => {
+    calls.push({ path, body: JSON.parse(options.body) });
+    return calls.length === 1
+      ? new Promise((done) => {
+          resolve = done;
+        })
+      : quote();
+  });
+  const initial = { ...props(), worldBatch: true, disabled: true };
+  ui.render(initial);
+  ui.expire();
+  assert.equal(calls.length, 0);
+  ui.render({ ...initial, disabled: false });
+  ui.expire();
+  ui.render({ ...initial, disabled: false, scope: 'round-two' });
+  resolve(quote());
+  await tick();
+  ui.render();
+  assert.equal(ui.has('confirm'), false);
+  ui.expire();
+  await tick();
+  ui.render();
+  assert.equal(ui.has('confirm'), true);
+  assert.equal(calls.length, 2);
+  ui.unmount();
+});
+
+test('unknown consent recovery never automatically creates another paid operation', async () => {
+  const calls = [];
+  let failed = false;
+  const ui = await harness('story-reply-confirmation', async (path, options) => {
+    calls.push({ path, body: JSON.parse(options.body) });
+    if (path.endsWith('/quote')) return quote();
+    if (!failed) {
+      failed = true;
+      throw new Error('NETWORK_ERROR');
+    }
+    return { accepted: true };
+  });
+  ui.render({
+    ...props(),
+    worldBatch: true,
+    onChanged: async () => {
+      throw new Error('STATUS_FAILED');
+    },
+  });
+  ui.expire();
+  await tick();
+  ui.render();
+  ui.button('confirm')();
+  await tick();
+  ui.render();
+  assert.equal(ui.has('retrySame'), true);
+  ui.expire();
+  assert.equal(calls.length, 2);
+  ui.button('retrySame')();
+  await tick();
+  ui.render();
+  ui.expire();
+  await tick();
+  ui.render();
+  assert.equal(calls.length, 3);
+  assert.equal(
+    ui.has('retryEstimate'),
+    false,
+    'acknowledged dispatch never offers a replacement quote',
+  );
+  assert.deepEqual(calls[2], calls[1]);
+  ui.unmount();
+});
+
+test('player phase shows a live local forecast without quote or consent and preserves unresolved billing', async () => {
+  const calls = [];
+  let status = {
+    available: false,
+    pending: false,
+    forecast: {
+      estimatedSparkSubunits: '12500',
+      estimatedTotalMicros: 6250,
+      requestCount: 2,
+      basis: 'local_round_forecast',
+      includesMapAnalysis: false,
+      finalQuoteRequired: true,
+    },
+  };
+  let failed = false;
+  const ui = await harness('world-generation-confirmation', async (...args) => {
+    calls.push(args);
+    if (failed) throw new Error('STATUS_FAILED');
+    return status;
+  });
+  const initial = {
+    campaignId: 'campaign',
+    scope: 'round-one',
+    disabled: false,
+    access: 'owner',
+    phase: 'players',
+  };
+  ui.render(initial);
+  await ui.flush();
+  assert.match(ui.text(), /worldCostForecast/);
+  assert.equal(ui.elements('reply-confirmation').length, 0);
+  assert.ok(calls.every((args) => args.length === 1));
+  status = { ...status, pending: false, unknown: true };
+  ui.render({ ...initial, scope: 'round-two' });
+  await ui.flush();
+  assert.equal(ui.has('worldCostUnresolved'), true);
+  assert.doesNotMatch(ui.text(), /worldCostForecast/);
+  failed = true;
+  ui.render({ ...initial, scope: 'round-three' });
+  await ui.flush();
+  assert.equal(
+    ui.has('worldCostUnresolved'),
+    true,
+    'failed read must retain the previous uncertainty',
+  );
+  assert.equal(ui.elements('reply-confirmation').length, 0);
+  ui.unmount();
+});
+
+test('game toolbar shows both account-bound currencies and refreshes after round changes', async () => {
+  const room = await readFile(
+    new URL('../../apps/web/components/game/game-page.tsx', import.meta.url),
+    'utf8',
+  );
+  const wallet = await readFile(
+    new URL('../../apps/web/components/game/game-wallet.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(room, /<GameWallet\s+ownerId=\{user\.id\}/);
+  assert.match(wallet, /<SparksBalance ownerId=\{ownerId\}/);
+  assert.match(wallet, /<DreamsBalance ownerId=\{ownerId\}/);
+  assert.match(wallet, /\[ownerId, scope\]/);
+  assert.match(wallet, /SPARKS_REFRESH_EVENT/);
+  assert.doesNotMatch(wallet, /campaign.*ownerId|\/consent|\/quote/);
 });
