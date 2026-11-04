@@ -134,7 +134,18 @@ for (const locale of ['ru', 'en', 'uk']) {
       },
     }[locale as 'ru' | 'en' | 'uk'];
     const inspection = page.getByTestId('npc-public-inspection');
-    const openInspection = async () => {
+    const stopPath = `/api/v1/game/campaigns/${id}/stop`;
+    const openInspection = async (expectedStopCount?: number) => {
+      // Leaving the map stops real-time movement. Observe that safety request separately
+      // from Talk/whisper/close, which must not dispatch anything.
+      const stopped =
+        expectedStopCount === undefined
+          ? undefined
+          : page.waitForResponse(
+              (response) =>
+                response.request().method() === 'POST' &&
+                new URL(response.url()).pathname === stopPath,
+            );
       await page.getByRole('button', { name: inspectionCopy.actions, exact: true }).click();
       await page
         .getByRole('dialog', { name: inspectionCopy.actions, exact: true })
@@ -145,15 +156,20 @@ for (const locale of ['ru', 'en', 'uk']) {
       await expect(
         inspection.getByRole('button', { name: inspectionCopy.close, exact: true }),
       ).toBeFocused();
+      if (stopped) {
+        expect((await stopped).ok()).toBeTruthy();
+        expect(sentDuringInspection).toEqual(Array(expectedStopCount).fill(stopPath));
+      }
     };
     const sentDuringInspection: string[] = [];
     const watchInspection = (request: import('@playwright/test').Request) => {
       if (request.method() === 'POST' && request.url().includes(`/game/campaigns/${id}/`))
-        sentDuringInspection.push(request.url());
+        sentDuringInspection.push(new URL(request.url()).pathname);
     };
     page.on('request', watchInspection);
     await input.fill('Inspection preserves this private draft');
-    await openInspection();
+    expect(sentDuringInspection).toEqual([]);
+    await openInspection(1);
     await expect(feed).toBeHidden();
     await expect(feed).toHaveAttribute('aria-hidden', 'true');
     await expect(feed.locator('[data-story-entry]')).toHaveCount(48);
@@ -196,12 +212,14 @@ for (const locale of ['ru', 'en', 'uk']) {
     await expect.poll(offset).toBeCloseTo(anchor.offset, 0);
     await expect(input).toHaveValue('Inspection preserves this private draft');
     await expect(panel.locator('form')).toContainText(npcName);
-    await openInspection();
+    // No requests were added by repeated Talk, whisper, polling, or Escape.
+    expect(sentDuringInspection).toEqual([stopPath]);
+    await openInspection(2);
     await inspection.getByRole('button', { name: inspectionCopy.close, exact: true }).click();
     await expect(inspection).toHaveCount(0);
     await expect(feed).toBeFocused();
     await expect.poll(offset).toBeCloseTo(anchor.offset, 0);
-    expect(sentDuringInspection).toEqual([]);
+    expect(sentDuringInspection).toEqual([stopPath, stopPath]);
     page.off('request', watchInspection);
     await input.fill('');
     await panel.getByRole('button', { name: inspectionCopy.clear, exact: true }).click();
