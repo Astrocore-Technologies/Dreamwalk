@@ -26,3 +26,10 @@ All API responses in these browser cases are intercepted; there are no real paid
 Local formatting and source comparison only: no local test/build/type/lint/browser or
 API/database execution. Fresh exact-head CI, Vercel and actual screenshot review are
 required before merge. Disk capacity precludes local builds or full artifact extraction.
+
+First exact-head CI rendered all nine new cases successfully. Actual screenshots found
+that the standalone route lacked the shared heading's locale wrapper marker and that
+repreparation became a full-width primary action in the new grid. The follow-up adds
+the existing locale marker and groups unchanged reprepare/refresh controls as secondary
+status actions. New heading-position and bounded secondary-action assertions retain
+all previous coverage. Fresh full CI and screenshots are required after this correction.

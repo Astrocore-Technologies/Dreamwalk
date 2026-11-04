@@ -397,7 +397,7 @@ export function StoryPlayableBuilder({
     return map ? label(map) : '';
   };
   return (
-    <section className={styles.builder} data-testid="story-playable-builder">
+    <section className={styles.builder} data-testid="story-playable-builder" data-locale={locale}>
       <header className={`page-heading ${styles.heading}`}>
         <div>
           <h1>{copyText('title')}</h1>
@@ -439,17 +439,24 @@ export function StoryPlayableBuilder({
             <p role="status">
               <Sparkles size={24} aria-hidden="true" /> {statusText(state.status)}
             </p>
-            <Button busy={busy} variant="secondary" onClick={() => void act('refresh')}>
-              {copyText('refresh')}
-            </Button>
+            <div className={styles.statusActions}>
+              <Button busy={busy} variant="secondary" onClick={() => void act('refresh')}>
+                {copyText('refresh')}
+              </Button>
+              {!unresolved &&
+                (state.status !== 'prepared' || state.jobs.length > 0 || !state.sourceCurrent) && (
+                  <Button
+                    busy={busy}
+                    variant="secondary"
+                    data-testid="builder-reprepare"
+                    onClick={() => void act('prepare')}
+                  >
+                    {copyText('prepare')}
+                  </Button>
+                )}
+            </div>
           </div>
           {!state.sourceCurrent && <p role="alert">{copyText('stale')}</p>}
-          {!unresolved &&
-            (state.status !== 'prepared' || state.jobs.length > 0 || !state.sourceCurrent) && (
-              <Button busy={busy} onClick={() => void act('prepare')}>
-                {copyText('prepare')}
-              </Button>
-            )}
           {state.sourceCurrent && state.status === 'prepared' && !state.jobs.length && (
             <Button busy={busy} onClick={() => void act('quote')}>
               {copyText('quote')}

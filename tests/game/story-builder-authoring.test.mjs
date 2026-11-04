@@ -75,6 +75,8 @@ test('application is reviewed and separate from publication, with localized dura
 
 test('builder review composition uses only actual draft labels and retains the disabled map', async () => {
   assert.match(source, /story-playable-builder\.module\.css/);
+  assert.match(source, /data-locale=\{locale\}/);
+  assert.match(source, /variant="secondary"\s+data-testid="builder-reprepare"/);
   assert.match(source, /aria-current=\{index === step \? 'step' : undefined\}/);
   assert.match(source, /state\.draft\.maps\.map/);
   assert.match(source, /state\.draft\.npcs\.map/);

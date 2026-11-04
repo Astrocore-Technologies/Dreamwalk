@@ -3,6 +3,9 @@
   gap: 18px;
   min-width: 0;
 }
+.builder > button {
+  justify-self: start;
+}
 .heading {
   margin: 0;
   padding: 0;
@@ -84,6 +87,13 @@
   align-items: center;
   justify-content: space-between;
   gap: 20px;
+}
+.statusActions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 10px;
+  flex-shrink: 0;
+  max-width: 100%;
 }
 .statusBand p {
   display: flex;
@@ -256,6 +266,9 @@
   }
   .steps li {
     font-size: 14px;
+  }
+  .statusActions {
+    flex-direction: column;
   }
   .statusBand,
   .reviewActions {

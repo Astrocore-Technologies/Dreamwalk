@@ -133,6 +133,13 @@ for (const locale of ['ru', 'uk', 'en']) {
       await expect(root.locator('ol > li')).toHaveCount(5);
       await expect(root.locator('ol > li').nth(3)).toHaveAttribute('aria-current', 'step');
       await expect(root.locator('aside ul')).toHaveCount(3);
+      await expect(root.getByTestId('builder-reprepare')).toHaveClass(/secondary/);
+      if (variant.width === 1536) {
+        const heading = await root.getByRole('heading', { level: 1 }).boundingBox();
+        expect(heading!.y).toBeLessThan(45);
+        const reprepare = await root.getByTestId('builder-reprepare').boundingBox();
+        expect(reprepare!.width).toBeLessThan(350);
+      }
       for (const item of await root.locator('ol > li').all()) {
         expect(await item.evaluate((element) => element.scrollWidth <= element.clientWidth)).toBe(
           true,
