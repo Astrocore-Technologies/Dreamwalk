@@ -4,7 +4,7 @@ import { SparkReceiptCost } from '../visual-authoring/sparks-cost';
 import { StoryCost, RuntimeMapQuoteNotice } from './story-cost';
 import { StoryReplyConfirmation } from './story-reply-confirmation';
 import { WorldGenerationConfirmation } from './world-generation-confirmation';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import type {
   GameProjection,
   StoryActionPreview,
@@ -62,6 +62,7 @@ export function UnifiedStory({
   campaignId,
   projection,
   recipient,
+  inspection,
   onClearRecipient,
   disabled,
   partyDisabled = disabled,
@@ -73,6 +74,7 @@ export function UnifiedStory({
   campaignId: string;
   projection: GameProjection;
   recipient: StoryRecipient;
+  inspection?: ReactNode;
   onClearRecipient: () => void;
   disabled: boolean;
   partyDisabled?: boolean;
@@ -453,17 +455,18 @@ export function UnifiedStory({
       </div>
       <div className={styles.body}>
         <div className={styles.story}>
-          <div className={styles.history}>
+          <div className={styles.history} data-inspecting={!!inspection}>
             <div
               className={styles.feed}
               role="log"
               aria-label={h('title')}
               aria-live="polite"
               aria-relevant="additions"
+              aria-hidden={!!inspection}
               data-testid="story-feed"
               ref={feedElement}
               onScroll={onFeedScroll}
-              tabIndex={0}
+              tabIndex={inspection ? -1 : 0}
             >
               <div ref={feedContent}>
                 {!feed?.entries.length && <p className={styles.status}>{h('empty')}</p>}
@@ -505,6 +508,7 @@ export function UnifiedStory({
                 {h('newEvents')}
               </button>
             )}
+            {inspection && <div className={styles.inspectionLayer}>{inspection}</div>}
           </div>
           <form
             className={styles.composer}

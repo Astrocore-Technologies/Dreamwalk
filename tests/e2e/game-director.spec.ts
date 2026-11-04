@@ -283,6 +283,15 @@ test('two realtime players coauthor committed evolving scenes, travel and retain
       .toBe(true);
     await owner.locator('main').scrollIntoViewIfNeeded();
     await owner.evaluate(() => scrollTo(0, 0));
+    // A normal public profile with an admitted portrait must not clip the Talk action.
+    const talkRoom = await owner.getByTestId('npc-inspection-talk').evaluate((button) => {
+      const card = button.closest('[data-testid="npc-public-inspection"]')!;
+      const viewport = card.parentElement!.getBoundingClientRect();
+      const action = button.getBoundingClientRect();
+      return { top: action.top - viewport.top, bottom: viewport.bottom - action.bottom };
+    });
+    expect(talkRoom.top).toBeGreaterThanOrEqual(0);
+    expect(talkRoom.bottom).toBeGreaterThanOrEqual(8);
     await owner.screenshot({ path: test.info().outputPath('director-generated-scene.png') });
     const waitingText = 'Я предлагаю проверить следы в нашей исходной комнате.';
     await prepare(guest, waitingText);

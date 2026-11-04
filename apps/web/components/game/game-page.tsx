@@ -28,6 +28,7 @@ import { TurnControls } from './turn-controls';
 import { useTurnText } from './turn-messages';
 import { playerControlsAvailable } from './turn-ui';
 import { UnifiedStory, type StoryRecipient } from './unified-story';
+import { NpcPublicInspection } from './npc-public-inspection';
 import { LivingNotices } from './living-notices';
 import { useGame, type CampaignSummary } from './use-game';
 import styles from './game.module.css';
@@ -508,48 +509,39 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             }}
             reducedMotion={!!user?.settings.reducedMotion}
           />
-          {inspectedNpc && (
-            <section
-              className={styles.inspection}
-              aria-live="polite"
-              data-testid="npc-public-inspection"
-            >
-              <header>
-                <h2>{inspectedNpc.label || t('NPC')}</h2>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  aria-label={turnText('close')}
-                  onClick={() => setInspectedNpcId(null)}
-                >
-                  ×
-                </Button>
-              </header>
-              {inspectedPortraitUrl && (
-                <img
-                  className={styles.artPortrait}
-                  src={inspectedPortraitUrl}
-                  alt={inspectedNpc.label || t('NPC')}
-                />
-              )}
-              <p>
-                {inspectedNpc.publicProfile?.description ||
-                  inspectedNpc.supportingNpc?.description ||
-                  turnText('noDescription')}
-              </p>
-              <p>
-                {inspectedNpc.publicProfile?.appearance ||
-                  inspectedNpc.supportingNpc?.appearance ||
-                  ''}
-              </p>
-            </section>
-          )}
         </div>
         <UnifiedStory
           key={campaignId}
           campaignId={campaignId}
           projection={p}
           recipient={recipient}
+          inspection={
+            inspectedNpc ? (
+              <NpcPublicInspection
+                npcId={inspectedNpc.id}
+                name={inspectedNpc.label || t('NPC')}
+                role={inspectedNpc.publicProfile?.role || inspectedNpc.supportingNpc?.roleLabel}
+                description={
+                  inspectedNpc.publicProfile?.description ||
+                  inspectedNpc.supportingNpc?.description ||
+                  turnText('noDescription')
+                }
+                appearance={
+                  inspectedNpc.publicProfile?.appearance || inspectedNpc.supportingNpc?.appearance
+                }
+                portraitUrl={inspectedPortraitUrl}
+                disabled={controlsDisabled || storyBusy}
+                onClose={() => setInspectedNpcId(null)}
+                onTalk={() => {
+                  const npc = p.entities.find(
+                    (entity) => entity.kind === 'npc' && entity.id === inspectedNpcId,
+                  );
+                  if (npc && !controlsDisabled && !storyBusy)
+                    setRecipient({ id: npc.id, label: npc.label || t('NPC') });
+                }}
+              />
+            ) : null
+          }
           onClearRecipient={() => setRecipient(null)}
           onWorldRefresh={() => void game.refresh()}
           onBusyChange={setStoryBusy}

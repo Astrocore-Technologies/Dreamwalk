@@ -1,0 +1,43 @@
+# Public NPC inspection, reference 58
+
+## Scope and visible differences
+
+The approved 1536 x 1024 reference places the NPC portrait, name, public role, description and Talk action in the right column above the existing story composer. Current main instead renders a small 72 x 88 portrait with text beneath or over the map, omits the public role and has no direct Talk action in inspection.
+
+This local presentation candidate moves inspection into the story history region, preserving its dimensions and mounted contents underneath an opaque, independently scrollable card. Closing restores the same history and reading anchor. The composer, recipients, whisper setting, confirmations and draft remain mounted. The normal Story heading remains above inspection; this deliberately preserves the existing panel structure rather than claiming full reference parity.
+
+Only the current visible NPC projection is used. Role comes from publicProfile.role or supportingNpc.roleLabel; missing role is omitted. Description and appearance retain the existing public fallbacks. Portraits still require the exact authorized immutable binding. Missing portraits stay absent; no generated illustration, inferred identity, private source data or invented fallback image is added. Large real portraits use bounded cover cropping, which needs visual review on representative art.
+
+Talk revalidates the visible NPC and changes only the existing recipient selection. It does not send a message, request a quote, change channel, fill text, start generation or move the actor. Existing draft/quote invalidation and queued submission identities remain unchanged. During some queued states local selection remains possible, as with map selection, but the disabled input is not focused. Close and Escape restore focus to history without scrolling the page. Selecting another NPC resets only inspection scrolling.
+
+## Source verification
+
+All seven modified existing source/test files match exact main 8670f1a10d40bee6078994a62bb1166bc5353012 before editing. The CampaignRoom pre-render controller is byte-identical (6,228 bytes), the actual visible-NPC/authorized-portrait derivation is byte-identical (330 bytes), and UnifiedStory's controller is byte-identical (12,199 bytes). Existing immutable-binding adversarial tests are retained; only their presentation assertion follows the extracted component.
+
+Independent source review found a stale image-rendering assertion and retained overlay scroll when changing NPC. Both were corrected and re-reviewed with no remaining source blockers. Source comparison and formatting are not runtime verification.
+
+## Pending acceptance
+
+Prepared browser coverage extends the three RU/EN/UK chat-layout journeys: repeated inspection/Talk, no dispatch, draft and whisper preservation, Close/Escape and focus, incoming history while inspecting, reading-anchor restoration, short viewports with confirmations and mobile layout. Nine new captures are planned (desktop, short+confirmation and mobile for each locale). Existing director integration covers admitted portrait loading; existing assets tests cover denied/missing/mismatched bindings and invisible NPCs.
+
+At the local source-preparation stage, no tests, lint, typecheck, build, browser, database or provider calls were run because the workspace had about 30 MB free. That stage did not commit, push, create a PR, merge or deploy; subsequent publication and remote evidence are recorded below. Full exact-head CI, actual screenshot inspection, queued-target and disappearing-NPC behavior, long public content, light theme and live authorized-data acceptance remain pending. This is not ready to merge and does not complete KAN-17 or KAN-16.
+
+## First remote evidence and correction
+
+Initial PR93 head dc0da471 passed production build, types, lint, unit/source tests, isolated PostgreSQL, browser shards 1 and 3 and automatic Vercel. Shard 2 failed the three extended chat-layout cases: all six attempts saw exactly one pixel of anchor rounding after the newly inserted 1024-to-1440 viewport roundtrip. The existing baseline already accounts for one-pixel reflow rounding in its resize section. The correction changes no tolerance: it removes only the redundant early resize, leaving exact inspection-only anchor checks and the complete original resize matrix (now also with inspection and confirmation open).
+
+Actual admitted-portrait screenshot review also found the Talk action partly clipped at 1440 x 1000 with ordinary public copy. The portrait budget is reduced from 300px to 240px; composer and long-content scrolling remain unchanged. A boundary assertion now checks the full Talk action with at least 8px remaining below it in that real synthetic portrait journey. Both corrections were independently reviewed. Fresh exact-head CI and new rendered evidence are required; old successful checks do not transfer.
+
+## Map focus safety and request phases
+
+The synced head 2eb5e63 passed the full admitted-portrait action-boundary test, static checks, PostgreSQL and browser shards 1 and 3. Its three chat-layout failures were caused by the new test counting the existing map-blur movement stop as an inspection turn. SHA- and CRC-verified traces for all six attempts show exactly one successful `/stop` request during each Inspect click, and no POST during any Talk, whisper, Escape or close action.
+
+The test now waits for and accounts for exactly one safety stop at each map-to-inspection transition, then asserts that the full request list remains unchanged throughout the separate Talk/whisper/close phases. It does not ignore `/stop` globally or relax geometry, focus, draft, privacy, channel or history assertions. Production behavior is unchanged. Fresh exact-head CI and all remaining rendered viewport checks are still required.
+
+## Short-viewport keyboard acceptance
+
+Head 77c0832 passed all six jobs and all 242 browser cases on the first attempt, plus automatic Vercel. Independent review of all nine new originals confirmed desktop/mobile readability and the admitted-portrait Talk fit. At 820 x 700 with confirmation, Talk initially lies below the bounded inspection viewport. The composer stays visible, but those initial screenshots did not prove action access after scrolling.
+
+Additional test coverage now uses Close-to-Tab keyboard navigation at 1280 x 720, 1024 x 600 and 820 x 700, requiring the entire Talk button to scroll inside its own overlay while the composer remains in the viewport, the document stays at its original position and the reading anchor remains unchanged within the existing resize tolerance. Enter must select the recipient and focus the empty composer without sending any request. The existing safety-stop phase accounting remains active, and new RU/EN/UK short-keyboard captures make this behavior reviewable. This coverage is pending fresh exact-head CI and rendered review; no production change is included.
+
+The first keyboard-proof run (head 3e52ab3) passed RU and EN but exposed a 1/64px lower-edge overshoot in UK twice. The actual short-keyboard screenshots also show the focus outline clipped below Talk across all three locales. Rather than loosening the geometric assertion, the inspection scrollport now reserves 8px of scroll padding for native focus scrolling. The test is strengthened to require the complete computed outline width plus offset (currently 6px) inside both vertical boundaries. This CSS property changes the preferred scroll viewing region, not history/composer layout or controller behavior; see [CSS Scroll Snap scroll-padding](https://www.w3.org/TR/css-scroll-snap-1/#scroll-padding). Fresh CI and pixels remain required.

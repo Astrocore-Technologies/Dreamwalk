@@ -200,7 +200,12 @@ test('inspection portraits require the current visible NPC and matching authoriz
   );
   assert.match(selection, /artPreviewUrl/);
   assert.match(source, /const art = p \? authorizedArt\(p, sceneMedia.art\) : \[\]/);
-  assert.match(source, /inspectedPortraitUrl && \([\s\S]*?src=\{inspectedPortraitUrl\}/);
+  assert.match(source, /portraitUrl=\{inspectedPortraitUrl\}/);
+  const inspection = await readFile(
+    new URL('../../apps/web/components/game/npc-public-inspection.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(inspection, /portraitUrl &&[\s\S]*?src=\{portraitUrl\}/);
   const select = new Function(
     'p',
     'art',

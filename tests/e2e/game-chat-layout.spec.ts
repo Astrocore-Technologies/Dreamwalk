@@ -109,6 +109,121 @@ for (const locale of ['ru', 'en', 'uk']) {
     await page.waitForResponse(`**/api/v1/game/campaigns/${id}/turns/feed`);
     await expect.poll(offset).toBeCloseTo(anchor.offset, 0);
 
+    // Public NPC inspection replaces only the visible history region. It never sends a turn.
+    const inspectionCopy = {
+      ru: {
+        actions: 'Действия',
+        inspect: 'Осмотреть',
+        close: 'Закрыть осмотр',
+        whisper: 'Шёпот',
+        clear: 'Обратиться к ведущему',
+      },
+      en: {
+        actions: 'Actions',
+        inspect: 'Inspect',
+        close: 'Close inspection',
+        whisper: 'Whisper',
+        clear: 'Address the director',
+      },
+      uk: {
+        actions: 'Дії',
+        inspect: 'Оглянути',
+        close: 'Закрити огляд',
+        whisper: 'Шепіт',
+        clear: 'Звернутися до ведучого',
+      },
+    }[locale as 'ru' | 'en' | 'uk'];
+    const inspection = page.getByTestId('npc-public-inspection');
+    const stopPath = `/api/v1/game/campaigns/${id}/stop`;
+    const openInspection = async (expectedStopCount?: number) => {
+      // Leaving the map stops real-time movement. Observe that safety request separately
+      // from Talk/whisper/close, which must not dispatch anything.
+      const stopped =
+        expectedStopCount === undefined
+          ? undefined
+          : page.waitForResponse(
+              (response) =>
+                response.request().method() === 'POST' &&
+                new URL(response.url()).pathname === stopPath,
+            );
+      await page.getByRole('button', { name: inspectionCopy.actions, exact: true }).click();
+      await page
+        .getByRole('dialog', { name: inspectionCopy.actions, exact: true })
+        .locator('[data-map-target="keeper"]')
+        .getByRole('button', { name: inspectionCopy.inspect, exact: true })
+        .click();
+      await expect(inspection).toBeVisible();
+      await expect(
+        inspection.getByRole('button', { name: inspectionCopy.close, exact: true }),
+      ).toBeFocused();
+      if (stopped) {
+        expect((await stopped).ok()).toBeTruthy();
+        expect(sentDuringInspection).toEqual(Array(expectedStopCount).fill(stopPath));
+      }
+    };
+    const sentDuringInspection: string[] = [];
+    const watchInspection = (request: import('@playwright/test').Request) => {
+      if (request.method() === 'POST' && request.url().includes(`/game/campaigns/${id}/`))
+        sentDuringInspection.push(new URL(request.url()).pathname);
+    };
+    page.on('request', watchInspection);
+    await input.fill('Inspection preserves this private draft');
+    expect(sentDuringInspection).toEqual([]);
+    await openInspection(1);
+    await expect(feed).toBeHidden();
+    await expect(feed).toHaveAttribute('aria-hidden', 'true');
+    await expect(feed.locator('[data-story-entry]')).toHaveCount(48);
+    await expect(input).toHaveValue('Inspection preserves this private draft');
+    expect((await input.boundingBox())!.y).toBeCloseTo(originalInput!.y, 0);
+    const npcName = await inspection.getByRole('heading').innerText();
+    await inspection.getByTestId('npc-inspection-talk').click();
+    await panel.getByRole('button', { name: inspectionCopy.whisper, exact: true }).click();
+    for (let click = 0; click < 2; click++) {
+      await inspection.getByTestId('npc-inspection-talk').click();
+      await expect(input).toBeFocused();
+      await expect(panel.locator('form')).toContainText(npcName);
+      await expect(input).toHaveValue('Inspection preserves this private draft');
+      await expect(
+        panel.getByRole('button', { name: inspectionCopy.whisper, exact: true }),
+      ).toHaveAttribute('aria-pressed', 'true');
+    }
+    fixture.entries.push(entry(48));
+    await expect(feed.locator('[data-story-entry]')).toHaveCount(49);
+    // Keep inspection-only anchor checks at the same viewport. The existing resize matrix
+    // below separately exercises reflow rounding with inspection and confirmation both open.
+    await expect(input).toBeInViewport();
+    expect((await bounds(page)).height).toBeLessThanOrEqual(1);
+    expect((await bounds(page)).width).toBeLessThanOrEqual(1);
+    const cardBounds = await inspection.boundingBox();
+    const inputBounds = await input.boundingBox();
+    expect(cardBounds!.x).toBeGreaterThanOrEqual((await panel.boundingBox())!.x);
+    expect(inputBounds!.y).toBeGreaterThan((await panel.boundingBox())!.y);
+    await page.evaluate(() => document.fonts.ready);
+    await info.attach(`game-npc-inspection-${locale}-desktop`, {
+      body: await page.screenshot(),
+      contentType: 'image/png',
+    });
+    await inspection
+      .getByRole('button', { name: inspectionCopy.close, exact: true })
+      .press('Escape');
+    await expect(inspection).toHaveCount(0);
+    await expect(feed).toBeVisible();
+    await expect(feed).toBeFocused();
+    await expect.poll(offset).toBeCloseTo(anchor.offset, 0);
+    await expect(input).toHaveValue('Inspection preserves this private draft');
+    await expect(panel.locator('form')).toContainText(npcName);
+    // No requests were added by repeated Talk, whisper, polling, or Escape.
+    expect(sentDuringInspection).toEqual([stopPath]);
+    await openInspection(2);
+    await inspection.getByRole('button', { name: inspectionCopy.close, exact: true }).click();
+    await expect(inspection).toHaveCount(0);
+    await expect(feed).toBeFocused();
+    await expect.poll(offset).toBeCloseTo(anchor.offset, 0);
+    expect(sentDuringInspection).toEqual([stopPath, stopPath]);
+    await input.fill('');
+    await panel.getByRole('button', { name: inspectionCopy.clear, exact: true }).click();
+    await panel.getByRole('button', { name: inspectionCopy.whisper, exact: true }).click();
+
     // A confirmation and viewport resize must not hide the composer or lose the paragraph.
     fixture.turns = [
       {
@@ -119,6 +234,9 @@ for (const locale of ['ru', 'en', 'uk']) {
     ];
     await expect(panel.locator('[data-testid="story-reply-confirmation"]')).toHaveCount(1);
     await expect.poll(offset).toBeCloseTo(anchor.offset, 0);
+    expect(sentDuringInspection).toEqual([stopPath, stopPath]);
+    await openInspection(3);
+    await expect(panel.locator('[data-testid="story-reply-confirmation"]')).toBeVisible();
     for (const size of [
       { width: 1280, height: 720 },
       { width: 1024, height: 600 },
@@ -133,7 +251,57 @@ for (const locale of ['ru', 'en', 'uk']) {
       await expect
         .poll(async () => Math.abs((await offset()) - anchor.offset))
         .toBeLessThanOrEqual(1);
+      // Keyboard navigation must reveal Talk inside the bounded overlay, not scroll
+      // the page or hide the composer when confirmation leaves little history space.
+      const close = inspection.getByRole('button', { name: inspectionCopy.close, exact: true });
+      const talk = inspection.getByTestId('npc-inspection-talk');
+      await close.focus();
+      await close.press('Tab');
+      await expect(talk).toBeFocused();
+      await expect(talk).toBeInViewport();
+      const actionBounds = await talk.evaluate((element) => {
+        const viewport = element.closest('[data-testid="npc-public-inspection"]')!.parentElement!;
+        const action = element.getBoundingClientRect();
+        const clip = viewport.getBoundingClientRect();
+        const focusedStyle = getComputedStyle(element);
+        return {
+          above: action.top - clip.top,
+          below: clip.bottom - action.bottom,
+          focusRing: parseFloat(focusedStyle.outlineWidth) + parseFloat(focusedStyle.outlineOffset),
+        };
+      });
+      expect(actionBounds.focusRing).toBeGreaterThan(0);
+      expect(actionBounds.above).toBeGreaterThanOrEqual(actionBounds.focusRing);
+      expect(actionBounds.below).toBeGreaterThanOrEqual(actionBounds.focusRing);
+      await expect(input).toBeInViewport();
+      expect((await bounds(page)).height).toBeLessThanOrEqual(1);
+      expect((await bounds(page)).width).toBeLessThanOrEqual(1);
+      expect((await bounds(page)).pageTop).toBe(0);
+      await expect
+        .poll(async () => Math.abs((await offset()) - anchor.offset))
+        .toBeLessThanOrEqual(1);
+      if (size.width === 820) {
+        await info.attach(`game-npc-inspection-${locale}-short-keyboard`, {
+          body: await page.screenshot(),
+          contentType: 'image/png',
+        });
+      }
+      await talk.press('Enter');
+      await expect(input).toBeFocused();
+      await expect(input).toBeInViewport();
+      await expect(input).toHaveValue('');
+      await expect(panel.locator('form')).toContainText(npcName);
+      expect(sentDuringInspection).toEqual([stopPath, stopPath, stopPath]);
     }
+    await info.attach(`game-npc-inspection-${locale}-confirmation-short`, {
+      body: await page.screenshot(),
+      contentType: 'image/png',
+    });
+    await inspection.getByRole('button', { name: inspectionCopy.close, exact: true }).click();
+    await expect(inspection).toHaveCount(0);
+    await expect(feed).toBeFocused();
+    expect(sentDuringInspection).toEqual([stopPath, stopPath, stopPath]);
+    page.off('request', watchInspection);
     await campaignDetails(page);
     await expect(page.getByTestId('campaign-hero')).toBeVisible();
     expect((await bounds(page)).height).toBeLessThanOrEqual(1);
@@ -156,11 +324,21 @@ for (const locale of ['ru', 'en', 'uk']) {
     await expect(input).toBeInViewport();
     expect((await bounds(page)).width).toBeLessThanOrEqual(1);
     await input.fill('Draft stays in place');
+    await openInspection();
+    await inspection.scrollIntoViewIfNeeded();
+    expect((await bounds(page)).width).toBeLessThanOrEqual(1);
+    await info.attach(`game-npc-inspection-${locale}-mobile`, {
+      body: await page.screenshot(),
+      contentType: 'image/png',
+    });
+    await inspection.getByRole('button', { name: inspectionCopy.close, exact: true }).click();
+    await expect(inspection).toHaveCount(0);
+    await expect(input).toHaveValue('Draft stays in place');
     await page.setViewportSize({ width: 1440, height: 900 });
     await expect(input).toHaveValue('Draft stays in place');
     await expect.poll(async () => (await bounds(page)).height).toBeLessThanOrEqual(1);
     await page.reload();
-    await expect(feed.locator('[data-story-entry]')).toHaveCount(48);
+    await expect(feed.locator('[data-story-entry]')).toHaveCount(49);
     await expect.poll(gap).toBeLessThan(2);
     await expect(input).toBeInViewport();
   });
