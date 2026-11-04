@@ -220,7 +220,6 @@ for (const locale of ['ru', 'en', 'uk']) {
     await expect(feed).toBeFocused();
     await expect.poll(offset).toBeCloseTo(anchor.offset, 0);
     expect(sentDuringInspection).toEqual([stopPath, stopPath]);
-    page.off('request', watchInspection);
     await input.fill('');
     await panel.getByRole('button', { name: inspectionCopy.clear, exact: true }).click();
     await panel.getByRole('button', { name: inspectionCopy.whisper, exact: true }).click();
@@ -235,7 +234,8 @@ for (const locale of ['ru', 'en', 'uk']) {
     ];
     await expect(panel.locator('[data-testid="story-reply-confirmation"]')).toHaveCount(1);
     await expect.poll(offset).toBeCloseTo(anchor.offset, 0);
-    await openInspection();
+    expect(sentDuringInspection).toEqual([stopPath, stopPath]);
+    await openInspection(3);
     await expect(panel.locator('[data-testid="story-reply-confirmation"]')).toBeVisible();
     for (const size of [
       { width: 1280, height: 720 },
@@ -251,6 +251,41 @@ for (const locale of ['ru', 'en', 'uk']) {
       await expect
         .poll(async () => Math.abs((await offset()) - anchor.offset))
         .toBeLessThanOrEqual(1);
+      // Keyboard navigation must reveal Talk inside the bounded overlay, not scroll
+      // the page or hide the composer when confirmation leaves little history space.
+      const close = inspection.getByRole('button', { name: inspectionCopy.close, exact: true });
+      const talk = inspection.getByTestId('npc-inspection-talk');
+      await close.focus();
+      await close.press('Tab');
+      await expect(talk).toBeFocused();
+      await expect(talk).toBeInViewport();
+      const actionBounds = await talk.evaluate((element) => {
+        const viewport = element.closest('[data-testid="npc-public-inspection"]')!.parentElement!;
+        const action = element.getBoundingClientRect();
+        const clip = viewport.getBoundingClientRect();
+        return { above: action.top - clip.top, below: clip.bottom - action.bottom };
+      });
+      expect(actionBounds.above).toBeGreaterThanOrEqual(0);
+      expect(actionBounds.below).toBeGreaterThanOrEqual(0);
+      await expect(input).toBeInViewport();
+      expect((await bounds(page)).height).toBeLessThanOrEqual(1);
+      expect((await bounds(page)).width).toBeLessThanOrEqual(1);
+      expect((await bounds(page)).pageTop).toBe(0);
+      await expect
+        .poll(async () => Math.abs((await offset()) - anchor.offset))
+        .toBeLessThanOrEqual(1);
+      if (size.width === 820) {
+        await info.attach(`game-npc-inspection-${locale}-short-keyboard`, {
+          body: await page.screenshot(),
+          contentType: 'image/png',
+        });
+      }
+      await talk.press('Enter');
+      await expect(input).toBeFocused();
+      await expect(input).toBeInViewport();
+      await expect(input).toHaveValue('');
+      await expect(panel.locator('form')).toContainText(npcName);
+      expect(sentDuringInspection).toEqual([stopPath, stopPath, stopPath]);
     }
     await info.attach(`game-npc-inspection-${locale}-confirmation-short`, {
       body: await page.screenshot(),
@@ -259,6 +294,8 @@ for (const locale of ['ru', 'en', 'uk']) {
     await inspection.getByRole('button', { name: inspectionCopy.close, exact: true }).click();
     await expect(inspection).toHaveCount(0);
     await expect(feed).toBeFocused();
+    expect(sentDuringInspection).toEqual([stopPath, stopPath, stopPath]);
+    page.off('request', watchInspection);
     await campaignDetails(page);
     await expect(page.getByTestId('campaign-hero')).toBeVisible();
     expect((await bounds(page)).height).toBeLessThanOrEqual(1);
