@@ -34,7 +34,7 @@ await test(
         outsider = await client().register();
       const { campaignId: id } = await a.request('/game/campaigns', { template: 'observatory-v1' });
       await t.test(
-        'campaign membership and WebSocket Origin/session authorization are enforced',
+        'campaign membership and WebSocket session authorization remain enforced during the origin pause',
         async () => {
           await outsider.request(path(id, 'snapshot'), undefined, 'GET', 403);
           assert.equal((await outsider.request('/game/campaigns')).campaigns.length, 0);
@@ -48,11 +48,15 @@ await test(
           await b.request(path(id, 'snapshot'), undefined, 'GET', 403);
           await b.request(path(id, 'accept'), {});
           assert.equal(await rejectedSocket(outsider, id), 403);
-          assert.equal(await rejectedSocket(a, id, 'https://untrusted.invalid'), 403);
+          assert.equal(await rejectedSocket(outsider, id, 'https://untrusted.invalid'), 403);
           assert.equal(await rejectedSocket(client(), id), 403);
+          assert.equal(await rejectedSocket(client(), id, 'https://untrusted.invalid'), 403);
         },
       );
-      const first = await connect(a, id),
+      // The owner-approved Origin pause does not bypass session or membership.
+      // Exercise its projection/input path here and foreign-Origin live
+      // revocation below, rather than only testing its handshake.
+      const first = await connect(a, id, 'https://untrusted.invalid'),
         second = await connect(b, id);
       await t.test(
         'emitted HTTP and WebSocket envelopes match the strict browser contract',
@@ -566,7 +570,7 @@ await test(
         },
       );
       await t.test('live revocation closes sockets and removes subsequent access', async () => {
-        const connection = await connect(b, id);
+        const connection = await connect(b, id, 'https://untrusted.invalid');
         const closed = once(connection.ws, 'close');
         await a.request(`/game/campaigns/${id}/members/${b.user.id}`, {}, 'DELETE');
         const [code] = await Promise.race([
@@ -580,7 +584,7 @@ await test(
         assert.equal(await rejectedSocket(b, id), 403);
         await a.request(path(id, 'invitations'), { username: b.handle });
         await b.request(path(id, 'accept'), {});
-        const rejoined = await connect(b, id);
+        const rejoined = await connect(b, id, 'https://untrusted.invalid');
         assert.ok(rejoined.messages[0].projection.actorId);
         const sessions = await b.request('/account/sessions');
         const currentSession = sessions.find((session) => session.current);
@@ -598,7 +602,7 @@ await test(
           1008,
         );
 
-        const ownerConnection = await connect(a, id),
+        const ownerConnection = await connect(a, id, 'https://untrusted.invalid'),
           logoutClosed = once(ownerConnection.ws, 'close');
         await a.request('/auth/logout', {});
         const [logoutCode] = await Promise.race([

@@ -4,7 +4,7 @@ import type { Request } from 'express';
 import { WebSocketServer, WebSocket } from 'ws';
 import { HttpException } from '@nestjs/common';
 import { config } from '../config';
-import { ingressAllowed } from '../ingress';
+import { ingressAllowed, ENFORCE_BROWSER_ORIGIN } from '../ingress';
 import { GameService } from './game.service';
 
 /** Every outbound projection rechecks session and membership. No global event payload is broadcast. */
@@ -32,7 +32,7 @@ export function attachGameSockets(
     const locale = localeSchema.safeParse(url.searchParams.get('locale'));
     if (locale.success) req.headers['accept-language'] = locale.data;
     if (
-      req.headers.origin !== config.WEB_ORIGIN ||
+      (ENFORCE_BROWSER_ORIGIN && req.headers.origin !== config.WEB_ORIGIN) ||
       !ingressAllowed(
         req.headers['x-dreamwalk-ingress'],
         config.DREAMWALK_INGRESS_SECRET,

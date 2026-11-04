@@ -1,5 +1,9 @@
 import { NextRequest, NextResponse } from 'next/server';
-import { trustedBrowserOrigin, canonicalWebOrigin } from './lib/hosted-origin';
+import {
+  trustedBrowserOrigin,
+  canonicalWebOrigin,
+  ENFORCE_BROWSER_ORIGIN,
+} from './lib/hosted-origin';
 
 export function proxy(request: NextRequest) {
   if (process.env.VERCEL !== '1') return NextResponse.next();
@@ -29,15 +33,17 @@ export function proxy(request: NextRequest) {
   const headers = new Headers(request.headers);
   if (!['GET', 'HEAD', 'OPTIONS'].includes(request.method)) {
     const canonical = canonicalWebOrigin(process.env);
-    if (!canonical) return new NextResponse('Service unavailable', { status: 503 });
-    if (!trustedBrowserOrigin(request, process.env))
+    if (ENFORCE_BROWSER_ORIGIN && !canonical)
+      return new NextResponse('Service unavailable', { status: 503 });
+    if (ENFORCE_BROWSER_ORIGIN && !trustedBrowserOrigin(request, process.env))
       return NextResponse.json(
         { code: 'FORBIDDEN', message: 'Invalid request origin.', retryable: false },
         { status: 403, headers: { 'Cache-Control': 'private, no-store' } },
       );
-    // Browser CSRF admission happened at this trusted edge. Keep the backend's
-    // canonical-origin check on the separately authenticated server-to-server hop.
-    headers.set('origin', canonical);
+    // Keep the configured backend origin when available, never derive it from
+    // caller headers. Origin enforcement is temporarily paused by owner request.
+    if (canonical) headers.set('origin', canonical);
+    else headers.delete('origin');
   }
   // Platform authorization is consumed by Vercel, never by the application API.
   // Strip it explicitly rather than relying on a particular edge runtime to do so.

@@ -14,7 +14,53 @@ Object.assign(process.env, {
   DREAMWALK_INGRESS_SECRET: secret,
 });
 const { attachGameSockets } = require('../apps/api/src/game/game.socket.ts');
-test('real socket upgrade requires ingress AND Origin before session authorization', async () => {
+test('foreign-Origin socket upgrades only after synthetic session authorization and still checks each projection', async (t) => {
+  const server = createServer();
+  let authorizedCalls = 0;
+  let projectionChecks = 0;
+  const cookie = `dreamwalk_session=${'b'.repeat(64)}`;
+  const wss = attachGameSockets(server, {
+    onShutdown() {},
+    async connected(req) {
+      assert.equal(req.headers.cookie, cookie);
+      authorizedCalls++;
+      return { connectionEpoch: 1, actorId: 'synthetic-actor' };
+    },
+    async snapshot(req) {
+      assert.equal(req.headers.cookie, cookie);
+      projectionChecks++;
+      return { connectionEpoch: 1, projectionRevision: 1, projection: { fixture: true } };
+    },
+    subscribe() {
+      return () => {};
+    },
+    async delivered() {},
+    async disconnected() {},
+    async keepAlive() {},
+  });
+  server.listen(0, '127.0.0.1');
+  await once(server, 'listening');
+  const ws = new WebSocket(
+    `ws://127.0.0.1:${server.address().port}/api/v1/game/socket?campaignId=00000000-0000-4000-8000-000000000000`,
+    {
+      headers: { origin: 'https://foreign.example', cookie, 'x-dreamwalk-ingress': secret },
+    },
+  );
+  t.after(async () => {
+    ws.terminate();
+    for (const client of wss.clients) client.terminate();
+    await Promise.all([
+      new Promise((resolve) => wss.close(resolve)),
+      new Promise((resolve) => server.close(resolve)),
+    ]);
+  });
+  const snapshot = JSON.parse((await once(ws, 'message'))[0].toString());
+  assert.equal(snapshot.type, 'snapshot');
+  assert.equal(snapshot.projection.fixture, true);
+  assert.equal(authorizedCalls, 1);
+  assert.equal(projectionChecks, 1);
+});
+test('real socket upgrade still requires ingress and session authorization during the temporary origin pause', async () => {
   const server = createServer();
   let authorizedCalls = 0;
   const wss = attachGameSockets(server, {
@@ -57,12 +103,20 @@ test('real socket upgrade requires ingress AND Origin before session authorizati
       await rejected({ origin: 'https://wrong.example', 'x-dreamwalk-ingress': secret }),
       403,
     );
-    assert.equal(authorizedCalls, 0);
+    assert.equal(
+      authorizedCalls,
+      1,
+      'foreign Origin reaches session authorization only with valid ingress',
+    );
     assert.equal(
       await rejected({ origin: process.env.WEB_ORIGIN, 'x-dreamwalk-ingress': secret }),
       403,
     );
-    assert.equal(authorizedCalls, 1, 'valid ingress must still invoke user-session authorization');
+    assert.equal(authorizedCalls, 2, 'valid ingress must still invoke user-session authorization');
+    assert.equal(await rejected({ 'x-dreamwalk-ingress': secret }), 403);
+    assert.equal(authorizedCalls, 3, 'missing Origin never supplies a user session');
+    assert.equal(await rejected({ origin: 'https://wrong.example' }), 403);
+    assert.equal(authorizedCalls, 3, 'missing ingress cannot reach session authorization');
   } finally {
     wss.close();
     await new Promise((resolve) => server.close(resolve));

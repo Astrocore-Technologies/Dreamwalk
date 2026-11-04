@@ -1,6 +1,7 @@
 'use client';
 import { VisualWorkshop } from '@/components/visual-authoring/workshop';
 import { GamePage } from '@/components/game/game-page';
+import { KnownNpcSettlementPage } from '@/components/game/known-npc-settlement';
 import { EmailActionPage } from '@/components/account-email';
 import { Suspense } from 'react';
 import { usePathname } from 'next/navigation';
@@ -17,6 +18,12 @@ function Router() {
   const { locale } = useT();
   let content: React.ReactNode;
   if (path === '/' || path === '/home') content = <HomePage />;
+  else if (/^\/game\/[^/]+\/settlement\/[^/]+$/.test(path))
+    content = (
+      <Protected>
+        <KnownNpcSettlementPage campaignId={path.split('/')[2]} jobId={path.split('/')[4]} />
+      </Protected>
+    );
   else if (path === '/game' || path.startsWith('/game/'))
     content = (
       <Protected>

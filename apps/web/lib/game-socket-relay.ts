@@ -1,6 +1,6 @@
 import WebSocket, { type RawData } from 'ws';
 import { localeSchema } from '@dreamwalk/contracts';
-import { canonicalWebOrigin, trustedBrowserOrigin } from './hosted-origin';
+import { canonicalWebOrigin, trustedBrowserOrigin, ENFORCE_BROWSER_ORIGIN } from './hosted-origin';
 
 const CLIENT_LIMIT = 8192;
 const SERVER_LIMIT = 1024 * 1024;
@@ -13,8 +13,7 @@ export function socketRelayTarget(request: Request, env: NodeJS.ProcessEnv) {
   if (!secret || !/^[A-Za-z0-9_-]{32,256}$/.test(secret)) throw new Error('RELAY_CONFIG');
   const api = new URL(env.API_URL ?? '');
   const canonical = canonicalWebOrigin(env);
-  if (!canonical) throw new Error('RELAY_CONFIG');
-  const web = new URL(canonical);
+  if (ENFORCE_BROWSER_ORIGIN && !canonical) throw new Error('RELAY_CONFIG');
   if (
     api.protocol !== 'https:' ||
     api.username ||
@@ -22,8 +21,7 @@ export function socketRelayTarget(request: Request, env: NodeJS.ProcessEnv) {
     api.pathname !== '/' ||
     api.search ||
     api.hash ||
-    web.protocol !== 'https:' ||
-    !trustedBrowserOrigin(request, env)
+    (ENFORCE_BROWSER_ORIGIN && !trustedBrowserOrigin(request, env))
   )
     throw new Error('RELAY_ORIGIN');
   const cookie = request.headers.get('cookie') ?? '';
@@ -48,7 +46,11 @@ export function socketRelayTarget(request: Request, env: NodeJS.ProcessEnv) {
   if (locale.success) url.searchParams.set('locale', locale.data);
   return {
     url: url.href,
-    headers: { cookie: sessionCookie, origin: web.origin, 'x-dreamwalk-ingress': secret },
+    headers: {
+      cookie: sessionCookie,
+      ...(canonical ? { origin: canonical } : {}),
+      'x-dreamwalk-ingress': secret,
+    },
   };
 }
 
