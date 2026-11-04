@@ -263,10 +263,16 @@ for (const locale of ['ru', 'en', 'uk']) {
         const viewport = element.closest('[data-testid="npc-public-inspection"]')!.parentElement!;
         const action = element.getBoundingClientRect();
         const clip = viewport.getBoundingClientRect();
-        return { above: action.top - clip.top, below: clip.bottom - action.bottom };
+        const focusedStyle = getComputedStyle(element);
+        return {
+          above: action.top - clip.top,
+          below: clip.bottom - action.bottom,
+          focusRing: parseFloat(focusedStyle.outlineWidth) + parseFloat(focusedStyle.outlineOffset),
+        };
       });
-      expect(actionBounds.above).toBeGreaterThanOrEqual(0);
-      expect(actionBounds.below).toBeGreaterThanOrEqual(0);
+      expect(actionBounds.focusRing).toBeGreaterThan(0);
+      expect(actionBounds.above).toBeGreaterThanOrEqual(actionBounds.focusRing);
+      expect(actionBounds.below).toBeGreaterThanOrEqual(actionBounds.focusRing);
       await expect(input).toBeInViewport();
       expect((await bounds(page)).height).toBeLessThanOrEqual(1);
       expect((await bounds(page)).width).toBeLessThanOrEqual(1);
