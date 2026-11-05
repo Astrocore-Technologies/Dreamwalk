@@ -580,7 +580,11 @@ test('builder analyzes effective manual art bindings, aliases old map IDs and ho
       studio,
     );
     exactPlan.rooms[0].spatialGrounding.confidence = 0.2;
-    assert.throws(() => compileStoryPlan(changed.source, exactPlan), /MAP_IMAGE_UNCERTAIN/);
+    const uncertain = compileStoryPlan(changed.source, exactPlan).playable.maps.room;
+    assert.equal(uncertain.spatialMode, 'location_only');
+    assert.equal(uncertain.locationImage.revisionId, studio);
+    assert.deepEqual(uncertain.spawns, []);
+    assert.deepEqual(uncertain.scenePresence.scenes[0].participantIds, []);
   } finally {
     imagesModule.prepareStoryMapImages = original;
   }
@@ -801,6 +805,11 @@ test('result diagnostics preserve bounded categories without leaking source or d
     'STORY_SOURCE_MISMATCH',
     'STORY_CONNECTION_INVALID',
     'STORY_DISCONNECTED',
+    'STORY_UNRESOLVED_PRESENCE_INVALID',
+    'STORY_SCENE_PRESENCE_INVALID',
+    'STORY_SCENE_ENTRY_INVALID',
+    'STORY_SCENE_PRESENCE_EVIDENCE_REQUIRED',
+    'STORY_POSITION_REQUIRED',
     'MAP_IMAGE_UNSAFE_SPAWN',
   ])
     assert.equal(classify(new Error(code), 'apply'), code);
@@ -818,6 +827,14 @@ test('result diagnostics preserve bounded categories without leaking source or d
     'AUTHORING_PROPOSAL_INVALID',
   );
   assert.equal(classify('STORY_SOURCE_MISMATCH', 'apply'), 'AUTHORING_APPLY_FAILED');
+  assert.equal(
+    classify(new Error('STORY_SCENE_PRESENCE_INVALID:private participant details'), 'apply'),
+    'AUTHORING_APPLY_FAILED',
+  );
+  assert.equal(
+    classify({ message: 'STORY_SCENE_PRESENCE_INVALID', source: 'private source' }, 'apply'),
+    'AUTHORING_APPLY_FAILED',
+  );
 });
 
 test('schematic illustration recovery uses only unique immutable current-map pins, without mutating state', async () => {

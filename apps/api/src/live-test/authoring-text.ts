@@ -1,3 +1,4 @@
+import { KnownAuthoringSettlement } from './known-authoring-settlement';
 import { authoringResultFailureCode } from './authoring-result-failure';
 import { quoteFunding, heldFunding } from '../generation/currency-funding';
 import { readStoryImages } from '../ai/story-vision';
@@ -602,6 +603,7 @@ export class AuthoringTextEngine {
         "UPDATE live_authoring_text_jobs SET cancel_requested=true,status=CASE WHEN status='dispatched' THEN status ELSE 'cancelled' END,actual_micros=CASE WHEN status='queued' THEN 0 ELSE actual_micros END,error_code='AUTHORING_CANCELLED',updated_at=now() WHERE id=$1",
         [id],
       );
+      await new KnownAuthoringSettlement(this.db, this.live).settleAutomatic(c, ownerId, id);
     });
     return this.get(ownerId, id);
   }
@@ -679,6 +681,9 @@ export class AuthoringTextEngine {
     }
     if (!claimed) {
       await this.resumeGenerated(ownerId, id, validateFence, commit);
+      await this.db.tx((c) =>
+        new KnownAuthoringSettlement(this.db, this.live).settleAutomatic(c, ownerId, id),
+      );
       return this.get(ownerId, id);
     }
     const currentClaim = claimed;
@@ -808,6 +813,8 @@ export class AuthoringTextEngine {
           erased ? 'DATA_ERASED' : (errorCode ?? (late ? 'AUTHORING_LATE_RESULT' : null)),
         ],
       );
+      if (status !== 'generated')
+        await new KnownAuthoringSettlement(this.db, this.live).settleAutomatic(c, row.actor_id, id);
       return status === 'generated';
     });
     if (!generated) return;
@@ -898,7 +905,10 @@ export class AuthoringTextEngine {
       const errorCode = authoringResultFailureCode(error, resultPhase);
       await this.db.tx(async (c) => {
         await this.live.lockAuthorization(c, current.session_id);
-        await c.query('SELECT id FROM live_authoring_text_jobs WHERE id=$1 FOR UPDATE', [id]);
+        const locked = (
+          await c.query('SELECT status FROM live_authoring_text_jobs WHERE id=$1 FOR UPDATE', [id])
+        ).rows[0];
+        if (locked?.status !== 'generated') return;
         await settleReservationSparks(c, current.reservation_id, {
           outcome: 'failure_policy_pending',
           receiptId: `authoring:${id}`,
@@ -907,6 +917,7 @@ export class AuthoringTextEngine {
           "UPDATE live_authoring_text_jobs SET status='stale',proposal=NULL,result=NULL,error_code=$2,updated_at=now() WHERE id=$1 AND status='generated'",
           [id, errorCode],
         );
+        await new KnownAuthoringSettlement(this.db, this.live).settleAutomatic(c, ownerId, id);
       });
     }
   }
