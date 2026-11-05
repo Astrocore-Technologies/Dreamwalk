@@ -103,7 +103,11 @@ interface Port {
     campaignId: string,
     turnId: string,
     proposal: StoryTurnProposal,
-  ): Promise<(c: PoolClient, state: GameState) => Promise<GameState>>;
+  ): Promise<
+    ((c: PoolClient, state: GameState) => Promise<GameState>) & {
+      preparePlacement: (state: GameState) => GameState;
+    }
+  >;
   dispatch(id: string): void;
   failWorldRequest(campaignId: string, requestId: string, code: string): Promise<void>;
   deferredSpeechContext(state: GameState, request: NpcDecisionRequest): DecisionContext;
@@ -2046,51 +2050,58 @@ export class StoryTurnRuntime {
       (job.proposal as { contextHash?: string })?.contextHash === job.contextHash
         ? await this.port.rebaseTravel?.(id, r.id, live.state, originalInput, job.proposal)
         : null;
-    const applied: ReturnType<typeof applyStoryTurnProposal> = duplicateReply
-      ? {
-          state: live.state,
-          events: [],
-          entries: [],
-          actions: [],
-          error: 'INVALID_ACTION' as const,
-        }
-      : applyStoryTurnProposal(
-          live.state,
-          r.actor_id,
-          rebasedTravel?.input ?? originalInput,
-          r.id,
-          rebasedTravel?.proposal ?? job.proposal,
-          {
-            speechAlreadyRecorded: deferredDirector && r.context.speechAlreadyRecorded === true,
-            ...(deferredDirector && r.input.channel === 'whisper' && !r.input.targetNpcId
-              ? {
-                  sourceSpeechSegments: parseStorySegments(r.input.text).segments.filter(
-                    (segment) => segment.kind === 'speech',
-                  ),
-                }
-              : {}),
-          },
-        );
     let travelFailure: string | undefined;
-    let travelArt: ((c: PoolClient, state: GameState) => Promise<GameState>) | undefined;
+    let travelArt:
+      | (((c: PoolClient, state: GameState) => Promise<GameState>) & {
+          preparePlacement: (state: GameState) => GameState;
+        })
+      | undefined;
+    if (!duplicateReply && job.context.travelSceneSpec) {
+      try {
+        if (!this.port.admitTravel) throw Error('LOCATION_MEDIA_UNAVAILABLE');
+        travelArt = await this.port.admitTravel(id, r.id, job.proposal as StoryTurnProposal);
+      } catch (error) {
+        travelFailure =
+          (error as { getResponse?: () => { code?: string } }).getResponse?.().code ??
+          'LOCATION_GENERATION_FAILED';
+      }
+    }
+    const applied: ReturnType<typeof applyStoryTurnProposal> =
+      duplicateReply || !!travelFailure
+        ? {
+            state: live.state,
+            events: [],
+            entries: [],
+            actions: [],
+            error: 'INVALID_ACTION' as const,
+          }
+        : applyStoryTurnProposal(
+            live.state,
+            r.actor_id,
+            rebasedTravel?.input ?? originalInput,
+            r.id,
+            rebasedTravel?.proposal ?? job.proposal,
+            {
+              speechAlreadyRecorded: deferredDirector && r.context.speechAlreadyRecorded === true,
+              ...(travelArt ? { prepareTravelPlacement: travelArt.preparePlacement } : {}),
+              ...(deferredDirector && r.input.channel === 'whisper' && !r.input.targetNpcId
+                ? {
+                    sourceSpeechSegments: parseStorySegments(r.input.text).segments.filter(
+                      (segment) => segment.kind === 'speech',
+                    ),
+                  }
+                : {}),
+            },
+          );
     if (
       !applied.error &&
       !applied.clarification &&
-      applied.actions.some((p) => p.action.kind === 'travel' && p.action.targetId === 'new_scene')
-    ) {
-      // Real arrivals need the exact already-consented image, not a placeholder map.
-      if (!this.port.admitTravel) {
-        applied.error = 'INVALID_ACTION';
-      } else
-        try {
-          travelArt = await this.port.admitTravel(id, r.id, job.proposal as StoryTurnProposal);
-        } catch (error) {
-          travelFailure =
-            (error as { getResponse?: () => { code?: string } }).getResponse?.().code ??
-            'LOCATION_GENERATION_FAILED';
-          applied.error = 'INVALID_ACTION';
-        }
-    }
+      applied.actions.some(
+        (p) => p.action.kind === 'travel' && p.action.targetId === 'new_scene',
+      ) &&
+      !travelArt
+    )
+      applied.error = 'INVALID_ACTION';
     const requiresConfirmation =
       !deferredDirector &&
       !applied.error &&

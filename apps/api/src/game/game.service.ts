@@ -1,4 +1,5 @@
 import { requiresMapRecovery } from './map-readiness';
+import type { AuthoringTextEngine } from '../live-test/authoring-text';
 import { listCampaigns } from './campaign-list';
 import { restorePublicNpcPresentation } from './public-npc-profile';
 import { LocationTravelGeneration } from './location-travel-generation';
@@ -278,6 +279,7 @@ export class GameService implements OnModuleDestroy {
     @Inject(NpcAiService) private ai: NpcAiService,
     @Inject(AssetReuseService) private art: AssetReuseService,
     @Optional() @Inject(ImageGenerationService) images?: ImageGenerationService,
+    @Optional() @Inject('TRAVEL_MAP_ENGINE') travelMapEngine?: AuthoringTextEngine,
   ) {
     this.corrections = new NarrativeCorrections(this.db, {
       access: (req, id) => this.access(req, id),
@@ -295,7 +297,13 @@ export class GameService implements OnModuleDestroy {
           preflight,
         ),
     });
-    if (images) this.travelGeneration = new LocationTravelGeneration(this.db, images, this.art);
+    if (images)
+      this.travelGeneration = new LocationTravelGeneration(
+        this.db,
+        images,
+        this.art,
+        travelMapEngine,
+      );
     this.worldGeneration = new WorldGenerationBatch(this.db, this.ai, this.travelGeneration);
     this.story = new StoryTurnRuntime(this.db, this.ai, {
       serial: <T>(id: string, work: () => Promise<T>) => this.serial(id, work),

@@ -166,6 +166,8 @@ export interface StoryQuote {
   /** Current-map vision is part of this same quote, never an extra generation. */
   runtimeMapImages?: number;
   generatedLocationImages?: number;
+  generatedLocationGroundingStages?: number;
+  travelGroundingPolicyHash?: string;
   estimateRiskConsentRequired?: boolean;
   chargeUnit?: 'sparks' | 'credits';
   funding?: CurrencyFunding;

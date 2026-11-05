@@ -1,3 +1,4 @@
+import { groundedArrivalArea } from './grounded-arrival';
 import { sharesScene, enterScene, publicSceneMap, scenePresenceErrors } from './scene-presence';
 export { sharesScene } from './scene-presence';
 import { hasPosition } from '@dreamwalk/contracts';
@@ -459,7 +460,12 @@ function actionInternal(
       )
     )
       return fail(state, 'WRONG_MODE');
-    if (!walkable(state, exit.destinationMapId, exit.destination, id, true))
+    const admission = groundedArrivalArea(state, exit.destinationMapId);
+    if (!admission.valid) return fail(state, 'TARGET_UNAVAILABLE');
+    if (
+      !admission.allows(a, exit.destination) ||
+      !walkable(state, exit.destinationMapId, exit.destination, id, true)
+    )
       return fail(state, 'PATH_BLOCKED');
     const s = copy(state);
     for (const [npcId, brain] of Object.entries(s.npcBrains ?? {})) {

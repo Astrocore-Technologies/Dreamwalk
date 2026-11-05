@@ -35,7 +35,14 @@ const q = () => ({
   verifiedUpperMicros: null,
 });
 function subject(db = {}, images = {}, art = {}) {
-  return new LocationTravelGeneration(db, { attachTravelValidator() {}, ...images }, art);
+  const travel = new LocationTravelGeneration(db, { attachTravelValidator() {}, ...images }, art);
+  travel.grounding = {
+    preparePlacement: async () => (state) => state,
+    prepare: async () => {},
+    entry: async () => ({ envelope: {}, quote: {} }),
+    apply: async (_c, _owner, _prep, state) => structuredClone(state),
+  };
+  return travel;
 }
 test('preparation builds exact private future image, no campaign mutation or dispatch, replay reuses quote', async () => {
   const draft = g.createCompleteObservatoryDraft();
@@ -177,7 +184,14 @@ test('accept only stores exact image consent and does not bypass native serial a
       return { rows: [] };
     },
   };
-  const entries = [{ preparationId: row.id, imageQuoteId: quote.id, quote: {} }];
+  const entries = [
+    {
+      preparationId: row.id,
+      imageQuoteId: quote.id,
+      quote: {},
+      grounding: { envelope: {}, quote: {} },
+    },
+  ];
   await assert.rejects(
     () => travel.accept(client, 'owner', 'batch', entries, false),
     errorCode('IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED'),
@@ -267,7 +281,10 @@ test('arrival cannot proceed without admitted exact image, and pins art in the c
     },
   );
   travel.validate = async () => ({});
-  const p = { narrative: { newScene: { name: 'Cafe', template: 'room' }, newNpc: null } };
+  const p = {
+    narrative: { newScene: { name: 'Cafe', template: 'room' }, newNpc: null },
+    steps: [{ action: { kind: 'travel', targetId: 'new_scene' } }],
+  };
   row.image_status = 'unknown';
   await assert.rejects(
     () => travel.admitted('campaign', id, p),
@@ -490,6 +507,7 @@ test('marked travel admission preserves exact policy entry and rejects a changed
       preparationId: row.id,
       imageQuoteId: quote.id,
       automaticKnownCostPolicyHash: 'a'.repeat(64),
+      grounding: { envelope: {}, quote: {} },
       quote: { automaticKnownCostPolicyHash: 'a'.repeat(64) },
     },
   ];

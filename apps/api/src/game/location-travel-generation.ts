@@ -1,3 +1,5 @@
+import { TravelMapGrounding, type TravelGroundingEntry } from './travel-map-grounding';
+import type { AuthoringTextEngine } from '../live-test/authoring-text';
 import { digest } from '../ai/context';
 import type { PoolClient, QueryResultRow } from 'pg';
 import {
@@ -30,14 +32,21 @@ export type TravelMediaEntry = {
   imageQuoteId: string;
   quote: StoryQuote;
   automaticKnownCostPolicyHash?: string;
+  grounding: TravelGroundingEntry;
 };
 /** A future scene uses an exact image request fixed before consent, never a blanket future allowance. */
 export class LocationTravelGeneration {
+  private grounding?: TravelMapGrounding;
   constructor(
     private db: Db,
     private images: ImageGenerationEngine,
     private art: AssetReuseService,
+    groundingEngine?: AuthoringTextEngine,
   ) {
+    if (groundingEngine)
+      this.grounding = new TravelMapGrounding(db, art, groundingEngine, (c, user, row) =>
+        this.validate(c, user, row),
+      );
     images.attachTravelValidator((c, actor, input) => this.authorizeImage(c, actor, input));
   }
   private async source(c: Pick<PoolClient, 'query'>, userId: string, campaignId: string) {
@@ -185,6 +194,8 @@ export class LocationTravelGeneration {
         await this.failUnspent(campaignId, request.id, 'LOCATION_TRAVEL_SEPARATE_POST');
         continue;
       }
+      if (!this.grounding)
+        fail(409, 'LOCATION_GROUNDING_UNAVAILABLE', 'LOCATION_GROUNDING_UNAVAILABLE');
       try {
         const destinationKey = normalizeLocationName(travels[0].destinationName);
         if (destinations.has(destinationKey) || actors.has(request.actor_id)) {
@@ -322,6 +333,7 @@ export class LocationTravelGeneration {
             [row.id, JSON.stringify(nativeQuote)],
           );
         }
+        await this.grounding!.prepare(userId, row.id);
         // Exact scene name/template and pre-priced media input must survive the model unchanged.
         await this.db.query(
           `UPDATE game_npc_decision_requests SET context=context||jsonb_build_object('travelSceneSpec',$2::jsonb)||CASE WHEN context->'mockProposal'->'narrative'->'newScene' IS NOT NULL AND context->'mockProposal'->'narrative'->'newScene'<>'null'::jsonb THEN jsonb_build_object('mockProposal',jsonb_set(context->'mockProposal','{narrative,newScene}',$3::jsonb)) ELSE '{}'::jsonb END
@@ -376,6 +388,7 @@ export class LocationTravelGeneration {
         ...(q.automaticKnownCostSettlement
           ? { automaticKnownCostPolicyHash: q.automaticKnownCostSettlement.fingerprint }
           : {}),
+        grounding: await this.grounding!.entry(c, row.id),
         quote: {
           id: q.id,
           ...(q.automaticKnownCostSettlement
@@ -428,6 +441,9 @@ export class LocationTravelGeneration {
         entry.quote.automaticKnownCostPolicyHash !== entry.automaticKnownCostPolicyHash
       )
         fail(409, 'GENERATION_QUOTE_STALE', 'GENERATION_QUOTE_STALE');
+      const grounding = await this.grounding!.entry(c, row.id);
+      if (digest(grounding) !== digest(entry.grounding ?? null))
+        fail(409, 'LOCATION_GROUNDING_QUOTE_STALE', 'LOCATION_GROUNDING_QUOTE_STALE');
       // Like native text entries, each exact child is admitted later in order.
       // The user accepted these immutable native quotes, not arbitrary future image requests.
       await c.query(
@@ -549,19 +565,36 @@ export class LocationTravelGeneration {
       );
     }
   }
+  async workGrounding(campaignId: string, requestId: string) {
+    await this.grounding?.work(campaignId, requestId);
+  }
   async progress(c: Pick<PoolClient, 'query'>, campaignId: string) {
     const rows = (
       await c.query(
-        `SELECT p.id,p.batch_id,j.status,h.status AS hold_status FROM game_location_travel_preparations p
+        `SELECT p.id,p.batch_id,j.status,h.status AS hold_status,g.status AS grounding_status,(g.status='unknown' AND g.job_id IS NULL AND g.error_code='STORY_MAP_COUNT_UNAVAILABLE' AND gc.status='succeeded') AS grounding_recoverable,gj.status AS grounding_job_status,gh.status AS grounding_hold_status FROM game_location_travel_preparations p
       LEFT JOIN image_generation_jobs j ON j.id=p.image_job_id LEFT JOIN spark_holds h ON h.id=j.spark_quote_id
+      LEFT JOIN game_travel_map_groundings g ON g.preparation_id=p.id LEFT JOIN runtime_map_token_counts gc ON gc.id=g.count_id
+      LEFT JOIN live_authoring_text_jobs gj ON gj.id=g.job_id LEFT JOIN spark_holds gh ON gh.id=gj.spark_quote_id
       WHERE p.campaign_id=$1 AND (p.state='accepted' OR j.status IN ('queued','dispatched','generated','unknown') OR h.status='pending')`,
         [campaignId],
       )
     ).rows;
     return {
       rows,
-      active: rows.some((r) => ['queued', 'dispatched', 'generated'].includes(r.status)),
-      unknown: rows.some((r) => r.status === 'unknown' || r.hold_status === 'pending'),
+      active: rows.some(
+        (r) =>
+          ['queued', 'dispatched', 'generated'].includes(r.status) ||
+          (r.status === 'admitted' &&
+            (r.grounding_recoverable ||
+              ['prepared', 'bound', 'queued'].includes(r.grounding_status))),
+      ),
+      unknown: rows.some(
+        (r) =>
+          r.status === 'unknown' ||
+          r.hold_status === 'pending' ||
+          (r.grounding_status === 'unknown' && !r.grounding_recoverable) ||
+          r.grounding_hold_status === 'pending',
+      ),
     };
   }
   async canUseFrozen(campaignId: string, turnId: string) {
@@ -646,10 +679,20 @@ export class LocationTravelGeneration {
       digest(proposal.narrative.newScene) !== digest(row.scene) ||
       proposal.narrative.newNpc ||
       proposal.narrative.newItem ||
-      proposal.steps?.some((step) => step.narrativeImpact != null)
+      proposal.steps?.some(
+        (step) =>
+          step.narrativeImpact != null ||
+          (step.action && (step.action.kind !== 'travel' || step.action.targetId !== 'new_scene')),
+      ) ||
+      proposal.steps?.filter(
+        (step) => step.action?.kind === 'travel' && step.action.targetId === 'new_scene',
+      ).length !== 1
     )
       fail(409, 'LOCATION_PLAN_CHANGED', 'LOCATION_PLAN_CHANGED');
-    return async (c: PoolClient, state: GameState) => {
+    if (!this.grounding)
+      fail(409, 'LOCATION_GROUNDING_UNAVAILABLE', 'LOCATION_GROUNDING_UNAVAILABLE');
+    const preparePlacement = await this.grounding!.preparePlacement(row.owner_id, row);
+    const commit = async (c: PoolClient, state: GameState) => {
       await this.validate(c, row.owner_id, row);
       const binding = await this.art.pinCampaignArtTx(
         c,
@@ -659,7 +702,9 @@ export class LocationTravelGeneration {
         `map:scene-${turnId}:background`,
         row.admitted_revision_id,
       );
-      const next = structuredClone(state);
+      if (!this.grounding)
+        fail(409, 'LOCATION_GROUNDING_UNAVAILABLE', 'LOCATION_GROUNDING_UNAVAILABLE');
+      const next = await this.grounding!.apply(c, row.owner_id, row, state);
       next.artBindings = [
         ...(next.artBindings ?? []).filter((b) => b.slot !== binding.slot),
         binding,
@@ -671,5 +716,6 @@ export class LocationTravelGeneration {
       );
       return next;
     };
+    return Object.assign(commit, { preparePlacement });
   }
 }

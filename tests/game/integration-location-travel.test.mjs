@@ -8,6 +8,11 @@ import { db, startApi, stopApi, client } from './support-runtime.mjs';
 import { requestEstimateOwnerProfile } from '../images/owner-config-fixture.mjs';
 const require = createRequire(import.meta.url);
 const { Db } = require('../../apps/api/dist/db.js');
+const { AuthoringTextEngine } = require('../../apps/api/dist/live-test/authoring-text.js');
+const {
+  BoundedAuthoringTextProvider,
+} = require('../../apps/api/dist/live-test/authoring-provider.js');
+const { travelMapPlanDefinition } = require('../../apps/api/dist/game/travel-map-plan.js');
 const { Auth } = require('../../apps/api/dist/auth.js');
 const { GameService } = require('../../apps/api/dist/game/game.service.js');
 const { PlayableService } = require('../../apps/api/dist/game/playable.service.js');
@@ -61,6 +66,17 @@ await test(
       );
       const profile = requestEstimateOwnerProfile();
       profile.image.size = '1024x1024';
+      profile.text.contextBudgetTokens = 100000;
+      profile.text.storyPlanMaxOutputTokens = 4096;
+      profile.text.storyVision = {
+        model: profile.text.model,
+        counting: 'operational_exact',
+        maxImages: 1,
+        detail: 'high',
+        billing: 'text_input_rate',
+        maxPricedInputTokens: 100000,
+        pricing: profile.text.pricing,
+      };
       const config = readGenerationConfig({
         GENERATION_MODE: 'release',
         GENERATION_CONFIG_JSON: JSON.stringify({ ...profile, aggregateCapMicros: 10000000 }),
@@ -181,6 +197,73 @@ await test(
         authority.authorizeImage(c, user, id, input),
       );
       images.setReleaseResultAuthorizer((...args) => authority.authorizeReleaseResult(...args));
+      let groundingCalls = 0,
+        countCalls = 0;
+      const groundProvider = new BoundedAuthoringTextProvider(
+        travelMapPlanDefinition,
+        'synthetic-key',
+        async (url, init) => {
+          if (String(url).endsWith('/input_tokens')) {
+            countCalls++;
+            return new Response(
+              JSON.stringify({ object: 'response.input_tokens', input_tokens: 1000 }),
+            );
+          }
+          groundingCalls++;
+          const body = JSON.parse(init.body),
+            context = JSON.parse(body.input[0].content[0].text),
+            image = context.mapImages[0];
+          assert.equal(
+            body.input[0].content.filter((part) => part.type === 'input_image').length,
+            1,
+          );
+          const plan = {
+            version: 1,
+            spatialGrounding: {
+              version: 1,
+              imageRevisionId: image.revisionId,
+              imageSha256: image.sha256,
+              confidence: 0.95,
+              rows: Array.from({ length: 24 }, (_, y) =>
+                Array.from({ length: 24 }, (_, x) =>
+                  x >= 2 && x <= 21 && y >= 2 && y <= 21 ? '.' : '?',
+                ).join(''),
+              ),
+              landmarks: [],
+            },
+            spawns: [
+              { x: 4, y: 4 },
+              { x: 5, y: 4 },
+              { x: 4, y: 5 },
+              { x: 5, y: 5 },
+            ],
+            returnPoint: { x: 3, y: 3 },
+            arrivals: context.arrivals.map((arrival, index) => ({
+              id: arrival.id,
+              x: 4 + (index % 5) * 3,
+              y: 7 + Math.floor(index / 5) * 3,
+            })),
+          };
+          return new Response(
+            JSON.stringify({
+              id: `synthetic-ground-${groundingCalls}`,
+              status: 'completed',
+              service_tier: 'default',
+              usage: { input_tokens: 1000, output_tokens: 100 },
+              output: [
+                { type: 'message', content: [{ type: 'output_text', text: JSON.stringify(plan) }] },
+              ],
+            }),
+          );
+        },
+        authority.textProfile(),
+      );
+      const grounding = new AuthoringTextEngine(
+        database,
+        authority,
+        groundProvider,
+        travelMapPlanDefinition,
+      );
       function instantiate() {
         game = new GameService(
           database,
@@ -189,6 +272,7 @@ await test(
           ai,
           art,
           images,
+          grounding,
         );
         clearInterval(game.timer);
         game.dispatchAi = () => {};
@@ -256,12 +340,20 @@ await test(
           q.quote.automaticKnownCostPolicyHash
             ? { automaticKnownCostPolicyHash: q.quote.automaticKnownCostPolicyHash }
             : {}),
+          travelGroundingPolicyHash: q.quote.travelGroundingPolicyHash,
         });
       }
       async function drain(id, live, allowUnpaidContinuation = false) {
         for (let i = 0; i < 60; i++) {
           await game.processDecisionRequests(id, live);
           await images.workOnce();
+          const stages = (
+            await db.query(
+              "SELECT id FROM game_location_travel_preparations WHERE campaign_id=$1 AND state='accepted'",
+              [id],
+            )
+          ).rows;
+          for (const stage of stages) await game.travelGeneration.workGrounding(id, stage.id);
           const jobs = (
             await db.query(
               "SELECT id FROM npc_ai_jobs WHERE campaign_id=$1 AND status IN ('queued','reserved') ORDER BY created_at,id",
@@ -330,7 +422,7 @@ await test(
         },
       );
       await t.test(
-        'quote is inert; one consent generates, pins and arrives once even after runtime restart',
+        'one consent survives count-commit and enqueue lost replies, then pins actual positions once',
         async () => {
           const id = ids[0];
           let live = await setup(id);
@@ -370,7 +462,11 @@ await test(
             ).rows[0].n,
             0,
           );
+          const groundingBefore = [countCalls, groundingCalls];
           const q = await quote(id);
+          assert.equal(q.quote.generatedLocationGroundingStages, 1);
+          assert.ok(q.quote.travelGroundingPolicyHash);
+          assert.deepEqual([countCalls, groundingCalls], groundingBefore);
           assert.equal(q.quote.generatedLocationImages, 1);
           assert.equal(q.quote.estimateRiskConsentRequired, true);
           assert.deepEqual([textCalls, imageCalls], calls);
@@ -393,6 +489,7 @@ await test(
                 quoteId: q.quote.id,
                 consent: true,
                 estimateRiskConsent: true,
+                travelGroundingPolicyHash: q.quote.travelGroundingPolicyHash,
                 ...(automaticKnownCostPolicyHash ? { automaticKnownCostPolicyHash } : {}),
               }),
               code('IMAGE_SETTLEMENT_POLICY_CONSENT_REQUIRED'),
@@ -402,6 +499,7 @@ await test(
             game.worldGenerationConsent(req, id, {
               operationId: q.operationId,
               quoteId: q.quote.id,
+              travelGroundingPolicyHash: q.quote.travelGroundingPolicyHash,
               consent: true,
               automaticKnownCostPolicyHash: q.quote.automaticKnownCostPolicyHash,
             }),
@@ -444,7 +542,53 @@ await test(
           instantiate();
           await game.snapshot(req, id);
           live = game.live.get(id);
+          // A committed count with two lost SQL responses must reconcile on restart,
+          // without treating the known receipt as unknown/free or calling count again.
+          const databaseQuery = database.query.bind(database);
+          let lostCountReply = false,
+            lostCountReadback = false;
+          database.query = async (sql, values) => {
+            if (
+              !lostCountReply &&
+              sql.includes("UPDATE runtime_map_token_counts SET status='succeeded'")
+            ) {
+              await databaseQuery(sql, values);
+              lostCountReply = true;
+              throw Error('SQL_RESPONSE_LOST');
+            }
+            if (
+              lostCountReply &&
+              !lostCountReadback &&
+              sql.includes('SELECT c.* FROM runtime_map_token_counts')
+            ) {
+              lostCountReadback = true;
+              throw Error('SQL_READBACK_UNAVAILABLE');
+            }
+            return databaseQuery(sql, values);
+          };
+          // Crash after native enqueue commits but before its caller receives the reply.
+          const enqueue = grounding.enqueueAcceptedTravelGrounding.bind(grounding);
+          let lostEnqueueReply = false;
+          grounding.enqueueAcceptedTravelGrounding = async (...args) => {
+            const native = await enqueue(...args);
+            if (!lostEnqueueReply) {
+              lostEnqueueReply = true;
+              // Expire only the exact native quote after its job and hold committed.
+              // Recovery must use that job, never try a fresh reserve or quote.
+              await db.query(
+                "UPDATE live_authoring_text_quotes SET expires_at=now()-interval '61 seconds' WHERE id=$1",
+                [args[1].quoteId],
+              );
+              throw Error('SQL_RESPONSE_LOST');
+            }
+            return native;
+          };
           await drain(id, live);
+          grounding.enqueueAcceptedTravelGrounding = enqueue;
+          database.query = databaseQuery;
+          assert.equal(lostCountReply, true);
+          assert.equal(lostCountReadback, true);
+          assert.equal(lostEnqueueReply, true);
           assert.equal(live.state.entities[actor].mapId, `scene-${turn.id}`);
           assert.ok(
             live.state.artBindings.some((b) => b.slot === `map:scene-${turn.id}:background`),
@@ -453,6 +597,26 @@ await test(
             await db.query('SELECT * FROM game_location_travel_preparations WHERE id=$1', [turn.id])
           ).rows[0];
           assert.equal(prep.state, 'committed');
+          const grounded = (
+            await db.query(
+              'SELECT g.*, j.status native_status, c.status count_status FROM game_travel_map_groundings g JOIN live_authoring_text_jobs j ON j.id=g.job_id JOIN runtime_map_token_counts c ON c.id=g.count_id WHERE g.preparation_id=$1',
+              [turn.id],
+            )
+          ).rows[0];
+          assert.equal(grounded.status, 'ready');
+          assert.equal(grounded.count_status, 'succeeded');
+          assert.equal(grounded.native_status, 'committed');
+          assert.deepEqual(
+            [countCalls, groundingCalls],
+            groundingBefore.map((n) => n + 1),
+          );
+          const arrived = live.state.entities[actor];
+          assert.deepEqual({ x: arrived.x, y: arrived.y }, { x: 4, y: 7 });
+          const actualMap = live.state.maps[arrived.mapId];
+          assert.equal(actualMap.spatialGrounding.imageRevisionId, grounded.image_revision_id);
+          assert.equal(actualMap.spatialGrounding.imageSha256, grounded.image_sha256);
+          assert.equal(actualMap.spatialGrounding.rows[0], '?'.repeat(24));
+          assert.deepEqual(actualMap.spawns[0], { x: 4, y: 4 });
           const image = (
             await db.query('SELECT status FROM image_generation_jobs WHERE id=$1', [
               prep.image_job_id,
@@ -462,6 +626,10 @@ await test(
           assert.equal(imageCalls, calls[1] + 1);
           await drain(id, live);
           assert.equal(imageCalls, calls[1] + 1);
+          assert.deepEqual(
+            [countCalls, groundingCalls],
+            groundingBefore.map((n) => n + 1),
+          );
           const receipt = (await game.storyFeed(req, id)).turns.find((t) => t.id === turn.id);
           assert.equal(receipt.travel.status, 'committed');
           assert.equal(receipt.travel.sparkStatus, 'settled');

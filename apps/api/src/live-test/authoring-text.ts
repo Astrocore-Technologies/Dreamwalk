@@ -1,3 +1,7 @@
+import {
+  verifyAcceptedTravelGrounding,
+  type AcceptedTravelGroundingProof,
+} from '../generation/travel-grounding-consent';
 import { KnownAuthoringSettlement } from './known-authoring-settlement';
 import { authoringResultFailureCode } from './authoring-result-failure';
 import { quoteFunding, heldFunding } from '../generation/currency-funding';
@@ -212,6 +216,19 @@ export class AuthoringTextEngine {
       return this.live.assertActivePolicy(c, authorizationId);
     return null;
   }
+  async quoteAcceptedTravelGrounding(
+    ownerId: string,
+    input: Omit<AuthoringTextBinding, 'sessionId'> & {
+      sessionId?: string;
+      operationId: string;
+      context: unknown;
+    },
+    proof: { preparationId: string; batchId: string },
+    validateFence: AuthoringTextFence,
+  ) {
+    if (input.projectId !== proof.preparationId) throw Error('TRAVEL_GROUNDING_CONSENT_STALE');
+    return this.quote(ownerId, input, validateFence, { ...proof, contextHash: input.readsetHash });
+  }
   async quote(
     ownerId: string,
     input: Omit<AuthoringTextBinding, 'sessionId'> & {
@@ -220,6 +237,7 @@ export class AuthoringTextEngine {
       context: unknown;
     },
     validateFence: AuthoringTextFence,
+    acceptedCount?: { preparationId: string; batchId: string; contextHash: string },
   ) {
     await this.live.requireOwner(ownerId);
     z.uuid().parse(input.operationId);
@@ -256,26 +274,33 @@ export class AuthoringTextEngine {
           snapshot =
             this.provider.prepareTextRequest?.(context, prior.request_snapshot)?.snapshot ?? null;
         } else {
-          await resolveStoryMapCount(this.db, ownerId, error, async (c) => {
-            await this.lockSource(c, ownerId);
-            const sessionId =
-              this.live.mode === 'release'
-                ? await this.live.resolveAuthorizationId(c, ownerId, candidateBinding.sessionId)
-                : candidateBinding.sessionId;
-            const binding = bindingSchema.parse({ ...candidateBinding, sessionId });
-            if (
-              !(
-                await c.query('SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE', [
-                  ownerId,
-                ])
-              ).rowCount
-            )
-              fail(403, 'FORBIDDEN', 'FORBIDDEN');
-            await assertBoundedTextSource(c, binding.sessionId, binding.projectId);
-            await this.live.authorizeText(c, ownerId, binding.sessionId);
-            await this.activePolicy(c, binding.sessionId);
-            await validateFence(c, binding);
-          });
+          await resolveStoryMapCount(
+            this.db,
+            ownerId,
+            error,
+            async (c) => {
+              await this.lockSource(c, ownerId);
+              const sessionId =
+                this.live.mode === 'release'
+                  ? await this.live.resolveAuthorizationId(c, ownerId, candidateBinding.sessionId)
+                  : candidateBinding.sessionId;
+              const binding = bindingSchema.parse({ ...candidateBinding, sessionId });
+              if (
+                !(
+                  await c.query(
+                    'SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE',
+                    [ownerId],
+                  )
+                ).rowCount
+              )
+                fail(403, 'FORBIDDEN', 'FORBIDDEN');
+              await assertBoundedTextSource(c, binding.sessionId, binding.projectId);
+              await this.live.authorizeText(c, ownerId, binding.sessionId);
+              await this.activePolicy(c, binding.sessionId);
+              await validateFence(c, binding);
+            },
+            acceptedCount,
+          );
           snapshot = this.provider.prepareTextRequest?.(context)?.snapshot ?? null;
         }
       } else {
@@ -373,6 +398,21 @@ export class AuthoringTextEngine {
       return this.quoteDto(c, row);
     });
   }
+  /** Internal continuation of an already accepted finite future-raster tranche. */
+  async enqueueAcceptedTravelGrounding(
+    ownerId: string,
+    input: { quoteId: string; operationId: string },
+    proof: AcceptedTravelGroundingProof,
+    validateFence: AuthoringTextFence,
+  ) {
+    if (input.quoteId !== proof.nativeQuoteId) throw Error('TRAVEL_GROUNDING_CONSENT_STALE');
+    return this.enqueue(
+      ownerId,
+      { ...input, consent: true, automaticKnownCostPolicy: 'known-cost-v1' },
+      validateFence,
+      proof,
+    );
+  }
   async enqueue(
     ownerId: string,
     input: {
@@ -382,6 +422,7 @@ export class AuthoringTextEngine {
       automaticKnownCostPolicy?: 'known-cost-v1';
     },
     validateFence: AuthoringTextFence,
+    acceptedTravel?: AcceptedTravelGroundingProof,
   ) {
     await this.live.requireOwner(ownerId);
     const value = z
@@ -460,6 +501,16 @@ export class AuthoringTextEngine {
       if (!this.policyMatches(locked, activePolicy))
         fail(409, 'GENERATION_POLICY_CHANGED', 'GENERATION_POLICY_CHANGED');
       this.verifySnapshot(locked.context, locked.request_snapshot, Number(locked.upper_micros));
+      if (acceptedTravel) {
+        if (!this.provider.profile) throw Error('MAP_VISION_POLICY_REQUIRED');
+        await verifyAcceptedTravelGrounding(
+          c,
+          ownerId,
+          acceptedTravel,
+          this.provider.profile,
+          this.provider.version,
+        );
+      }
       const id = randomUUID();
       const reservation = await reserveGenerationSpend(
         c,
@@ -508,6 +559,13 @@ export class AuthoringTextEngine {
         id,
         locked.spark_quote_id ?? null,
       ]);
+      if (acceptedTravel) {
+        const linked = await c.query(
+          "UPDATE game_travel_map_groundings SET job_id=$2,status='queued',updated_at=now() WHERE preparation_id=$1 AND native_quote_id=$3 AND project_id=$4 AND context_hash=$5 AND status='bound' AND job_id IS NULL",
+          [acceptedTravel.preparationId, id, locked.id, binding.projectId, locked.context_hash],
+        );
+        if (linked.rowCount !== 1) throw Error('TRAVEL_GROUNDING_CONSENT_STALE');
+      }
       return this.dto({
         ...job,
         spark_quote_id: locked.spark_quote_id,
