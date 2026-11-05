@@ -86,6 +86,7 @@ try {
     'integration-automatic-settlement.test.mjs',
     'integration-verified-access-recovery.test.mjs',
     'integration-location-only.test.mjs',
+    'integration-text-plan-positions.test.mjs',
     // Travel deliberately retains an unknown native image liability under a synthetic tariff.
     'integration-location-travel.test.mjs',
     'integration-private-story-routing.test.mjs',

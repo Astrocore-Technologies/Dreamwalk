@@ -84,8 +84,10 @@ export interface AuthoringTextDefinition {
   purpose?: 'story_plan';
   version: string;
   schema: Record<string, unknown>;
+  /** Deterministic source-aware schema, shared by quote and exact dispatch body. */
+  schemaForContext?(context: unknown): Record<string, unknown>;
   instructions: string;
-  validateProposal(value: unknown): unknown;
+  validateProposal(value: unknown, context?: unknown): unknown;
 }
 /** Exact key-free Responses body shared by quoting and transport. */
 export function buildAuthoringTextRequestBody(
@@ -112,7 +114,7 @@ export function buildAuthoringTextRequestBody(
         type: 'json_schema',
         name: 'private_location_layout',
         strict: true,
-        schema: definition.schema,
+        schema: definition.schemaForContext?.(context) ?? definition.schema,
       },
     },
   });

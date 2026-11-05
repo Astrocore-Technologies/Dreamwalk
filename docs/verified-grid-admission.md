@@ -24,3 +24,24 @@ This change does not provide a campaign-migration operation. It also does not cl
 - The disposable PostgreSQL legacy integration verifies one provider result and settlement identity, rejected new incomplete preparation, unchanged snapshots/clocks/events/history/jobs/quotes/ledger through read/reload/rejection, and preserved private audience scope.
 - Core tests verify movement and existing scene behavior. UI tests cover recovery display, disabled gameplay and intact reads.
 - Browser fixture uses only a synthetic historical snapshot and original synthetic image. It must run on an isolated test deployment; it never changes a user's saved campaign.
+
+## Asset-free plan contract
+
+For a source with no attached or explicitly omitted map images, new authoring requests
+use a positioned response schema: exactly four player spawns per room, both passage
+endpoints, and numeric NPC positions. These are logical coordinates proposed from the
+authored text, not claims of observing an absent image. The compiler still checks the
+layout and never supplies missing coordinates itself. Image uncertainty keeps its separate
+permissive observation contract and strict admission checks.
+
+The response schema is selected in the same request-body builder used for quoting,
+restart verification and dispatch. Its definition version changes with this contract.
+The saved source context also selects the validator at result receipt and restart; no
+second generation or silent paid repair is introduced. Known invalid results retain their
+actual-cost receipt. The UI reports the validation failure rather than falsely claiming
+that the author edited the story.
+
+Synthetic checks cover missing spawns/endpoints/NPC positions, unchanged image policy,
+identical quoted/dispatched bodies, positioned playable state and owner-authoring
+prepare/apply/start with disposable database billing. They do not claim a paid provider
+always produces semantically correct geometry.
