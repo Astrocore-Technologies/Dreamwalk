@@ -27,33 +27,38 @@ export function AccountExports() {
     expired: t('Срок хранения экспорта истёк'),
   };
   return (
-    <section className="stack" aria-label={t('Архивы моих данных')}>
-      <p className="muted">
-        {t('Архив готовит оператор. Готовый файл доступен только тебе в течение 7 дней.')}
-      </p>
-      <div className="row">
-        <Button
-          variant="secondary"
-          busy={busy}
-          onClick={async () => {
-            setBusy(true);
-            setError('');
-            try {
-              await api('/account/export', { method: 'POST', body: '{}' });
-              toast(t('Запрос на экспорт данных сохранён'));
-              requests.reload();
-            } catch (e) {
-              setError(errorMessage(e));
-            } finally {
-              setBusy(false);
-            }
-          }}
-        >
-          {t('Запросить экспорт')}
-        </Button>
-        <Button variant="ghost" onClick={requests.reload}>
-          {t('Обновить список архивов')}
-        </Button>
+    <section className="stack account-exports" aria-label={t('Архивы моих данных')}>
+      <div className="account-export-summary">
+        <div className="account-data-copy">
+          <h3>{t('Экспорт данных')}</h3>
+          <p className="muted">
+            {t('Архив готовит оператор. Готовый файл доступен только тебе в течение 7 дней.')}
+          </p>
+        </div>
+        <div className="account-export-actions">
+          <Button
+            variant="secondary"
+            busy={busy}
+            onClick={async () => {
+              setBusy(true);
+              setError('');
+              try {
+                await api('/account/export', { method: 'POST', body: '{}' });
+                toast(t('Запрос на экспорт данных сохранён'));
+                requests.reload();
+              } catch (e) {
+                setError(errorMessage(e));
+              } finally {
+                setBusy(false);
+              }
+            }}
+          >
+            {t('Запросить экспорт')}
+          </Button>
+          <Button variant="ghost" onClick={requests.reload}>
+            {t('Обновить список архивов')}
+          </Button>
+        </div>
       </div>
       <ErrorBox message={error || requests.error} />
       {requests.loading ? (
