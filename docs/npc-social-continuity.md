@@ -22,7 +22,7 @@ fingerprint window is not semantic paraphrase detection; the provider is instruc
 leave repeated flattery and routine chatter unchanged.
 
 Relationship evidence is retained with private memory and its social significance enters
-existing retrieval. The latest conversational beat is kept ahead of old relationship
+existing retrieval. The latest conversational beat keeps a reserved context slot alongside old relationship
 memories. Both context packers identify the newest record by its supplied chronological
 metadata instead of mistaking the last relevance-ranked item for the latest question.
 Public speech receives only a categorical conversation tone when every listener is

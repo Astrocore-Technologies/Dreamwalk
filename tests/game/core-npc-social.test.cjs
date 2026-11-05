@@ -185,6 +185,8 @@ test('accumulated relationship memories do not displace the new conversational b
   const context = g.buildNpcDecisionContext(s, 'keeper');
   assert.equal(context.observations.length, 16);
   assert.ok(context.observations.some((o) => o.id === source.id));
+  assert.equal(context.latestInteractionId, source.id);
+  assert.equal(context.observations[0].kind, 'helped');
 });
 test('a later public exchange cannot widen a relationship learned from a private whisper', () => {
   let { state: s, source } = said(world());
@@ -233,7 +235,7 @@ test('same-tick source chronology is recorded before relevance ranking for conte
   assert.equal(older.tick, current.tick);
   const context = g.buildNpcDecisionContext(latest, 'keeper');
   assert.equal(context.latestInteractionId, current.id);
-  assert.equal(context.observations[0].id, current.id);
+  assert.ok(context.observations.some((o) => o.id === current.id));
 });
 
 test('legacy speech receives only audience-safe categorical social tone and not private mixed axes', () => {

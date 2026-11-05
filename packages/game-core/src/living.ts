@@ -1345,13 +1345,18 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
       (a, b) =>
         Number(b.id === currentPlan?.source?.sourceObservationId) -
           Number(a.id === currentPlan?.source?.sourceObservationId) ||
-        Number(b.id === latestInteraction?.id) - Number(a.id === latestInteraction?.id) ||
         npcObservationImportance(m, b) - npcObservationImportance(m, a) ||
         relevance(b) - relevance(a) ||
         b.tick - a.tick ||
         a.id.localeCompare(b.id),
     )
     .slice(0, 16);
+  // Preserve importance ordering while reserving one slot for the current exchange.
+  // The explicit ID lets downstream budget packing pin it without relying on rank.
+  if (latestInteraction && !ranked.some((o) => o.id === latestInteraction.id)) {
+    if (ranked.length === 16) ranked.pop();
+    ranked.push(latestInteraction);
+  }
   const context = {
     ...(spatialContext(state, npcId) ? { spatialContext: spatialContext(state, npcId) } : {}),
     npcId,
