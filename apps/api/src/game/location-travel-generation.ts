@@ -1,3 +1,7 @@
+import {
+  reconcileTerminalTravelGrounding,
+  resolvedTerminalTravelGroundings,
+} from './travel-map-grounding-reconciliation';
 import { TravelMapGrounding, type TravelGroundingEntry } from './travel-map-grounding';
 import type { AuthoringTextEngine } from '../live-test/authoring-text';
 import { digest } from '../ai/context';
@@ -568,7 +572,11 @@ export class LocationTravelGeneration {
   async workGrounding(campaignId: string, requestId: string) {
     await this.grounding?.work(campaignId, requestId);
   }
+  async reconcile(campaignId: string) {
+    await this.db.tx((c) => reconcileTerminalTravelGrounding(c, campaignId));
+  }
   async progress(c: Pick<PoolClient, 'query'>, campaignId: string) {
+    const resolved = await resolvedTerminalTravelGroundings(c, campaignId);
     const rows = (
       await c.query(
         `SELECT p.id,p.batch_id,j.status,h.status AS hold_status,g.status AS grounding_status,(g.status='unknown' AND g.job_id IS NULL AND g.error_code='STORY_MAP_COUNT_UNAVAILABLE' AND gc.status='succeeded') AS grounding_recoverable,gj.status AS grounding_job_status,gh.status AS grounding_hold_status FROM game_location_travel_preparations p
@@ -578,7 +586,7 @@ export class LocationTravelGeneration {
       WHERE p.campaign_id=$1 AND (p.state='accepted' OR j.status IN ('queued','dispatched','generated','unknown') OR h.status='pending')`,
         [campaignId],
       )
-    ).rows;
+    ).rows.map((row) => (resolved.has(row.id) ? { ...row, grounding_status: 'failed' } : row));
     return {
       rows,
       active: rows.some(

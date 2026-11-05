@@ -232,6 +232,14 @@ export interface StoryTurnReceipt {
     destinationName: string;
     status: 'prepared' | 'accepted' | 'committed' | 'failed' | 'declined';
     imageStatus?: string;
+    grounding?: {
+      status: 'prepared' | 'bound' | 'queued' | 'ready' | 'failed' | 'unknown';
+      jobStatus?: string;
+      sparkStatus?: 'held' | 'pending' | 'settled' | 'released';
+      funding?: CurrencyFunding;
+      sparkReservedSubunits?: string;
+      sparkCapturedSubunits?: string | null;
+    };
     sparkStatus?: 'held' | 'pending' | 'settled' | 'released';
     funding?: CurrencyFunding;
     sparkReservedSubunits?: string;

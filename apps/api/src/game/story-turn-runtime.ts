@@ -251,7 +251,7 @@ export class StoryTurnRuntime {
   private async row(id: string, turnId: string, userId?: string) {
     return (
       await this.db.query(
-        `SELECT t.*,tp.scene->>'name' AS travel_name,tp.state AS travel_state,r.status AS travel_request_status,ij.status AS travel_image_status,ih.status AS travel_spark_status,ih.reserved_subunits AS travel_spark_reserved,ih.captured_subunits AS travel_spark_captured,ih.sparks_reserved_subunits AS travel_spark_paid_reserved,EXISTS(SELECT 1 FROM game_npc_decision_requests pending WHERE pending.campaign_id=t.campaign_id AND pending.context->>'storyTurnId'=t.id::text AND pending.status='queued' AND pending.result_code='GENERATION_QUOTE_STALE') AS generation_needs_confirmation,r.status AS request_status,j.status AS job_status,j.credits AS job_credits,sh.status AS spark_status,sh.reserved_subunits AS spark_reserved,sh.captured_subunits AS spark_captured,sh.sparks_reserved_subunits AS spark_paid_reserved FROM game_story_turns t LEFT JOIN game_location_travel_preparations tp ON tp.id=t.id LEFT JOIN image_generation_jobs ij ON ij.id=tp.image_job_id LEFT JOIN spark_holds ih ON ih.id=ij.spark_quote_id LEFT JOIN game_npc_decision_requests r ON r.id=t.decision_request_id LEFT JOIN npc_ai_jobs j ON j.id=r.job_id LEFT JOIN spark_holds sh ON sh.id=COALESCE(j.spark_hold_id,(SELECT br.spark_quote_id FROM live_test_text_permits p JOIN generation_budget_reservations br ON br.id=p.reservation_id WHERE p.job_id=j.id OR p.request_id::text=j.request_meta->>'runtimeRequestId' LIMIT 1)) WHERE t.campaign_id=$1 AND t.id=$2 ${userId ? 'AND t.requester_user_id=$3' : ''}`,
+        `SELECT t.*,tp.scene->>'name' AS travel_name,tp.state AS travel_state,r.status AS travel_request_status,ij.status AS travel_image_status,ih.status AS travel_spark_status,ih.reserved_subunits AS travel_spark_reserved,ih.captured_subunits AS travel_spark_captured,ih.sparks_reserved_subunits AS travel_spark_paid_reserved,g.status AS grounding_status,gj.status AS grounding_job_status,gh.status AS grounding_spark_status,gh.reserved_subunits AS grounding_spark_reserved,gh.captured_subunits AS grounding_spark_captured,gh.sparks_reserved_subunits AS grounding_spark_paid_reserved,EXISTS(SELECT 1 FROM game_npc_decision_requests pending WHERE pending.campaign_id=t.campaign_id AND pending.context->>'storyTurnId'=t.id::text AND pending.status='queued' AND pending.result_code='GENERATION_QUOTE_STALE') AS generation_needs_confirmation,r.status AS request_status,j.status AS job_status,j.credits AS job_credits,sh.status AS spark_status,sh.reserved_subunits AS spark_reserved,sh.captured_subunits AS spark_captured,sh.sparks_reserved_subunits AS spark_paid_reserved FROM game_story_turns t LEFT JOIN game_location_travel_preparations tp ON tp.id=t.id LEFT JOIN image_generation_jobs ij ON ij.id=tp.image_job_id LEFT JOIN spark_holds ih ON ih.id=ij.spark_quote_id LEFT JOIN game_travel_map_groundings g ON g.preparation_id=tp.id LEFT JOIN live_authoring_text_jobs gj ON gj.id=g.job_id LEFT JOIN spark_holds gh ON gh.id=gj.spark_quote_id LEFT JOIN game_npc_decision_requests r ON r.id=t.decision_request_id LEFT JOIN npc_ai_jobs j ON j.id=r.job_id LEFT JOIN spark_holds sh ON sh.id=COALESCE(j.spark_hold_id,(SELECT br.spark_quote_id FROM live_test_text_permits p JOIN generation_budget_reservations br ON br.id=p.reservation_id WHERE p.job_id=j.id OR p.request_id::text=j.request_meta->>'runtimeRequestId' LIMIT 1)) WHERE t.campaign_id=$1 AND t.id=$2 ${userId ? 'AND t.requester_user_id=$3' : ''}`,
         [id, turnId, ...(userId ? [userId] : [])],
       )
     )[0];
@@ -274,6 +274,33 @@ export class StoryTurnRuntime {
                     ? 'failed'
                     : r.travel_state,
               ...(r.travel_image_status ? { imageStatus: r.travel_image_status } : {}),
+              ...(r.grounding_status
+                ? {
+                    grounding: {
+                      status: r.grounding_status,
+                      ...(r.grounding_job_status ? { jobStatus: r.grounding_job_status } : {}),
+                      ...(r.grounding_spark_status
+                        ? {
+                            sparkStatus: r.grounding_spark_status,
+                            sparkReservedSubunits: String(r.grounding_spark_reserved),
+                            sparkCapturedSubunits:
+                              r.grounding_spark_captured == null
+                                ? null
+                                : String(r.grounding_spark_captured),
+                            ...(r.grounding_spark_paid_reserved == null
+                              ? {}
+                              : {
+                                  funding: heldFunding({
+                                    reserved_subunits: r.grounding_spark_reserved,
+                                    sparks_reserved_subunits: r.grounding_spark_paid_reserved,
+                                    captured_subunits: r.grounding_spark_captured,
+                                  }),
+                                }),
+                          }
+                        : {}),
+                    },
+                  }
+                : {}),
               ...(r.travel_spark_status
                 ? {
                     sparkStatus: r.travel_spark_status,
@@ -2482,7 +2509,7 @@ export class StoryTurnRuntime {
         )
         .slice(-300);
       const turns = await this.db.query(
-        `SELECT t.*,tp.scene->>'name' AS travel_name,tp.state AS travel_state,r.status AS travel_request_status,ij.status AS travel_image_status,ih.status AS travel_spark_status,ih.reserved_subunits AS travel_spark_reserved,ih.captured_subunits AS travel_spark_captured,ih.sparks_reserved_subunits AS travel_spark_paid_reserved,EXISTS(SELECT 1 FROM game_npc_decision_requests pending WHERE pending.campaign_id=t.campaign_id AND pending.context->>'storyTurnId'=t.id::text AND pending.status='queued' AND pending.result_code='GENERATION_QUOTE_STALE') AS generation_needs_confirmation,j.status AS job_status,j.credits AS job_credits,sh.status AS spark_status,sh.reserved_subunits AS spark_reserved,sh.captured_subunits AS spark_captured,sh.sparks_reserved_subunits AS spark_paid_reserved FROM game_story_turns t LEFT JOIN game_location_travel_preparations tp ON tp.id=t.id LEFT JOIN image_generation_jobs ij ON ij.id=tp.image_job_id LEFT JOIN spark_holds ih ON ih.id=ij.spark_quote_id LEFT JOIN game_npc_decision_requests r ON r.id=t.decision_request_id LEFT JOIN npc_ai_jobs j ON j.id=r.job_id LEFT JOIN spark_holds sh ON sh.id=COALESCE(j.spark_hold_id,(SELECT br.spark_quote_id FROM live_test_text_permits p JOIN generation_budget_reservations br ON br.id=p.reservation_id WHERE p.job_id=j.id OR p.request_id::text=j.request_meta->>'runtimeRequestId' LIMIT 1)) WHERE t.campaign_id=$1 AND t.requester_user_id=$2 AND t.erased_at IS NULL AND t.status<>'quoted' ORDER BY t.created_at DESC LIMIT 40`,
+        `SELECT t.*,tp.scene->>'name' AS travel_name,tp.state AS travel_state,r.status AS travel_request_status,ij.status AS travel_image_status,ih.status AS travel_spark_status,ih.reserved_subunits AS travel_spark_reserved,ih.captured_subunits AS travel_spark_captured,ih.sparks_reserved_subunits AS travel_spark_paid_reserved,g.status AS grounding_status,gj.status AS grounding_job_status,gh.status AS grounding_spark_status,gh.reserved_subunits AS grounding_spark_reserved,gh.captured_subunits AS grounding_spark_captured,gh.sparks_reserved_subunits AS grounding_spark_paid_reserved,EXISTS(SELECT 1 FROM game_npc_decision_requests pending WHERE pending.campaign_id=t.campaign_id AND pending.context->>'storyTurnId'=t.id::text AND pending.status='queued' AND pending.result_code='GENERATION_QUOTE_STALE') AS generation_needs_confirmation,j.status AS job_status,j.credits AS job_credits,sh.status AS spark_status,sh.reserved_subunits AS spark_reserved,sh.captured_subunits AS spark_captured,sh.sparks_reserved_subunits AS spark_paid_reserved FROM game_story_turns t LEFT JOIN game_location_travel_preparations tp ON tp.id=t.id LEFT JOIN image_generation_jobs ij ON ij.id=tp.image_job_id LEFT JOIN spark_holds ih ON ih.id=ij.spark_quote_id LEFT JOIN game_travel_map_groundings g ON g.preparation_id=tp.id LEFT JOIN live_authoring_text_jobs gj ON gj.id=g.job_id LEFT JOIN spark_holds gh ON gh.id=gj.spark_quote_id LEFT JOIN game_npc_decision_requests r ON r.id=t.decision_request_id LEFT JOIN npc_ai_jobs j ON j.id=r.job_id LEFT JOIN spark_holds sh ON sh.id=COALESCE(j.spark_hold_id,(SELECT br.spark_quote_id FROM live_test_text_permits p JOIN generation_budget_reservations br ON br.id=p.reservation_id WHERE p.job_id=j.id OR p.request_id::text=j.request_meta->>'runtimeRequestId' LIMIT 1)) WHERE t.campaign_id=$1 AND t.requester_user_id=$2 AND t.erased_at IS NULL AND t.status<>'quoted' ORDER BY t.created_at DESC LIMIT 40`,
         [id, a.user.id],
       );
       return {

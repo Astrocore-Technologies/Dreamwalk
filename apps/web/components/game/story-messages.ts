@@ -34,6 +34,7 @@ export const storyMessages = {
     'Результат генерації {name} уточнюється. Новий платний запит не запускається.',
   ],
   locationImageCost: ['Карта: ', 'Map: ', 'Карта: '],
+  locationGroundingCost: ['Анализ карты: ', 'Map analysis: ', 'Аналіз карти: '],
   locationSeparatePost: [
     'Отправь переход в новое место отдельным действием между звёздочками. Остальные действия и слова можно отправить отдельно; генерация ещё не оплачена.',
     'Send travel to a new place as a separate action between asterisks. Send other actions or speech separately; no generation has been charged.',

@@ -1,3 +1,4 @@
+import { reconcileTerminalTravelGrounding } from './travel-map-grounding-reconciliation';
 import {
   acceptedWorldKnownCostPolicyMatches,
   worldKnownCostPolicyRequired,
@@ -262,6 +263,7 @@ export class TravelMapGrounding {
     }
   }
   private async workOnce(campaignId: string, id: string) {
+    await this.db.tx((c) => reconcileTerminalTravelGrounding(c, campaignId));
     const rows = await this.db.query(
       `SELECT p.*,j.status AS image_status,j.admitted_revision_id FROM game_location_travel_preparations p JOIN image_generation_jobs j ON j.id=p.image_job_id JOIN game_travel_map_groundings g ON g.preparation_id=p.id WHERE p.id=$1 AND p.campaign_id=$2 AND p.state='accepted' AND j.status='admitted' AND (g.status IN ('prepared','bound','queued') OR (g.status='unknown' AND g.job_id IS NULL AND g.error_code='STORY_MAP_COUNT_UNAVAILABLE' AND EXISTS (SELECT 1 FROM runtime_map_token_counts c WHERE c.id=g.count_id AND c.status='succeeded')))`,
       [id, campaignId],

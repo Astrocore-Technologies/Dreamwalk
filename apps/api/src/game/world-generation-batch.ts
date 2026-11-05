@@ -854,6 +854,7 @@ export class WorldGenerationBatch {
   }
   /** An unresolved prior round must not create a new charge or strand later rounds. */
   async stopUnspentForUnknown(campaignId: string) {
+    await this.travel?.reconcile(campaignId);
     const unknown = await this.db.query(
       `SELECT 1 FROM npc_ai_jobs j LEFT JOIN spark_holds h ON h.id=j.spark_hold_id
        WHERE j.campaign_id=$1 AND (j.status='reconciling' OR h.status='pending')

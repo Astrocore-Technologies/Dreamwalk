@@ -1,7 +1,7 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID, createHash } from 'node:crypto';
 import sharp from 'sharp';
-import { gameEnvelopeSchema, type GameEntity } from '@dreamwalk/contracts';
+import { frozenArtBindingSchema, gameEnvelopeSchema, type GameEntity } from '@dreamwalk/contracts';
 import { authoringRequest } from './support/private-authoring';
 
 test('legacy location-only save remains read-only with original image and history', async ({
@@ -104,7 +104,14 @@ test('legacy location-only save remains read-only with original image and histor
     licenseLabel: 'Test only',
   };
   snapshot.projection.artBindings = [
-    { slot: art.slot, revisionId: original.id, sha256: original.sha256 },
+    frozenArtBindingSchema.parse({
+      slot: art.slot,
+      revisionId: art.revisionId,
+      sha256: art.sha256,
+      mime: art.mime,
+      width: art.width,
+      height: art.height,
+    }),
   ];
   gameEnvelopeSchema.parse(snapshot);
   const savedSnapshot = JSON.stringify(snapshot);

@@ -691,3 +691,81 @@ test('arrival observations are recorded from grounded positions, never provision
     sightings.every((o) => o.mapId === `scene-${turnId}` && o.point.x === 10 && o.point.y === 8),
   );
 });
+
+test('story receipts itemize native grounding holds without inventing settlement or leaking context', () => {
+  const { StoryTurnRuntime } = require('../../apps/api/src/game/story-turn-runtime.ts');
+  const runtime = Object.create(StoryTurnRuntime.prototype);
+  const base = {
+    id: 'turn',
+    operation_id: 'operation',
+    status: 'queued',
+    created_at: new Date('2026-01-01T00:00:00Z'),
+    input: { channel: 'say', text: 'go' },
+    travel_name: 'Cafe',
+    travel_state: 'accepted',
+    travel_image_status: 'admitted',
+    travel_spark_status: 'settled',
+    travel_spark_reserved: '100',
+    travel_spark_captured: '80',
+  };
+  for (const [status, job, hold, captured] of [
+    ['queued', 'queued', 'held', null],
+    ['unknown', 'unknown', 'pending', null],
+    ['ready', 'applied', 'settled', '213'],
+    ['failed', 'stale', 'settled', '213'],
+    ['failed', 'cancelled', 'released', '0'],
+  ]) {
+    const r = runtime.receipt({
+      ...base,
+      grounding_status: status,
+      grounding_job_status: job,
+      grounding_spark_status: hold,
+      grounding_spark_reserved: '345',
+      grounding_spark_captured: captured,
+      grounding_spark_paid_reserved: '300',
+      context: { private: 'DO_NOT_EXPOSE' },
+      image_sha256: 'PRIVATE_HASH',
+    });
+    assert.equal(r.travel.grounding.status, status);
+    assert.equal(r.travel.grounding.jobStatus, job);
+    assert.equal(r.travel.grounding.sparkStatus, hold);
+    assert.equal(r.travel.grounding.sparkReservedSubunits, '345');
+    assert.equal(r.travel.grounding.sparkCapturedSubunits, captured);
+    assert.ok(r.travel.grounding.funding);
+    assert.equal(r.travel.sparkCapturedSubunits, '80');
+    assert.doesNotMatch(JSON.stringify(r), /DO_NOT_EXPOSE|PRIVATE_HASH/);
+  }
+  const predispatch = runtime.receipt({ ...base, grounding_status: 'unknown' });
+  assert.deepEqual(predispatch.travel.grounding, { status: 'unknown' });
+  assert.equal(runtime.receipt(base).travel.grounding, undefined);
+});
+
+test('terminal grounding status projection is read-only and shares exact liability proof with dispatcher repair', async () => {
+  const {
+    resolvedTerminalTravelGroundings,
+    reconcileTerminalTravelGrounding,
+  } = require('../../apps/api/src/game/travel-map-grounding-reconciliation.ts');
+  const queries = [];
+  const c = {
+    query: async (sql, params) => {
+      queries.push({ sql, params });
+      return { rows: [{ preparation_id: 'resolved' }] };
+    },
+  };
+  assert.deepEqual([...(await resolvedTerminalTravelGroundings(c, 'campaign'))], ['resolved']);
+  assert.match(queries[0].sql, /^SELECT /);
+  assert.doesNotMatch(queries[0].sql, /UPDATE|INSERT|DELETE/);
+  await reconcileTerminalTravelGrounding(c, 'campaign');
+  assert.match(queries[1].sql, /SET status='failed'/);
+  assert.equal(
+    queries[0].sql.slice(queries[0].sql.indexOf('WHERE')),
+    queries[1].sql.slice(queries[1].sql.indexOf('WHERE')),
+  );
+  for (const { sql, params } of queries) {
+    assert.deepEqual(params, ['campaign']);
+    assert.match(sql, /j\.operation_id=g\.job_operation_id/);
+    assert.match(sql, /g\.status='unknown' AND g\.result IS NULL/);
+    assert.match(sql, /r\.status='settled' AND r\.actual_micros=j\.actual_micros/);
+    assert.match(sql, /h\.status IN \('settled','released'\)/);
+  }
+});

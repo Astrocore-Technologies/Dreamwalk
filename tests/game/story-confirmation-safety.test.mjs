@@ -1466,3 +1466,59 @@ test('direct text policy disclosure needs the exact quote marker, not an image h
     assert.equal(ui.has('automaticKnownCostNotice'), marker === 'known-cost-v1');
   }
 });
+
+for (const [status, jobStatus, sparkStatus, sparkCapturedSubunits, message] of [
+  ['ready', 'applied', 'settled', '213', 'locationReady'],
+  ['failed', 'stale', 'settled', '213', 'locationFailed'],
+  ['unknown', 'unknown', 'pending', null, 'locationUnknown'],
+  ['queued', 'queued', 'held', null, 'locationPreparing'],
+  ['unknown', undefined, undefined, undefined, 'locationUnknown'],
+])
+  test(`travel receipt exposes ${status}/${sparkStatus ?? 'no hold'} grounding without a new request`, async () => {
+    const grounding = {
+      status,
+      jobStatus,
+      sparkStatus,
+      ...(sparkStatus ? { sparkReservedSubunits: '345', sparkCapturedSubunits } : {}),
+    };
+    const turn = {
+      id: 'travel-turn',
+      status: 'committed',
+      travel: {
+        destinationName: 'Cafe',
+        status: status === 'ready' ? 'committed' : 'accepted',
+        imageStatus: 'admitted',
+        sparkStatus: 'settled',
+        sparkReservedSubunits: '100',
+        sparkCapturedSubunits: '80',
+        grounding,
+      },
+    };
+    const calls = [];
+    const ui = await harness('unified-story', async (...args) => {
+      calls.push(args);
+      return { canSubmit: true, canonRevision: 4, entries: [], turns: [turn], configuration: {} };
+    });
+    ui.render(composerProps());
+    await ui.flush();
+    assert.match(ui.text(), new RegExp(message));
+    const costs = ui.elements('receipt').map((node) => node.props.receipt);
+    assert.ok(
+      costs.some((r) => r.sparkCapturedSubunits === '80'),
+      'image cost remains separate',
+    );
+    const actual = costs.find((r) => r.sparkReservedSubunits === '345');
+    if (sparkStatus) {
+      assert.ok(
+        ui
+          .elements('p')
+          .some((node) => [].concat(node.props.children ?? []).includes('locationGroundingCost')),
+      );
+      assert.deepEqual(actual, { ...grounding, generationCost: null });
+    } else assert.equal(actual, undefined, 'no synthetic zero/refund for an absent hold');
+    assert.ok(
+      calls.every((args) => !args[1]?.body && (!args[1]?.method || args[1].method === 'GET')),
+      'receipt reads do not dispatch or consent',
+    );
+    ui.unmount();
+  });

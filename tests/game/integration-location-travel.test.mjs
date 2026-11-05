@@ -42,11 +42,14 @@ await test(
       const guest = await client().registerLegacyFixture();
       const source = await owner.request('/adventures/old-observatory?view=published');
       const ids = [];
-      for (let i = 0; i < 10; i++) {
-        const { campaignId } = await (i === 7 ? guest : owner).request('/game/campaigns', {
-          turnBased: i !== 6,
-          playableVersionId: source.playableVersionId,
-        });
+      for (let i = 0; i < 11; i++) {
+        const { campaignId } = await (i === 7 || i === 10 ? guest : owner).request(
+          '/game/campaigns',
+          {
+            turnBased: i !== 6,
+            playableVersionId: source.playableVersionId,
+          },
+        );
         ids.push(campaignId);
         if (i === 1) {
           await owner.request(`/game/campaigns/${campaignId}/invitations`, {
@@ -198,7 +201,8 @@ await test(
       );
       images.setReleaseResultAuthorizer((...args) => authority.authorizeReleaseResult(...args));
       let groundingCalls = 0,
-        countCalls = 0;
+        countCalls = 0,
+        groundingGate;
       const groundProvider = new BoundedAuthoringTextProvider(
         travelMapPlanDefinition,
         'synthetic-key',
@@ -210,6 +214,7 @@ await test(
             );
           }
           groundingCalls++;
+          if (groundingGate) await groundingGate;
           const body = JSON.parse(init.body),
             context = JSON.parse(body.input[0].content[0].text),
             image = context.mapImages[0];
@@ -633,6 +638,25 @@ await test(
           const receipt = (await game.storyFeed(req, id)).turns.find((t) => t.id === turn.id);
           assert.equal(receipt.travel.status, 'committed');
           assert.equal(receipt.travel.sparkStatus, 'settled');
+          const groundingHold = (
+            await db.query(
+              `SELECT g.status,g.project_id,j.status AS job_status,h.status AS hold_status,h.reserved_subunits,h.captured_subunits FROM game_travel_map_groundings g JOIN live_authoring_text_jobs j ON j.id=g.job_id JOIN spark_holds h ON h.id=j.spark_quote_id WHERE g.preparation_id=$1`,
+              [turn.id],
+            )
+          ).rows[0];
+          assert.equal(receipt.travel.grounding.status, groundingHold.status);
+          assert.equal(receipt.travel.grounding.jobStatus, groundingHold.job_status);
+          assert.equal(receipt.travel.grounding.sparkStatus, groundingHold.hold_status);
+          assert.equal(
+            receipt.travel.grounding.sparkReservedSubunits,
+            String(groundingHold.reserved_subunits),
+          );
+          assert.equal(
+            receipt.travel.grounding.sparkCapturedSubunits,
+            String(groundingHold.captured_subunits),
+          );
+          assert.ok(receipt.travel.grounding.funding);
+          assert.equal(receipt.travel.grounding.projectId, undefined);
         },
       );
       await t.test(
@@ -993,6 +1017,163 @@ await test(
             reserved_subunits: row.reserved_subunits,
             captured_subunits: row.captured_subunits,
           });
+        },
+      );
+      await t.test(
+        'late known grounding receipt clears only resolved orchestration liability without retry or arrival',
+        async () => {
+          const id = ids[10],
+            live = await setup(id, other),
+            origin = live.state.entities[otherActor].mapId;
+          const turn = await post(id, live, '*I go to Late Receipt Cafe*', other);
+          await end(id, live, otherActor);
+          const q = await quote(id, other);
+          await accept(id, q, other);
+          let release;
+          groundingGate = new Promise((resolve) => {
+            release = resolve;
+          });
+          const timeout = grounding.timeoutMs;
+          grounding.timeoutMs = 10;
+          const before = [countCalls, groundingCalls];
+          try {
+            let pending;
+            for (let i = 0; i < 20; i++) {
+              await game.processDecisionRequests(id, live);
+              await images.workOnce();
+              await game.travelGeneration.workGrounding(id, turn.id);
+              const jobs = (
+                await db.query(
+                  "SELECT id FROM npc_ai_jobs WHERE campaign_id=$1 AND status IN ('queued','reserved') ORDER BY created_at,id",
+                  [id],
+                )
+              ).rows;
+              for (const job of jobs) {
+                await ai.run(job.id, async () => true);
+                await game.processAi(id, live);
+              }
+              pending = (
+                await db.query(
+                  `SELECT g.status,j.status native_status,h.status hold_status FROM game_travel_map_groundings g JOIN live_authoring_text_jobs j ON j.id=g.job_id JOIN spark_holds h ON h.id=j.spark_quote_id WHERE g.preparation_id=$1`,
+                  [turn.id],
+                )
+              ).rows[0];
+              if (pending?.status === 'unknown') break;
+            }
+            assert.ok(
+              pending,
+              JSON.stringify(
+                (
+                  await db.query(
+                    `SELECT p.state,p.image_job_id,j.status image_status,j.error_code image_error,g.status,g.error_code,r.status request_status,r.result_code FROM game_location_travel_preparations p LEFT JOIN image_generation_jobs j ON j.id=p.image_job_id LEFT JOIN game_travel_map_groundings g ON g.preparation_id=p.id LEFT JOIN game_npc_decision_requests r ON r.id=p.id WHERE p.id=$1`,
+                    [turn.id],
+                  )
+                ).rows,
+              ),
+            );
+            assert.equal(pending.status, 'unknown');
+            assert.equal(pending.native_status, 'unknown');
+            assert.equal(pending.hold_status, 'pending');
+            await game.travelGeneration.reconcile(id);
+            assert.equal(
+              (
+                await db.query(
+                  'SELECT status FROM game_travel_map_groundings WHERE preparation_id=$1',
+                  [turn.id],
+                )
+              ).rows[0].status,
+              'unknown',
+            );
+            await game.worldGeneration.stopUnspentForUnknown(id);
+            assert.equal(
+              (
+                await db.query('SELECT status FROM game_npc_decision_requests WHERE id=$1', [
+                  turn.id,
+                ])
+              ).rows[0].status,
+              'failed',
+            );
+            release();
+            let terminal;
+            for (let i = 0; i < 200; i++) {
+              terminal = (
+                await db.query(
+                  `SELECT g.status,g.result,j.status native_status,j.actual_micros,h.status hold_status FROM game_travel_map_groundings g JOIN live_authoring_text_jobs j ON j.id=g.job_id JOIN spark_holds h ON h.id=j.spark_quote_id WHERE g.preparation_id=$1`,
+                  [turn.id],
+                )
+              ).rows[0];
+              if (
+                terminal.native_status === 'stale' &&
+                ['settled', 'released'].includes(terminal.hold_status)
+              )
+                break;
+              await new Promise((resolve) => setTimeout(resolve, 10));
+            }
+            assert.equal(terminal.native_status, 'stale');
+            assert.equal(terminal.hold_status, 'settled');
+            assert.ok(Number(terminal.actual_micros) > 0);
+            assert.equal(terminal.status, 'unknown');
+            // An unrelated or changed native identity must never resolve this stage.
+            const native = (
+              await db.query(
+                'SELECT j.id,j.operation_id FROM live_authoring_text_jobs j JOIN game_travel_map_groundings g ON g.job_id=j.id WHERE g.preparation_id=$1',
+                [turn.id],
+              )
+            ).rows[0];
+            await db.query('UPDATE live_authoring_text_jobs SET operation_id=$2 WHERE id=$1', [
+              native.id,
+              randomUUID(),
+            ]);
+            await game.travelGeneration.reconcile(id);
+            assert.equal(
+              (
+                await db.query(
+                  'SELECT status FROM game_travel_map_groundings WHERE preparation_id=$1',
+                  [turn.id],
+                )
+              ).rows[0].status,
+              'unknown',
+            );
+            await db.query('UPDATE live_authoring_text_jobs SET operation_id=$2 WHERE id=$1', [
+              native.id,
+              native.operation_id,
+            ]);
+            const progress = await database.tx((c) => game.travelGeneration.progress(c, id));
+            assert.equal(progress.unknown, false);
+            assert.equal(
+              (
+                await db.query(
+                  'SELECT status FROM game_travel_map_groundings WHERE preparation_id=$1',
+                  [turn.id],
+                )
+              ).rows[0].status,
+              'unknown',
+              'status projection must remain read-only',
+            );
+            await game.worldGeneration.stopUnspentForUnknown(id);
+            const reconciled = (
+              await db.query(
+                'SELECT status,result FROM game_travel_map_groundings WHERE preparation_id=$1',
+                [turn.id],
+              )
+            ).rows[0];
+            assert.equal(reconciled.status, 'failed');
+            assert.equal(reconciled.result, null);
+            await game.travelGeneration.workGrounding(id, turn.id);
+            await game.worldGeneration.stopUnspentForUnknown(id);
+            await drain(id, live);
+            assert.equal(live.state.entities[otherActor].mapId, origin);
+            assert.equal(live.state.maps[`scene-${turn.id}`], undefined);
+            assert.deepEqual(
+              [countCalls, groundingCalls],
+              before.map((n) => n + 1),
+            );
+            assert.equal((await game.worldGenerationStatus(other, id)).unknown, false);
+          } finally {
+            release();
+            groundingGate = undefined;
+            grounding.timeoutMs = timeout;
+          }
         },
       );
       await t.test(
