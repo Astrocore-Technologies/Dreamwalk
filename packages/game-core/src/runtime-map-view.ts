@@ -1,3 +1,4 @@
+import { actorLifeState, type ActorLifeState } from '@dreamwalk/contracts';
 import {
   occupiedCells,
   type GameEntity,
@@ -12,6 +13,7 @@ export interface RuntimeMapMarker {
   id: string;
   kind: GameEntity['kind'];
   label?: string;
+  lifeState?: ActorLifeState;
   x: number;
   y: number;
   occupiedCells: GamePoint[];
@@ -83,6 +85,9 @@ export function runtimeMapView(state: GameState, observerIds: string[]): Runtime
       marker: index + 1,
       id: entity.id,
       kind: entity.kind,
+      ...(['npc', 'player'].includes(entity.kind) && actorLifeState(entity) !== 'conscious'
+        ? { lifeState: actorLifeState(entity) }
+        : {}),
       ...(entity.label ? { label: entity.label } : {}),
       x: entity.x,
       y: entity.y,

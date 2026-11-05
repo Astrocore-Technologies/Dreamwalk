@@ -67,9 +67,14 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
   const module = { exports: {} };
   const imports = {
     react,
-    'lucide-react': { Send: 'send-icon' },
+    'lucide-react': { Send: 'send-icon', Compass: 'compass' },
     '../visual-authoring/sparks-cost': { SparkReceiptCost: 'receipt' },
-    '@/components/ui': { Button: 'button', ErrorBox: 'error', Textarea: 'textarea' },
+    '@/components/ui': {
+      Button: 'button',
+      ErrorBox: 'error',
+      Textarea: 'textarea',
+      Modal: 'modal',
+    },
     './world-generation-confirmation': { WorldGenerationConfirmation: 'world-status' },
     './living-notices': { noticeLabels: {} },
     './use-story-scroll': { useStoryScroll: () => ({}) },
@@ -142,7 +147,7 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
     },
     button(label) {
       const found = nodes(tree).find(
-        (node) => node.type === 'button' && node.props.children === label,
+        (node) => node.type === 'button' && [].concat(node.props.children ?? []).includes(label),
       );
       assert.ok(found, `Button ${label} exists`);
       return found.props.onClick;
@@ -860,7 +865,8 @@ test('ordinary world status never mounts consent or makes writes, including acro
   ui.render({ campaignId: 'campaign', scope: 'round-22', disabled: false, access: 'owner' });
   await ui.flush();
   assert.equal(ui.elements('reply-confirmation').length, 0);
-  assert.equal(ui.has('worldCostForecastHint'), true);
+  assert.equal(ui.has('worldCostForecastHint'), false);
+  assert.match(ui.text(), /worldCostForecast:/);
   ui.expire();
   await ui.flush();
   assert.equal(ui.elements('reply-confirmation').length, 0);
@@ -1064,4 +1070,263 @@ test('contradictory local quote never auto-posts or offers ordinary consent', as
     assert.ok(ui.elements('error').some((node) => node.props.message === 'postingRejected'));
     ui.unmount();
   }
+});
+
+test('ordinary successful post stays compact without instructions, deferred notice or confirmation', async () => {
+  const calls = [];
+  let receipt;
+  const ui = await harness('unified-story', async (path, options) => {
+    if (!options?.body)
+      return {
+        canSubmit: true,
+        canonRevision: 4,
+        entries: [],
+        turns: receipt ? [receipt] : [],
+        configuration: {},
+      };
+    const input = JSON.parse(options.body);
+    calls.push({ path, input });
+    if (path.endsWith('/quote')) return localPostQuote();
+    receipt = {
+      id: input.turnId,
+      operationId: input.operationId,
+      status: 'committed',
+      code: 'NPC_REPLY_DEFERRED',
+    };
+    return receipt;
+  });
+  ui.render(composerProps());
+  await ui.flush();
+  assert.equal(ui.has('worldBatchPosting'), false);
+  ui.elements('textarea')[0].props.onChange({ target: { value: 'Осматриваю двор' } });
+  ui.render();
+  ui.elements('form')[0].props.onSubmit({ preventDefault() {} });
+  await tick();
+  ui.render();
+  assert.equal(calls.length, 2, 'one Send quotes and posts');
+  assert.equal(ui.elements('textarea')[0].props.value, '');
+  assert.equal(ui.has('worldBatchPosting'), false);
+  assert.equal(ui.has('worldCostForecastHint'), false);
+  assert.equal(ui.has('deferred'), false);
+  assert.equal(ui.has('confirm'), false);
+  assert.equal(ui.elements('reply-confirmation').length, 0);
+  ui.unmount();
+});
+
+test('one explicit compound confirmation covers text plus image risk without automatic consent', async () => {
+  const calls = [];
+  const prepared = quote();
+  Object.assign(prepared.quote, { generatedLocationImages: 2, estimateRiskConsentRequired: true });
+  const ui = await harness('story-reply-confirmation', async (path, options) => {
+    calls.push({ path, body: JSON.parse(options.body) });
+    return path.endsWith('/quote') ? prepared : { accepted: true };
+  });
+  ui.render(props());
+  ui.button('refreshEstimate')();
+  await tick();
+  ui.render();
+  assert.equal(calls.length, 1);
+  assert.ok(ui.text().includes('В оценку входит новая локация'));
+  ui.button('confirm')();
+  await tick();
+  ui.render();
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].body.consent, true);
+  assert.equal(calls[1].body.estimateRiskConsent, true);
+  assert.equal(calls[1].body.quoteId, prepared.quote.id);
+  ui.unmount();
+});
+
+test('location picker sends a free direct transition once and stays open after a rejected move', async () => {
+  const ui = await harness('location-picker');
+  let calls = 0,
+    finish;
+  const p = {
+    projection: {
+      map: { id: 'origin' },
+      locations: [
+        { id: 'origin', label: 'Here' },
+        { id: 'cafe', label: 'Cafe' },
+      ],
+    },
+    disabled: false,
+    onTravel: async () => {
+      calls++;
+      return new Promise((resolve) => (finish = resolve));
+    },
+  };
+  ui.render(p);
+  ui.render();
+  ui.button('Выбрать локацию')();
+  ui.render();
+  assert.equal(ui.elements('modal').length, 1);
+  ui.button('Here')();
+  assert.equal(calls, 0);
+  ui.button('Cafe')();
+  ui.button('Cafe')();
+  assert.equal(calls, 1);
+  finish(false);
+  await tick();
+  ui.render();
+  assert.equal(ui.elements('modal').length, 1);
+  ui.button('Cafe')();
+  assert.equal(calls, 2);
+  finish(true);
+  await tick();
+  ui.render();
+  assert.equal(ui.elements('modal').length, 0);
+  ui.unmount();
+});
+test('location picker closes when the authoritative map changes and cannot act while disabled', async () => {
+  const ui = await harness('location-picker');
+  let calls = 0;
+  const p = {
+    projection: {
+      map: { id: 'origin' },
+      locations: [
+        { id: 'origin', label: 'Here' },
+        { id: 'cafe', label: 'Cafe' },
+      ],
+    },
+    disabled: false,
+    onTravel: async () => {
+      calls++;
+      return true;
+    },
+  };
+  ui.render(p);
+  ui.render();
+  ui.button('Выбрать локацию')();
+  ui.render();
+  ui.render({ ...p, disabled: true });
+  ui.button('Cafe')();
+  assert.equal(calls, 0);
+  ui.render({ ...p, projection: { ...p.projection, map: { id: 'cafe' } } });
+  ui.render();
+  assert.equal(ui.elements('modal').length, 0);
+  ui.unmount();
+});
+
+test('declining a new location synchronously disables stale paid confirmation and retries only the same cancellation', async () => {
+  const calls = [];
+  let attempts = 0;
+  const ui = await harness('story-reply-confirmation', async (path) => {
+    calls.push(path);
+    return quote();
+  });
+  ui.render({
+    ...props(),
+    onDecline: async () => {
+      attempts++;
+      if (attempts === 1) throw new Error('response lost');
+    },
+  });
+  ui.render();
+  ui.button('refreshEstimate')();
+  await tick();
+  ui.render();
+  const staleConfirm = ui.button('confirm');
+  ui.button('declineLocation')();
+  staleConfirm();
+  await tick();
+  ui.render();
+  assert.equal(calls.filter((path) => path.endsWith('/consent')).length, 0);
+  assert.equal(ui.has('confirm'), false);
+  assert.match(ui.text(), /declineUnknown/);
+  ui.button('retrySame')();
+  await tick();
+  ui.render();
+  assert.equal(attempts, 2);
+  assert.equal(calls.filter((path) => path.endsWith('/consent')).length, 0);
+});
+test('declining a location is available even when pricing fails and never dispatches generation', async () => {
+  let declined = 0;
+  const ui = await harness('story-reply-confirmation', async () => {
+    throw new Error('estimate failed');
+  });
+  ui.render({
+    ...props(),
+    onDecline: async () => {
+      declined++;
+    },
+  });
+  ui.render();
+  ui.button('refreshEstimate')();
+  await tick();
+  ui.render();
+  assert.equal(ui.has('declineLocation'), true);
+  ui.button('declineLocation')();
+  await tick();
+  assert.equal(declined, 1);
+});
+
+test('definite decline refusal restores pricing and decline controls in the same scope', async () => {
+  const calls = [];
+  const ui = await harness('story-reply-confirmation', async (path) => {
+    calls.push(path);
+    return quote();
+  });
+  ui.render({
+    ...props(),
+    onDecline: async () => {
+      throw ui.apiError(409);
+    },
+  });
+  ui.render();
+  ui.button('refreshEstimate')();
+  await tick();
+  ui.render();
+  ui.button('declineLocation')();
+  await tick();
+  ui.render();
+  assert.equal(ui.has('declineLocation'), true);
+  assert.doesNotMatch(ui.text(), /declineUnknown/);
+  ui.button('refreshEstimate')();
+  await tick();
+  ui.render();
+  assert.equal(calls.filter((path) => path.endsWith('/quote')).length, 2);
+  assert.equal(calls.filter((path) => path.endsWith('/consent')).length, 0);
+  assert.equal(ui.has('confirm'), true);
+});
+test('uncertain decline clears quote timers and retains the exact cancellation when props change', async () => {
+  let prices = 0,
+    original = 0,
+    newer = 0;
+  const ui = await harness('story-reply-confirmation', async () => {
+    prices++;
+    return quote();
+  });
+  const p = {
+    ...props(),
+    worldBatch: true,
+    onDecline: async () => {
+      original++;
+      if (original === 1) throw new Error('lost response');
+    },
+  };
+  ui.render(p);
+  ui.render();
+  ui.expire();
+  await tick();
+  ui.render();
+  ui.button('declineLocation')();
+  await tick();
+  ui.render();
+  ui.render({
+    ...p,
+    onDecline: async () => {
+      newer++;
+    },
+  });
+  ui.expire();
+  await tick();
+  ui.render();
+  assert.equal(prices, 1);
+  assert.equal(ui.has('confirm'), false);
+  ui.button('retrySame')();
+  await tick();
+  ui.render();
+  assert.equal(original, 2);
+  assert.equal(newer, 0);
+  assert.equal(prices, 1);
 });

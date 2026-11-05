@@ -537,3 +537,20 @@ test('maximum authored prompt gets hidden style after public validation; old req
   );
   assert.equal(sent.length, 2);
 });
+
+// Public new quotes use v2 estimate reservations; status must not advertise a legacy fixed floor.
+test('new image capabilities reserve the quoted estimate rather than the historical 20-Sparks floor', () => {
+  const p = ownerProfile(now);
+  const c = config(p);
+  const runtime = createOwnerImageRuntime(c, { resolveApiKey: () => undefined });
+  assert.equal(runtime.capabilities.reserveMicros, c.image.estimatedTotalMicros);
+  assert.notEqual(runtime.capabilities.reserveMicros, c.image.reserveMicros);
+  assert.equal(runtime.capabilities.estimateRiskConsentRequired, true);
+  assert.equal(runtime.capabilities.verifiedUpperMicros, null);
+  assert.equal(runtime.capabilities.providerEnforcesQuotedCap, false);
+  assert.equal(
+    runtime.policy.operationalReserveMicros,
+    c.image.reserveMicros,
+    'historical accepted quotes retain their original policy',
+  );
+});

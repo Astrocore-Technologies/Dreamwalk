@@ -706,7 +706,11 @@ test('actual deferred-request processor preserves previously quoted history duri
   const written = [];
   let reviewed;
   const fake = {
-    story: { quotedReply: async () => null, requireLegacyReplyConsent: async () => false },
+    story: {
+      reconcileTerminalTravel: async () => {},
+      quotedReply: async () => null,
+      requireLegacyReplyConsent: async () => false,
+    },
     db: {
       query: async (sql, args = []) => {
         if (sql.startsWith('SELECT * FROM game_npc_decision_requests')) return [row];
@@ -795,7 +799,11 @@ test('actual deferred-request processor prepares the history window before askin
   const written = [];
   let reviewed, failed;
   const fake = {
-    story: { quotedReply: async () => null, requireLegacyReplyConsent: async () => false },
+    story: {
+      reconcileTerminalTravel: async () => {},
+      quotedReply: async () => null,
+      requireLegacyReplyConsent: async () => false,
+    },
     db: {
       query: async (sql, args = []) => {
         if (sql.startsWith('SELECT * FROM game_npc_decision_requests')) return [row];

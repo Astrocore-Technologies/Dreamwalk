@@ -4,6 +4,7 @@ import type { GameProjection } from '@dreamwalk/contracts';
 import { getLocale, useT } from '@/lib/i18n';
 import { Button, Field, Select, Textarea } from '@/components/ui';
 import type { CommandBody } from './use-game';
+import { npcUnavailable } from './turn-ui';
 import styles from './game.module.css';
 export function LivingConversation({
   projection,
@@ -24,7 +25,9 @@ export function LivingConversation({
     setNpcId('');
     setSelectedTopic('');
   }, [projection.actorId]);
-  const npcs = projection.entities.filter((entity) => entity.kind === 'npc');
+  const npcs = projection.entities.filter(
+    (entity) => entity.kind === 'npc' && !npcUnavailable(entity),
+  );
   const recipient = npcs.some((npc) => npc.id === npcId) ? npcId : npcs[0]?.id || '';
   const topics = projection.npcFactTopics?.filter((topic) => topic.npcId === recipient) || [];
   const topicId = topics.some((topic) => topic.id === selectedTopic) ? selectedTopic : undefined;
@@ -40,6 +43,7 @@ export function LivingConversation({
       <form
         onSubmit={async (event) => {
           event.preventDefault();
+          if (disabled || !recipient || !text.trim()) return;
           const sent = text;
           if (
             await command({

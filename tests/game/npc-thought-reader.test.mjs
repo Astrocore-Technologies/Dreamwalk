@@ -36,10 +36,11 @@ test('reader preserves public inspection Talk and keys private state to selected
   assert.match(controller, /this.game.npcInnerThought\(req, id, npcId\)/);
 });
 
-test('turn-based posts disclose deferred world cost without replacing legacy recovery', () => {
+test('turn-based posts retain compact cost and legacy recovery without verbose instructions', () => {
   const composer = read('apps/web/components/game/unified-story.tsx');
   const cost = read('apps/web/components/game/story-cost.tsx');
-  assert.match(composer, /projection.turn \? \([\s\S]*data-testid="world-batch-posting"/);
+  assert.doesNotMatch(composer, /world-batch-posting/);
+  assert.match(composer, /<WorldGenerationConfirmation/);
   assert.match(composer, /turn.generationNeedsConfirmation/);
   assert.match(composer, /<StoryReplyConfirmation/);
   assert.match(

@@ -1,3 +1,4 @@
+import type { AcceptedTravelBatchProof } from './travel-consent';
 import { quoteFunding, optionalFunding } from './currency-funding';
 /** Transactional usage accounting: mandatory in release, opt-in for historical modes.
  * No wallet creation, funding or activation. */
@@ -79,7 +80,7 @@ export async function reserveSparks(
   ownerId: string,
   quoteId: string | null,
   reservationId: string,
-  options: { required?: boolean } = {},
+  options: { required?: boolean; acceptedTravel?: AcceptedTravelBatchProof } = {},
 ) {
   // Defense in depth: a missed caller option must never turn release spending into
   // legacy opt-in accounting. The persisted scope, not request JSON, decides.
@@ -99,7 +100,7 @@ export async function reserveSparks(
     return;
   }
   try {
-    await accounting.reserve(c, ownerId, quoteId);
+    await accounting.reserve(c, ownerId, quoteId, options.acceptedTravel);
   } catch (error) {
     if (error instanceof Error && /^(INSUFFICIENT_SPARKS|SPARK_[A-Z_]+)$/.test(error.message))
       fail(409, error.message, error.message);

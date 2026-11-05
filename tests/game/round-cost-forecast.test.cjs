@@ -67,7 +67,7 @@ test('already-submitted speech contributes once and an existing plan is not fore
   assert.equal(result.estimatedTotalMicros, 50);
 });
 
-test('actual unprepared player speech and deferred director bind to the submitted round before world preparation', async () => {
+test('single-owner mixed post binds its deferred director to the submitted round before world preparation', async () => {
   const { randomUUID } = require('node:crypto');
   const { StoryTurnRuntime } = require('../../apps/api/dist/game/story-turn-runtime');
   const draft = g.createAuthoredDraft('courtyard');
@@ -89,7 +89,7 @@ test('actual unprepared player speech and deferred director bind to the submitte
     turnFence: g.turnFence(state),
   };
   const posted = runtime.simulateTurnPost(state, 'alice', input, turnId, 'owner');
-  assert.ok(posted.requests.length > 0);
+  assert.equal(posted.requests.length, 0);
   assert.ok(posted.directorText);
   assert.ok(posted.requests.every((request) => !request.context.turnFence));
   // submitTurnBased stores this minimal director request under the turn ID.
@@ -119,11 +119,6 @@ test('actual unprepared player speech and deferred director bind to the submitte
     })),
     director,
   ];
-  posted.state.turnController.deferredSpeech.push({
-    ...posted.state.turnController.deferredSpeech[0],
-    id: 'old-round-reference',
-    roundId: 'old-round',
-  });
   const db = {
     async query(sql, values) {
       assert.match(sql, /LEFT JOIN game_story_turns t ON t.campaign_id=r.campaign_id/);
@@ -155,7 +150,10 @@ test('actual unprepared player speech and deferred director bind to the submitte
     game.deferredSpeechContext.bind(game),
   );
   assert.deepEqual(posted.state, before);
-  assert.ok(contexts.find((request) => request.purpose === 'speech').context.currentUtterance);
+  assert.equal(
+    contexts.some((request) => request.purpose === 'speech'),
+    false,
+  );
   assert.ok(
     contexts
       .find((request) => request.purpose === 'story_turn')

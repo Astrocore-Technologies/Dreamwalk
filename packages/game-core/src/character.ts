@@ -11,7 +11,8 @@ type Response = NpcCharacterization['reactions'][number]['response'];
 type Stance = NpcCharacterization['reactions'][number]['publicStance'];
 
 export function characterTrigger(observation: NpcObservation, npcId?: string): Trigger | undefined {
-  if (['harmed', 'pushed'].includes(observation.kind)) return 'threat';
+  if (['harmed', 'pushed', 'died', 'lost_consciousness'].includes(observation.kind))
+    return 'threat';
   if (observation.kind === 'helped') return 'help';
   if (
     observation.kind === 'item_taken' &&

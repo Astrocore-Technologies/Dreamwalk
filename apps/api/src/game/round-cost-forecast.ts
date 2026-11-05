@@ -1,3 +1,4 @@
+import { isActorConscious } from '@dreamwalk/contracts';
 import { providerMicrosToSparkSubunits, type GameState } from '@dreamwalk/contracts';
 import { buildNpcDecisionContext, buildStoryTurnContext, turnFence } from '@dreamwalk/game-core';
 import type { Db } from '../db';
@@ -97,7 +98,10 @@ export async function forecastWorldRound(
           ...buildStoryTurnContext(state, row.turn_actor_id, worldInput, row.turn_id),
           turnBased: true,
           turnBasedDeferredDirector: true,
+          npcRepliesHandled: row.turn_context.npcRepliesHandled === true,
+          speechAlreadyRecorded: row.turn_context.speechAlreadyRecorded === true,
           worldInput,
+          committedAttackOutcomes: row.turn_context.committedAttackOutcomes ?? [],
           ...(row.turn_context.untrustedRoleplay
             ? {
                 untrustedRoleplay: row.turn_context.untrustedRoleplay,
@@ -118,7 +122,7 @@ export async function forecastWorldRound(
       !brain.living ||
       npc?.kind !== 'npc' ||
       npc.encounterId ||
-      (npc.vitality !== undefined && npc.vitality <= 0) ||
+      !isActorConscious(npc) ||
       !maps.has(npc.mapId) ||
       // Completed, running and free decisions are not billed a second time.
       rows.some((row) => row.npc_id === npcId && row.purpose === 'plan') ||

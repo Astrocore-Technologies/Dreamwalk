@@ -12,7 +12,9 @@ verify the source SHA-256, create a deterministic 768×768 contained JPEG matchi
 24×24 map framing with an analysis-only coordinate guide, and include it as real Responses `input_image` content in the same
 story-planning request. Original revision/hash and derived input hash are immutable
 read dependencies. No image URL is fetched from user input. The existing estimate and
-consent cover image analysis; there is no hidden second request or automatic retry.
+consent cover image analysis. Exact mode performs a separate, durable token-count
+preflight while preparing the quote; generation still has one acceptance and no
+automatic retry. The count is operational work, not a second generation or player charge.
 
 The typed proposal describes 24 rows of floor/door/wall-rock/water/obstacle/unknown
 cells and bounded public landmarks. The server validates image identity, safe distinct
@@ -35,19 +37,33 @@ text planning.
 
 ## Production gate and honest limits
 
-`text.storyVision` is an optional, explicit operator-reviewed policy, not enabled by
-this change. It requires the exact model, `detail: high`, `maxImages` (1–4), a reviewed
-`inputTokensPerImage` allowance for the normalized image, `billing: text_input_rate`,
-`maxPricedInputTokens`, and official pricing evidence with review/expiry dates. The
-configured image billing basis must be supported for that exact model. This is not a
-wallet/global spending cap: the existing request-specific reserve still applies.
+`text.storyVision` supports an explicitly reviewed image allowance or
+`counting: operational_exact`. When it is absent and the same model already has an
+exact `runtimeVision` policy, the authoring adapter derives exact story-image support
+in memory (up to the existing four-image source limit). It uses the existing reviewed
+model, billing basis, pricing range and expiry; no stored operator setting changes.
+An explicit `storyVision: false` opts out. A configured invalid or expired policy
+fails rather than silently changing modes.
 
-Image bytes count toward transport limits, not text token estimates. The estimate
-uses the image allowance plus conservative text-envelope accounting, and the body hash
-pins the exact raster bytes. A model/policy/image change invalidates the snapshot.
-Requests outside the reviewed pricing range are rejected before dispatch. Actual usage
-outside that range remains unpriced/unknown rather than incorrectly charging a lower
-tier. Never reuse GPT Image generation prices for vision inputs.
+Exact mode sends the identical authorized image/text/schema input to the provider's
+input-token-count endpoint before presenting the ordinary generation quote. It stores
+only the actor, model/provider fingerprint, body hash, status and count in the existing
+erasable operational receipt table, with no prompt or image content. Source access,
+release authorization, live owner and generation-policy fences are checked after
+locking, before admission, and again when creating/accepting the quote. Network work
+runs outside database locks. Requests are rate-limited; an unknown outcome blocks an
+automatic repeat. Fresh successful receipts can be reused for ten minutes. A saved
+quote pins the exact count and body across worker restarts without another count.
+
+Generation's existing request-specific reserve uses the exact input count plus its
+output allowance and safety margin, with the existing billing rates. This is not a
+global spending cap. Count endpoint fees are not asserted to be free: the operational
+provider-fee field remains unknown until verified, and is not fabricated as a zero-cost
+invoice or charged to the player's wallet. Image bytes still count toward transport
+limits. Requests outside the reviewed pricing range are rejected; actual generation
+usage outside it remains unpriced/unknown. Explicit legacy allowance policies retain
+their conservative accounting. No GPT Image generation price or guessed image-token
+multiplier is used for vision input.
 
 Documentation checked 2026-11-03:
 
@@ -62,8 +78,9 @@ Documentation checked 2026-11-03:
 A provider's self-reported confidence is not a guarantee of visual accuracy. Mock
 fixtures validate transport, accounting fences and geometry consistency, not the
 model's ability to read the user's actual map. A separately authorized real-image
-quality evaluation and verified model-specific image allowance/billing are still
-required before enabling the policy. Existing campaigns need a separate intentional
+quality evaluation is still required to establish visual quality. Exact counting
+replaces the need to guess an image-token multiplier; it does not prove that the
+model read the map correctly. Existing campaigns need a separate intentional
 migration/re-preparation if their original art and geometry disagree; this patch never
 silently repositions them.
 
@@ -72,20 +89,24 @@ silently repositions them.
 `tests/game/map-image-grounding.test.cjs` uses synthetic input only, covering ownership,
 integrity, contain framing, quote/body pinning, actual mocked multimodal dispatch,
 unsafe cells, disconnected spawns, confidence, doors, visible landmarks and stale art.
-The test is included in `npm run test:game`. Paid-start PostgreSQL tests run against a
+`tests/game/story-map-exact-count.test.cjs` additionally covers exact quote/dispatch
+identity across restart, safe-spawn validation, explicit opt-out, priced-tier limits,
+durable admission/access checks, receipt reuse, uncertain outcome and erasure. These
+tests use injected transport only and are included in `npm run test:game`. Paid-start PostgreSQL tests run against a
 fresh disposable local cluster and injected providers only.
 
 ## Playable fallback when vision is not configured
 
 An image-backed story no longer requires an administrator to enable vision before it
-can start. When the configured text profile has no `storyVision` policy, uncompiled
+can start. When neither story-image support nor inherited exact runtime-image support is available
+(or story vision is explicitly disabled), uncompiled
 preparations derive a text-only schematic source. The existing estimate explains that
 the illustration is displayed separately from unverified positions and image analysis
 is not priced. Original artwork remains saved in the story assets. The
 source/checksum and quote distinguish this mode, so an earlier estimate cannot be
 silently reused. No second confirmation or hidden image request is introduced.
 
-This fallback is only for an absent policy. A configured but expired/invalid vision
+This fallback is only for an absent capability or explicit opt-out. A configured but expired/invalid vision
 policy still fails before dispatch, rather than silently changing an accepted mode.
 Saved campaign state is unchanged. The illustration view is a temporary alternative,
 not a claim that the original raster was understood or its spawn repaired.

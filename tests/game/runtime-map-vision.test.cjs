@@ -243,6 +243,37 @@ test('text-only remains text-only with zero image calls and no changed public pr
   assert.equal(provider.runtimeVisionEnabled(), false);
 });
 
+test('spatial focus follows purpose and never substitutes another visible character', () => {
+  const { config, context } = fixture();
+  const provider = new OpenAiNpcProvider(config, async () => assert.fail('no provider calls'));
+  context.actorId = 'hero';
+  const focus = (purpose, patch = {}) => {
+    const prepared = provider.prepareTextRequest(purpose, { ...context, ...patch });
+    return JSON.parse(JSON.parse(prepared.body).input[0].content[0].text).context
+      .runtimeSpatialFocus;
+  };
+  for (const purpose of ['story_turn', 'narrative', 'intent']) {
+    assert.equal(focus(purpose).entityId, 'hero');
+    assert.deepEqual([focus(purpose).x, focus(purpose).y], [2, 3]);
+  }
+  for (const purpose of ['plan', 'speech']) assert.equal(focus(purpose).entityId, 'npc');
+  assert.equal(
+    focus('story_turn', { mode: 'npc', npcId: undefined, targetNpcId: 'npc' }).entityId,
+    'npc',
+  );
+  assert.equal(
+    focus('story_turn', { actorId: undefined, director: { actorId: 'hero' } }).entityId,
+    'hero',
+  );
+  assert.equal(focus('speech', { npcId: 'unseen-private-npc' }), null);
+  assert.equal(
+    focus('narrative', { actorId: 'npc' }),
+    null,
+    'wrong entity kind is not a player focus',
+  );
+  assert.equal(focus('narrative', { actorId: undefined }), null, 'do not guess from first marker');
+});
+
 test('current-map source and shared view are frozen; changed positions, pins, rights or map stop dispatch', async () => {
   const fs = require('node:fs/promises'),
     os = require('node:os'),
@@ -309,8 +340,20 @@ test('current-map source and shared view are frozen; changed positions, pins, ri
       'narrative',
     );
     assert.ok(context.runtimeMapImage);
+    assert.equal(context.runtimeMapImage.terrainStatus, 'illustration_only');
     assert.equal(queries.length, 2);
     assert.equal(await runtimeMapStillCurrent(query, 'campaign', state, context), true);
+    const grounded = structuredClone(state);
+    delete grounded.maps[map.id].backgroundMode;
+    grounded.maps[map.id].spatialGrounding = {
+      imageRevisionId: row.revisionId,
+      imageSha256: row.sha256,
+    };
+    assert.equal(
+      await runtimeMapStillCurrent(query, 'campaign', grounded, context),
+      false,
+      'changed interpretation status cannot reuse a frozen quote',
+    );
     row.metadata.camera = 'unrestricted';
     assert.ok(
       (
@@ -337,16 +380,18 @@ test('current-map source and shared view are frozen; changed positions, pins, ri
     delete room.spatialGrounding;
     shared.entities.hero.x = 2;
     shared.entities.hero.y = 4;
-    shared.entities.keeper.x = 10;
+    shared.entities.keeper.x = 8;
     shared.entities.keeper.y = 4;
-    shared.entities.listener.x = 15;
+    shared.entities.listener.x = 14;
     shared.entities.listener.y = 4;
     for (const id of Object.keys(shared.entities))
       if (!['hero', 'keeper', 'listener'].includes(id)) delete shared.entities[id];
     const turn = g.buildStoryTurnContext(
       shared,
       'hero',
-      { operationId: randomUUID(), text: 'Hello', channel: 'say', expectedCanonRevision: 0 },
+      // A raised voice reaches the NPC six cells away. The NPC's prospective
+      // reply can reach a second listener outside the player's visible area.
+      { operationId: randomUUID(), text: 'Hello!', channel: 'say', expectedCanonRevision: 0 },
       randomUUID(),
     );
     assert.deepEqual(

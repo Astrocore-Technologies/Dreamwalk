@@ -1,4 +1,7 @@
+import { isActorConscious } from '@dreamwalk/contracts';
 import { parseStoryItemAction } from './story-items';
+import { resolveTravelRequest } from './location-travel';
+import { storyContactAction } from './story-attacks';
 import { applyTurnAction, turnFence, matchesTurnFence } from './turns';
 import type { TurnFence } from '@dreamwalk/contracts';
 import {
@@ -16,7 +19,8 @@ import { npcContextFingerprint } from './living';
 export function reviseNpcBelief(state: GameState, npcId: string, input: unknown): GameResult {
   const p = npcBeliefRevisionSchema.safeParse(input),
     m = state.npcBrains?.[npcId]?.living;
-  if (!p.success || !m) return { state, events: [], error: 'INVALID_ACTION' };
+  if (!p.success || !m || !isActorConscious(state.entities[npcId]))
+    return { state, events: [], error: 'INVALID_ACTION' };
   const x = p.data,
     source = x.evidenceIds.map((id) => m.observations.find((o) => o.id === id));
   if (new Set(x.evidenceIds).size !== x.evidenceIds.length || source.some((o) => !o))
@@ -110,14 +114,16 @@ export function parsePlayerTextAction(
     return null;
   const pickup = parseStoryItemAction(state, actorId, text);
   if (pickup) return pickup;
+  const travel = resolveTravelRequest(state, text);
+  if (travel?.mapId) return { kind: 'travel', targetId: travel.mapId };
+  const contact = storyContactAction(state, actorId, text);
+  if (contact) return contact;
   const normalized = text.trim().toLowerCase(),
     patterns: [RegExp, GameAction['kind']][] = [
       [
         /^(eat|consume|съешь|съесть|съел|съела|поесть|ем|з'їсти|з’їсти|з'їж|з’їж|поїсти)\s+(.+)$/u,
         'consume',
       ],
-      [/^(hit|strike|ударить|ударил|ударяю|вдарити|вдарив)\s+(.+)$/u, 'hit'],
-      [/^(push|shove|толкнуть|толкнул|толкаю|штовхнути|штовхнув|штовхаю)\s+(.+)$/u, 'push'],
       [/^(open|открой|открываю|відкрий|відкриваю)\s+(.+)$/u, 'open'],
       [/^(close|закрой|закрываю|закрий|закриваю)\s+(.+)$/u, 'close'],
       [/^(inspect|осмотри|осматриваю|оглянь|оглядаю)\s+(.+)$/u, 'inspect'],
@@ -275,7 +281,12 @@ export function recordNpcCognition(
 ): GameResult {
   const parsed = npcCognitionSchema.safeParse(input),
     memory = state.npcBrains?.[npcId]?.living;
-  if (!parsed.success || !memory || state.entities[npcId]?.kind !== 'npc')
+  if (
+    !parsed.success ||
+    !memory ||
+    state.entities[npcId]?.kind !== 'npc' ||
+    !isActorConscious(state.entities[npcId])
+  )
     return { state, events: [], error: 'INVALID_ACTION' };
   if (
     memory.knowledgeRevision !== fence.knowledgeRevision ||

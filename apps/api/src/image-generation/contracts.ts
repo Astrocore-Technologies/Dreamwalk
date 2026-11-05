@@ -32,6 +32,7 @@ export const generationRequestSchema = z
       .optional(),
     authoringContext: authoringContextSchema.optional(),
     privateReferenceAssetIds: z.array(z.uuid()).max(1).default([]),
+    travelContext: z.object({ preparationId: z.uuid() }).strict().optional(),
     campaignContext: z
       .object({
         campaignId: z.uuid(),
@@ -78,7 +79,7 @@ export const generationRequestSchema = z
       !v.imageFraming ||
       (v.framingVersion === 1 &&
         v.kind === 'background' &&
-        !!(v.studioLocationContext || v.campaignContext)),
+        !!(v.studioLocationContext || v.campaignContext || v.travelContext)),
     { message: 'MAP_IMAGE_FRAMING_CONTEXT_REQUIRED' },
   )
   .refine((v) => !v.studioLocationContext || !!v.adventureId)
@@ -87,6 +88,7 @@ export const generationRequestSchema = z
       [
         v.authoringContext,
         v.campaignContext,
+        v.travelContext,
         v.studioLocationContext,
         v.heroPortraitContext,
         v.storyCoverContext,

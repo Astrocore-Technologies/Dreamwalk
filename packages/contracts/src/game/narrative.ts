@@ -80,6 +80,7 @@ export const narrativeActionSchema = z
       'consume',
       'give',
       'transition',
+      'travel',
       'wait',
       'hit',
       'push',
@@ -106,18 +107,37 @@ export interface ConfirmedNarrativeTurn {
   requestHash: string;
   tick: number;
   narration: string;
+  /** Server-owned textual audience. Legacy entries without scope remain public. */
+  channel?: 'public' | 'whisper';
+  audienceIds?: string[];
   sceneId?: string;
   npcId?: string;
   evidenceIds: string[];
   introducedScene?: { id: string; name: string; description: string };
   introducedNpc?: { id: string; name: string; roleLabel: string };
   introducedItem?: { id: string; name: string; description: string };
+  /** Durable admission prevents a deferred director retry from applying injury twice. */
+  impact?: {
+    segmentIndex: number;
+    targetId: string;
+    effect: 'harm' | 'blocked' | 'unconscious' | 'death' | 'recover' | 'revive';
+    damage: number;
+    lifeStateBefore?: 'conscious' | 'unconscious' | 'dead';
+    lifeStateAfter?: 'conscious' | 'unconscious' | 'dead';
+    vitalityBefore?: number;
+    vitalityAfter?: number;
+  };
 }
 export interface NarrativeCanon {
   revision: number;
   turns: ConfirmedNarrativeTurn[];
 }
 export const narrativePublicTurnSchema = z
-  .object({ id: z.string().uuid(), tick: z.number().int().nonnegative(), narration: copy(2000) })
+  .object({
+    id: z.string().uuid(),
+    tick: z.number().int().nonnegative(),
+    narration: copy(2000),
+    channel: z.enum(['say', 'whisper']).optional(),
+  })
   .strict();
 export type NarrativePublicTurn = z.infer<typeof narrativePublicTurnSchema>;

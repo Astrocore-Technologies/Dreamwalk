@@ -27,6 +27,7 @@ const viewSchema = z
             id: gameIdSchema,
             kind: z.enum(['player', 'npc', 'item', 'door']),
             label: z.string().max(120).optional(),
+            lifeState: z.enum(['conscious', 'unconscious', 'dead']).optional(),
             x: z.number().int().min(0).max(63),
             y: z.number().int().min(0).max(63),
             occupiedCells: z.array(pointSchema).min(1).max(9),

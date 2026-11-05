@@ -11,6 +11,7 @@ type WorldGenerationStatus = {
   ordinary?: { state: 'pending' | 'accepted' | 'blocked'; code: string | null } | null;
   available: boolean;
   generatedLocationImages?: number;
+  pendingLocationIds?: string[];
   estimateRiskConsentRequired?: boolean;
   pending: boolean;
   unknown?: boolean;
@@ -135,6 +136,18 @@ export function WorldGenerationConfirmation({
           scope={scope}
           disabled={disabled || !!error || membershipError || membershipPending}
           onChanged={refresh}
+          onDecline={
+            status.pendingLocationIds?.length
+              ? async () => {
+                  const requestIds = [...status.pendingLocationIds!];
+                  await api(`${path}/decline`, {
+                    method: 'POST',
+                    body: JSON.stringify({ requestIds }),
+                  });
+                  await refresh();
+                }
+              : undefined
+          }
         />
       ) : status?.ordinary?.state === 'blocked' ? (
         <ErrorBox message={blockedMessage} />
@@ -152,7 +165,6 @@ export function WorldGenerationConfirmation({
                 })
               : h(error || status ? 'worldCostUnavailable' : 'worldCostCalculating')}
           </p>
-          <small>{h('worldCostForecastHint')}</small>
         </div>
       ) : (
         <p role="status">

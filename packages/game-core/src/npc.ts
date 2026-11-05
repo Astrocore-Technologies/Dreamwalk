@@ -1,3 +1,4 @@
+import { isActorConscious } from '@dreamwalk/contracts';
 import { footprintDistance, adjacentFootprintAnchors } from '@dreamwalk/contracts';
 import { characterAppraisal } from './character';
 import { matchesTurnFence, turnFence } from './turns';
@@ -83,6 +84,7 @@ export function currentNpcPlan(state: GameState, id: string) {
     brain = state.npcBrains?.[id];
   if (
     npc?.kind !== 'npc' ||
+    !isActorConscious(npc) ||
     !brain ||
     npc.encounterId ||
     !Array.isArray(brain.plan) ||
@@ -219,7 +221,8 @@ export function createMockNpcPlan(state: GameState, id: string): unknown {
 export function acceptNpcPlan(state: GameState, id: string, input: unknown): GameResult {
   const npc = state.entities[id],
     brain = state.npcBrains?.[id];
-  if (npc?.kind !== 'npc' || !brain) return { ...result(state), error: 'FORBIDDEN' };
+  if (npc?.kind !== 'npc' || !isActorConscious(npc) || !brain)
+    return { ...result(state), error: 'FORBIDDEN' };
   const parsed = npcPlanProposalSchema.safeParse(input);
   if (!parsed.success) return { ...result(state), error: 'INVALID_ACTION' };
   const p = parsed.data;
@@ -300,7 +303,8 @@ export function stepNpcPlan(state: GameState, id: string): GameResult {
   if (state.turnController && state.turnController.phase !== 'world') return result(state);
   const npc = state.entities[id],
     brain = state.npcBrains?.[id];
-  if (!npc || !brain || brain.cursor >= brain.plan.length) return result(state);
+  if (!npc || !isActorConscious(npc) || !brain || brain.cursor >= brain.plan.length)
+    return result(state);
   const abort = (code: 'STALE_STATE' | 'PATH_BLOCKED' | 'WRONG_MODE'): GameResult => {
     const s = structuredClone(state),
       b = s.npcBrains![id];
@@ -359,7 +363,7 @@ export function recordNpcEvents(
   let changed = false;
   for (const [id, brain] of Object.entries(s.npcBrains!)) {
     const observer = before.entities[id];
-    if (!observer) continue;
+    if (!observer || !isActorConscious(observer)) continue;
     for (let i = 0; i < events.length; i++) {
       const e = events[i],
         eventId = `${operationId}:${i}`;

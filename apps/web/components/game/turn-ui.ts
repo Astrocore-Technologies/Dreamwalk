@@ -40,3 +40,25 @@ export function spriteFeedback(kind: 'hit' | 'push', elapsed: number, dx: number
       }
     : { x: dx * envelope * 10, y: dy * envelope * 10, rotation: -dx * envelope * 0.09 };
 }
+
+/** Public lifecycle only; legacy zero-vitality saves never imply death. */
+export function publicLifeState(entity: {
+  lifeState?: 'conscious' | 'unconscious' | 'dead';
+  vitality?: number;
+}) {
+  return (
+    entity.lifeState ??
+    (entity.vitality !== undefined && entity.vitality <= 0 ? 'unconscious' : 'conscious')
+  );
+}
+export function npcUnavailable(entity: {
+  kind: string;
+  lifeState?: 'conscious' | 'unconscious' | 'dead';
+  vitality?: number;
+}) {
+  return (
+    entity.kind === 'npc' &&
+    (publicLifeState(entity) !== 'conscious' ||
+      (entity.vitality !== undefined && entity.vitality <= 0))
+  );
+}

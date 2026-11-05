@@ -10,6 +10,31 @@ export const localeNames: Record<Locale, string> = {
 };
 export const intlLocales: Record<Locale, string> = { uk: 'uk-UA', en: 'en-GB', ru: 'ru-RU' };
 const messages: Record<string, Record<Locale, string>> = {
+  'Замечена смерть персонажа': {
+    ru: 'Замечена смерть персонажа',
+    en: 'A character died',
+    uk: 'Помічено смерть персонажа',
+  },
+  'Замечена потеря сознания': {
+    ru: 'Замечена потеря сознания',
+    en: 'A character lost consciousness',
+    uk: 'Помічено втрату свідомості',
+  },
+  'Персонаж пришёл в сознание': {
+    ru: 'Персонаж пришёл в сознание',
+    en: 'A character regained consciousness',
+    uk: 'Персонаж опритомнів',
+  },
+  'Персонаж вернулся к жизни': {
+    ru: 'Персонаж вернулся к жизни',
+    en: 'A character returned to life',
+    uk: 'Персонаж повернувся до життя',
+  },
+  'Замечено состояние персонажа': {
+    ru: 'Замечено состояние персонажа',
+    en: 'A character’s condition was observed',
+    uk: 'Помічено стан персонажа',
+  },
   'Недавно редактировали': {
     ru: 'Недавно редактировали',
     en: 'Recently edited',

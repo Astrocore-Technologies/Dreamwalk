@@ -1,3 +1,4 @@
+import { LocationTravelGeneration } from './location-travel-generation';
 import { captureWorldQuoteRoster } from '../ai/runtime-map-preflight';
 import { aggregateFunding, optionalFunding } from '../generation/currency-funding';
 import { totalQuotedSparkSubunits, commonQuotedSparkRate } from '../generation/sparks-quote-total';
@@ -22,7 +23,13 @@ type Entry = {
   quote: StoryQuote;
 };
 const quoteInput = z.object({ operationId: z.uuid() }).strict();
-const consentInput = quoteInput.extend({ quoteId: z.uuid(), consent: z.literal(true) }).strict();
+const consentInput = quoteInput
+  .extend({
+    quoteId: z.uuid(),
+    consent: z.literal(true),
+    estimateRiskConsent: z.literal(true).optional(),
+  })
+  .strict();
 const entryIdentity = (rows: QueryResultRow[]) =>
   rows.map((r) => ({
     id: r.id,
@@ -37,6 +44,7 @@ export class WorldGenerationBatch {
   constructor(
     private readonly db: Db,
     private readonly ai: NpcAiService,
+    private readonly travel?: LocationTravelGeneration,
   ) {}
   private async authorize(
     c: PoolClient,
@@ -120,7 +128,13 @@ export class WorldGenerationBatch {
         r.job_status,
       ),
     );
-    return { rows, unknown, active };
+    const media = await this.travel?.progress(c, campaignId);
+    return {
+      rows,
+      mediaRows: media?.rows ?? [],
+      unknown: unknown || !!media?.unknown,
+      active: active || !!media?.active,
+    };
   }
   private async expire(c: PoolClient, campaignId: string, state: GameState) {
     const rows = (
@@ -145,9 +159,114 @@ export class WorldGenerationBatch {
         }
       }
   }
+  /** Read-only signal from the already committed free post, before any media quote. */
+  async pendingLocationCount(c: Pick<PoolClient, 'query'>, campaignId: string, state: GameState) {
+    if (state.turnController?.phase !== 'world') return 0;
+    const result = await c.query(
+      `SELECT count(*)::int AS count FROM game_npc_decision_requests r
+       JOIN game_story_turns t ON t.id=r.id AND t.campaign_id=r.campaign_id
+       WHERE r.campaign_id=$1 AND r.purpose='story_turn' AND r.status='queued' AND r.job_id IS NULL
+       AND t.status='committed' AND t.erased_at IS NULL AND t.context ? 'travelOriginMapId'
+       AND t.input->'turnFence'->>'roundId'=$2`,
+      [campaignId, state.turnController.roundId],
+    );
+    return Number(result.rows[0]?.count ?? 0);
+  }
+  async declineLocations(userId: string, campaignId: string, state: GameState, body: unknown) {
+    const input = z
+      .object({ requestIds: z.array(z.uuid()).min(1).max(256) })
+      .strict()
+      .parse(body);
+    const ids = [...new Set(input.requestIds)].sort();
+    return this.db.tx(async (c) => {
+      await this.authorize(c, userId, campaignId, false);
+      await this.lock(c, campaignId);
+      const rows = (
+        await c.query(
+          `SELECT t.id,t.input,r.status,r.result_code,r.job_id
+        FROM game_story_turns t JOIN game_npc_decision_requests r ON r.id=t.id AND r.campaign_id=t.campaign_id
+        WHERE t.campaign_id=$1 AND t.id=ANY($2::uuid[]) AND t.erased_at IS NULL AND t.status='committed'
+        AND t.context ? 'travelOriginMapId' AND r.purpose='story_turn' FOR UPDATE OF t,r`,
+          [campaignId, ids],
+        )
+      ).rows;
+      if (rows.length !== ids.length)
+        fail(409, 'LOCATION_TRAVEL_UNAVAILABLE', 'LOCATION_TRAVEL_UNAVAILABLE');
+      for (const row of rows) {
+        if (row.status === 'cancelled' && row.result_code === 'LOCATION_TRAVEL_DECLINED') continue;
+        const prep = (
+          await c.query('SELECT * FROM game_location_travel_preparations WHERE id=$1 FOR UPDATE', [
+            row.id,
+          ])
+        ).rows[0];
+        if (
+          row.status !== 'queued' ||
+          row.job_id ||
+          (prep &&
+            (prep.owner_id !== userId ||
+              prep.campaign_id !== campaignId ||
+              prep.state !== 'prepared' ||
+              prep.image_job_id))
+        )
+          fail(409, 'LOCATION_TRAVEL_ALREADY_STARTED', 'LOCATION_TRAVEL_ALREADY_STARTED');
+        const changed = await c.query(
+          `UPDATE game_npc_decision_requests r SET status='cancelled',result_code='LOCATION_TRAVEL_DECLINED'
+          WHERE r.id=$1 AND r.campaign_id=$2 AND r.status='queued' AND r.job_id IS NULL
+          AND NOT EXISTS(SELECT 1 FROM npc_ai_jobs j WHERE j.operation_id=r.id OR j.request_meta->>'runtimeRequestId'=r.id::text)
+          AND NOT EXISTS(SELECT 1 FROM live_test_text_permits p WHERE p.request_id=r.id)
+          AND NOT EXISTS(SELECT 1 FROM generation_budget_reservations b WHERE b.operation_key='manual-text:'||r.id::text)
+          AND NOT EXISTS(SELECT 1 FROM spark_holds h WHERE h.source_id=r.id::text)
+          AND NOT EXISTS(SELECT 1 FROM image_generation_jobs j WHERE j.operation_id=r.id AND j.actor_id=$3)
+          RETURNING id`,
+          [row.id, campaignId, userId],
+        );
+        if (!changed.rowCount)
+          fail(409, 'LOCATION_TRAVEL_ALREADY_STARTED', 'LOCATION_TRAVEL_ALREADY_STARTED');
+        await c.query(
+          "UPDATE game_location_travel_preparations SET state='failed' WHERE id=$1 AND state='prepared'",
+          [row.id],
+        );
+        await c.query(
+          "UPDATE game_story_turns SET result_code='LOCATION_TRAVEL_DECLINED' WHERE id=$1",
+          [row.id],
+        );
+      }
+      await c.query(
+        `UPDATE game_world_generation_batches SET state='stale' WHERE campaign_id=$1 AND accepted_at IS NULL
+        AND EXISTS(SELECT 1 FROM jsonb_array_elements(media_entries) e WHERE e->>'preparationId'=ANY($2::text[]))`,
+        [campaignId, ids],
+      );
+      if ((await this.pendingLocationCount(c, campaignId, state)) === 0) {
+        const rounds = [
+          ...new Set(rows.map((row) => row.input.turnFence?.roundId).filter(Boolean)),
+        ];
+        // The original End turn already authorized ordinary text. Restore only that exact blocked round.
+        await c.query(
+          `UPDATE game_ordinary_round_consents SET state='pending',result_code=NULL,updated_at=now()
+          WHERE campaign_id=$1 AND owner_id=$2 AND round_id=ANY($3::text[]) AND state='blocked'
+          AND result_code='IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED'`,
+          [campaignId, userId, rounds],
+        );
+      }
+      return { declined: true as const, requestIds: ids };
+    });
+  }
   async status(userId: string, campaignId: string, state: GameState) {
     return this.db.tx(async (c) => {
       await this.authorize(c, userId, campaignId, false);
+      const generatedLocationImages = await this.pendingLocationCount(c, campaignId, state);
+      const pendingLocationIds = generatedLocationImages
+        ? (
+            await c.query(
+              `SELECT t.id FROM game_story_turns t
+        JOIN game_npc_decision_requests r ON r.id=t.id AND r.campaign_id=t.campaign_id
+        WHERE t.campaign_id=$1 AND t.context ? 'travelOriginMapId' AND t.status='committed' AND t.erased_at IS NULL
+        AND r.purpose='story_turn' AND r.status='queued' AND r.job_id IS NULL AND t.input->'turnFence'->>'roundId'=$2
+        ORDER BY t.id`,
+              [campaignId, state.turnController?.roundId],
+            )
+          ).rows.map((row) => String(row.id))
+        : [];
       // Metadata only: reading a waiting reason must not quote, admit, cancel or retry work.
       const waiting = await c.query(
         `SELECT r.result_code FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id
@@ -172,6 +291,9 @@ export class WorldGenerationBatch {
           active = evidence.active === true;
         return {
           available: false,
+          generatedLocationImages,
+          pendingLocationIds,
+          estimateRiskConsentRequired: generatedLocationImages > 0,
           pending: unknown || active,
           unknown,
           reason: unknown
@@ -196,10 +318,18 @@ export class WorldGenerationBatch {
             r.request_status === 'queued' &&
             !r.job_id,
         );
+      // The free departure can precede world context preparation. Its explicit
+      // quote endpoint will prepare the round; GET must neither schedule it nor
+      // reject a still-unprepared intent as a stale paid quote.
       const available =
-        !pending && (await this.eligible(c, userId, campaignId, state, false)).length > 0;
+        !pending &&
+        (generatedLocationImages > 0 ||
+          (await this.eligible(c, userId, campaignId, state, false)).length > 0);
       return {
         available,
+        generatedLocationImages,
+        pendingLocationIds,
+        estimateRiskConsentRequired: generatedLocationImages > 0,
         pending,
         unknown: progress.unknown,
         reason: progress.unknown
@@ -281,8 +411,24 @@ export class WorldGenerationBatch {
           quote,
         });
       }
-      const reserve = entries.reduce((n, e) => n + (e.quote.providerReserveMicros ?? 0), 0);
-      const estimate = entries.reduce(
+      const mediaEntries =
+        (await this.travel?.quotes(
+          c,
+          userId,
+          campaignId,
+          requests.map((r) => String(r.id)),
+        )) ?? [];
+      if (
+        requests.some(
+          (r) =>
+            r.context.travelRequests?.some((t: { mapId?: string | null }) => !t.mapId) &&
+            !mediaEntries.some((entry) => entry.preparationId === r.id),
+        )
+      )
+        fail(409, 'LOCATION_MEDIA_UNAVAILABLE', 'LOCATION_MEDIA_UNAVAILABLE');
+      const pricedEntries = [...entries, ...mediaEntries];
+      const reserve = pricedEntries.reduce((n, e) => n + (e.quote.providerReserveMicros ?? 0), 0);
+      const estimate = pricedEntries.reduce(
         (n, e) => n + (e.quote.estimatedTotalMicros ?? e.quote.providerReserveMicros ?? 0),
         0,
       );
@@ -295,7 +441,7 @@ export class WorldGenerationBatch {
         fail(409, 'SPARK_PRICE_UNVERIFIED', 'SPARK_PRICE_UNVERIFIED');
       const id = randomUUID(),
         expiresAt = new Date(
-          Math.min(...entries.map((e) => Date.parse(e.quote.expiresAt))),
+          Math.min(...pricedEntries.map((e) => Date.parse(e.quote.expiresAt))),
         ).toISOString();
       // Never publish a dead aggregate after a slow exact-quote pass. Rollback
       // every native quote together; no consent, job or hold was created.
@@ -308,9 +454,12 @@ export class WorldGenerationBatch {
         external: true,
         requiresConsent: true,
         chargeUnit: 'sparks',
-        sparkReservedSubunits: totalQuotedSparkSubunits(entries.map((entry) => entry.quote)),
-        ...commonQuotedSparkRate(entries.map((entry) => entry.quote)),
-        ...optionalFunding(aggregateFunding(entries.map((entry) => entry.quote))),
+        sparkReservedSubunits: totalQuotedSparkSubunits(pricedEntries.map((entry) => entry.quote)),
+        ...commonQuotedSparkRate(pricedEntries.map((entry) => entry.quote)),
+        ...optionalFunding(aggregateFunding(pricedEntries.map((entry) => entry.quote))),
+        ...(mediaEntries.length
+          ? { generatedLocationImages: mediaEntries.length, estimateRiskConsentRequired: true }
+          : {}),
         providerUpperMicros: null,
         providerReserveMicros: reserve,
         ...(entries.some((e) => e.quote.runtimeMapImages)
@@ -326,15 +475,15 @@ export class WorldGenerationBatch {
         estimateSnapshot: {
           schemaVersion: 1,
           costBasis: 'operator_estimate',
-          fingerprint: digest(entries),
+          fingerprint: digest(pricedEntries),
           reserveMicros: reserve,
           estimatedTotalMicros: estimate,
           providerEnforcesQuotedCap: false,
         },
       };
       await c.query(
-        `INSERT INTO game_world_generation_batches(id,campaign_id,owner_id,operation_id,state_hash,request_hash,turn_fence,entries,quote,expires_at)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10)`,
+        `INSERT INTO game_world_generation_batches(id,campaign_id,owner_id,operation_id,state_hash,request_hash,turn_fence,entries,quote,expires_at,media_entries)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
         [
           id,
           campaignId,
@@ -346,10 +495,22 @@ export class WorldGenerationBatch {
           JSON.stringify(entries),
           JSON.stringify(quote),
           expiresAt,
+          JSON.stringify(mediaEntries),
         ],
       );
       return { status: 'quoted' as const, operationId: input.operationId, quote };
     });
+  }
+  private async consumeOrdinaryForMedia(c: PoolClient, batch: QueryResultRow, userId: string) {
+    if (!Array.isArray(batch.media_entries) || !batch.media_entries.length) return;
+    // Explicit combined consent supersedes the same round's text-only intent.
+    // Persist this in the acceptance transaction, before a worker can schedule media/text.
+    await c.query(
+      `UPDATE game_ordinary_round_consents SET state='accepted',batch_id=$3,result_code=NULL,updated_at=now()
+       WHERE campaign_id=$1 AND round_id=$2 AND owner_id=$4 AND state IN ('pending','blocked')
+       AND (result_code IS NULL OR result_code='IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED')`,
+      [batch.campaign_id, batch.turn_fence.roundId, batch.id, userId],
+    );
   }
   async consent(
     userId: string,
@@ -400,6 +561,7 @@ export class WorldGenerationBatch {
           fail(409, 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED', 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED');
       }
       if (batch.accepted_at) {
+        await this.consumeOrdinaryForMedia(c, batch, userId);
         const previous = await this.progress(c, campaignId);
         return {
           accepted: true as const,
@@ -479,6 +641,14 @@ export class WorldGenerationBatch {
         BigInt(batch.quote.sparkReservedSubunits)
       )
         fail(409, 'INSUFFICIENT_SPARKS', 'INSUFFICIENT_SPARKS');
+      if (Array.isArray(batch.media_entries) && batch.media_entries.length)
+        await this.travel?.accept(
+          c,
+          userId,
+          batch.id,
+          batch.media_entries,
+          input.estimateRiskConsent === true,
+        );
       for (const entry of entries)
         await c.query(
           "UPDATE game_npc_decision_requests SET requester_user_id=$2,result_code=NULL WHERE id=$1 AND status='queued' AND job_id IS NULL",
@@ -498,6 +668,7 @@ export class WorldGenerationBatch {
           ),
         ],
       );
+      await this.consumeOrdinaryForMedia(c, batch, userId);
       if (ordinaryRoundId !== undefined)
         await c.query(
           `UPDATE game_ordinary_round_consents SET state='accepted',batch_id=$3,updated_at=now()
@@ -527,7 +698,11 @@ export class WorldGenerationBatch {
         )
       ).rows[0];
       if (!batch) return null;
-      const progress = await this.progress(c, campaignId);
+      let progress = await this.progress(c, campaignId);
+      if (!progress.active && !progress.unknown) {
+        await this.travel?.advance(c, batch.owner_id, campaignId, batch.id, callerRequest.id);
+        progress = await this.progress(c, campaignId);
+      }
       if (progress.unknown) {
         // Stop unpaid siblings, not the unresolved financial evidence. A player
         // must not remain trapped in this phase or buy replacement work.
@@ -545,6 +720,14 @@ export class WorldGenerationBatch {
               c,
             );
         }
+        return null;
+      }
+      const failedImage = progress.mediaRows.find(
+        (row) =>
+          row.id === callerRequest.id && ['rejected', 'cancelled', 'expired'].includes(row.status),
+      );
+      if (failedImage) {
+        await this.failUnspent(campaignId, callerRequest.id, 'LOCATION_IMAGE_FAILED', c);
         return null;
       }
       if (progress.active) return null;
@@ -607,7 +790,9 @@ export class WorldGenerationBatch {
     const unknown = await this.db.query(
       `SELECT 1 FROM npc_ai_jobs j LEFT JOIN spark_holds h ON h.id=j.spark_hold_id
        WHERE j.campaign_id=$1 AND (j.status='reconciling' OR h.status='pending')
-       UNION ALL SELECT 1 FROM live_test_text_permits WHERE campaign_id=$1 AND state='unknown' LIMIT 1`,
+       UNION ALL SELECT 1 FROM live_test_text_permits WHERE campaign_id=$1 AND state='unknown'
+       UNION ALL SELECT 1 FROM game_location_travel_preparations p JOIN image_generation_jobs j ON j.id=p.image_job_id
+         LEFT JOIN spark_holds h ON h.id=j.spark_quote_id WHERE p.campaign_id=$1 AND (j.status='unknown' OR h.status='pending') LIMIT 1`,
       [campaignId],
     );
     if (!unknown.length) return;

@@ -104,6 +104,7 @@ async function world({
   // These requests exercise legacy manual authorization, not composer-bound
   // release quotes or world-generation batches.
   service.story = {
+    reconcileTerminalTravel: async () => {},
     requireLegacyReplyConsent: async () => false,
     quotedReply: async () => null,
   };

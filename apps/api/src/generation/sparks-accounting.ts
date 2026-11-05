@@ -1,3 +1,4 @@
+import { verifyAcceptedTravelBatch, type AcceptedTravelBatchProof } from './travel-consent';
 /** Inert accounting primitives. Caller owns a transaction; no provider, credit or activation side effects.
  * No funding or paid-wallet activation path is provided. Existing demo wallets are unrelated.
  */
@@ -350,11 +351,15 @@ export class SparksAccounting {
     c: PoolClient,
     ownerId: string,
     quoteId: string,
-    worldBatch?: AcceptedWorldBatchProof,
+    worldBatch?: AcceptedWorldBatchProof | AcceptedTravelBatchProof,
   ) {
     z.uuid().parse(ownerId);
     z.uuid().parse(quoteId);
-    if (worldBatch) await verifyAcceptedWorldBatch(c, ownerId, worldBatch, quoteId);
+    if (worldBatch) {
+      if ('preparationId' in worldBatch)
+        await verifyAcceptedTravelBatch(c, ownerId, worldBatch, quoteId);
+      else await verifyAcceptedWorldBatch(c, ownerId, worldBatch, quoteId);
+    }
     const wallet = (
       await c.query('SELECT * FROM spark_wallets WHERE owner_id=$1 FOR UPDATE', [ownerId])
     ).rows[0];

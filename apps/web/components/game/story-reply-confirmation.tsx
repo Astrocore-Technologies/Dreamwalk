@@ -2,6 +2,7 @@
 import { useEffect, useRef, useState } from 'react';
 import type { StoryTurnQuoteResponse } from '@dreamwalk/contracts';
 import { api, ApiError, errorMessage } from '@/lib/client';
+import { useT } from '@/lib/i18n';
 import { Button, ErrorBox } from '../ui';
 import { StoryCost, RuntimeMapQuoteNotice } from './story-cost';
 import { providerBoundKnown } from './narrative-guards';
@@ -15,6 +16,7 @@ export function StoryReplyConfirmation({
   scope,
   disabled,
   onChanged,
+  onDecline,
   endpoint,
   worldBatch = false,
 }: {
@@ -23,10 +25,12 @@ export function StoryReplyConfirmation({
   scope: string;
   disabled: boolean;
   onChanged: () => Promise<void>;
+  onDecline?: () => Promise<void>;
   endpoint?: string;
   worldBatch?: boolean;
 }) {
   const h = useStoryText();
+  const { t } = useT();
   const [prepared, setPreparedState] = useState<{
     result: Pick<StoryTurnQuoteResponse, 'quote'>;
     operationId: string;
@@ -39,6 +43,8 @@ export function StoryReplyConfirmation({
   }
   const [busy, setBusy] = useState(false);
   const [unknown, setUnknown] = useState(false);
+  const [declineUnknown, setDeclineUnknown] = useState(false);
+  const declineAttempt = useRef<(() => Promise<void>) | null>(null);
   const [error, setError] = useState('');
   const [refreshVersion, setRefreshVersion] = useState(0);
   const quoteOperation = useRef<{ path: string; scope: string; id: string } | null>(null);
@@ -56,7 +62,7 @@ export function StoryReplyConfirmation({
     };
   }, [path]);
   useEffect(() => {
-    if (!unknown) {
+    if (!unknown && !declineUnknown) {
       setPrepared(null);
       setError('');
       quoteOperation.current = null;
@@ -65,7 +71,7 @@ export function StoryReplyConfirmation({
   }, [path, scope]);
   useEffect(() => {
     const expiry = prepared?.result.quote?.expiresAt;
-    if (!expiry || unknown) return;
+    if (!expiry || unknown || declineUnknown) return;
     const timer = setTimeout(
       () => {
         setPrepared(null);
@@ -76,11 +82,11 @@ export function StoryReplyConfirmation({
       Math.max(0, Date.parse(expiry) - Date.now()),
     );
     return () => clearTimeout(timer);
-  }, [prepared, unknown]);
+  }, [prepared, unknown, declineUnknown]);
   // A quote prepares pricing only. Consent remains an explicit, separate action.
   // Debounce changing world scopes and never restart an uncertain/accepted dispatch.
   useEffect(() => {
-    if (!worldBatch || disabled || unknown || confirmed.current) return;
+    if (!worldBatch || disabled || unknown || declineUnknown || confirmed.current) return;
     let active = true;
     let timer: ReturnType<typeof setTimeout>;
     const start = () => {
@@ -93,9 +99,9 @@ export function StoryReplyConfirmation({
       active = false;
       clearTimeout(timer);
     };
-  }, [worldBatch, path, scope, disabled, unknown, refreshVersion]);
+  }, [worldBatch, path, scope, disabled, unknown, declineUnknown, refreshVersion]);
   async function estimate() {
-    if (flight.current || disabled || unknown || confirmed.current) return;
+    if (flight.current || disabled || unknown || declineUnknown || confirmed.current) return;
     flight.current = true;
     setBusy(true);
     setError('');
@@ -170,6 +176,7 @@ export function StoryReplyConfirmation({
           operationId: sent.operationId,
           quoteId: quote.id,
           consent: true,
+          ...(quote.estimateRiskConsentRequired ? { estimateRiskConsent: true } : {}),
         }),
       });
       accepted = true;
@@ -197,6 +204,37 @@ export function StoryReplyConfirmation({
       if (stamp === epoch.current) setBusy(false);
     }
   }
+  async function decline() {
+    if (flight.current || disabled || unknown || (!onDecline && !declineAttempt.current)) return;
+    flight.current = true;
+    confirmed.current = true;
+    // Invalidate an already captured confirm handler before React rerenders.
+    setPrepared(null);
+    quoteOperation.current = null;
+    declineAttempt.current ??= onDecline!;
+    setBusy(true);
+    setError('');
+    try {
+      await declineAttempt.current();
+      setDeclineUnknown(false);
+      declineAttempt.current = null;
+    } catch (err) {
+      setError(errorMessage(err));
+      if (err instanceof ApiError && err.status && err.status < 500 && err.status !== 408) {
+        // A definite denial (including already accepted work) is not an unknown cancellation.
+        setDeclineUnknown(false);
+        declineAttempt.current = null;
+        confirmed.current = false;
+        await onChanged();
+      } else {
+        // Retry only this same finite cancellation. Never fall back to a paid confirmation.
+        setDeclineUnknown(true);
+      }
+    } finally {
+      flight.current = false;
+      setBusy(false);
+    }
+  }
   return (
     <div
       className={worldBatch ? styles.liveCost : styles.quote}
@@ -206,7 +244,9 @@ export function StoryReplyConfirmation({
       <p>{h(worldBatch ? 'worldCostTitle' : 'replyEstimateChanged')}</p>
       <RuntimeMapQuoteNotice />
       <ErrorBox message={error} />
-      {unknown ? (
+      {declineUnknown ? (
+        <p role="status">{h('declineUnknown')}</p>
+      ) : unknown ? (
         <>
           <p role="status">{h('unknown')}</p>
           <Button type="button" disabled={busy || disabled} onClick={() => void confirm()}>
@@ -216,6 +256,13 @@ export function StoryReplyConfirmation({
       ) : prepared?.result.quote ? (
         <>
           <StoryCost quote={prepared.result.quote} />
+          {!!prepared.result.quote.generatedLocationImages && (
+            <p>
+              {t(
+                'В оценку входит новая локация и её изображение. Фактическая стоимость может отличаться; переход произойдёт после готовности карты.',
+              )}
+            </p>
+          )}
           <div className={styles.actions}>
             <Button type="button" disabled={busy || disabled} onClick={() => void confirm()}>
               {h('confirm')}
@@ -247,6 +294,16 @@ export function StoryReplyConfirmation({
           onClick={() => void estimate()}
         >
           {h(worldBatch ? 'retryEstimate' : 'refreshEstimate')}
+        </Button>
+      )}
+      {!unknown && (declineUnknown || (onDecline && !confirmed.current)) && (
+        <Button
+          type="button"
+          variant="secondary"
+          disabled={busy || disabled}
+          onClick={() => void decline()}
+        >
+          {h(declineUnknown ? 'retrySame' : 'declineLocation')}
         </Button>
       )}
     </div>

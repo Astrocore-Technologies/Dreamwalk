@@ -283,7 +283,12 @@ export class NpcAiEngine {
       timeoutMs: this.policy.timeoutMs,
     };
   }
-  private async authorize(c: PoolClient, scope: AiScope) {
+  private async authorize(
+    c: PoolClient,
+    scope: AiScope,
+    runtimeRequestId?: string,
+    context?: DecisionContext,
+  ) {
     const s = scopeSchema.parse(scope);
     const condition =
       s.origin === 'user'
@@ -313,8 +318,36 @@ export class NpcAiEngine {
       ).rowCount
     )
       fail(403, 'FORBIDDEN', 'FORBIDDEN');
+    // The owner may fund another member's already-authored shared travel, never invent their intent.
+    let exactSharedTravel = false;
     if (
       s.subjectKind === 'player' &&
+      s.purpose === 'story_turn' &&
+      this.releaseGeneration() &&
+      runtimeRequestId &&
+      context
+    ) {
+      const bound = (
+        await c.query(
+          `SELECT r.context FROM game_story_turns t
+        JOIN game_npc_decision_requests r ON r.id=t.id
+        JOIN game_location_travel_preparations p ON p.id=t.id
+        JOIN game_campaigns c ON c.id=t.campaign_id
+        JOIN game_members m ON m.campaign_id=c.id AND m.user_id=t.requester_user_id AND m.actor_id=t.actor_id
+        JOIN users u ON u.id=m.user_id
+        WHERE t.id=$1 AND t.campaign_id=$2 AND t.actor_id=$3 AND t.status='committed' AND t.erased_at IS NULL
+          AND t.input->>'channel'='say' AND NOT(t.input ? 'targetNpcId')
+          AND r.purpose='story_turn' AND r.status IN ('queued','scheduled') AND r.context->>'generationPolicy'='world-batch-v1'
+          AND c.owner_id=$4 AND p.owner_id=$4 AND p.state IN ('prepared','accepted','committed')
+          AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('m.user_id')}`,
+          [runtimeRequestId, s.campaignId, s.npcId, s.requesterUserId],
+        )
+      ).rows[0];
+      exactSharedTravel = !!bound && digest(bound.context) === digest(context);
+    }
+    if (
+      s.subjectKind === 'player' &&
+      !exactSharedTravel &&
       (s.origin !== 'user' ||
         !(
           await c.query(
@@ -444,7 +477,12 @@ export class NpcAiEngine {
           'SELECT i.id FROM adventure_invitations i JOIN game_playable_versions v ON v.adventure_id=i.adventure_id JOIN game_campaigns gc ON gc.source_version_id=v.id WHERE gc.id=$1 ORDER BY i.id FOR SHARE OF i',
           [scope.campaignId],
         );
-        await this.authorize(c, { ...scope, origin: 'user' });
+        await this.authorize(
+          c,
+          { ...scope, origin: 'user' },
+          typeof context.turnId === 'string' ? context.turnId : undefined,
+          context,
+        );
         // Erasure/admin writes can update the durable state without touching the
         // hot cache. Never send a context captured before that committed revision.
         const hotRevision = this.runtimeRevisionReader?.(scope.campaignId);
@@ -574,7 +612,12 @@ export class NpcAiEngine {
     if (!this.contextFits(scope.purpose, context))
       fail(413, 'TEXT_CONTEXT_WINDOW_EXCEEDED', 'TEXT_CONTEXT_WINDOW_EXCEEDED');
     const run = async (c: PoolClient) => {
-      await this.authorize(c, { ...scope, origin: 'user', requesterUserId });
+      await this.authorize(
+        c,
+        { ...scope, origin: 'user', requesterUserId },
+        worldBatchRequestId,
+        context,
+      );
       await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
         `npc-ai-quote:${requesterUserId}`,
       ]);
@@ -857,7 +900,7 @@ export class NpcAiEngine {
         'SELECT a.id FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures a ON a.id=v.adventure_id WHERE c.id=$1 FOR SHARE OF a',
         [scope.campaignId],
       );
-      await this.authorize(c, scope);
+      await this.authorize(c, scope, input.runtimeRequestId, context);
       await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
         `npc-ai:${scope.campaignId}`,
       ]);
@@ -870,7 +913,7 @@ export class NpcAiEngine {
         'SELECT i.id FROM adventure_invitations i JOIN game_playable_versions v ON v.adventure_id=i.adventure_id JOIN game_campaigns gc ON gc.source_version_id=v.id WHERE gc.id=$1 ORDER BY i.id FOR SHARE OF i',
         [scope.campaignId],
       );
-      await this.authorize(c, scope);
+      await this.authorize(c, scope, input.runtimeRequestId, context);
       const previous = (
         await c.query<Job>('SELECT * FROM npc_ai_jobs WHERE campaign_id=$1 AND operation_id=$2', [
           scope.campaignId,
@@ -1382,14 +1425,19 @@ export class NpcAiEngine {
       try {
         if (j.sponsor_id)
           await this.sponsorship.validate(c, j.sponsor_id, j.campaign_id, j.purpose, false);
-        await this.authorize(c, {
-          campaignId: j.campaign_id,
-          npcId: j.npc_id,
-          origin: j.origin,
-          subjectKind: j.subject_kind,
-          purpose: j.purpose,
-          requesterUserId: j.requester_user_id ?? undefined,
-        });
+        await this.authorize(
+          c,
+          {
+            campaignId: j.campaign_id,
+            npcId: j.npc_id,
+            origin: j.origin,
+            subjectKind: j.subject_kind,
+            purpose: j.purpose,
+            requesterUserId: j.requester_user_id ?? undefined,
+          },
+          j.request_meta.runtimeRequestId,
+          j.context,
+        );
       } catch {
         await this.finalize(c, id, 'cancelled');
         return null;
@@ -1783,14 +1831,19 @@ export class NpcAiEngine {
         fail(409, 'STALE_AI_RESULT', 'STALE_AI_RESULT');
       if (j.sponsor_id)
         await this.sponsorship.validate(c, j.sponsor_id, j.campaign_id, j.purpose, false);
-      await this.authorize(c, {
-        campaignId: j.campaign_id,
-        npcId: j.npc_id,
-        origin: j.origin,
-        subjectKind: j.subject_kind,
-        purpose: j.purpose,
-        requesterUserId: j.requester_user_id ?? undefined,
-      });
+      await this.authorize(
+        c,
+        {
+          campaignId: j.campaign_id,
+          npcId: j.npc_id,
+          origin: j.origin,
+          subjectKind: j.subject_kind,
+          purpose: j.purpose,
+          requesterUserId: j.requester_user_id ?? undefined,
+        },
+        j.request_meta.runtimeRequestId,
+        j.context,
+      );
       if (j.spark_hold_id)
         await this.settleNpcSparks(
           c,

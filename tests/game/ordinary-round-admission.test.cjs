@@ -228,6 +228,7 @@ function schedulerFixture() {
       }),
   };
   game.worldGeneration = {
+    pendingLocationCount: async () => 0,
     quote: async () => {
       quotes++;
       return { quote: { id: 'quote' } };
@@ -283,4 +284,14 @@ test('native preflight failures stop once without consent, dispatch or automatic
   assert.equal(f.counts().authority, 'blocked');
   assert.equal(f.counts().consents, 0);
   assert.equal(f.counts().failures, 1);
+});
+
+test('new-location intent stops ordinary admission before quoting and preserves the pending request', async () => {
+  const f = schedulerFixture();
+  f.game.worldGeneration.pendingLocationCount = async () => 1;
+  await f.game.admitOrdinaryRound('campaign');
+  assert.deepEqual(f.counts(), { quotes: 0, consents: 0, failures: 0, authority: 'blocked' });
+  f.game.ordinaryAdmissionChecks.clear();
+  await f.game.admitOrdinaryRound('campaign');
+  assert.deepEqual(f.counts(), { quotes: 0, consents: 0, failures: 0, authority: 'blocked' });
 });

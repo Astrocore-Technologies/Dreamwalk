@@ -464,3 +464,211 @@ test('an authored help reaction enters the existing causal scheduler only for op
     false,
   );
 });
+
+function speechFact(id, text, disclosure = 'public', extra = {}) {
+  return {
+    id,
+    eventId: id,
+    rootId: id,
+    kind: 'authored_fact',
+    tick: 0,
+    mapId: 'courtyard',
+    channel: 'direct',
+    confidence: 'witnessed',
+    depth: 0,
+    disclosure,
+    audienceIds: [],
+    title: 'Workshop information',
+    definitionText: text,
+    relevanceTopics: ['workshop'],
+    relevanceMapId: 'courtyard',
+    ...extra,
+  };
+}
+function knowledgeConversation() {
+  const s = world();
+  const m = s.npcBrains.keeper.living;
+  m.observations = [speechFact('workshop-hours', 'The workshop opens after sunrise.')];
+  for (let i = 0; i < 24; i++)
+    m.observations.push({
+      id: `conversation-${i}`,
+      eventId: `event-${i}`,
+      rootId: `event-${i}`,
+      kind: 'said',
+      tick: i + 1,
+      mapId: 'courtyard',
+      channel: 'direct',
+      confidence: 'witnessed',
+      actorId: 'alice',
+      text: `An unrelated remark ${i}`,
+      disclosure: 'public',
+      audienceIds: ['alice', 'keeper'],
+      depth: 0,
+    });
+  m.observations.push({
+    ...m.observations.at(-1),
+    id: 'current-question',
+    eventId: 'question',
+    rootId: 'question',
+    tick: 30,
+    text: 'When does the workshop open?',
+  });
+  return s;
+}
+
+test('safe knowledge retrieval retains an old relevant known fact alongside the current exchange', () => {
+  const s = knowledgeConversation();
+  const audience = ['alice', 'keeper'];
+  const ids = g.selectNpcSpeechObservationIds(s, 'keeper', audience, ['current-question']);
+  assert.equal(ids.length, 16);
+  assert.ok(ids.includes('current-question'));
+  assert.ok(ids.includes('workshop-hours'));
+  assert.ok(ids.includes('conversation-23'));
+  assert.equal(new Set(ids).size, ids.length);
+  const safe = g.buildNpcPublicSpeechContext(s, 'keeper', audience, ids);
+  assert.equal(
+    safe.claims.find((c) => c.observationId === 'workshop-hours').authoredFact.text,
+    'The workshop opens after sunrise.',
+  );
+  assert.deepEqual(
+    g.selectNpcSpeechObservationIds(JSON.parse(JSON.stringify(s)), 'keeper', audience, [
+      'current-question',
+    ]),
+    ids,
+  );
+});
+
+test('safe knowledge retrieval checks every listener before ranking and does not infer asked permission', () => {
+  const s = knowledgeConversation(),
+    m = s.npcBrains.keeper.living;
+  m.observations.unshift(
+    speechFact('never-known', 'NEVER_PRIVATE', 'private', { revealCondition: 'never' }),
+    speechFact('asked-known', 'ASKED_PRIVATE', 'private', { revealCondition: 'asked' }),
+    speechFact('trusted-known', 'TRUSTED_PRIVATE', 'private', { revealCondition: 'trusted' }),
+    speechFact('whisper-known', 'WHISPER_PRIVATE', 'participants', {
+      audienceIds: ['alice', 'keeper'],
+    }),
+  );
+  m.relationships.alice = { trust: 2, alertness: 0, debt: 0, evidenceIds: [] };
+  let ids = g.selectNpcSpeechObservationIds(s, 'keeper', ['alice', 'keeper'], ['current-question']);
+  assert.ok(!ids.includes('asked-known'));
+  assert.ok(!ids.includes('never-known'));
+  assert.ok(ids.includes('trusted-known'));
+  assert.ok(ids.includes('whisper-known'));
+  ids = g.selectNpcSpeechObservationIds(
+    s,
+    'keeper',
+    ['alice', 'bob', 'keeper'],
+    ['current-question'],
+  );
+  assert.ok(
+    !ids.some((id) =>
+      ['never-known', 'asked-known', 'trusted-known', 'whisper-known'].includes(id),
+    ),
+  );
+  ids = g.selectNpcSpeechObservationIds(
+    s,
+    'keeper',
+    ['alice', 'keeper'],
+    ['current-question'],
+    ['asked-known'],
+  );
+  assert.ok(ids.includes('asked-known'));
+  const safe = g.buildNpcPublicSpeechContext(s, 'keeper', ['alice', 'keeper'], ids, [
+    'asked-known',
+  ]);
+  assert.match(JSON.stringify(safe), /ASKED_PRIVATE/);
+  assert.doesNotMatch(JSON.stringify(safe), /NEVER_PRIVATE/);
+});
+
+test('private additions and another NPC knowledge cannot change the selected public conversation', () => {
+  const s = knowledgeConversation(),
+    audience = ['alice', 'keeper'];
+  const select = () => g.selectNpcSpeechObservationIds(s, 'keeper', audience, ['current-question']);
+  const beforeIds = select();
+  const before = g.buildNpcPublicSpeechContext(s, 'keeper', audience, beforeIds);
+  for (let i = 0; i < 30; i++)
+    s.npcBrains.keeper.living.observations.push(
+      speechFact(`private-${i}`, 'SECRET_MATCH workshop', 'private', {
+        revealCondition: 'never',
+        tick: 999,
+      }),
+    );
+  s.npcBrains.keeper.living.personality.biography = 'OTHER_PRIVATE_BIO';
+  s.npcBrains.stranger = {
+    ...structuredClone(s.npcBrains.keeper),
+    living: {
+      ...structuredClone(s.npcBrains.keeper.living),
+      observations: [speechFact('foreign-knowledge', 'FOREIGN_FACT')],
+    },
+  };
+  assert.deepEqual(select(), beforeIds);
+  assert.deepEqual(g.buildNpcPublicSpeechContext(s, 'keeper', audience, select()), before);
+});
+
+test('current public scene name does not expose whole-map descriptions, other places or private biography', () => {
+  const s = knowledgeConversation();
+  s.maps.courtyard.label = 'Public courtyard';
+  s.maps.courtyard.description = 'UNSEEN_ROOM_DETAIL';
+  s.maps.hidden = { ...s.maps.courtyard, id: 'hidden', label: 'SECRET_PLACE' };
+  s.entities.keeper.publicProfile = {
+    role: 'Workshop instructor',
+    description: 'Speaks directly and dislikes small talk.',
+    appearance: '',
+  };
+  const original = JSON.stringify(s);
+  const safe = g.buildNpcPublicSpeechContext(
+    s,
+    'keeper',
+    ['alice', 'keeper'],
+    ['current-question'],
+  );
+  assert.deepEqual(safe.currentPlace, {
+    name: 'Public courtyard',
+    source: 'current_public_scene_label',
+    scope: 'scene_not_exact_position',
+  });
+  assert.equal(safe.publicIdentity.role, 'Workshop instructor');
+  assert.match(safe.publicIdentity.description, /dislikes small talk/);
+  assert.doesNotMatch(JSON.stringify(safe), /UNSEEN_ROOM_DETAIL|SECRET_PLACE|PRIVATE_BIOGRAPHY/);
+  assert.deepEqual(g.buildNpcDecisionContext(s, 'keeper').currentPlace, safe.currentPlace);
+  assert.equal(JSON.stringify(s), original, 'read-time recovery never rewrites the saved NPC');
+});
+
+test('known local facts survive a different question language and remembered places remain recallable', () => {
+  const s = knowledgeConversation(),
+    audience = ['alice', 'keeper'];
+  const question = s.npcBrains.keeper.living.observations.at(-1);
+  question.text = 'Во сколько начинаются занятия?';
+  assert.ok(
+    g
+      .selectNpcSpeechObservationIds(s, 'keeper', audience, ['current-question'])
+      .includes('workshop-hours'),
+  );
+  question.text = 'When does the workshop open?';
+  s.npcBrains.keeper.living.observations[0].relevanceMapId = 'earlier-visited-location';
+  assert.ok(
+    g
+      .selectNpcSpeechObservationIds(s, 'keeper', audience, ['current-question'])
+      .includes('workshop-hours'),
+    'an author location relevance hint is not a rule that erases already learned knowledge elsewhere',
+  );
+});
+
+test('audience-safe identity retains explicit public personality, not private cognition', () => {
+  const state = world();
+  state.entities.keeper.publicProfile = {
+    role: 'Archivist',
+    description: 'Keeps the reading room.',
+    appearance: '',
+    personality: 'Wry, self-directed, impatient with flattery.',
+    greeting: 'Which question did you bring?',
+  };
+  const context = g.buildNpcPublicSpeechContext(state, 'keeper', ['alice'], []);
+  assert.equal(context.publicIdentity.personality, state.entities.keeper.publicProfile.personality);
+  assert.equal(
+    context.publicIdentity.greetingExample,
+    state.entities.keeper.publicProfile.greeting,
+  );
+  assert.doesNotMatch(JSON.stringify(context), /PRIVATE_BIOGRAPHY_47|PRIVATE_EXAMPLE_47/);
+});

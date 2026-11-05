@@ -4,12 +4,29 @@ import type { GameState } from '@dreamwalk/contracts';
 import { runtimeMapView } from '@dreamwalk/game-core';
 import { config } from '../config';
 import { digest } from '../ai/context';
-import { readRuntimeMapImage, runtimeMapImageSchema } from '../ai/runtime-vision';
+import {
+  readRuntimeMapImage,
+  runtimeMapImageSchema,
+  type RuntimeMapImage,
+} from '../ai/runtime-vision';
 import type { AiPurpose } from '../ai/types';
 import { sourceAccessSql, sourceLiveSql } from './source-access';
 import { renderRuntimeMapRaster } from './runtime-map-raster';
 
 type Query = (sql: string, values: unknown[]) => Promise<Record<string, unknown>[]>;
+function terrainStatus(
+  state: GameState,
+  mapId: string,
+  image: Pick<RuntimeMapImage, 'revisionId' | 'sha256'>,
+) {
+  const map = state.maps[mapId],
+    grounding = map?.spatialGrounding;
+  return map?.backgroundMode !== 'schematic' &&
+    grounding?.imageRevisionId === image.revisionId &&
+    grounding.imageSha256 === image.sha256
+    ? ('analyzed' as const)
+    : ('illustration_only' as const);
+}
 /** Select only an immutable background the current scene can display. Never reads author drafts,
  * generation prompts, reference images, entity portraits, or another location's assets. */
 async function currentRaster(query: Query, campaignId: string, state: GameState, actorId: string) {
@@ -102,13 +119,15 @@ export async function extendRuntimeMap<T extends object>(
   if (typeof filename !== 'string' || basename(filename) !== filename)
     throw new Error('MAP_IMAGE_UNAVAILABLE');
   const bytes = await readFile(resolve(config.ASSET_DIR, filename));
-  const runtimeMapImage = runtimeMapImageSchema.parse(
-    await renderRuntimeMapRaster(
-      bytes,
-      { revisionId: String(row.revisionId), sha256: String(row.sha256) },
-      view,
-    ),
+  const raster = await renderRuntimeMapRaster(
+    bytes,
+    { revisionId: String(row.revisionId), sha256: String(row.sha256) },
+    view,
   );
+  const runtimeMapImage = runtimeMapImageSchema.parse({
+    ...raster,
+    terrainStatus: terrainStatus(state, view.mapId, raster),
+  });
   return { ...context, runtimeMapImage };
 }
 /** Recheck public positions, observer view, exact current-map pin and revocation before any dispatch.
@@ -123,6 +142,11 @@ export async function runtimeMapStillCurrent(
   if (!image) return true;
   try {
     if (digest(runtimeMapView(state, image.view.observerIds)) !== digest(image.view)) return false;
+    if (
+      image.terrainStatus &&
+      image.terrainStatus !== terrainStatus(state, image.view.mapId, image)
+    )
+      return false;
     const actorId =
       image.view.observerIds.find((id) => state.entities[id]?.kind === 'player') ??
       image.view.observerIds[0];

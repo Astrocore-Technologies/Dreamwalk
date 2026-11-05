@@ -4,6 +4,8 @@ import { footprintDistance } from '@dreamwalk/contracts';
 import type { GameAction, GameProjection } from '@dreamwalk/contracts';
 import { useItemText } from './item-messages';
 import styles from './game.module.css';
+import { npcUnavailable, publicLifeState } from './turn-ui';
+import { useTurnText } from './turn-messages';
 export function MapActions({
   projection,
   ids,
@@ -27,6 +29,7 @@ export function MapActions({
 }) {
   const text = useItemText(),
     ref = useRef<HTMLDivElement>(null);
+  const turnText = useTurnText();
   const entities = ids.flatMap((id) => {
     const e = projection.entities.find((e) => e.id === id);
     return e ? [e] : [];
@@ -94,6 +97,8 @@ export function MapActions({
         </section>
       ))}
       {entities.map((e) => {
+        const unavailable = npcUnavailable(e);
+        const lifeState = publicLifeState(e);
         const near = !!own && footprintDistance(own, e) <= 1;
         const main = disabled || !near || (!!projection.turn && projection.turn.resources.main < 1);
         const additional =
@@ -101,6 +106,11 @@ export function MapActions({
         return (
           <section key={e.id} data-map-target={e.id}>
             <strong>{e.label ?? e.id}</strong>
+            {unavailable && lifeState !== 'conscious' && (
+              <p data-life-state={lifeState}>
+                {turnText(lifeState)} · {turnText('cannotRespond')}
+              </p>
+            )}
             {e.publicProfile?.description && <p>{e.publicProfile.description}</p>}
             <div className={styles.menuActions}>
               {e.kind === 'npc' && (
@@ -108,7 +118,7 @@ export function MapActions({
                   {!projection.turn && (
                     <button
                       type="button"
-                      disabled={disabled}
+                      disabled={disabled || unavailable}
                       onClick={() => {
                         onClose();
                         onSay(e.id);
@@ -162,14 +172,14 @@ export function MapActions({
                 <>
                   <button
                     type="button"
-                    disabled={main}
+                    disabled={main || unavailable}
                     onClick={() => act({ kind: 'push', targetId: e.id })}
                   >
                     {text('push')}
                   </button>
                   <button
                     type="button"
-                    disabled={main}
+                    disabled={main || unavailable}
                     onClick={() => act({ kind: 'hit', targetId: e.id })}
                   >
                     {text('hit')}

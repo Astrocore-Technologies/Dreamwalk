@@ -40,6 +40,8 @@ type Prepared = {
 };
 const clarificationKeys: Record<string, StoryMessageKey> = {
   AMBIGUOUS: 'ambiguous',
+  LOCATION_GENERATION_REQUIRES_TURNS: 'locationRequiresTurns',
+  LOCATION_TRAVEL_SEPARATE_POST: 'locationSeparatePost',
   UNSUPPORTED: 'unsupported',
   WALK_FIRST: 'walkFirst',
   CLEAR_TARGET_TO_CONTINUE_STORY: 'clearTarget',
@@ -56,6 +58,7 @@ const actionLabels = {
   pick_up: 'Подобрать',
   give: 'Передать',
   transition: 'Перейти',
+  travel: 'Перейти',
   approach: 'Перейти',
   wait: 'Ждать',
 } as const;
@@ -85,8 +88,6 @@ export function UnifiedStory({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const turnText = useTurnText();
-  const turnCopy = useRef(turnText);
-  turnCopy.current = turnText;
   const h = useStoryText(),
     { t, locale } = useT(),
     hintId = useId();
@@ -156,7 +157,6 @@ export function UnifiedStory({
           submitted.current = null;
           if (receipt.status === 'committed') {
             if (currentDraft.current === sent.key) setText('');
-            if (receipt.code === 'NPC_REPLY_DEFERRED') setNotice(turnCopy.current('deferred'));
             callback.current();
           } else
             setNotice(
@@ -285,7 +285,14 @@ export function UnifiedStory({
         return;
       }
       if (result.status === 'clarification') {
-        if (projection.turn) setError(h('postingRejected'));
+        if (projection.turn)
+          setError(
+            h(
+              result.code === 'LOCATION_TRAVEL_SEPARATE_POST'
+                ? 'locationSeparatePost'
+                : 'postingRejected',
+            ),
+          );
         else setNotice(h(clarificationKeys[result.code || ''] || 'ambiguous'));
         return;
       }
@@ -299,7 +306,7 @@ export function UnifiedStory({
         estimateRiskConsentRequired?: boolean;
       };
       if (
-        projection.turn &&
+        (projection.turn || result.travel) &&
         !((media.generatedLocationImages ?? 0) > 0 || media.estimateRiskConsentRequired)
       ) {
         // Send records a free local post. Paid world work belongs to End turn,
@@ -627,11 +634,7 @@ export function UnifiedStory({
               </span>
             </p>
             <div className={styles.composerFeedback}>
-              {projection.turn ? (
-                <small data-testid="world-batch-posting">{h('worldBatchPosting')}</small>
-              ) : (
-                <RuntimeMapQuoteNotice />
-              )}
+              {!projection.turn && <RuntimeMapQuoteNotice />}
               <ErrorBox message={error} />
               {notice && (
                 <p className={styles.status} role="status">
@@ -683,6 +686,40 @@ export function UnifiedStory({
                   </Button>
                 </p>
               )}
+              {feed?.turns
+                .filter((turn) => turn.travel)
+                .map((turn) => (
+                  <div
+                    key={`travel-${turn.id}`}
+                    className={styles.quote}
+                    data-location-generation={turn.travel!.status}
+                  >
+                    <p>
+                      {h(
+                        turn.travel!.imageStatus === 'unknown' ||
+                          turn.travel!.sparkStatus === 'pending'
+                          ? 'locationUnknown'
+                          : turn.travel!.status === 'declined'
+                            ? 'locationDeclined'
+                            : turn.travel!.status === 'committed'
+                              ? 'locationReady'
+                              : turn.travel!.status === 'failed' ||
+                                  ['rejected', 'expired', 'cancelled'].includes(
+                                    turn.travel!.imageStatus ?? '',
+                                  )
+                                ? 'locationFailed'
+                                : 'locationPreparing',
+                        { name: turn.travel!.destinationName },
+                      )}
+                    </p>
+                    {turn.travel!.sparkStatus && (
+                      <p>
+                        {h('locationImageCost')}
+                        <SparkReceiptCost receipt={{ ...turn.travel!, generationCost: null }} />
+                      </p>
+                    )}
+                  </div>
+                ))}
               {pendingTurns.map((turn) => (
                 <div key={turn.id} className={styles.quote} data-story-pending={turn.status}>
                   {turn.status === 'awaiting_confirmation' && !projection.turn ? (

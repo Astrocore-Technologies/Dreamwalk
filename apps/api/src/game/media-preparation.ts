@@ -1,7 +1,7 @@
 /** Pure grounded media specification; never dispatches generation or invents game entities. */
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
-import { projectState } from '@dreamwalk/game-core';
+import { narrativeTurnIsPublic, projectState } from '@dreamwalk/game-core';
 import {
   defaultImageStylePrompt,
   deriveMapImageFraming,
@@ -38,7 +38,7 @@ export function prepareSceneMedia(
   const premise = state.narrativePremise;
   // Look up the original confirmed introduction, not only the recent context window.
   const introduction = state.narrativeCanon?.turns.find(
-    (turn) => turn.sceneId === map.id,
+    (turn) => narrativeTurnIsPublic(turn) && turn.sceneId === map.id,
   )?.introducedScene;
   const excerpt = (text: string | undefined, limit: number) => ({
     text: (text ?? '').slice(0, limit),

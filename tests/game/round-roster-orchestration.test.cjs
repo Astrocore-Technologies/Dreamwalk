@@ -235,6 +235,77 @@ function speechFixture() {
   runtime.port = { prepareAreaTurnSpeech: game.prepareAreaTurnSpeech.bind(game) };
   return { state, game, runtime };
 }
+// Exercise the real local-post boundary before admitting a director-owned turn.
+function commitRoleplayFixture(fixture, text, channel = 'say', options = {}) {
+  const { state, runtime } = fixture;
+  const id = require('node:crypto').randomUUID();
+  const input = {
+    operationId: id,
+    text,
+    channel,
+    ...(options.targetNpcId ? { targetNpcId: options.targetNpcId } : {}),
+    expectedCanonRevision: state.narrativeCanon?.revision ?? 0,
+    turnFence: g.turnFence(state),
+  };
+  const posted = runtime.simulateTurnPost(state, 'alice', input, id, 'owner');
+  assert.deepEqual(posted.state.entities, state.entities, 'no physical effect at local post');
+  for (const npcId of Object.keys(state.npcBrains))
+    assert.deepEqual(
+      posted.state.npcBrains[npcId].living.observations,
+      state.npcBrains[npcId].living.observations,
+      'pending intent/words are not admitted to live memory',
+    );
+  assert.equal(posted.state.npcUtterances?.length ?? 0, state.npcUtterances?.length ?? 0);
+  assert.ok(posted.directorText);
+  assert.ok(
+    posted.entries
+      .filter((entry) => entry.kind === 'attempt')
+      .every((entry) => entry.audienceIds.length === 1 && entry.audienceIds[0] === 'alice'),
+    'an unresolved attempt is provisional until its actual ordered audience is known',
+  );
+  const ready = g.endPlayerTurn(posted.state, 'alice', g.turnFence(posted.state)).state;
+  const worldInput = { ...input, text: posted.directorText, turnFence: g.turnFence(ready) };
+  const context = g.buildStoryTurnContext(ready, 'alice', worldInput, id);
+  const voice = context.sceneSpeakers?.find((entry) => entry.npcId === options.replyNpcId);
+  if (options.replyNpcId) assert.ok(voice, 'reply must have an admitted exact voice');
+  const proposal = {
+    turnId: id,
+    contextHash: context.contextHash,
+    status: 'ready',
+    code: null,
+    steps: context.segments.map((segment) => ({
+      segmentIndex: segment.index,
+      action:
+        context.actionPreview.find((entry) => entry.segmentIndex === segment.index)?.action ?? null,
+      reply: voice?.segmentIndex === segment.index ? { text: 'A grounded answer.' } : null,
+      ...(voice?.segmentIndex === segment.index
+        ? { replyNpcId: voice.npcId, replyContextHash: voice.speechHash }
+        : {}),
+      ...(options.impact && options.impact.segmentIndex === segment.index
+        ? { narrativeImpact: { targetId: options.impact.targetId, effect: options.impact.effect } }
+        : {}),
+    })),
+    narrative: {
+      narration: 'The scene continues without any unconfirmed mechanical change.',
+      newScene: null,
+      newNpc: null,
+      evidenceIds: [],
+    },
+  };
+  const applied = g.applyStoryTurnProposal(ready, 'alice', worldInput, id, proposal, {
+    sourceSpeechSegments: g
+      .parseStorySegments(input.text)
+      .segments.filter((s) => s.kind === 'speech'),
+  });
+  assert.equal(applied.error, undefined);
+  const { settlePendingStorySpeech } = require('../../apps/api/dist/game/pending-story-speech');
+  const after = settlePendingStorySpeech(applied.state, id);
+  const replay = g.applyStoryTurnProposal(after, 'alice', worldInput, id, proposal);
+  assert.ok(replay.error, 'a committed source cannot be replayed');
+  assert.deepEqual(replay.state, after);
+  return { id, input, posted, context, proposal, applied, after };
+}
+
 test('one area utterance creates all listener decisions and one player feed entry', () => {
   for (const [channel, text, expected] of [
     ['say', 'Hello', ['keeper', 'three']],
@@ -268,22 +339,20 @@ test('one area utterance creates all listener decisions and one player feed entr
   }
 });
 test('exclamation inside emote does not make following normal speech a shout', () => {
-  const { state, runtime } = speechFixture(),
-    id = require('node:crypto').randomUUID();
-  const result = runtime.simulateTurnPost(
-    state,
-    'alice',
-    {
-      operationId: id,
-      text: '*Raises a hand!* Hello',
-      channel: 'say',
-      expectedCanonRevision: state.narrativeCanon?.revision ?? 0,
-      turnFence: g.turnFence(state),
-    },
-    id,
-    'owner',
-  );
-  assert.deepEqual(result.requests.map((r) => r.npcId).sort(), ['keeper', 'three']);
+  const fixture = speechFixture();
+  const result = commitRoleplayFixture(fixture, '*Raises a hand!* Hello', 'say', {
+    replyNpcId: 'keeper',
+  });
+  assert.deepEqual(result.posted.requests, [], 'the director owns the one reply');
+  const spoken = result.applied.entries.find((entry) => entry.kind === 'speech');
+  assert.deepEqual(spoken.audienceIds, ['alice', 'keeper', 'three']);
+  for (const npcId of ['keeper', 'three', 'six', 'seven'])
+    assert.equal(
+      result.after.npcBrains[npcId].living.observations.some((o) => o.text === 'Hello'),
+      ['keeper', 'three'].includes(npcId),
+    );
+  assert.equal(result.after.npcUtterances.filter((u) => u.text === 'Hello').length, 1);
+  assert.equal(result.applied.entries.filter((entry) => entry.kind === 'npc_reply').length, 1);
 });
 test('one spoken segment can schedule more than 32 listeners without multiplying player speech', () => {
   const { state, runtime } = speechFixture();
@@ -795,6 +864,7 @@ test('a busy earlier reply blocks later NPC replies without blocking private rou
     },
   };
   game.story = {
+    reconcileTerminalTravel: async () => {},
     requireLegacyReplyConsent: async (_id, request) => {
       visited.push(request.id);
       return true;
@@ -1100,81 +1170,63 @@ test('modern area speech ignores stale selected-recipient metadata and never for
 });
 
 test('targetless emote-only posts admit visible observers without mechanical changes', () => {
-  const { state, runtime } = speechFixture(),
-    id = require('node:crypto').randomUUID();
-  const physical = structuredClone(state.entities);
-  const posted = runtime.simulateTurnPost(
-    state,
-    'alice',
-    {
-      operationId: id,
-      text: '*Smiles gently and adjusts a scarf*',
-      channel: 'say',
-      expectedCanonRevision: 0,
-      turnFence: g.turnFence(state),
-    },
-    id,
-    'owner',
-  );
-  assert.deepEqual(posted.state.entities, physical);
-  assert.deepEqual(posted.actions, []);
-  assert.deepEqual(posted.requests.map((request) => request.npcId).sort(), [
-    'keeper',
-    'seven',
-    'six',
-    'three',
-  ]);
-  assert.equal(posted.entries.length, 1);
-  assert.equal(posted.entries[0].kind, 'attempt');
-  assert.ok(posted.entries[0].sourceId);
-  assert.ok(posted.requests.every((request) => request.context.responseOptional));
-  for (const request of posted.requests) {
-    const observation = g.npcReplyObservation(
-      posted.state,
-      'alice',
-      request.npcId,
-      request.context.replyToObservationId,
+  const fixture = speechFixture();
+  const text = 'Smiles gently and adjusts a scarf';
+  const result = commitRoleplayFixture(fixture, `*${text}*`);
+  assert.deepEqual(result.after.entities, fixture.state.entities);
+  assert.deepEqual(result.applied.actions, []);
+  assert.deepEqual(result.posted.requests, [], 'no second reply owner for an emote');
+  const entry = result.applied.entries.find((entry) => entry.kind === 'attempt');
+  assert.ok(entry.sourceId);
+  assert.deepEqual(entry.audienceIds, ['alice', 'keeper', 'seven', 'six', 'three']);
+  for (const npcId of ['keeper', 'seven', 'six', 'three']) {
+    const observations = result.after.npcBrains[npcId].living.observations.filter(
+      (o) => o.text === text,
     );
+    assert.equal(observations.length, 1);
+    const observation = observations[0];
     assert.equal(observation.kind, 'attempted');
     assert.equal(observation.confidence, 'reported');
-    assert.equal(request.context.untrustedRoleplay[0].verified, false);
+    assert.deepEqual(observation.speechIdentity, { turnId: result.id, segmentIndex: 0 });
+    assert.equal(
+      g.npcReplyObservation(result.after, 'alice', npcId, observation.id)?.id,
+      observation.id,
+    );
   }
+  assert.equal(result.after.npcUtterances.filter((u) => u.id === entry.sourceId).length, 1);
 });
 
 test('a whispered emote cannot disclose private contents to distant visible NPCs', () => {
-  const { state, runtime } = speechFixture(),
-    id = require('node:crypto').randomUUID();
-  const text = 'Shows a secret note';
-  const posted = runtime.simulateTurnPost(
-    state,
-    'alice',
-    {
-      operationId: id,
-      text: `*${text}*`,
-      channel: 'whisper',
-      expectedCanonRevision: 0,
-      turnFence: g.turnFence(state),
-    },
-    id,
-    'owner',
-  );
-  assert.deepEqual(
-    posted.requests.map((request) => request.npcId),
-    ['keeper'],
-  );
-  assert.deepEqual(posted.entries[0].audienceIds, ['alice', 'keeper']);
-  assert.deepEqual(posted.state.npcUtterances.at(-1).audienceIds, ['alice', 'keeper']);
-  assert.equal(posted.directorText, '');
-  for (const npcId of ['three', 'six', 'seven'])
-    assert.equal(
-      posted.state.npcBrains[npcId].living.observations.some((o) => o.text === text),
-      false,
+  for (const targetNpcId of [undefined, 'keeper']) {
+    const fixture = speechFixture();
+    fixture.state.entities.bob = {
+      ...structuredClone(fixture.state.entities.alice),
+      id: 'bob',
+      x: 5,
+      y: 6,
+    };
+    const text = 'Shows a secret note';
+    const result = commitRoleplayFixture(fixture, `*${text}*`, 'whisper', { targetNpcId });
+    const audience = targetNpcId ? ['alice', 'keeper'] : ['alice'];
+    assert.deepEqual(result.posted.requests, []);
+    assert.deepEqual(
+      result.applied.entries.find((e) => e.kind === 'attempt').audienceIds,
+      audience,
     );
+    assert.deepEqual(result.after.npcUtterances.at(-1).audienceIds, audience);
+    assert.deepEqual(result.after.narrativeCanon.turns.at(-1).audienceIds, audience);
+    for (const npcId of ['keeper', 'three', 'six', 'seven'])
+      assert.equal(
+        result.after.npcBrains[npcId].living.observations.some((o) => o.text === text),
+        npcId === targetNpcId,
+      );
+    assert.equal(JSON.stringify(g.projectState(result.after, 'bob')).includes(text), false);
+  }
 });
 
 test('mixed roleplay is observed separately from sound and adds no duplicate reply jobs', () => {
-  const { state, runtime } = speechFixture(),
-    id = require('node:crypto').randomUUID();
+  const fixture = speechFixture();
+  const { state } = fixture;
   state.entities.hidden = { ...structuredClone(state.entities.keeper), id: 'hidden', x: 7, y: 6 };
   state.npcBrains.hidden = structuredClone(state.npcBrains.keeper);
   state.maps.courtyard.blocked.push({ x: 6, y: 5 });
@@ -1182,73 +1234,210 @@ test('mixed roleplay is observed separately from sound and adds no duplicate rep
   Object.assign(state.entities.three, { x: 5, y: 8 });
   assert.equal(g.visible(state, state.entities.hidden, state.entities.alice), false);
   assert.equal(g.canNpcHear(state, state.entities.hidden, state.entities.alice, 3), true);
-  const posted = runtime.simulateTurnPost(
-    state,
+  const result = commitRoleplayFixture(fixture, '*Smiles gently* Hello', 'say', {
+    replyNpcId: 'keeper',
+  });
+  assert.deepEqual(result.posted.requests, []);
+  assert.deepEqual(result.applied.entries.find((e) => e.kind === 'speech').audienceIds, [
     'alice',
-    {
-      operationId: id,
-      text: '*Smiles gently* Hello',
-      channel: 'say',
-      expectedCanonRevision: 0,
-      turnFence: g.turnFence(state),
-    },
-    id,
-    'owner',
-  );
-  assert.deepEqual(posted.requests.map((request) => request.npcId).sort(), [
     'hidden',
     'keeper',
     'three',
   ]);
-  const hidden = posted.requests.find((request) => request.npcId === 'hidden');
-  assert.equal(hidden.context.untrustedRoleplay, undefined);
   assert.equal(
-    posted.state.npcBrains.hidden.living.observations.some((o) => o.text === 'Smiles gently'),
+    result.after.npcBrains.hidden.living.observations.some((o) => o.text === 'Smiles gently'),
     false,
   );
-  assert.equal(posted.entries[0].audienceIds.includes('hidden'), false);
-  assert.equal(posted.entries[1].audienceIds.includes('hidden'), true);
   assert.equal(
-    posted.requests.find((request) => request.npcId === 'keeper').context.untrustedRoleplay.length,
+    result.after.npcBrains.hidden.living.observations.filter((o) => o.text === 'Hello').length,
     1,
   );
+  assert.equal(
+    result.applied.entries.find((e) => e.kind === 'attempt').audienceIds.includes('hidden'),
+    false,
+  );
+  const keeper = result.context.sceneSpeakers.find((voice) => voice.npcId === 'keeper');
+  const claim = keeper.claims.find((claim) => claim.untrustedAttempt === 'Smiles gently');
+  assert.ok(claim, 'exact safe voice can remember the visible descriptive intent');
+  assert.equal(claim.kind, 'attempted');
+  assert.equal(result.applied.entries.filter((entry) => entry.kind === 'npc_reply').length, 1);
+  assert.equal(result.after.npcUtterances.filter((u) => u.text === 'Smiles gently').length, 1);
+  assert.equal(result.after.npcUtterances.filter((u) => u.text === 'Hello').length, 1);
 });
 
 test('deferred roleplay extras cannot bypass the complete outgoing audience disclosure check', () => {
-  const { state, runtime, game } = speechFixture(),
-    id = require('node:crypto').randomUUID();
-  const posted = runtime.simulateTurnPost(
-    state,
+  const fixture = speechFixture();
+  const { game } = fixture;
+  const result = commitRoleplayFixture(fixture, '*Smiles secretly*', 'whisper', {
+    targetNpcId: 'keeper',
+  });
+  const nextRound = g.finishWorldPhase(result.after, g.turnFence(result.after));
+  assert.equal(nextRound.error, undefined);
+  const spoken = game.prepareAreaTurnSpeech(
+    nextRound.state,
     'alice',
-    {
-      operationId: id,
-      text: '*Smiles secretly* Hello',
-      channel: 'whisper',
-      expectedCanonRevision: 0,
-      turnFence: g.turnFence(state),
-    },
-    id,
+    { channel: 'whisper', text: 'Hello' },
     'owner',
+    { turnId: require('node:crypto').randomUUID(), segmentIndex: 0 },
   );
-  const request = posted.requests[0];
-  assert.equal(request.context.untrustedRoleplay.length, 1);
-  // The second source was heard by a new bystander; the earlier private gesture
-  // was not. This models distinct emission audiences without broadening either.
-  posted.state.entities.bob = {
-    ...structuredClone(posted.state.entities.alice),
+  const request = spoken.requests.find((r) => r.npcId === 'keeper');
+  const attempt = spoken.state.npcBrains.keeper.living.observations.find(
+    (o) => o.text === 'Smiles secretly',
+  );
+  // Historical/scoped roleplay extras must retain their independently admitted source.
+  request.context.untrustedRoleplay = [
+    {
+      actorId: 'alice',
+      segmentIndex: 0,
+      text: attempt.text,
+      observationId: attempt.id,
+      verified: false,
+    },
+  ];
+  game.ai = { contextBudgetBytes: () => 64000 };
+  const worldState = g.endPlayerTurn(spoken.state, 'alice', g.turnFence(spoken.state)).state;
+  const original = game.deferredSpeechContext(worldState, request);
+  assert.equal(original.untrustedRoleplay.length, 1, 'safe complete audience retains the source');
+  worldState.entities.bob = {
+    ...structuredClone(worldState.entities.alice),
     id: 'bob',
     x: 7,
     y: 5,
   };
-  const spoken = posted.state.npcBrains.keeper.living.observations.find(
-    (o) => o.id === request.context.replyToObservationId,
-  );
-  spoken.audienceIds.push('bob');
-  const worldState = g.endPlayerTurn(posted.state, 'alice', g.turnFence(posted.state)).state;
-  game.ai = { contextBudgetBytes: () => 64000 };
+  // Only the second source has the broader audience. Permission for the first cannot grow.
+  worldState.npcBrains.keeper.living.observations
+    .find((o) => o.id === request.context.replyToObservationId)
+    .audienceIds.push('bob');
   const current = game.deferredSpeechContext(worldState, request);
   assert.ok(current.audienceIds.includes('bob'));
   assert.equal(current.untrustedRoleplay, undefined);
   assert.equal(JSON.stringify(current).includes('Smiles secretly'), false);
   assert.equal(roleplayExtrasRemainSafe(request.context, current), false);
+});
+
+test('ordered descriptive sources exclude incapacitated witnesses and retain attempt provenance', () => {
+  const fixture = speechFixture();
+  const result = commitRoleplayFixture(
+    fixture,
+    '*I strike at the keeper* *Adjusts a scarf*',
+    'say',
+    {
+      impact: { segmentIndex: 0, targetId: 'keeper', effect: 'death' },
+    },
+  );
+  const keeper = result.after.npcBrains.keeper.living.observations;
+  assert.equal(
+    keeper.some((o) => o.text === 'Adjusts a scarf'),
+    false,
+  );
+  assert.equal(result.after.entities.keeper.lifeState, 'dead');
+  const seen = result.after.npcBrains.three.living.observations.filter(
+    (o) => o.text === 'Adjusts a scarf',
+  );
+  assert.equal(seen.length, 1);
+  assert.equal(seen[0].kind, 'attempted');
+  assert.equal(seen[0].confidence, 'reported');
+  assert.equal(
+    result.applied.entries.filter((e) => e.kind === 'attempt')[1].audienceIds.includes('keeper'),
+    false,
+  );
+  assert.equal(result.after.npcUtterances.filter((u) => u.text === 'Adjusts a scarf').length, 1);
+});
+
+test('conditional revival voice cannot borrow a future private gesture as present knowledge', () => {
+  const fixture = speechFixture();
+  Object.assign(fixture.state.entities.keeper, { lifeState: 'dead', lifeRevision: 2, vitality: 0 });
+  fixture.state = g.endPlayerTurn(fixture.state, 'alice', g.turnFence(fixture.state)).state;
+  const id = require('node:crypto').randomUUID();
+  const input = {
+    operationId: id,
+    text: '*I revive the keeper* *Shows PRIVATE_FUTURE_NOTE* Hello',
+    channel: 'whisper',
+    targetNpcId: 'keeper',
+    expectedCanonRevision: 0,
+    turnFence: g.turnFence(fixture.state),
+  };
+  const context = g.buildStoryTurnContext(fixture.state, 'alice', input, id);
+  assert.ok(context.sceneSpeakerImpactVariants.length);
+  for (const voice of [...context.sceneSpeakers, ...context.sceneSpeakerImpactBases])
+    assert.equal(JSON.stringify(voice.claims).includes('PRIVATE_FUTURE_NOTE'), false);
+  for (const variant of context.sceneSpeakerImpactVariants)
+    assert.equal(JSON.stringify(variant.replacedClaims).includes('PRIVATE_FUTURE_NOTE'), false);
+});
+
+test('attempt source retry preserves its original audience rather than newly arrived witnesses', () => {
+  const { admitStoryRoleplayAttempt } = require('../../packages/game-core/dist/story-roleplay');
+  const fixture = speechFixture();
+  const id = require('node:crypto').randomUUID();
+  const input = {
+    operationId: id,
+    text: '*Smiles gently*',
+    channel: 'say',
+    expectedCanonRevision: 0,
+  };
+  const segment = g.parseStorySegments(input.text).segments[0];
+  const admitted = admitStoryRoleplayAttempt(fixture.state, 'alice', input, id, segment);
+  assert.equal(admitted.error, undefined);
+  const arrived = structuredClone(admitted.state);
+  arrived.entities.arrival = { ...structuredClone(arrived.entities.keeper), id: 'arrival' };
+  arrived.npcBrains.arrival = structuredClone(fixture.state.npcBrains.keeper);
+  const repeated = admitStoryRoleplayAttempt(arrived, 'alice', input, id, segment);
+  assert.deepEqual(repeated.state, arrived);
+  assert.deepEqual(repeated.events, []);
+  assert.deepEqual(repeated.source, admitted.source);
+  assert.equal(repeated.source.audienceIds.includes('arrival'), false);
+  assert.equal(repeated.state.npcUtterances.filter((u) => u.id === admitted.source.id).length, 1);
+});
+
+test('pending public words wait for ordered travel before admitting actual hearers', () => {
+  const fixture = speechFixture();
+  fixture.state.maps.annex = {
+    ...structuredClone(fixture.state.maps.courtyard),
+    id: 'annex',
+    label: 'Annex',
+    spawns: [{ x: 5, y: 5 }],
+    exits: [],
+  };
+  fixture.state.entities.destination = {
+    ...structuredClone(fixture.state.entities.keeper),
+    id: 'destination',
+    mapId: 'annex',
+    x: 6,
+    y: 5,
+  };
+  fixture.state.npcBrains.destination = structuredClone(fixture.state.npcBrains.keeper);
+  fixture.state.entities.guest = {
+    ...structuredClone(fixture.state.entities.alice),
+    id: 'guest',
+    x: 5,
+    y: 6,
+  };
+  const result = commitRoleplayFixture(
+    fixture,
+    '*go to Annex* *Smiles at the new room* WORDS_AT_DESTINATION',
+    'say',
+    { replyNpcId: 'destination' },
+  );
+  for (const entry of result.posted.entries) assert.deepEqual(entry.audienceIds, ['alice']);
+  const spoken = result.applied.entries.find((entry) => entry.kind === 'speech');
+  assert.deepEqual(spoken.audienceIds, ['alice', 'destination']);
+  assert.equal(result.after.entities.alice.mapId, 'annex');
+  for (const npcId of ['keeper', 'three', 'six', 'seven'])
+    assert.equal(
+      result.after.npcBrains[npcId].living.observations.some(
+        (o) => o.text === 'WORDS_AT_DESTINATION' || o.text === 'Smiles at the new room',
+      ),
+      false,
+    );
+  assert.equal(
+    result.after.npcBrains.destination.living.observations.filter(
+      (o) => o.text === 'WORDS_AT_DESTINATION',
+    ).length,
+    1,
+  );
+  assert.deepEqual(
+    result.applied.entries.find((entry) => entry.text === 'Smiles at the new room').audienceIds,
+    ['alice', 'destination'],
+  );
+  assert.equal(result.applied.entries.filter((entry) => entry.kind === 'npc_reply').length, 1);
 });

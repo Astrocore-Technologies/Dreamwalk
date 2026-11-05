@@ -90,3 +90,24 @@ test('NPC reply permits concise observable roleplay without promoting claims or 
   const body = JSON.parse(buildOpenAiNpcRequestBody(config, 'speech', {}));
   assert.match(body.text.format.schema.properties.text.description, /brief observable gesture/);
 });
+
+test('NPC grounding answers known self facts without making operational defaults or scene names omniscient', () => {
+  for (const purpose of ['speech', 'story_turn']) {
+    const body = JSON.parse(buildOpenAiNpcRequestBody(config, purpose, { mode: 'npc' }));
+    assert.match(body.instructions, /publicIdentity is supplied public self-knowledge/);
+    assert.match(
+      body.instructions,
+      /unknown cause of the player arrival does not erase your identity/,
+    );
+    assert.match(body.instructions, /not proof that your token is inside a particular building/);
+    assert.match(
+      body.instructions,
+      /not invented admissions rules, routes, authority or past events/,
+    );
+    assert.match(
+      body.instructions,
+      /operational helper\/patrol\/guard setting is not a personality/,
+    );
+    assert.match(body.instructions, /does not by itself call for a safety warning/);
+  }
+});

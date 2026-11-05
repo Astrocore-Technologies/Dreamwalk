@@ -113,6 +113,7 @@ export const gameActionSchema = z
       'knock',
       'communicate',
       'transition',
+      'travel',
       'defend',
       'flee',
     ]),
@@ -195,6 +196,9 @@ export const gameLabelTranslationsSchema = z
   .strict();
 export type GameLabelTranslations = z.infer<typeof gameLabelTranslationsSchema>;
 export interface GameEntity extends GamePoint {
+  lifeState?: import('./lifecycle').ActorLifeState;
+  /** Changes on any lifecycle transition, invalidating pre-incapacity jobs even after revival. */
+  lifeRevision?: number;
   npcPlaceholder?: NpcPlaceholder;
   item?: WorldItemState;
   /** Private author-approved provisioning capability. */
@@ -203,7 +207,14 @@ export interface GameEntity extends GamePoint {
   maxVitality?: number;
   movementTrace?: { sequence: number; points: GamePoint[] };
   feedback?: { kind: 'hit' | 'push'; sequence: number; dx: number; dy: number };
-  publicProfile?: { role: string; description: string; appearance: string };
+  publicProfile?: {
+    role: string;
+    description: string;
+    appearance: string;
+    /** Already-public author presentation, never biography or secrets. */
+    personality?: string;
+    greeting?: string;
+  };
   tokenSize?: TokenSize;
   characterAnimation?: CharacterAnimation;
   supportingNpc?: SupportingNpcCard;
@@ -397,6 +408,7 @@ export interface GameProjection {
   revision: number;
   actorId: string;
   map: GameMap;
+  locations?: { id: string; label: string; labelTranslations?: GameLabelTranslations }[];
   entities: GameEntity[];
   inventory: GameEntity[];
   encounter?: GameEncounter;
@@ -535,6 +547,7 @@ export const gamePublicEntitySchema = z
     npcPlaceholder: npcPlaceholderSchema.optional(),
     item: worldItemStateSchema.optional(),
     id: gameIdSchema,
+    lifeState: z.enum(['conscious', 'unconscious', 'dead']).optional(),
     vitality: z.number().int().min(0).max(100).optional(),
     maxVitality: z.number().int().min(1).max(100).optional(),
     movementTrace: movementTraceSchema.optional(),
@@ -548,6 +561,8 @@ export const gamePublicEntitySchema = z
         role: z.string().max(120),
         description: z.string().max(4000),
         appearance: z.string().max(4000),
+        personality: z.string().max(4000).optional(),
+        greeting: z.string().max(2000).optional(),
       })
       .strict()
       .optional(),
@@ -627,6 +642,18 @@ export const gameProjectionSchema = z
     revision: z.number().int().nonnegative().safe(),
     actorId: gameIdSchema,
     map: gameMapSchema,
+    locations: z
+      .array(
+        z
+          .object({
+            id: gameIdSchema,
+            label: z.string().max(120),
+            labelTranslations: gameLabelTranslationsSchema.optional(),
+          })
+          .strict(),
+      )
+      .max(32)
+      .optional(),
     entities: z.array(gamePublicEntitySchema).min(1).max(512),
     inventory: z.array(gamePublicEntitySchema).max(128),
     encounter: gamePublicEncounterSchema.optional(),
@@ -821,6 +848,8 @@ export const authoredGameDraftSchema = z
                 role: z.string().max(120),
                 description: z.string().max(4000),
                 appearance: z.string().max(4000),
+                personality: z.string().max(4000).optional(),
+                greeting: z.string().max(2000).optional(),
               })
               .strict()
               .optional(),
@@ -851,6 +880,8 @@ export const authoredGameDraftSchema = z
                 role: z.string().max(120),
                 description: z.string().max(4000),
                 appearance: z.string().max(4000),
+                personality: z.string().max(4000).optional(),
+                greeting: z.string().max(2000).optional(),
               })
               .strict()
               .optional(),
@@ -961,5 +992,6 @@ export const npcPlanProposalSchema = z
   })
   .strict();
 export * from './story-turn';
+export * from './lifecycle';
 
 export * from './world-items';

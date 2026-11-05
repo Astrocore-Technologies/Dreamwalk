@@ -1,4 +1,5 @@
 'use client';
+import { npcUnavailable, publicLifeState } from './turn-ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { createPortal } from 'react-dom';
@@ -26,6 +27,7 @@ import { NarrativePreferences } from './narrative-preferences';
 import { GameCanvas } from './game-canvas';
 import { TurnControls } from './turn-controls';
 import { GameWallet } from './game-wallet';
+import { LocationPicker } from './location-picker';
 import { useTurnText } from './turn-messages';
 import { playerControlsAvailable } from './turn-ui';
 import { UnifiedStory, type StoryRecipient } from './unified-story';
@@ -56,6 +58,7 @@ const actionKeys: Partial<Record<GameAction['kind'], string>> = {
   open: 'Открыть дверь',
   close: 'Закрыть дверь',
   transition: 'Перейти',
+  travel: 'Перейти',
   defend: 'Ждать',
   flee: 'Покинуть столкновение',
 };
@@ -297,6 +300,9 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
   }
   function act(action: GameAction) {
     if (!playerAvailable) return;
+    const target = p?.entities.find((entity) => entity.id === action.targetId);
+    if (target && npcUnavailable(target) && (action.kind === 'hit' || action.kind === 'push'))
+      return;
     if (encounter) {
       setSelected(action);
       return;
@@ -427,6 +433,13 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
               scope={`${campaignId}:${p.turn?.roundId ?? ''}:${p.turn?.phase ?? ''}`}
             />
           )}
+          <LocationPicker
+            projection={p}
+            disabled={controlsDisabled || storyBusy || !!encounter}
+            onTravel={(mapId) =>
+              game.command({ type: 'action', action: { kind: 'travel', targetId: mapId } })
+            }
+          />
           <TurnControls
             projection={p}
             connected={connected}
@@ -512,6 +525,10 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                 return;
               }
               const npc = p.entities.find((entity) => entity.id === npcId && entity.kind === 'npc');
+              if (npc && npcUnavailable(npc)) {
+                setInspectedNpcId(npc.id);
+                return;
+              }
               if (npc) setRecipient({ id: npc.id, label: npc.label || t('NPC') });
             }}
             onMove={(target) => {
@@ -550,12 +567,14 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                   inspectedNpc.publicProfile?.appearance || inspectedNpc.supportingNpc?.appearance
                 }
                 portraitUrl={inspectedPortraitUrl}
-                disabled={controlsDisabled || storyBusy}
+                lifeState={publicLifeState(inspectedNpc)}
+                disabled={controlsDisabled || storyBusy || npcUnavailable(inspectedNpc)}
                 onClose={() => setInspectedNpcId(null)}
                 onTalk={() => {
                   const npc = p.entities.find(
                     (entity) => entity.kind === 'npc' && entity.id === inspectedNpcId,
                   );
+                  if (npc && npcUnavailable(npc)) return;
                   if (!p.turn && npc && !controlsDisabled && !storyBusy)
                     setRecipient({ id: npc.id, label: npc.label || t('NPC') });
                 }}

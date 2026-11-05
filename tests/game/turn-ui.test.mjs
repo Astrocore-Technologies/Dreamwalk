@@ -83,3 +83,65 @@ test('turn UI messages supply complete Russian, English and Ukrainian copy', asy
     for (const value of values) assert.ok(typeof value === 'string' && value.trim(), key);
   }
 });
+
+test('NPC lifecycle is explicit and legacy zero vitality is unconscious, never inferred dead', async () => {
+  const { publicLifeState, npcUnavailable } =
+    await import('../../apps/web/components/game/turn-ui.ts');
+  assert.equal(publicLifeState({}), 'conscious');
+  assert.equal(publicLifeState({ vitality: 0 }), 'unconscious');
+  assert.equal(publicLifeState({ lifeState: 'dead', vitality: 6 }), 'dead');
+  assert.equal(publicLifeState({ lifeState: 'conscious', vitality: 0 }), 'conscious');
+  for (const lifeState of ['unconscious', 'dead']) {
+    assert.equal(npcUnavailable({ kind: 'npc', lifeState }), true);
+    assert.equal(npcUnavailable({ kind: 'player', lifeState }), false);
+  }
+  const { storyTargetValid } = await import('../../apps/web/components/game/story-turn-guards.ts');
+  for (const state of [{ lifeState: 'dead' }, { lifeState: 'unconscious' }, { vitality: 0 }]) {
+    const projection = { entities: [{ id: 'keeper', kind: 'npc', ...state }] };
+    assert.equal(storyTargetValid(projection, 'say', 'keeper'), false);
+    assert.equal(storyTargetValid(projection, 'whisper', 'keeper'), false);
+    assert.equal(storyTargetValid(projection, 'say'), true);
+  }
+});
+
+test('unavailable NPCs remain inspectable on the map with localized lifecycle and guarded actions', async () => {
+  const read = (name) =>
+    readFile(new URL(`../../apps/web/components/game/${name}`, import.meta.url), 'utf8');
+  const menu = await read('map-actions.tsx');
+  assert.match(menu, /disabled=\{disabled \|\| unavailable\}/);
+  assert.equal((menu.match(/disabled=\{main \|\| unavailable\}/g) || []).length, 2);
+  assert.match(menu, /onInspect\?\.\(e.id\)/);
+  const canvas = await read('game-canvas.tsx');
+  assert.match(canvas, /projection.entities.filter\(npcUnavailable\)/);
+  assert.match(canvas, /onInspectNpc\?\.\(entity.id\)/);
+  assert.match(canvas, /record.sprite.tint = npcUnavailable\(entity\)/);
+  assert.match(canvas, /present.add\(entity.id\)/);
+  const inspection = await read('npc-public-inspection.tsx');
+  assert.match(inspection, /disabled=\{disabled \|\| lifeState !== 'conscious'\}/);
+  assert.match(inspection, /data-life-state=\{lifeState\}/);
+});
+
+test('author and moderator previews label every lifecycle observation in all UI locales', async () => {
+  const { translate } = await import('../../apps/web/lib/locales.ts');
+  const source = await readFile(
+    new URL('../../apps/web/components/studio/living-npc-preview.tsx', import.meta.url),
+    'utf8',
+  );
+  const labels = {
+    died: 'Замечена смерть персонажа',
+    lost_consciousness: 'Замечена потеря сознания',
+    regained_consciousness: 'Персонаж пришёл в сознание',
+    revived: 'Персонаж вернулся к жизни',
+    life_state_seen: 'Замечено состояние персонажа',
+  };
+  for (const [kind, label] of Object.entries(labels)) {
+    assert.ok(source.includes(`${kind}: '${label}'`));
+    assert.equal(translate('ru', label), label);
+    for (const locale of ['en', 'uk']) assert.notEqual(translate(locale, label), label);
+  }
+  const moderator = await readFile(
+    new URL('../../apps/web/components/studio/moderator-npc-preview.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(moderator, /import \{ observationLabels \} from '.\/living-npc-preview'/);
+});

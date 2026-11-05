@@ -18,7 +18,7 @@ export const storyMapImageSchema = z
   .strict();
 export type StoryMapImage = z.infer<typeof storyMapImageSchema>;
 
-export interface StoryVisionPolicy {
+export interface ReviewedStoryVisionPolicy {
   model: string;
   inputTokensPerImage: number;
   maxImages: number;
@@ -27,6 +27,14 @@ export interface StoryVisionPolicy {
   maxPricedInputTokens: number;
   pricing: { source: string; reviewedAt: string; validUntil: string };
 }
+export type StoryVisionPolicy =
+  | ReviewedStoryVisionPolicy
+  | (Omit<ReviewedStoryVisionPolicy, 'inputTokensPerImage'> & {
+      counting: 'operational_exact';
+      inputTokensPerImage?: never;
+    });
+export const usesStoryExactCount = (policy?: StoryVisionPolicy | false) =>
+  !!policy && 'counting' in policy && policy.counting === 'operational_exact';
 export function readStoryImages(context: unknown): StoryMapImage[] {
   const value = (context as { mapImages?: unknown } | null)?.mapImages;
   if (value === undefined) return [];
@@ -40,7 +48,7 @@ export function readStoryImages(context: unknown): StoryMapImage[] {
   }
   return images;
 }
-export function storyVisionInput(context: unknown, policy?: StoryVisionPolicy) {
+export function storyVisionInput(context: unknown, policy?: StoryVisionPolicy | false) {
   const images = readStoryImages(context);
   if (!images.length) return JSON.stringify(context);
   if (
@@ -48,8 +56,8 @@ export function storyVisionInput(context: unknown, policy?: StoryVisionPolicy) {
     images.length > policy.maxImages ||
     policy.detail !== 'high' ||
     policy.billing !== 'text_input_rate' ||
-    !Number.isSafeInteger(policy.inputTokensPerImage) ||
-    policy.inputTokensPerImage < 1 ||
+    (!usesStoryExactCount(policy) &&
+      (!Number.isSafeInteger(policy.inputTokensPerImage) || policy.inputTokensPerImage! < 1)) ||
     !(
       Date.parse(policy.pricing.reviewedAt) <= Date.now() &&
       Date.parse(policy.pricing.validUntil) > Date.now()
@@ -86,7 +94,8 @@ export function storyVisionInput(context: unknown, policy?: StoryVisionPolicy) {
 export function storyVisionCounter(
   body: string,
   model: string,
-  policy?: StoryVisionPolicy,
+  policy?: StoryVisionPolicy | false,
+  exact?: TextTokenCounter,
 ): TextTokenCounter | undefined {
   const envelope = JSON.parse(body);
   if (!Array.isArray(envelope.input)) return undefined;
@@ -100,8 +109,18 @@ export function storyVisionCounter(
   if (!images) return undefined;
   if (!policy || policy.model !== model || images > policy.maxImages)
     throw new Error('MAP_VISION_POLICY_REQUIRED');
+  if (usesStoryExactCount(policy)) {
+    if (!exact || exact.precision !== 'exact' || !exact.supports(model))
+      throw new Error('STORY_MAP_EXACT_COUNT_REQUIRED');
+    if (
+      !Number.isSafeInteger(policy.maxPricedInputTokens) ||
+      exact.countInput(body, model) > policy.maxPricedInputTokens
+    )
+      throw new Error('MAP_VISION_POLICY_REQUIRED');
+    return exact;
+  }
   const tokens =
-    Buffer.byteLength(JSON.stringify(envelope)) + 4096 + images * policy.inputTokensPerImage;
+    Buffer.byteLength(JSON.stringify(envelope)) + 4096 + images * policy.inputTokensPerImage!;
   if (!Number.isSafeInteger(policy.maxPricedInputTokens) || tokens > policy.maxPricedInputTokens)
     throw new Error('MAP_VISION_POLICY_REQUIRED');
   const hash = createHash('sha256').update(body).digest('hex');

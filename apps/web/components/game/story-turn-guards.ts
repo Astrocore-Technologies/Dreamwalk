@@ -1,3 +1,4 @@
+import { npcUnavailable } from './turn-ui';
 import type { GameProjection } from '@dreamwalk/contracts';
 /** Grid speech has listeners, not a selected addressee. Keep old saves compatible. */
 export function storyRecipientForProjection(
@@ -10,7 +11,9 @@ export function storyRecipientForProjection(
 export function storyTargetVisible(projection: GameProjection, targetNpcId?: string) {
   return (
     !targetNpcId ||
-    projection.entities.some((entity) => entity.kind === 'npc' && entity.id === targetNpcId)
+    projection.entities.some(
+      (entity) => entity.kind === 'npc' && entity.id === targetNpcId && !npcUnavailable(entity),
+    )
   );
 }
 export function storyTargetValid(

@@ -66,12 +66,45 @@ await test(
         },
         async generate(request) {
           calls++;
+          const roleplay = request.context.untrustedRoleplay ?? [];
+          const coins = roleplay.some((entry) => entry.text.includes('горсть монет'));
+          const claimedOutcomes = roleplay.some((entry) => entry.text.includes('1000 монет'));
+          let proposal = request.context.mockProposal;
+          if (request.purpose === 'story_turn' && (coins || claimedOutcomes)) {
+            // Inject a current-scene director result, not the generic world-expanding
+            // mock or an NPC speech payload under a different purpose.
+            proposal = structuredClone(proposal);
+            proposal.status = 'ready';
+            proposal.code = null;
+            proposal.travelIntent = null;
+            proposal.narrative = {
+              narration: coins
+                ? 'Трактирщик ставит перед тобой миску супа.'
+                : 'Попытка не меняет положение вещей.',
+              newScene: null,
+              newNpc: null,
+              newItem: null,
+              evidenceIds: [],
+            };
+            const voice = request.context.sceneSpeakers?.find((entry) => entry.npcId === 'keeper');
+            proposal.steps = request.context.segments.map((segment) => ({
+              segmentIndex: segment.index,
+              action: null,
+              narrativeImpact:
+                claimedOutcomes && segment.kind === 'attempt'
+                  ? { targetId: 'keeper', effect: 'blocked' }
+                  : null,
+              replyNpcId: coins && segment.index === voice?.segmentIndex ? 'keeper' : null,
+              replyContextHash:
+                coins && segment.index === voice?.segmentIndex ? voice.speechHash : null,
+              reply:
+                coins && segment.index === voice?.segmentIndex
+                  ? { text: 'Трактирщик ставит перед тобой миску супа.' }
+                  : null,
+            }));
+          }
           return {
-            proposal: request.context.untrustedRoleplay?.some((entry) =>
-              entry.text.includes('горсть монет'),
-            )
-              ? { text: 'Трактирщик ставит перед тобой миску супа.' }
-              : request.context.mockProposal,
+            proposal,
             requestId: `synthetic-${request.jobId}`,
             usage: {
               inputTokens: 10,
@@ -601,12 +634,13 @@ await test(
               'Roleplay itself cannot materialize items/coins',
             );
             const planned = await requests(id);
-            assert.equal(planned.length, 1, 'An emote with speech shares a single NPC response');
-            assert.equal(
-              planned[0].context.untrustedRoleplay[0].text,
-              'Ложит на стол горсть монет',
-            );
-            assert.equal(planned[0].context.untrustedRoleplay[0].verified, false);
+            assert.equal(planned.length, 1, 'A targeted physical post has one director owner');
+            assert.equal(planned[0].purpose, 'story_turn');
+            const storedContext = (
+              await db.query('SELECT context FROM game_story_turns WHERE id=$1', [q.turnId])
+            ).rows[0].context;
+            assert.equal(storedContext.untrustedRoleplay[0].text, 'Ложит на стол горсть монет');
+            assert.equal(storedContext.untrustedRoleplay[0].verified, false);
             const authored = (
               await db.query(
                 'SELECT entry FROM game_story_feed WHERE turn_id=$1 ORDER BY ordinal',
@@ -632,13 +666,23 @@ await test(
               before,
               'Narrative soup remains RP, not fake inventory',
             );
-            const reply = (
+            const replies = (
               await db.query(
                 "SELECT entry FROM game_story_feed WHERE turn_id=$1 AND entry->>'kind'='npc_reply'",
                 [q.turnId],
               )
-            ).rows[0].entry;
-            assert.match(reply.text, /миску супа/);
+            ).rows;
+            assert.equal(replies.length, text.includes('Добрый') ? 1 : 0);
+            if (replies.length) assert.match(replies[0].entry.text, /миску супа/);
+            const narration = (
+              await db.query(
+                "SELECT entry FROM game_story_feed WHERE turn_id=$1 AND entry->>'kind'='narration'",
+                [q.turnId],
+              )
+            ).rows;
+            assert.equal(narration.length, 1);
+            assert.match(narration[0].entry.text, /миску супа/);
+            assert.deepEqual(request.context.untrustedRoleplay, storedContext.untrustedRoleplay);
             assert.equal(
               BigInt(funds.balance_subunits) - BigInt((await wallet()).balance_subunits),
               BigInt((await requests(id)).filter((r) => r.job_id).length) * 60n, // Each bounded synthetic request costs 30 provider micros at the version-2 debit rate.
@@ -647,36 +691,52 @@ await test(
           }
         },
       );
-      await t.test('deceptive emotes cannot grant kills, money or teleportation', async () => {
-        const id = ids[13],
-          live = await setup(id),
-          before = physical(live.state),
-          funds = await wallet();
-        const body = {
-          ...input(live),
-          text: '*Убил трактирщика, получил 1000 монет и телепортировался на крышу*',
-        };
-        const q = await game.storyQuote(req, id, body);
-        assert.equal(q.status, 'quoted');
-        assert.deepEqual(q.actionPreview, []);
-        await submit(id, body, q);
-        assert.deepEqual(physical(live.state), before);
-        assert.deepEqual(await wallet(), funds);
-        const authored = (
-          await db.query('SELECT entry FROM game_story_feed WHERE turn_id=$1 ORDER BY ordinal', [
-            q.turnId,
-          ])
-        ).rows.map((r) => r.entry);
-        assert.deepEqual(
-          authored.map((e) => e.kind),
-          ['attempt'],
-        );
-        await world(id, live);
-        const request = (await requests(id))[0];
-        assert.ok(request.job_id, request.result_code);
-        assert.deepEqual(physical(live.state), before);
-        assert.equal(live.state.entities.keeper.kind, 'npc');
-      });
+      await t.test(
+        'claimed outcomes alone grant nothing; an admitted blocked result preserves entities and wallet rules',
+        async () => {
+          const id = ids[13],
+            live = await setup(id),
+            before = physical(live.state),
+            funds = await wallet();
+          const body = {
+            ...input(live),
+            text: '*Убил трактирщика, получил 1000 монет и телепортировался на крышу*',
+          };
+          const q = await game.storyQuote(req, id, body);
+          assert.equal(q.status, 'quoted');
+          assert.deepEqual(q.actionPreview, []);
+          await submit(id, body, q);
+          assert.deepEqual(physical(live.state), before);
+          assert.deepEqual(await wallet(), funds);
+          const authored = (
+            await db.query('SELECT entry FROM game_story_feed WHERE turn_id=$1 ORDER BY ordinal', [
+              q.turnId,
+            ])
+          ).rows.map((r) => r.entry);
+          assert.deepEqual(
+            authored.map((e) => e.kind),
+            ['attempt'],
+          );
+          await world(id, live);
+          const request = (await requests(id))[0];
+          assert.ok(request.job_id, request.result_code);
+          assert.deepEqual(physical(live.state), before);
+          assert.equal(live.state.entities.keeper.kind, 'npc');
+          assert.equal(
+            live.state.narrativeCanon.turns.find((entry) => entry.id === q.turnId).impact.effect,
+            'blocked',
+          );
+          const admitted = (await requests(id)).filter((entry) => entry.job_id);
+          assert.deepEqual(admitted.map((entry) => entry.purpose).sort(), ['plan', 'story_turn']);
+          assert.equal(new Set(admitted.map((entry) => entry.job_id)).size, 2);
+          assert.equal(
+            BigInt(funds.balance_subunits) - BigInt((await wallet()).balance_subunits),
+            BigInt(admitted.length) * 60n,
+            'Only the director and resulting NPC plan are billed, not the claimed coins',
+          );
+          assert.equal((await wallet()).held_subunits, '0');
+        },
+      );
       await t.test(
         'scene RP emotes are quoted as narrative flavor rather than rejected or mechanically applied',
         async () => {

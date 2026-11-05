@@ -1,3 +1,4 @@
+import { isActorConscious } from '@dreamwalk/contracts';
 import {
   footprintDistance,
   adjacentFootprintAnchors,
@@ -58,6 +59,7 @@ export function npcConditionsMet(
 export function npcActionAllowed(s: GameState, npcId: string, a: GameAction): boolean {
   const npc = s.entities[npcId],
     m = s.npcBrains?.[npcId]?.living;
+  if (!isActorConscious(npc)) return false;
   if (!npc || !m) return true;
   const taboo = m.personality.taboos;
   if (a.kind === 'give' && a.itemId) {
@@ -217,7 +219,7 @@ export function stepNpcAuthoredPolicy(
   options: { deferPlanning?: boolean } = {},
 ): GameResult {
   const old = state.npcBrains?.[npcId]?.living;
-  if (!old) return { state, events: [] };
+  if (!old || !isActorConscious(state.entities[npcId])) return { state, events: [] };
   let s = structuredClone(state),
     m = s.npcBrains![npcId].living!;
   const events: GameResult['events'] = [];
@@ -394,7 +396,7 @@ export function stepNpcAuthoredPolicy(
 }
 export function npcDialogueDecisionTrigger(state: GameState, npcId: string) {
   const m = state.npcBrains?.[npcId]?.living;
-  if (!m) return null;
+  if (!m || !isActorConscious(state.entities[npcId])) return null;
   const last = [...m.observations]
     .reverse()
     .find((o) => o.kind === 'said' || o.kind === 'addressed');

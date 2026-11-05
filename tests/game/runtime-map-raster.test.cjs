@@ -347,3 +347,12 @@ test('all 32 admitted public-speech observers participate in the mask', async ()
   const result = await render(await image(), view);
   assert.equal(result.view.observerIds.length, 32);
 });
+
+test('visible bodies retain lifecycle in the validated runtime raster view', async () => {
+  const state = fixture();
+  state.entities.body = actor('body', 8, 4, { kind: 'npc', lifeState: 'dead', vitality: 0 });
+  const view = runtimeMapView(state, ['hero']);
+  assert.equal(view.markers.find((marker) => marker.id === 'body').lifeState, 'dead');
+  const raster = await render(await image(), view);
+  assert.equal(raster.view.markers.find((marker) => marker.id === 'body').lifeState, 'dead');
+});
