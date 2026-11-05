@@ -58,14 +58,22 @@ styles are unchanged. Responsive layouts retain natural height and readable cont
 rather than forcing real data into the mockups' fixed-height examples.
 
 The first exact-head CI480 passed static/build/types, PostgreSQL and fifteen of the
-seventeen account cases. Two export cases exposed an unsupported browser-filename
-assumption, now replaced by validation of the actual downloaded JSON bytes and endpoint.
-All sixty attached account/admin/state images were inspected. That review prompted
-further preference line-height/density, privacy typography/action/refresh placement and
-security status/banner refinements. Required email verification is correctly a separate
-access gate; tests now distinguish it from optional account-banner feedback and add
-scrolled mobile viewport evidence instead of relying on full-page fixed-navigation pixels.
+seventeen account design cases. All sixty attached account/admin/state images were
+inspected. That review prompted further preference line-height/density, privacy
+typography/action/refresh placement and security status/banner refinements. Required
+email verification is correctly a separate access gate; tests distinguish it from
+optional account-banner feedback and add scrolled mobile viewport evidence instead
+of relying on full-page fixed-navigation pixels.
 
-Fresh full CI and resulting image inspection remain required for these refinements.
-Source comparisons and synthetic checks do not establish live-account or full sitewide
-1:1 acceptance. Shared shell controls and real account data remain unchanged.
+CI482 passed every other gate and all fifteen other design cases. Its two export
+fixtures exposed Chromium's native anchor-download interception limitation: no
+routed download request appears in any failure trace, and the synthetic file download
+is canceled. The real disposable-PostgreSQL account-data test passed in the same run.
+The corrected test boundary keeps request/refresh/completed/expired link-state checks
+in the mocked matrix and expands the real native-download journey to both1536/390px.
+It retains the exact endpoint, filename, successful download, actual owner JSON bytes
+and secret-exclusion checks without changing the production link or API.
+
+Fresh full CI and resulting image inspection remain required. Source comparisons and
+synthetic checks do not establish live-account or full sitewide1:1 acceptance. Shared
+shell controls and real account data remain unchanged.
