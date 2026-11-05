@@ -9,6 +9,7 @@ type Quote = {
   id: string;
   chargeUnit?: 'sparks' | 'credits';
   sparkReservedSubunits?: string | null;
+  automaticKnownCostPolicy?: 'known-cost-v1';
   credits: number;
   expiresAt: string;
   demo: boolean;
@@ -131,6 +132,9 @@ export function LivingAiPanel({
           operationId: operation.current,
           quoteId: quote.id,
           consent: true,
+          ...(quote.automaticKnownCostPolicy === 'known-cost-v1'
+            ? { automaticKnownCostPolicy: quote.automaticKnownCostPolicy }
+            : {}),
         }),
       });
       if (request !== generation.current) return;

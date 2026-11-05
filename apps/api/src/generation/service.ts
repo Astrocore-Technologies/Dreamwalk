@@ -1,3 +1,10 @@
+import {
+  nativeRequestStop,
+  countFailureCode,
+  stopGenerationAuthorization,
+  stopGenerationReservation,
+  withGenerationStop,
+} from './stop-provenance';
 import { currentReleaseDeployment } from './release-deployment';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import {
@@ -15,7 +22,8 @@ import {
   type TextCountAdapter,
   type TextCountEvidence,
 } from '../ai/text-preflight';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit, type OnModuleDestroy } from '@nestjs/common';
+import { settleKnownCount, settleKnownPermit } from './known-text-settlement';
 import type { PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -38,7 +46,7 @@ import {
   type ImagePolicy,
   type GenerationRequest,
 } from '../image-generation/contracts';
-import { sourceAccessSql } from '../game/playable.service';
+import { sourceAccessSql } from '../game/source-access';
 import { LIVE_TEXT, type LiveTestConfig } from '../live-test/config';
 import {
   ownerPricingIsCurrent,
@@ -73,13 +81,99 @@ const consentSchema = z
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
     consent: z.literal(true),
+    automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
   })
   .strict()
   .refine((v) => !v.sessionId || !v.authorizationId || v.sessionId === v.authorizationId, {
     message: 'AUTHORIZATION_ID_MISMATCH',
   });
 @Injectable()
-export class GenerationAuthority {
+export class GenerationAuthority implements OnModuleInit, OnModuleDestroy {
+  private recoveryTimer?: ReturnType<typeof setInterval>;
+  private recoveringKnownText?: Promise<void>;
+  private countRecoveryCursor: string | null = null;
+  private permitRecoveryCursor: string | null = null;
+  private readonly settlementLogger = new Logger(GenerationAuthority.name);
+  onModuleInit() {
+    void this.recoverKnownText();
+    this.recoveryTimer = setInterval(() => void this.recoverKnownText(), 30000);
+    this.recoveryTimer.unref();
+  }
+  async onModuleDestroy() {
+    if (this.recoveryTimer) clearInterval(this.recoveryTimer);
+    await this.recoveringKnownText;
+  }
+  async recoverKnownText() {
+    if (this.recoveringKnownText) return this.recoveringKnownText;
+    this.recoveringKnownText = this.recoverKnownTextPage().catch(() => {
+      this.settlementLogger.warn('TEXT_AUTOMATIC_SETTLEMENT_RECOVERY_FAILED');
+    });
+    try {
+      await this.recoveringKnownText;
+    } finally {
+      this.recoveringKnownText = undefined;
+    }
+  }
+  private async recoverKnownTextPage() {
+    const counts = await this.db.query<{ id: string; authorization_id: string }>(
+      `
+      SELECT j.id,j.authorization_id FROM generation_text_counts j JOIN spark_holds h ON h.id=j.spark_quote_id
+      JOIN spark_quotes q ON q.id=h.id
+      WHERE q.price_snapshot->'providerQuote'->>'automaticKnownCostPolicy'='known-cost-v1'
+        AND q.price_snapshot->'providerQuote'->'automaticKnownCostAcceptance'->>'policy'='known-cost-v1' AND j.actual_micros IS NOT NULL AND j.input_tokens IS NOT NULL AND j.status IN ('stale','unknown','over_context','succeeded')
+        AND h.status IN ('held','pending') AND ($1::uuid IS NULL OR j.id>$1::uuid) ORDER BY j.id LIMIT 25`,
+      [this.countRecoveryCursor],
+    );
+    for (const row of counts) {
+      try {
+        await this.db.tx(async (c) => {
+          const authorization = await this.lockAuthorization(c, row.authorization_id);
+          const job = (
+            await c.query('SELECT * FROM generation_text_counts WHERE id=$1 FOR UPDATE', [row.id])
+          ).rows[0];
+          if (job) await settleKnownCount(c, job, authorization);
+        });
+      } catch {
+        this.settlementLogger.warn('COUNT_AUTOMATIC_SETTLEMENT_JOB_FAILED');
+      }
+      this.countRecoveryCursor = row.id;
+    }
+    if (counts.length < 25) this.countRecoveryCursor = null;
+    const permits = await this.db.query<{ id: string; session_id: string; job_id: string }>(
+      `
+      SELECT p.id,p.session_id,p.job_id FROM live_test_text_permits p JOIN spark_holds h ON h.id=p.spark_quote_id
+      JOIN spark_quotes q ON q.id=h.id
+      JOIN npc_ai_jobs j ON j.id=p.job_id WHERE q.price_snapshot->'providerQuote'->>'automaticKnownCostPolicy'='known-cost-v1'
+        AND q.price_snapshot->'providerQuote'->'automaticKnownCostAcceptance'->>'policy'='known-cost-v1' AND p.state='settled' AND j.status IN ('stale','failed')
+        AND j.provider_usage IS NOT NULL AND h.status IN ('held','pending')
+        AND ($1::uuid IS NULL OR p.id>$1::uuid) ORDER BY p.id LIMIT 25`,
+      [this.permitRecoveryCursor],
+    );
+    for (const row of permits) {
+      try {
+        await this.db.tx(async (c) => {
+          // NPC callback order: job, provider budget, authorization/scope, permit, fence, wallet.
+          const job = (
+            await c.query('SELECT * FROM npc_ai_jobs WHERE id=$1 FOR UPDATE', [row.job_id])
+          ).rows[0];
+          if (!job) return;
+          await c.query(
+            'SELECT provider_id FROM npc_ai_provider_budgets WHERE provider_id=$1 FOR UPDATE',
+            [job.provider_id],
+          );
+          const authorization = await this.lockAuthorization(c, row.session_id);
+          const permit = (
+            await c.query('SELECT * FROM live_test_text_permits WHERE id=$1 FOR UPDATE', [row.id])
+          ).rows[0];
+          if (permit) await settleKnownPermit(c, permit, authorization);
+        });
+      } catch {
+        this.settlementLogger.warn('PERMIT_AUTOMATIC_SETTLEMENT_JOB_FAILED');
+      }
+      this.permitRecoveryCursor = row.id;
+    }
+    if (permits.length < 25) this.permitRecoveryCursor = null;
+  }
   readonly config: LiveTestConfig & { mode: 'owner' | 'manual' | 'release' };
   readonly release?: ReleaseAdmission;
   readonly ownerConfig?: OwnerGenerationConfig;
@@ -157,6 +251,7 @@ export class GenerationAuthority {
     const candidate = this.countCandidate(request.context);
     return {
       blockCode: this.countGate(),
+      automaticKnownCostPolicy: 'known-cost-v1' as const,
       candidateFingerprint: digest(candidate),
       historyRecords: Array.isArray(candidate.history) ? candidate.history.length : 0,
       reserveMicros: this.profileConfig!.text.counting?.microsPerRequest ?? null,
@@ -220,6 +315,7 @@ export class GenerationAuthority {
         candidateFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
         keepRecentHistory: z.number().int().min(1).max(32768).optional(),
         consent: z.literal(true),
+        automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
       })
       .strict()
       .parse(input);
@@ -312,6 +408,15 @@ export class GenerationAuthority {
                 expiresAt: new Date(Date.now() + 60000).toISOString(),
                 tariff: sparkTariff(this.textProfile(), 'openai', this.textCountAdapter!.version),
                 providerQuote: {
+                  automaticKnownCostPolicy: 'known-cost-v1',
+                  ...(v.automaticKnownCostPolicy === 'known-cost-v1'
+                    ? {
+                        automaticKnownCostAcceptance: {
+                          policy: v.automaticKnownCostPolicy,
+                          requestHash,
+                        },
+                      }
+                    : {}),
                   countId: id,
                   model: this.profileConfig!.text.model,
                   providerVersion: this.textCountAdapter!.version,
@@ -365,10 +470,7 @@ export class GenerationAuthority {
       if (!Number.isSafeInteger(tokens) || tokens < 0)
         throw new Error('TEXT_COUNT_INVALID_RESPONSE');
     } catch (e) {
-      code =
-        e instanceof Error && e.message === 'PROVIDER_HTTP_403'
-          ? 'PROVIDER_HTTP_403'
-          : 'TEXT_COUNT_OUTCOME_UNKNOWN';
+      code = countFailureCode(e);
     }
     return this.db.tx(async (c) => {
       await this.lockAuthorization(c, job.authorization_id);
@@ -382,10 +484,17 @@ export class GenerationAuthority {
             job.reservation_id,
             Number(job.pricing_snapshot.microsPerRequest),
           );
-          await c.query('UPDATE generation_text_counts SET actual_micros=$2 WHERE id=$1', [
-            job.id,
-            Number(job.pricing_snapshot.microsPerRequest),
-          ]);
+          await c.query(
+            'UPDATE generation_text_counts SET actual_micros=$2,input_tokens=$3,completed_at=COALESCE(completed_at,clock_timestamp()) WHERE id=$1',
+            [job.id, Number(job.pricing_snapshot.microsPerRequest), tokens],
+          );
+          const known = (
+            await c.query('SELECT * FROM generation_text_counts WHERE id=$1', [job.id])
+          ).rows[0];
+          const authorization = (
+            await c.query('SELECT * FROM live_test_sessions WHERE id=$1', [job.authorization_id])
+          ).rows[0];
+          if (known && authorization) await settleKnownCount(c, known, authorization);
         }
         return this.countReceipt(
           (await c.query('SELECT * FROM generation_text_counts WHERE id=$1', [job.id])).rows[0],
@@ -401,13 +510,32 @@ export class GenerationAuthority {
           "UPDATE generation_text_counts SET status='unknown',result_code=$2,completed_at=clock_timestamp() WHERE id=$1",
           [job.id, code ?? 'TEXT_COUNT_DEADLINE_EXCEEDED'],
         );
-        await c.query(
-          "UPDATE live_test_sessions SET state='stopped',stop_code=COALESCE(stop_code,$2) WHERE id=$1",
-          [job.authorization_id, code ?? 'TEXT_COUNT_DEADLINE_EXCEEDED'],
-        );
-        await c.query('UPDATE generation_budget_scopes SET blocked=true WHERE id=$1', [
-          job.scope_id,
-        ]);
+        await stopGenerationAuthorization(c, {
+          authorizationId: job.authorization_id,
+          sourceKind: 'count',
+          sourceId: job.id,
+          ...nativeRequestStop(
+            deadline ? 'TEXT_COUNT_DEADLINE_EXCEEDED' : (code ?? 'TEXT_COUNT_RESULT_UNVERIFIED'),
+          ),
+        });
+        if (!code && tokens !== null) {
+          await settleGenerationSpend(
+            c,
+            job.reservation_id,
+            Number(job.pricing_snapshot.microsPerRequest),
+          );
+          await c.query(
+            'UPDATE generation_text_counts SET actual_micros=$2,input_tokens=$3 WHERE id=$1',
+            [job.id, Number(job.pricing_snapshot.microsPerRequest), tokens],
+          );
+          const known = (
+            await c.query('SELECT * FROM generation_text_counts WHERE id=$1', [job.id])
+          ).rows[0];
+          const authorization = (
+            await c.query('SELECT * FROM live_test_sessions WHERE id=$1', [job.authorization_id])
+          ).rows[0];
+          if (known && authorization) await settleKnownCount(c, known, authorization);
+        }
       } else {
         await settleGenerationSpend(
           c,
@@ -464,7 +592,10 @@ export class GenerationAuthority {
           c,
           job.reservation_id,
           stale
-            ? { outcome: 'failure_policy_pending', receiptId: `count:${job.id}` }
+            ? {
+                outcome: 'failure_policy_pending',
+                receiptId: `count:${job.id}`,
+              }
             : {
                 outcome: 'success',
                 actualMicros: String(job.pricing_snapshot.microsPerRequest),
@@ -510,6 +641,15 @@ export class GenerationAuthority {
             stale ? 'TEXT_COUNT_CANDIDATE_STALE' : over ? 'TEXT_CONTEXT_WINDOW_EXCEEDED' : null,
           ],
         );
+        if (stale) {
+          const known = (
+            await c.query('SELECT * FROM generation_text_counts WHERE id=$1', [job.id])
+          ).rows[0];
+          const authorization = (
+            await c.query('SELECT * FROM live_test_sessions WHERE id=$1', [job.authorization_id])
+          ).rows[0];
+          if (known && authorization) await settleKnownCount(c, known, authorization);
+        }
       }
       return this.countReceipt(
         (await c.query('SELECT * FROM generation_text_counts WHERE id=$1', [job.id])).rows[0],
@@ -701,7 +841,7 @@ export class GenerationAuthority {
         `SELECT 1 FROM generation_budget_reservations r JOIN generation_budget_scopes b ON b.id=r.scope_id
        WHERE ((r.scope_id<>$1 OR $2::boolean) AND r.status='held' AND r.upper_micros>0) OR (r.status='settled' AND r.actual_micros IS NULL)
        UNION ALL SELECT 1 FROM generation_budget_scopes b WHERE blocked AND NOT($3::boolean AND id=$1) AND (approved OR id=$1 OR EXISTS(SELECT 1 FROM generation_budget_reservations r WHERE r.scope_id=b.id AND (r.upper_micros>0 OR r.actual_micros>0)))
-       UNION ALL SELECT 1 FROM live_test_sessions WHERE scope_id=$1 AND state='stopped' AND COALESCE(stop_code,'')<>'OWNER_GENERATION_MODE_ACTIVE' AND NOT($3::boolean AND mode='owner' AND stop_code='IMAGE_RESULT_UNKNOWN')
+       UNION ALL SELECT 1 FROM live_test_sessions WHERE scope_id=$1 AND state='stopped' AND COALESCE(stop_code,'')<>'OWNER_GENERATION_MODE_ACTIVE' AND NOT($3::boolean AND mode='owner' AND stop_code IN ('IMAGE_RESULT_UNKNOWN','IMAGE_MODEL_ACCESS_REJECTION'))
        LIMIT 1`,
         [GENERATION_SCOPE_ID, firstClaim, imageOnlyAdmission],
       )
@@ -1077,10 +1217,27 @@ export class GenerationAuthority {
           operationId: randomUUID(),
           requestHash: policyRequestHash({ kind: 'initial_claim', hash: this.identity() }),
         });
-        await c.query(
-          "UPDATE live_test_sessions SET state='stopped',stop_code=COALESCE(stop_code,'OWNER_GENERATION_MODE_ACTIVE') WHERE scope_id=$1 AND mode='manual' AND state='active'",
-          [GENERATION_SCOPE_ID],
-        );
+        const manualGrants = (
+          await c.query(
+            "SELECT id FROM live_test_sessions WHERE scope_id=$1 AND mode='manual' AND state='active' ORDER BY id",
+            [GENERATION_SCOPE_ID],
+          )
+        ).rows;
+        for (const manual of manualGrants)
+          await withGenerationStop(
+            c,
+            {
+              authorizationId: manual.id,
+              sourceKind: 'policy',
+              sourceId: ownerAuthorizationId,
+              reason: 'OWNER_GENERATION_MODE_ACTIVE',
+            },
+            () =>
+              c.query(
+                "UPDATE live_test_sessions SET state='stopped',stop_code=COALESCE(stop_code,'OWNER_GENERATION_MODE_ACTIVE') WHERE id=$1",
+                [manual.id],
+              ),
+          );
       } else {
         await c.query(
           "INSERT INTO live_test_sessions(id,owner_id,scope_id,expires_at,cap_micros,state) VALUES($1,$2,$3,$4,1000000,'active') ON CONFLICT DO NOTHING",
@@ -1219,9 +1376,9 @@ export class GenerationAuthority {
     return !!(
       await c.query(
         `SELECT 1 FROM live_test_text_permits WHERE reservation_id=$1
-      AND (state='unknown' OR (state='dispatched' AND dispatched_at<=clock_timestamp()-interval '60 seconds'))
+      AND state IN ('dispatched','unknown') AND dispatched_at<=clock_timestamp()-interval '60 seconds'
       UNION ALL SELECT 1 FROM live_authoring_text_jobs WHERE reservation_id=$1
-      AND (status='unknown' OR (status='dispatched' AND deadline_at<=clock_timestamp())) LIMIT 1`,
+      AND status IN ('dispatched','unknown') AND deadline_at<=clock_timestamp() LIMIT 1`,
         [reservationId],
       )
     ).rowCount;
@@ -1256,13 +1413,16 @@ export class GenerationAuthority {
       code === 'PROVIDER_LIMIT_VIOLATION' ||
       (actualMicros !== null && actualMicros > Number(reserve.upper_micros))
     ) {
-      await c.query(
-        "UPDATE live_test_sessions SET state='stopped',stop_code=COALESCE(stop_code,$2) WHERE id=$1",
-        [sessionId, overdue ? 'PROVIDER_DEADLINE_EXCEEDED' : code],
+      await stopGenerationReservation(
+        c,
+        sessionId,
+        reservationId,
+        overdue
+          ? 'PROVIDER_DEADLINE_EXCEEDED'
+          : actualMicros !== null && actualMicros > Number(reserve.upper_micros)
+            ? 'COST_BOUND_EXCEEDED'
+            : code,
       );
-      await c.query('UPDATE generation_budget_scopes SET blocked=true WHERE id=$1', [
-        session.scope_id,
-      ]);
     }
   }
   async authorizeImage(
@@ -1453,6 +1613,7 @@ export class GenerationAuthority {
             subjectId: r.npc_id,
             purpose: r.purpose,
             errorCode: estimateError ?? r.result_code ?? null,
+            automaticKnownCostPolicy: 'known-cost-v1' as const,
             counting: countViews.get(r.id),
             permitState: r.permit_state ?? null,
             upperMicros:
@@ -1486,6 +1647,19 @@ export class GenerationAuthority {
       ).rows[0];
       if (previous) {
         if (previous.request_id !== requestId || previous.campaign_id !== campaignId)
+          fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+        const originalQuote = previous.spark_quote_id
+          ? (
+              await c.query('SELECT price_snapshot FROM spark_quotes WHERE id=$1', [
+                previous.spark_quote_id,
+              ])
+            ).rows[0]
+          : undefined;
+        if (
+          (originalQuote?.price_snapshot?.providerQuote?.automaticKnownCostAcceptance?.policy ===
+            'known-cost-v1') !==
+          (v.automaticKnownCostPolicy === 'known-cost-v1')
+        )
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
         return {
           id: previous.id,
@@ -1603,6 +1777,19 @@ export class GenerationAuthority {
             activePolicy?.hash || 'manual-live-text-v1',
           ),
           providerQuote: {
+            automaticKnownCostPolicy: 'known-cost-v1',
+            ...(v.automaticKnownCostPolicy === 'known-cost-v1'
+              ? {
+                  automaticKnownCostAcceptance: {
+                    policy: v.automaticKnownCostPolicy,
+                    operationId: v.operationId,
+                    requestId,
+                    campaignId,
+                    authorizationId: sessionId,
+                    contextHash: digest(r.context),
+                  },
+                }
+              : {}),
             permitId: id,
             requestId,
             contextHash: digest(r.context),
@@ -1858,14 +2045,17 @@ export class GenerationAuthority {
         code === 'PROVIDER_DEADLINE_EXCEEDED' ||
         (actual !== null && actual > Number(reserve.upper_micros));
       if (stop) {
-        await c.query(
-          "UPDATE live_test_sessions SET state='stopped',stop_code=COALESCE(stop_code,$2) WHERE id=$1",
-          [p.session_id, overdue ? 'PROVIDER_DEADLINE_EXCEEDED' : code],
-        );
-        await c.query(
-          'UPDATE generation_budget_scopes SET blocked=true WHERE id=(SELECT scope_id FROM live_test_sessions WHERE id=$1)',
-          [p.session_id],
-        );
+        const reason = overdue
+          ? 'PROVIDER_DEADLINE_EXCEEDED'
+          : actual !== null && actual > Number(reserve.upper_micros)
+            ? 'COST_BOUND_EXCEEDED'
+            : code;
+        await stopGenerationAuthorization(c, {
+          authorizationId: p.session_id,
+          sourceKind: 'permit',
+          sourceId: p.id,
+          ...nativeRequestStop(reason),
+        });
       }
       const erased = p.context_hash === 'erased' || p.result_code === 'DATA_ERASED';
       await c.query(
@@ -1893,6 +2083,18 @@ export class GenerationAuthority {
       )
     ).rows[0];
     if (!p) return;
+    // Preserve provider -> authorization/scope -> admission fence -> wallet order.
+    let authorization;
+    if (!committed && actualMicros !== null) {
+      const job = (await c.query('SELECT provider_id FROM npc_ai_jobs WHERE id=$1', [jobId]))
+        .rows[0];
+      if (job)
+        await c.query(
+          'SELECT provider_id FROM npc_ai_provider_budgets WHERE provider_id=$1 FOR UPDATE',
+          [job.provider_id],
+        );
+      authorization = await this.lockAuthorization(c, p.session_id);
+    }
     await settleReservationSparks(
       c,
       p.reservation_id,
@@ -1908,8 +2110,15 @@ export class GenerationAuthority {
             receiptId: `permit:${p.id}`,
           },
     );
+    if (authorization) await settleKnownPermit(c, p, authorization, true);
   }
-  async settleJob(c: PoolClient, jobId: string, actual: number | null, unknown: boolean) {
+  async settleJob(
+    c: PoolClient,
+    jobId: string,
+    actual: number | null,
+    unknown: boolean,
+    cause = 'UNATTRIBUTED_PROVIDER_FAILURE',
+  ) {
     const peek = (
       await c.query(
         "SELECT p.id,p.session_id FROM live_test_text_permits p JOIN npc_ai_jobs j ON (j.id=p.job_id OR j.request_meta->>'runtimeRequestId'=p.request_id::text) WHERE j.id=$1",
@@ -1937,6 +2146,14 @@ export class GenerationAuthority {
         "UPDATE live_test_text_permits SET state='settled',completed_at=now(),result_code=CASE WHEN context_hash='erased' OR result_code='DATA_ERASED' THEN 'DATA_ERASED' ELSE 'LATE_COST_RECONCILED' END WHERE id=$1",
         [p.id],
       );
+    } else if (p.state === 'unknown' && unknown) {
+      // Later deadline/security/cancellation causes must survive a previous uncertainty.
+      await stopGenerationAuthorization(c, {
+        authorizationId: peek.session_id,
+        sourceKind: 'permit',
+        sourceId: p.id,
+        ...nativeRequestStop(cause),
+      });
     } else if (p.state === 'dispatched' && unknown) {
       await settleReservationSparks(c, p.reservation_id, {
         outcome: 'unknown',
@@ -1946,14 +2163,12 @@ export class GenerationAuthority {
         "UPDATE live_test_text_permits SET state='unknown',result_code='PROVIDER_OUTCOME_UNKNOWN' WHERE id=$1",
         [p.id],
       );
-      await c.query(
-        "UPDATE live_test_sessions SET state='stopped',stop_code='PROVIDER_OUTCOME_UNKNOWN' WHERE id=$1",
-        [peek.session_id],
-      );
-      await c.query(
-        'UPDATE generation_budget_scopes SET blocked=true WHERE id=(SELECT scope_id FROM live_test_sessions WHERE id=$1)',
-        [peek.session_id],
-      );
+      await stopGenerationAuthorization(c, {
+        authorizationId: peek.session_id,
+        sourceKind: 'permit',
+        sourceId: p.id,
+        ...nativeRequestStop(cause),
+      });
     }
   }
 

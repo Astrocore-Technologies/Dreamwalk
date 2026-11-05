@@ -41,6 +41,7 @@ type Quote = ProviderCostQuote & {
   id: string;
   chargeUnit?: 'sparks' | 'credits';
   sparkReservedSubunits?: string | null;
+  automaticKnownCostPolicy?: 'known-cost-v1';
   credits: number;
   expiresAt: string;
   demo: boolean;
@@ -196,6 +197,9 @@ export function NarrativeDirector({
           expectedCanonRevision: sent.canonRevision,
           quoteId: sent.quote.id,
           consent: true,
+          ...(sent.quote.automaticKnownCostPolicy === 'known-cost-v1'
+            ? { automaticKnownCostPolicy: sent.quote.automaticKnownCostPolicy }
+            : {}),
         }),
       });
       if (request !== generation.current) return;

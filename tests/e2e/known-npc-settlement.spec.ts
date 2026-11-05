@@ -10,11 +10,11 @@ const path = `/game/${campaignId}/settlement/${jobId}`;
 async function fixture(
   page: Page,
   locale: 'en' | 'ru' | 'uk',
-  lost: false | 'pending' | 'settled' = false,
+  initial: 'pending' | 'settled' = 'pending',
 ) {
   const posts: Record<string, unknown>[] = [];
   const writes: string[] = [];
-  let settled = false;
+  let settled = initial === 'settled';
   const quote = () => ({
     jobId,
     holdId,
@@ -73,85 +73,62 @@ async function fixture(
     if (endpoint === `/api/v1/game/campaigns/${campaignId}/ai/jobs/${jobId}/settlement`) {
       if (method === 'POST') {
         posts.push(route.request().postDataJSON());
-        if (lost && posts.length === 1) {
-          settled = lost === 'settled';
-          return route.abort('failed');
-        }
-        settled = true;
+        return route.abort('failed');
       }
       return route.fulfill({ json: quote() });
     }
     return route.fulfill({ json: {} });
   });
-  return { posts, writes };
+  return {
+    posts,
+    writes,
+    settle: () => {
+      settled = true;
+    },
+  };
 }
 
 for (const locale of ['en', 'ru', 'uk'] as const) {
-  test(`owner settlement displays exact funding and requires explicit confirmation in ${locale}`, async ({
-    page,
-  }) => {
+  test(`settlement is read-only and displays confirmed funding in ${locale}`, async ({ page }) => {
     await page.setViewportSize({ width: 375, height: 740 });
-    const { posts, writes } = await fixture(page, locale);
+    const { posts, writes, settle } = await fixture(page, locale);
     const text = settlementMessages[locale];
     await page.goto(path);
     const form = page.getByTestId('known-npc-settlement');
-    const button = form.getByRole('button', { name: text.confirm, exact: true });
-    await expect(button).toBeEnabled();
+    await expect(form.getByRole('status')).toHaveText(text.automatic);
+    await expect(form.getByRole('button')).toHaveCount(0);
+    await expect(form.getByTestId('settlement-sparks-charge')).toHaveCount(0);
+    await expect(form.getByText(text.noNew, { exact: true })).toBeVisible();
+    settle();
+    await expect(form.getByRole('status')).toHaveText(text.complete, { timeout: 10000 });
     const decimal = locale === 'en' ? '.' : ',';
     await expect(form.getByTestId('settlement-dreams-charge')).toHaveText(`0${decimal}0100`);
     await expect(form.getByTestId('settlement-sparks-charge')).toHaveText(`0${decimal}0146`);
     await expect(form.getByTestId('settlement-dreams-release')).toHaveText(`0${decimal}0000`);
     await expect(form.getByTestId('settlement-sparks-release')).toHaveText(`0${decimal}0754`);
-    await expect(form.getByText(text.noNew, { exact: true })).toBeVisible();
+    await page.reload();
+    await expect(form.getByRole('status')).toHaveText(text.complete);
     expect(posts).toHaveLength(0);
     expect(writes).toHaveLength(0);
-    await button.focus();
-    await page.keyboard.press('Enter');
-    await expect(form.getByRole('status')).toHaveText(text.complete);
-    expect(posts).toHaveLength(1);
-    expect(posts[0]).toMatchObject({
-      holdId,
-      expectedActualMicros: '123',
-      expectedReservedSubunits: '1000',
-      expectedCaptureSubunits: '246',
-      consent: true,
-    });
-    expect(posts[0].operationId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(writes).toEqual([`/api/v1/game/campaigns/${campaignId}/ai/jobs/${jobId}/settlement`]);
-    await expect(button).toHaveCount(0);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
   });
 }
-
-for (const outcome of ['pending', 'settled'] as const) {
-  test(`lost settlement response survives reload with ${outcome} server state and no automatic replay`, async ({
+for (const initial of ['pending', 'settled'] as const) {
+  test(`reload and back navigation cannot dispatch or capture a ${initial} bill`, async ({
     page,
   }) => {
-    const { posts } = await fixture(page, 'en', outcome);
-    const text = settlementMessages.en;
+    const { posts, writes } = await fixture(page, 'en', initial);
     await page.goto(path);
-    await page.getByRole('button', { name: text.confirm, exact: true }).click();
-    await expect(page.getByRole('button', { name: text.retry, exact: true })).toBeEnabled();
-    expect(posts).toHaveLength(1);
-    const original = posts[0];
+    const form = page.getByTestId('known-npc-settlement');
+    const expected =
+      initial === 'pending' ? settlementMessages.en.automatic : settlementMessages.en.complete;
+    await expect(form.getByRole('status')).toHaveText(expected);
     await page.reload();
-    if (outcome === 'settled') {
-      await expect(page.getByTestId('known-npc-settlement').getByRole('status')).toHaveText(
-        text.complete,
-      );
-      expect(posts).toHaveLength(1);
-    } else {
-      const retry = page.getByRole('button', { name: text.retry, exact: true });
-      await expect(retry).toBeEnabled();
-      expect(posts).toHaveLength(1);
-      await retry.click();
-      await expect(page.getByTestId('known-npc-settlement').getByRole('status')).toHaveText(
-        text.complete,
-      );
-      expect(posts).toHaveLength(2);
-      expect(posts[1]).toEqual(original);
-    }
+    await expect(form.getByRole('status')).toHaveText(expected);
+    await expect(form.getByRole('button')).toHaveCount(0);
+    expect(posts).toHaveLength(0);
+    expect(writes).toHaveLength(0);
   });
 }

@@ -4,6 +4,8 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
 const { readFileSync } = require('node:fs');
+const { digest } = require('../../apps/api/dist/ai/context');
+const { automaticNpcAdmission } = require('../../apps/api/dist/game/automatic-npc-settlement');
 const {
   KnownNpcSettlement,
   knownNpcSettlementQuote,
@@ -92,6 +94,7 @@ function fixture() {
     actual_micros: '743',
     kind: 'text',
   };
+  const native = {};
   const wallet = { balance_subunits: '100000', held_subunits: '5252' };
   const ledger = [],
     audit = [],
@@ -104,6 +107,8 @@ function fixture() {
       if (sql.includes('FROM game_campaigns')) rows = [{ id: campaign, owner_id: owner }];
       else if (sql.includes('FROM npc_ai_jobs'))
         rows = values[0] === job.id && values[1] === campaign ? [job] : [];
+      else if (sql.includes('FROM npc_ai_quotes')) rows = [native];
+      else if (sql.includes('FROM game_world_generation_batches')) rows = [];
       else if (sql.includes('FROM npc_ai_provider_budgets'))
         rows = [{ provider_id: job.provider_id }];
       else if (sql.includes('FROM live_test_sessions')) rows = [authorization];
@@ -157,6 +162,7 @@ function fixture() {
     quote,
     authorization,
     reservation,
+    native,
     wallet,
     ledger,
     audit,
@@ -587,4 +593,282 @@ test('real NPC finalize consumes an ordinary known failure once and leaves later
   assert.equal(f.ledger.length, 2);
   assert.equal(calls, 0);
   assert.equal(f.job.proposal.private, 'must remain unchanged');
+});
+
+function automaticFixture() {
+  const f = fixture();
+  const p = Object.assign(f.job.request_snapshot, {
+    reserveMicros: 2626,
+    providerFingerprint: 'fixture-v1',
+  });
+  Object.assign(f.job, {
+    npc_id: 'keeper',
+    purpose: 'plan',
+    origin: 'user',
+    context_hash: 'fixture-context',
+    context: { contextHash: 'fixture-context' },
+    provider_version: 'v1',
+    policy_version: 'p1',
+    provider_upper_micros: '2626',
+    created_at: new Date('2026-10-01'),
+    started_at: new Date('2026-10-01'),
+    completed_at: new Date('2026-10-01'),
+    request_meta: {
+      quoteId: f.job.quote_id,
+      consent: true,
+      requestKey: '',
+      sponsorId: null,
+      runtimeRequestId: null,
+      acceptedWorldBatchId: null,
+    },
+  });
+  Object.assign(f.native, {
+    id: f.job.quote_id,
+    user_id: f.owner,
+    campaign_id: f.campaign,
+    npc_id: f.job.npc_id,
+    purpose: f.job.purpose,
+    context_hash: f.job.context_hash,
+    provider_id: f.job.provider_id,
+    provider_version: 'v1',
+    policy_version: 'p1',
+    credits: 0,
+    upper_micros: '2626',
+    request_snapshot: structuredClone(p),
+    spark_quote_id: f.hold.id,
+    expires_at: new Date('2026-10-02'),
+  });
+  f.authorization.id = f.job.generation_authorization_id;
+  Object.assign(f.reservation, {
+    id: f.job.generation_reservation_id,
+    operation_key: `release-npc:${f.job.id}`,
+    upper_micros: '2626',
+  });
+  f.quote.operation_id = f.native.id;
+  f.quote.price_snapshot.providerQuote = {
+    ...p,
+    policyVersion: 'p1',
+    contextHash: f.job.context_hash,
+    automaticKnownCostPolicy: 'known-cost-v1',
+  };
+  Object.assign(f.quote.price_snapshot.tariff, {
+    provider: f.job.provider_id,
+    providerRateVersion: p.providerFingerprint,
+    model: p.model,
+    inputMicrosPerMillion: String(p.inputMicrosPerMillion),
+    outputMicrosPerMillion: String(p.outputMicrosPerMillion),
+    cachedInputMicrosPerMillion: String(p.cachePricing.cachedInputMicrosPerMillion),
+    cacheWriteMicrosPerMillion: String(p.cachePricing.cacheWrite30mMicrosPerMillion),
+  });
+  f.job.request_meta.automaticKnownCostPolicy = 'known-cost-v1';
+  f.job.request_hash = digest({
+    scope: {
+      campaignId: f.campaign,
+      npcId: f.job.npc_id,
+      origin: 'user',
+      requesterUserId: f.owner,
+      purpose: 'plan',
+    },
+    context: f.job.context,
+    ...f.job.request_meta,
+  });
+  f.proof = () =>
+    automaticNpcAdmission(f.job, f.native, f.authorization, f.reservation, f.hold, f.quote);
+  f.automatic = () => f.service.execute(f.client, f.owner, f.campaign, f.job.id, undefined, true);
+  return f;
+}
+test('automatic recovery settles original accepted native cost without consent or game effects, once', async () => {
+  const f = automaticFixture();
+  assert.equal(f.proof(), true);
+  const proposal = structuredClone(f.job.proposal);
+  await f.automatic();
+  assert.equal(f.hold.status, 'settled');
+  assert.equal(f.wallet.held_subunits, '0');
+  assert.equal(f.wallet.balance_subunits, '98514');
+  assert.equal(f.audit.length, 1);
+  assert.equal(JSON.parse(f.audit[0][3]).automatic, true);
+  await f.automatic();
+  assert.equal(f.ledger.length, 2);
+  assert.deepEqual(f.job.proposal, proposal);
+  assert.equal(f.job.status, 'stale');
+});
+for (const [name, change] of [
+  [
+    'legacy unmarked acceptance',
+    (f) => delete f.quote.price_snapshot.providerQuote.automaticKnownCostPolicy,
+  ],
+  [
+    'new quote without explicit policy acceptance',
+    (f) => delete f.job.request_meta.automaticKnownCostPolicy,
+  ],
+  ['missing original consent', (f) => (f.job.request_meta.consent = false)],
+  ['modified request hash', (f) => (f.job.request_hash = 'changed')],
+  ['foreign native quote', (f) => (f.native.user_id = randomUUID())],
+  ['changed native pricing', (f) => (f.native.request_snapshot.model = 'changed')],
+  ['expired direct acceptance', (f) => (f.native.expires_at = new Date('2026-09-01'))],
+  ['foreign reservation', (f) => (f.reservation.operation_key = 'other')],
+  ['wrong upper bound', (f) => (f.reservation.upper_micros = '1')],
+  ['unknown liability', (f) => (f.hold.reason = 'unknown')],
+  ['partial existing capture', (f) => (f.hold.captured_subunits = '1')],
+  ['changed historical tariff', (f) => (f.quote.price_snapshot.tariff.model = 'changed')],
+  [
+    'unproved Dreams split',
+    (f) => {
+      f.hold.sparks_reserved_subunits = '1000';
+      f.hold.dream_hold_id = randomUUID();
+    },
+  ],
+])
+  test(`automatic native proof rejects ${name}`, () => {
+    const f = automaticFixture();
+    change(f);
+    assert.equal(f.proof(), false);
+  });
+test('bounded automatic recovery advances past malformed receipts and wraps its cursor', async () => {
+  const f = automaticFixture();
+  const rows = Array.from({ length: 25 }, () => ({
+    id: randomUUID(),
+    campaign_id: f.campaign,
+    payer_user_id: f.owner,
+  }));
+  const cursors = [],
+    attempted = [];
+  f.service.db.query = async (_sql, values) => {
+    cursors.push(values[0]);
+    return cursors.length === 1 ? rows : [];
+  };
+  f.service.execute = async (_c, _owner, _campaign, id) => {
+    attempted.push(id);
+  };
+  await f.service.recoverPending();
+  await f.service.recoverPending();
+  await f.service.recoverPending();
+  assert.deepEqual(cursors, [null, rows.at(-1).id, null]);
+  assert.equal(attempted.length, 25);
+});
+
+test('automatic native proof verifies the exact Dreams split and rejects tampered lineage', () => {
+  const f = automaticFixture();
+  const { hold, quote } = f;
+  hold.dream_hold_id = randomUUID();
+  hold.sparks_reserved_subunits = '4252';
+  quote.price_snapshot.fundingPolicy = 'dreams-first-v1';
+  const dreams = {
+    hold: {
+      id: hold.dream_hold_id,
+      owner_id: f.owner,
+      source_kind: 'npc',
+      source_id: f.native.id,
+      reserved_subunits: '1000',
+      status: 'pending',
+      reason: 'unknown',
+      captured_subunits: null,
+      settlement_fingerprint: null,
+    },
+    quote: {
+      id: hold.dream_hold_id,
+      owner_id: f.owner,
+      source_kind: 'npc',
+      source_id: f.native.id,
+      operation_id: hold.id,
+      reserve_subunits: '1000',
+      price_snapshot: {
+        currency: 'dreams',
+        policyVersion: 'dreams-first-v1',
+        providerQuote: {
+          sparkQuoteId: hold.id,
+          priceSnapshot: structuredClone(quote.price_snapshot),
+        },
+      },
+    },
+  };
+  const proof = () =>
+    automaticNpcAdmission(
+      f.job,
+      f.native,
+      f.authorization,
+      f.reservation,
+      hold,
+      quote,
+      undefined,
+      undefined,
+      dreams,
+    );
+  assert.equal(proof(), true);
+  dreams.quote.price_snapshot.providerQuote.priceSnapshot.tariff.sparkRateVersion =
+    'api-cent-1-spark-v1';
+  assert.equal(proof(), false);
+});
+
+test('historical end-turn allowance stays finite, source-linked and excludes image/risk consent', () => {
+  const f = automaticFixture();
+  delete f.quote.price_snapshot.providerQuote.automaticKnownCostPolicy;
+  delete f.job.request_meta.automaticKnownCostPolicy;
+  const requestId = randomUUID();
+  const batch = {
+    id: randomUUID(),
+    owner_id: f.owner,
+    campaign_id: f.campaign,
+    state: 'stale',
+    accepted_at: new Date('2026-10-01'),
+    expires_at: new Date('2026-10-02'),
+    quote: { ordinaryTurnConsentVersion: 'end-turn-v1', generatedLocationImages: 0 },
+    media_entries: [],
+    entries: [
+      {
+        requestId,
+        quote: { id: f.native.id },
+        npcId: f.job.npc_id,
+        purpose: f.job.purpose,
+        contextDigest: digest(f.job.context),
+      },
+    ],
+  };
+  const request = {
+    id: requestId,
+    job_id: f.job.id,
+    requester_user_id: f.owner,
+    campaign_id: f.campaign,
+    npc_id: f.job.npc_id,
+    purpose: f.job.purpose,
+    context: f.job.context,
+  };
+  f.job.request_meta.runtimeRequestId = requestId;
+  f.job.request_meta.acceptedWorldBatchId = batch.id;
+  f.job.request_hash = digest({
+    scope: {
+      campaignId: f.campaign,
+      npcId: f.job.npc_id,
+      origin: 'user',
+      requesterUserId: f.owner,
+      purpose: 'plan',
+    },
+    context: f.job.context,
+    ...f.job.request_meta,
+  });
+  const proof = () =>
+    automaticNpcAdmission(
+      f.job,
+      f.native,
+      f.authorization,
+      f.reservation,
+      f.hold,
+      f.quote,
+      batch,
+      request,
+    );
+  assert.equal(proof(), true);
+  batch.quote.generatedLocationImages = 1;
+  assert.equal(proof(), false);
+  batch.quote.generatedLocationImages = 0;
+  batch.quote.estimateRiskConsentRequired = true;
+  assert.equal(proof(), false);
+});
+
+test('terminal status cannot display a hypothetical charge different from persisted capture', async () => {
+  const f = fixture();
+  f.hold.status = 'released';
+  f.hold.captured_subunits = '0';
+  await assert.rejects(f.call(), /NPC_SETTLEMENT_UNAVAILABLE/);
+  assert.equal(f.ledger.length, 0);
 });

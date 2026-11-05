@@ -377,6 +377,9 @@ export function UnifiedStory({
           turnId: sent.result.turnId,
           quoteId: quote.id,
           consent: true,
+          ...(!immediate && quote.external && quote.automaticKnownCostPolicy === 'known-cost-v1'
+            ? { automaticKnownCostPolicy: quote.automaticKnownCostPolicy }
+            : {}),
           ...(sent.result.confirmationHash
             ? { confirmedActionHash: sent.result.confirmationHash }
             : {}),

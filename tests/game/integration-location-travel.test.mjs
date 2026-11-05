@@ -252,6 +252,10 @@ await test(
           quoteId: q.quote.id,
           consent: true,
           estimateRiskConsent: true,
+          ...(q.quote.automaticKnownCostPolicy === 'known-cost-v1' &&
+          q.quote.automaticKnownCostPolicyHash
+            ? { automaticKnownCostPolicyHash: q.quote.automaticKnownCostPolicyHash }
+            : {}),
         });
       }
       async function drain(id, live, allowUnpaidContinuation = false) {
@@ -379,13 +383,47 @@ await test(
             ).rows[0].n,
             0,
           );
+          assert.equal(q.quote.automaticKnownCostPolicy, 'known-cost-v1');
+          assert.match(q.quote.automaticKnownCostPolicyHash, /^[a-f0-9]{64}$/);
+          // Old clients and a mismatched acceptance cannot authorize a new marked quote.
+          for (const automaticKnownCostPolicyHash of [undefined, '0'.repeat(64)]) {
+            await assert.rejects(
+              game.worldGenerationConsent(req, id, {
+                operationId: q.operationId,
+                quoteId: q.quote.id,
+                consent: true,
+                estimateRiskConsent: true,
+                ...(automaticKnownCostPolicyHash ? { automaticKnownCostPolicyHash } : {}),
+              }),
+              code('IMAGE_SETTLEMENT_POLICY_CONSENT_REQUIRED'),
+            );
+          }
           await assert.rejects(
             game.worldGenerationConsent(req, id, {
               operationId: q.operationId,
               quoteId: q.quote.id,
               consent: true,
+              automaticKnownCostPolicyHash: q.quote.automaticKnownCostPolicyHash,
             }),
             code('IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED'),
+          );
+          assert.deepEqual([textCalls, imageCalls], calls);
+          assert.equal(
+            (
+              await db.query('SELECT accepted_at FROM game_world_generation_batches WHERE id=$1', [
+                q.quote.id,
+              ])
+            ).rows[0].accepted_at,
+            null,
+          );
+          assert.equal(
+            (
+              await db.query(
+                "SELECT count(*)::int n FROM image_generation_jobs WHERE input->'travelContext'->>'preparationId'=$1",
+                [turn.id],
+              )
+            ).rows[0].n,
+            0,
           );
           await accept(id, q);
           assert.equal(

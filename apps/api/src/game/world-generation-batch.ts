@@ -1,3 +1,8 @@
+import {
+  worldKnownCostPolicyHash,
+  worldKnownCostPolicyRequired,
+  acceptedWorldKnownCostPolicyMatches,
+} from '../generation/known-cost-policy';
 import { LocationTravelGeneration } from './location-travel-generation';
 import { captureWorldQuoteRoster } from '../ai/runtime-map-preflight';
 import { aggregateFunding, optionalFunding } from '../generation/currency-funding';
@@ -22,12 +27,21 @@ type Entry = {
   originalRequesterId: string | null;
   quote: StoryQuote;
 };
-const quoteInput = z.object({ operationId: z.uuid() }).strict();
+const quoteInput = z
+  .object({
+    operationId: z.uuid(),
+    automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
+  })
+  .strict();
 const consentInput = quoteInput
   .extend({
     quoteId: z.uuid(),
     consent: z.literal(true),
     estimateRiskConsent: z.literal(true).optional(),
+    automaticKnownCostPolicyHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict();
 const entryIdentity = (rows: QueryResultRow[]) =>
@@ -449,6 +463,13 @@ export class WorldGenerationBatch {
         fail(409, 'GENERATION_QUOTE_STALE', 'GENERATION_QUOTE_STALE');
       const quote: StoryQuote = {
         id,
+        ...(input.automaticKnownCostPolicy === 'known-cost-v1' ||
+        mediaEntries.some((entry) => entry.automaticKnownCostPolicyHash)
+          ? {
+              automaticKnownCostPolicy: 'known-cost-v1' as const,
+              automaticKnownCostPolicyHash: worldKnownCostPolicyHash(entries, mediaEntries),
+            }
+          : {}),
         credits: 0,
         demo: false,
         external: true,
@@ -577,6 +598,19 @@ export class WorldGenerationBatch {
             ),
         };
       }
+      if (worldKnownCostPolicyRequired(batch)) {
+        if (
+          !acceptedWorldKnownCostPolicyMatches(batch) ||
+          input.automaticKnownCostPolicyHash !== batch.quote.automaticKnownCostPolicyHash
+        )
+          fail(
+            409,
+            'IMAGE_SETTLEMENT_POLICY_CONSENT_REQUIRED',
+            'IMAGE_SETTLEMENT_POLICY_CONSENT_REQUIRED',
+          );
+      } else if (input.automaticKnownCostPolicyHash) {
+        fail(409, 'IMAGE_SETTLEMENT_POLICY_MISMATCH', 'IMAGE_SETTLEMENT_POLICY_MISMATCH');
+      }
       if (
         batch.state !== 'quoted' ||
         new Date(batch.expires_at).getTime() <= Date.now() ||
@@ -698,6 +732,8 @@ export class WorldGenerationBatch {
         )
       ).rows[0];
       if (!batch) return null;
+      if (worldKnownCostPolicyRequired(batch) && !acceptedWorldKnownCostPolicyMatches(batch))
+        fail(409, 'WORLD_BATCH_CONSENT_STALE', 'WORLD_BATCH_CONSENT_STALE');
       let progress = await this.progress(c, campaignId);
       if (!progress.active && !progress.unknown) {
         await this.travel?.advance(c, batch.owner_id, campaignId, batch.id, callerRequest.id);
@@ -782,6 +818,9 @@ export class WorldGenerationBatch {
           requesterUserId: batch.owner_id,
         },
         batchId: batch.id,
+        ...(acceptedWorldKnownCostPolicyMatches(batch)
+          ? { automaticKnownCostPolicy: 'known-cost-v1' as const }
+          : {}),
       };
     });
   }

@@ -335,7 +335,7 @@ test('strict quote parser rejects mismatched identity, malformed sums/tariff and
   for (const bad of [null, [], 1, 'bad']) assert.throws(() => readKnownSettlement(bad, jobId));
 });
 
-test('all locales disclose limited consent, exact values and storage/uncertainty states', () => {
+test('all locales disclose automatic settlement and the page is read-only', () => {
   for (const locale of ['en', 'ru', 'uk']) {
     assert.deepEqual(Object.keys(settlementMessages[locale]), Object.keys(settlementMessages.en));
     for (const value of Object.values(settlementMessages[locale])) assert.ok(value.trim());
@@ -346,11 +346,13 @@ test('all locales disclose limited consent, exact values and storage/uncertainty
   );
   assert.match(source, /formatSparkSubunits\(amount, locale, 'exact'\)/);
   assert.match(source, /cache: 'no-store'/);
-  assert.match(source, /storage: window.sessionStorage/);
+  assert.doesNotMatch(source, /sessionStorage|method: 'POST'|\.confirm\(/);
+  assert.match(source, /setTimeout.*5000/);
   assert.match(source, /key=\{`\$\{user.id\}:\$\{campaignId\}:\$\{jobId\}`\}/);
-  assert.match(source, /instance\?\.dispose\(\)/);
+  assert.match(source, /disposed = true/);
+  assert.match(source, /clearTimeout\(timer\)/);
   assert.match(source, /role="status" aria-live="polite"/);
-  assert.equal((source.match(/\.confirm\(\)/g) ?? []).length, 1);
+  assert.equal((source.match(/\.confirm\(\)/g) ?? []).length, 0);
   const route = readFileSync(
     new URL('../../apps/web/app/[[...path]]/page.tsx', import.meta.url),
     'utf8',

@@ -190,3 +190,93 @@ for (const [name, mutate] of Object.entries({
     mutate(f);
     await assert.rejects(() => verifyAcceptedTravelBatch(f.client, f.owner, f.proof, f.sparkId));
   });
+const {
+  imageKnownCostPolicy,
+} = require('../../apps/api/src/image-generation/settlement-policy.ts');
+const {
+  worldKnownCostPolicyHash,
+  acceptedWorldKnownCostPolicyMatches,
+} = require('../../apps/api/src/generation/known-cost-policy.ts');
+function markedFixture() {
+  const f = fixture();
+  f.native.input.automaticKnownCostPolicy = 'known-cost-v1';
+  f.native.cost_basis = 'approved_estimate';
+  f.prep.input_hash = digest(f.native.input);
+  const policy = imageKnownCostPolicy({
+    quoteId: f.native.id,
+    requestHash: f.native.request_hash,
+    reserveMicros: String(f.native.upper_micros),
+    costBasis: f.native.cost_basis,
+  });
+  f.prep.image_quote.automaticKnownCostSettlement = policy;
+  f.batch.media_entries[0].automaticKnownCostPolicyHash = policy.fingerprint;
+  f.batch.media_entries[0].quote.automaticKnownCostPolicy = 'known-cost-v1';
+  f.batch.media_entries[0].quote.automaticKnownCostPolicyHash = policy.fingerprint;
+  Object.assign(f.spark.price_snapshot.providerQuote, {
+    automaticKnownCostPolicy: 'known-cost-v1',
+    automaticKnownCostPolicyHash: policy.fingerprint,
+  });
+  f.batch.quote = {
+    automaticKnownCostPolicy: 'known-cost-v1',
+    automaticKnownCostPolicyHash: worldKnownCostPolicyHash(f.batch.entries, f.batch.media_entries),
+  };
+  return f;
+}
+test('single accepted combined consent proves exact new image policy without client consent injection', async () => {
+  const f = markedFixture();
+  const before = JSON.stringify([f.prep, f.native, f.batch, f.spark]);
+  const proof = await verifyAcceptedTravelBatch(f.client, f.owner, f.proof, f.sparkId);
+  assert.equal(
+    proof.automaticKnownCostPolicyHash,
+    f.prep.image_quote.automaticKnownCostSettlement.fingerprint,
+  );
+  assert.equal(JSON.stringify([f.prep, f.native, f.batch, f.spark]), before);
+});
+for (const [name, mutate] of Object.entries({
+  'missing aggregate acceptance': (f) => delete f.batch.quote.automaticKnownCostPolicyHash,
+  'changed aggregate acceptance': (f) =>
+    (f.batch.quote.automaticKnownCostPolicyHash = digest('different')),
+  'native policy changed': (f) => (f.native.cost_basis = 'verified_bound'),
+  'entry policy changed': (f) =>
+    (f.batch.media_entries[0].automaticKnownCostPolicyHash = digest('different')),
+  'nested entry policy changed': (f) =>
+    (f.batch.media_entries[0].quote.automaticKnownCostPolicyHash = digest('different')),
+  'prepared policy changed': (f) =>
+    (f.prep.image_quote.automaticKnownCostSettlement.fingerprint = digest('different')),
+  'immutable marker removed': (f) =>
+    delete f.spark.price_snapshot.providerQuote.automaticKnownCostPolicy,
+  'immutable hash changed': (f) =>
+    (f.spark.price_snapshot.providerQuote.automaticKnownCostPolicyHash = digest('different')),
+  'additional media exposure': (f) =>
+    f.batch.media_entries.push({
+      preparationId: randomUUID(),
+      imageQuoteId: randomUUID(),
+      quote: { providerReserveMicros: 1 },
+    }),
+  'additional text exposure': (f) =>
+    f.batch.entries.push({ requestId: randomUUID(), contextDigest: digest('different') }),
+}))
+  test(`new image policy rejects ${name}`, async () => {
+    const f = markedFixture();
+    mutate(f);
+    await assert.rejects(
+      () => verifyAcceptedTravelBatch(f.client, f.owner, f.proof, f.sparkId),
+      /TRAVEL_BATCH_CONSENT_STALE/,
+    );
+  });
+test('new image policy cannot omit required Sparks binding', async () => {
+  const f = markedFixture();
+  await assert.rejects(
+    () => verifyAcceptedTravelBatch(f.client, f.owner, f.proof),
+    /TRAVEL_BATCH_CONSENT_STALE/,
+  );
+});
+test('legacy accepted travel remains unmarked and creates no automatic capture authority', async () => {
+  const f = fixture();
+  assert.equal(
+    (await verifyAcceptedTravelBatch(f.client, f.owner, f.proof, f.sparkId))
+      .automaticKnownCostPolicyHash,
+    undefined,
+  );
+  assert.equal(acceptedWorldKnownCostPolicyMatches(f.batch), false);
+});

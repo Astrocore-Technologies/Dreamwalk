@@ -1,3 +1,4 @@
+import { withGenerationStop } from '../generation/stop-provenance';
 import { aggregateGenerationExposure } from '../generation/aggregate-exposure';
 import { settleReservationSparks } from '../generation/sparks-hooks';
 import { boundedTest, checkBoundedAdmission } from '../generation/bounded-test';
@@ -238,7 +239,16 @@ export async function settleGenerationSpend(c: PoolClient, id: string, actualMic
     [id, actualMicros],
   );
   if (actualMicros > Number(row.upper_micros) || (row.status === 'released' && actualMicros > 0))
-    await c.query('UPDATE generation_budget_scopes SET blocked=true WHERE id=$1', [row.scope_id]);
+    await withGenerationStop(
+      c,
+      {
+        scopeId: row.scope_id,
+        sourceKind: 'reservation',
+        sourceId: row.id,
+        reason: row.status === 'released' ? 'LATE_CHARGE_AFTER_RELEASE' : 'COST_BOUND_EXCEEDED',
+      },
+      () => c.query('UPDATE generation_budget_scopes SET blocked=true WHERE id=$1', [row.scope_id]),
+    );
 }
 export async function releaseUndispatchedGenerationSpend(c: PoolClient, id: string) {
   const initial = (

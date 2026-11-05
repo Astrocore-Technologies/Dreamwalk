@@ -161,6 +161,8 @@ export interface StoryAttackOutcome {
     | 'NARRATIVE_BLOCKED';
 }
 export interface StoryQuote {
+  automaticKnownCostPolicy?: 'known-cost-v1';
+  automaticKnownCostPolicyHash?: string;
   /** Current-map vision is part of this same quote, never an extra generation. */
   runtimeMapImages?: number;
   generatedLocationImages?: number;
@@ -206,6 +208,7 @@ export interface StoryTurnQuoteResponse {
 }
 export const storyTurnSubmitSchema = storyTurnInputSchema
   .extend({
+    automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
     turnId: z.uuid(),
     quoteId: z.uuid(),
     consent: z.literal(true),

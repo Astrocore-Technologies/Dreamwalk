@@ -55,6 +55,7 @@ export type TextCountReceipt = {
   invoiceExact: false;
 };
 export type TextCountView = {
+  automaticKnownCostPolicy?: 'known-cost-v1';
   blockCode: string | null;
   candidateFingerprint: string;
   historyRecords: number;
@@ -64,6 +65,7 @@ export type TextCountView = {
   latest: TextCountReceipt | null;
 };
 export type LiveRequest = {
+  automaticKnownCostPolicy?: 'known-cost-v1';
   composerBound?: boolean;
   counting?: TextCountView;
   errorCode?: string | null;

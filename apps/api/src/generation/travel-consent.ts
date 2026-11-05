@@ -1,6 +1,8 @@
 import type { PoolClient } from 'pg';
 import { matchesTurnFence } from '@dreamwalk/game-core';
 import { digest } from '../ai/context';
+import { imageKnownCostPolicy } from '../image-generation/settlement-policy';
+import { acceptedWorldKnownCostPolicyMatches } from './known-cost-policy';
 
 /** Read-only immutable evidence: callers retain native source/admission locks; never acquire game locks after budget locks. Identifiers only. Every caller independently verifies the finite original consent. */
 export type AcceptedTravelBatchProof = {
@@ -86,6 +88,29 @@ export async function verifyAcceptedTravelBatch(
     !matchesTurnFence(campaign.state, batch.turn_fence)
   )
     throw new Error('TRAVEL_BATCH_CONSENT_STALE');
+  const automaticPolicy =
+    native.input?.automaticKnownCostPolicy === 'known-cost-v1'
+      ? imageKnownCostPolicy({
+          quoteId: native.id,
+          requestHash: native.request_hash,
+          reserveMicros: String(native.upper_micros),
+          costBasis: native.cost_basis,
+        })
+      : undefined;
+  if (
+    automaticPolicy &&
+    (!acceptedWorldKnownCostPolicyMatches(batch) ||
+      matches[0].automaticKnownCostPolicyHash !== automaticPolicy.fingerprint ||
+      matches[0].quote.automaticKnownCostPolicyHash !== automaticPolicy.fingerprint ||
+      prep.image_quote.automaticKnownCostSettlement?.fingerprint !== automaticPolicy.fingerprint ||
+      !sparkQuoteId)
+  )
+    throw new Error('TRAVEL_BATCH_CONSENT_STALE');
+  if (
+    !automaticPolicy &&
+    (matches[0].automaticKnownCostPolicyHash || prep.image_quote.automaticKnownCostSettlement)
+  )
+    throw new Error('TRAVEL_BATCH_CONSENT_STALE');
   const jobs = await c.query('SELECT id FROM image_generation_jobs WHERE quote_id=$1', [native.id]);
   if (jobs.rows.some((job) => job.id !== existingJobId) || (existingJobId && !jobs.rowCount))
     throw new Error('QUOTE_CONSUMED');
@@ -127,10 +152,17 @@ export async function verifyAcceptedTravelBatch(
           requestHash: native.request_hash,
           pricingProfile: native.pricing_profile_snapshot,
           estimate: native.estimate_snapshot,
+          ...(automaticPolicy
+            ? {
+                automaticKnownCostPolicy: 'known-cost-v1',
+                automaticKnownCostPolicyHash: automaticPolicy.fingerprint,
+              }
+            : {}),
           settlement: 'actual-image-micros',
           cachePricing: 'not-quoted',
         })
     )
       throw new Error('TRAVEL_BATCH_CONSENT_STALE');
   }
+  return { automaticKnownCostPolicyHash: automaticPolicy?.fingerprint };
 }

@@ -243,6 +243,11 @@ export const storyMessages = {
     'Provider cost expressed in Sparks, without a wallet charge.',
     'Оцінка витрат провайдера в Іскрах, без списання з гаманця.',
   ],
+  automaticKnownCostNotice: [
+    'Подтверждая этот запрос, вы разрешаете автоматическое списание подтверждённых расходов провайдера в пределах показанного резерва, даже если ответ не удалось применить. Остаток резерва будет освобождён. Если расход неизвестен или выше резерва, резерв останется удержан без дополнительного списания. Автоматического повтора запроса не будет.',
+    'Confirming this request authorizes automatic settlement of verified provider costs within the displayed reserve, even if the response cannot be applied. The remaining reserve will be released. If the cost is unknown or exceeds the reserve, the reserve stays held without an additional charge. The request will not retry automatically.',
+    'Підтверджуючи цей запит, ви дозволяєте автоматичне списання підтверджених витрат провайдера в межах показаного резерву, навіть якщо відповідь не вдалося застосувати. Залишок резерву буде звільнено. Якщо витрати невідомі або перевищують резерв, резерв залишиться утриманим без додаткового списання. Автоматичного повтору запиту не буде.',
+  ],
   estimatedHold: [
     'Резерв: {amount} Искр. Спишем фактический расход, остаток вернём после сверки.',
     'Hold: {amount} Sparks. We charge actual usage and release the remainder after reconciliation.',

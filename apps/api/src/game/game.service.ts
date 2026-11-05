@@ -976,6 +976,7 @@ export class GameService implements OnModuleDestroy {
           quoteId: z.uuid().optional(),
           sponsorId: z.uuid().optional(),
           consent: z.boolean().optional(),
+          automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
         })
         .strict()
         .parse(body);
@@ -1071,6 +1072,20 @@ export class GameService implements OnModuleDestroy {
             input.sponsorId ?? null,
           ],
         );
+        if (input.automaticKnownCostPolicy === 'known-cost-v1')
+          await c.query(
+            'INSERT INTO audit(actor_id,action,target_id,details) VALUES($1,$2,$3,$4)',
+            [
+              a.user.id,
+              'narrative.known_cost.accepted',
+              turnId,
+              JSON.stringify({
+                policy: input.automaticKnownCostPolicy,
+                quoteId: input.quoteId,
+                requestHash,
+              }),
+            ],
+          );
       });
       live.decisionsPending = true;
       return this.narrativeDto(
@@ -1231,6 +1246,7 @@ export class GameService implements OnModuleDestroy {
         operationId: z.uuid().optional(),
         quoteId: z.uuid().optional(),
         consent: z.boolean().optional(),
+        automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
       })
       .strict()
       .parse(body);
@@ -1259,6 +1275,9 @@ export class GameService implements OnModuleDestroy {
           input.quoteId,
           input.consent,
           requestKey,
+          undefined,
+          undefined,
+          input.automaticKnownCostPolicy,
         );
         if (previous) return previous;
       }
@@ -1307,6 +1326,7 @@ export class GameService implements OnModuleDestroy {
         requesterUserId: a.user.id,
         quoteId: input.quoteId,
         consent: input.consent,
+        automaticKnownCostPolicy: input.automaticKnownCostPolicy,
         requestKey,
       });
       live.aiPending = true;
@@ -2423,7 +2443,17 @@ export class GameService implements OnModuleDestroy {
           continue;
         }
         try {
+          const acceptance = await this.db.query(
+            `SELECT details FROM audit WHERE actor_id=$1 AND target_id=$2 AND action='narrative.known_cost.accepted'`,
+            [r.requester_user_id, turn.id],
+          );
+          const acceptedPolicy =
+            acceptance.length === 1 &&
+            acceptance[0].details?.policy === 'known-cost-v1' &&
+            acceptance[0].details?.quoteId === turn.quote_id &&
+            acceptance[0].details?.requestHash === turn.request_hash;
           const job = await this.ai.queue({
+            ...(acceptedPolicy ? { automaticKnownCostPolicy: 'known-cost-v1' as const } : {}),
             scope: {
               campaignId: id,
               npcId: String(r.npc_id),
@@ -2541,6 +2571,9 @@ export class GameService implements OnModuleDestroy {
           requestKey: `runtime:${r.cause_key}`,
           runtimeRequestId: r.id,
           ...(worldReply ? { acceptedWorldBatchId: worldReply.batchId } : {}),
+          ...(quotedReply?.automaticKnownCostPolicy
+            ? { automaticKnownCostPolicy: quotedReply.automaticKnownCostPolicy }
+            : {}),
           ...(quotedReply
             ? {
                 quoteId: quotedReply.quote.id,

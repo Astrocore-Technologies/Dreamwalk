@@ -1,9 +1,9 @@
 export const settlementMessages = {
   ru: {
-    title: 'Завершить списание',
-    hint: 'Запрос к ИИ уже выполнен, но его результат не применён в игре. Здесь можно оплатить его точную стоимость и освободить остаток резерва.',
-    noNew:
-      'Новых запросов к ИИ и изменений в игре не будет. Это согласие касается только этого списания.',
+    title: 'Статус расчёта',
+    hint: 'Запрос к ИИ уже выполнен, но его результат не применён в игре. Система автоматически учтёт подтверждённую стоимость и освободит остаток резерва.',
+    noNew: 'Новых запросов к ИИ и изменений в игре не будет. Ручное подтверждение не требуется.',
+    automatic: 'Статус расчёта обновляется автоматически. Подтверждённая сумма появится здесь.',
     reserve: 'Резерв, эквивалент искр',
     charge: 'К списанию',
     release: 'Вернётся в баланс',
@@ -24,13 +24,13 @@ export const settlementMessages = {
     storage:
       'Не удалось безопасно сохранить или прочитать номер подтверждения. Новое списание не отправлено. Проверь статус перед продолжением.',
     uncertain:
-      'Ответ на подтверждение не получен. Сначала проверь статус. Повторное подтверждение использует тот же номер операции и не создаёт второе списание.',
+      'Подтверждённый расчёт пока недоступен. Статус обновляется автоматически; новый запрос к ИИ не создаётся.',
   },
   en: {
-    title: 'Complete the charge',
-    hint: 'The AI request already ran, but its result was not applied to the game. Settle its exact cost and release the rest of the reservation here.',
-    noNew:
-      'This makes no new AI requests or game changes. Your confirmation applies only to this charge.',
+    title: 'Charge status',
+    hint: 'The AI request already ran, but its result was not applied to the game. The system automatically settles the verified cost and releases the remaining reservation.',
+    noNew: 'This makes no new AI requests or game changes. No manual confirmation is needed.',
+    automatic: 'Settlement status refreshes automatically. The confirmed amount will appear here.',
     reserve: 'Reservation, in Spark equivalents',
     charge: 'To charge',
     release: 'Returned to balance',
@@ -51,12 +51,13 @@ export const settlementMessages = {
     storage:
       'The confirmation reference could not be safely saved or read. No new charge was sent. Check the status before continuing.',
     uncertain:
-      'The confirmation response was not received. Check the status first. Retrying uses the same operation reference and cannot create a second charge.',
+      'A verified settlement is not available yet. Status refreshes automatically without creating another AI request.',
   },
   uk: {
-    title: 'Завершити списання',
-    hint: 'Запит до ШІ вже виконано, але його результат не застосовано у грі. Тут можна сплатити точну вартість і звільнити решту резерву.',
-    noNew: 'Нових запитів до ШІ та змін у грі не буде. Згода стосується лише цього списання.',
+    title: 'Статус розрахунку',
+    hint: 'Запит до ШІ вже виконано, але його результат не застосовано у грі. Система автоматично врахує підтверджену вартість і звільнить решту резерву.',
+    noNew: 'Нових запитів до ШІ та змін у грі не буде. Ручне підтвердження не потрібне.',
+    automatic: 'Статус розрахунку оновлюється автоматично. Підтверджена сума з’явиться тут.',
     reserve: 'Резерв, еквівалент іскор',
     charge: 'До списання',
     release: 'Повернеться на баланс',
@@ -77,6 +78,6 @@ export const settlementMessages = {
     storage:
       'Не вдалося безпечно зберегти або прочитати номер підтвердження. Нове списання не надіслано. Перевір статус перед продовженням.',
     uncertain:
-      'Відповідь на підтвердження не отримано. Спочатку перевір статус. Повторне підтвердження використовує той самий номер операції й не створює другого списання.',
+      'Підтверджений розрахунок поки недоступний. Статус оновлюється автоматично без нового запиту до ШІ.',
   },
 } as const;

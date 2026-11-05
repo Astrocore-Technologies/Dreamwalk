@@ -1,3 +1,7 @@
+import {
+  acceptedWorldKnownCostPolicyMatches,
+  worldKnownCostPolicyRequired,
+} from './known-cost-policy';
 import { verifyAcceptedTravelBatch, type AcceptedTravelBatchProof } from './travel-consent';
 /** Inert accounting primitives. Caller owns a transaction; no provider, credit or activation side effects.
  * No funding or paid-wallet activation path is provided. Existing demo wallets are unrelated.
@@ -40,6 +44,7 @@ function reject(code: string): never {
 /** Server-only identifiers, not a trust flag. Both admission and accounting verify
  * the durable, finite consent independently against locked authoritative rows. */
 export interface AcceptedWorldBatchProof {
+  automaticKnownCostPolicy?: 'known-cost-v1';
   batchId: string;
   nativeQuoteId: string;
   runtimeRequestId: string;
@@ -83,6 +88,8 @@ export async function verifyAcceptedWorldBatch(
   const acceptedAt = batch?.accepted_at ? new Date(batch.accepted_at).getTime() : NaN;
   if (
     !batch ||
+    ((proof.automaticKnownCostPolicy === 'known-cost-v1' || worldKnownCostPolicyRequired(batch)) &&
+      !acceptedWorldKnownCostPolicyMatches(batch)) ||
     batch.state !== 'accepted' ||
     !Number.isFinite(acceptedAt) ||
     !(acceptedAt < new Date(batch.expires_at).getTime()) ||
@@ -149,6 +156,9 @@ export async function verifyAcceptedWorldBatch(
           ...native.request_snapshot,
           policyVersion: native.policy_version,
           contextHash: native.context_hash,
+          ...(spark.price_snapshot?.providerQuote?.automaticKnownCostPolicy === 'known-cost-v1'
+            ? { automaticKnownCostPolicy: 'known-cost-v1' }
+            : {}),
         })
     )
       reject('WORLD_BATCH_CONSENT_STALE');
