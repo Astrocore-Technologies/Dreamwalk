@@ -1,7 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { transformSync } from 'esbuild';
 import { selectSceneParticipant } from '../../apps/web/components/studio/scene-participant-selection.ts';
+import { mapPlanningMessage } from '../../apps/web/components/game/map-planning-message.ts';
 const source = await readFile(
   new URL('../../apps/web/components/visual-authoring/story-playable-builder.tsx', import.meta.url),
   'utf8',
@@ -155,3 +157,275 @@ test('builder review composition uses only actual draft labels and retains the d
   assert.match(css, /\.preview\s*\{\s*position: relative;/);
   assert.match(css, /grid-template-columns: minmax\(0, 2fr\) minmax\(260px, 1fr\)/);
 });
+
+// Execute the component's render, effects and handlers with isolated hook/transport adapters.
+// No browser, database, provider or wallet calls are involved.
+const builderCode = transformSync(source, {
+  loader: 'tsx',
+  format: 'cjs',
+  jsx: 'automatic',
+}).code;
+function builderHarness(locale, initial) {
+  const cells = [],
+    effects = [],
+    calls = [];
+  let cursor = 0,
+    tree,
+    state = initial,
+    readError;
+  const jsx = (type, props) => ({ type, props });
+  const imports = {
+    '../game/map-image-notice': { MapImageNotice: 'MapImageNotice' },
+    '../game/map-planning-message': { mapPlanningMessage },
+    './owner-authoring-settlement': { OwnerAuthoringSettlement: 'OwnerAuthoringSettlement' },
+    'next/link': 'link',
+    'lucide-react': Object.fromEntries(
+      ['ArrowLeft', 'Box', 'Check', 'MapPin', 'Sparkles', 'UsersRound'].map((name) => [name, name]),
+    ),
+    './story-playable-builder.module.css': {},
+    react: {
+      useState(initialValue) {
+        const index = cursor++;
+        cells[index] ??= { value: initialValue };
+        return [
+          cells[index].value,
+          (next) => {
+            cells[index].value = typeof next === 'function' ? next(cells[index].value) : next;
+          },
+        ];
+      },
+      useRef(initialValue) {
+        const index = cursor++;
+        cells[index] ??= { current: initialValue };
+        return cells[index];
+      },
+      useEffect(effect, deps) {
+        const index = cursor++,
+          old = cells[index];
+        if (!old || deps.some((value, i) => value !== old.deps[i])) {
+          cells[index] = { deps };
+          effects.push(() => {
+            old?.cleanup?.();
+            cells[index].cleanup = effect();
+          });
+        }
+      },
+    },
+    'react/jsx-runtime': { jsx, jsxs: jsx, Fragment: 'fragment' },
+    '@dreamwalk/contracts': { formatSparkSubunits: String },
+    './spark-equivalent': { providerSparkSubunits: (amount) => amount * 2 },
+    '@/lib/client': {
+      api: async (path, options = {}) => {
+        calls.push({ path, method: options.method ?? 'GET' });
+        assert.equal(options.method ?? 'GET', 'GET', 'render/refresh must never spend or retry');
+        assert.match(path, /^\/story-builds\/adventures\/synthetic-story\/latest$/);
+        if (readError) throw readError;
+        return structuredClone(state);
+      },
+      errorMessage: (error) => error.message,
+    },
+    '@/lib/i18n': { useT: () => ({ locale, t: (text) => text }) },
+    './sparks-cost': {
+      SparkQuoteNotice: 'SparkQuoteNotice',
+      SparkQuotePrice: 'SparkQuotePrice',
+      SparkReceiptCost: 'SparkReceiptCost',
+      useSparkCosts: () => ({ s: () => 'Actual cost', amount: String }),
+    },
+    '../ui': { Button: 'button', ErrorBox: 'ErrorBox' },
+    '../game/game-canvas': { GameCanvas: 'GameCanvas' },
+    '@dreamwalk/game-core': {
+      compilePlayableDraft: () => assert.fail('a failed preparation has no playable preview'),
+    },
+  };
+  const module = { exports: {} };
+  new Function('require', 'module', 'exports', builderCode)(
+    (name) => {
+      assert.ok(name in imports, name);
+      return imports[name];
+    },
+    module,
+    module.exports,
+  );
+  const nodes = (node = tree) =>
+    Array.isArray(node)
+      ? node.flatMap((child) => nodes(child))
+      : !node || typeof node !== 'object'
+        ? []
+        : [node, ...nodes(node.props?.children ?? [])];
+  const text = (node = tree) =>
+    Array.isArray(node)
+      ? node.map((child) => text(child)).join(' ')
+      : typeof node === 'string' || typeof node === 'number'
+        ? String(node)
+        : node && typeof node === 'object'
+          ? text(node.props?.children ?? [])
+          : '';
+  function render() {
+    cursor = 0;
+    tree = module.exports.StoryPlayableBuilder({ adventureId: 'synthetic-story' });
+    while (effects.length) effects.shift()();
+  }
+  const flush = async () => {
+    for (let i = 0; i < 12; i++) await Promise.resolve();
+    render();
+  };
+  return {
+    render,
+    flush,
+    nodes,
+    text,
+    calls,
+    setState: (next) => {
+      state = next;
+    },
+    setReadError: (error) => {
+      readError = error;
+    },
+    refresh: async () => {
+      const labels = ['Обновить состояние', 'Refresh status', 'Оновити стан'];
+      const button = nodes().find((node) => node.type === 'button' && labels.includes(text(node)));
+      assert.ok(button);
+      button.props.onClick();
+      await flush();
+    },
+  };
+}
+const failedBuild = (code, sparkStatus = 'settled') => ({
+  id: 'synthetic-build',
+  status: 'prepared',
+  sourceHash: 'synthetic-source',
+  sourceCurrent: true,
+  draft: null,
+  jobs: [
+    {
+      id: 'synthetic-job',
+      status: 'stale',
+      error_code: code,
+      actual_micros: '832',
+      sparkStatus,
+      sparkReservedSubunits: '10000',
+      sparkCapturedSubunits: '1664',
+    },
+  ],
+});
+const staleMessages = ['История изменилась', 'The story changed', 'Історія змінилася'];
+for (const locale of ['ru', 'en', 'uk']) {
+  test(`builder renders validation failures without false source changes or altered costs (${locale})`, async () => {
+    const codes = [
+      'AUTHORING_STALE',
+      'STORY_POSITION_REQUIRED',
+      'STORY_SOURCE_MISMATCH',
+      'STORY_CONNECTION_INVALID',
+      'STORY_DISCONNECTED',
+      'STORY_UNRESOLVED_PRESENCE_INVALID',
+      'STORY_SCENE_PRESENCE_INVALID',
+      'STORY_SCENE_ENTRY_INVALID',
+      'STORY_SCENE_PRESENCE_EVIDENCE_REQUIRED',
+      'STORY_MAP_INVALID',
+      'AUTHORING_PROPOSAL_INVALID',
+      'AUTHORING_APPLY_FAILED',
+      'AUTHORING_LATE_RESULT',
+    ];
+    const h = builderHarness(locale, failedBuild(codes[0]));
+    h.render();
+    await h.flush();
+    for (const code of codes) {
+      h.setState(failedBuild(code));
+      await h.refresh();
+      const expected = mapPlanningMessage(code, locale);
+      assert.ok(expected, code);
+      assert.ok(h.text().includes(expected), code);
+      for (const changed of staleMessages) assert.ok(!h.text().includes(changed), code);
+      assert.ok(!h.text().includes(code), 'raw diagnostic codes are not rendered');
+      const receipts = h.nodes().filter((node) => node.type === 'SparkReceiptCost');
+      assert.equal(receipts.length, 1);
+      assert.deepEqual(receipts[0].props.receipt, {
+        ...failedBuild(code).jobs[0],
+        generationCost: null,
+      });
+      assert.ok(h.nodes().some((node) => node.props['data-testid'] === 'builder-reprepare'));
+      assert.ok(!h.nodes().some((node) => node.type === 'GameCanvas'));
+      assert.ok(!h.nodes().some((node) => node.type === 'input'));
+    }
+    assert.equal(h.calls.length, codes.length + 1);
+    assert.ok(h.calls.every((call) => call.method === 'GET'));
+  });
+
+  test(`builder source-fence messages remain distinct from generic stale results (${locale})`, async () => {
+    const h = builderHarness(locale, failedBuild('STORY_CONTEXT_STALE'));
+    h.render();
+    await h.flush();
+    assert.ok(staleMessages.some((changed) => h.text().includes(changed)));
+    for (const code of ['AUTHORING_STALE', null, 'UNKNOWN_BOUNDED_RESULT_CODE']) {
+      h.setState(failedBuild(code));
+      await h.refresh();
+      assert.ok(staleMessages.every((changed) => !h.text().includes(changed)));
+    }
+    h.setState({ ...failedBuild('STORY_POSITION_REQUIRED'), sourceCurrent: false });
+    await h.refresh();
+    assert.ok(staleMessages.some((changed) => h.text().includes(changed)));
+    assert.ok(h.text().includes(mapPlanningMessage('STORY_POSITION_REQUIRED', locale)));
+  });
+
+  test(`old queued request invalidated by provider upgrade does not imply an author edit (${locale})`, async () => {
+    const build = failedBuild(null, 'held');
+    build.jobs[0] = {
+      ...build.jobs[0],
+      status: 'queued',
+      actual_micros: null,
+      sparkCapturedSubunits: '0',
+    };
+    const h = builderHarness(locale, build);
+    h.render();
+    await h.flush();
+    assert.ok(!h.nodes().some((node) => node.props['data-testid'] === 'builder-reprepare'));
+    // The server rejects an old queued provider version before dispatch. Source stays current.
+    build.jobs[0] = {
+      ...build.jobs[0],
+      status: 'failed',
+      error_code: 'AUTHORING_STALE',
+      actual_micros: '0',
+      sparkStatus: 'released',
+    };
+    h.setState(build);
+    await h.refresh();
+    assert.ok(h.text().includes(mapPlanningMessage('AUTHORING_STALE', locale)));
+    assert.ok(staleMessages.every((changed) => !h.text().includes(changed)));
+    assert.equal(
+      h.nodes().find((node) => node.type === 'SparkReceiptCost').props.receipt
+        .sparkCapturedSubunits,
+      '0',
+    );
+    assert.ok(h.calls.every((call) => call.method === 'GET'));
+    h.setState({ ...build, sourceCurrent: false });
+    await h.refresh();
+    assert.ok(staleMessages.some((changed) => h.text().includes(changed)));
+  });
+
+  test(`request errors distinguish invalid requests from verified source changes (${locale})`, async () => {
+    const h = builderHarness(locale, failedBuild('STORY_POSITION_REQUIRED'));
+    h.render();
+    await h.flush();
+    h.setReadError({ code: 'AUTHORING_STALE', message: 'private diagnostic detail' });
+    await h.refresh();
+    let message = h.nodes().find((node) => node.type === 'ErrorBox').props.message;
+    assert.equal(message, mapPlanningMessage('AUTHORING_STALE', locale));
+    assert.ok(staleMessages.every((changed) => !message.includes(changed)));
+    h.setReadError({ code: 'STORY_CONTEXT_STALE', message: 'private diagnostic detail' });
+    await h.refresh();
+    message = h.nodes().find((node) => node.type === 'ErrorBox').props.message;
+    assert.ok(staleMessages.some((changed) => message.includes(changed)));
+    assert.ok(!message.includes('private diagnostic detail'));
+  });
+
+  test(`builder keeps unsettled validation costs behind the existing settlement gate (${locale})`, async () => {
+    const h = builderHarness(locale, failedBuild('STORY_POSITION_REQUIRED', 'pending'));
+    h.render();
+    await h.flush();
+    assert.ok(!h.nodes().some((node) => node.props['data-testid'] === 'builder-reprepare'));
+    assert.equal(h.nodes().filter((node) => node.type === 'OwnerAuthoringSettlement').length, 1);
+    assert.equal(h.nodes().filter((node) => node.type === 'SparkReceiptCost').length, 1);
+    assert.equal(h.calls.length, 1);
+    assert.ok(staleMessages.every((changed) => !h.text().includes(changed)));
+  });
+}

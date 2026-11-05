@@ -273,3 +273,201 @@ test('authoring recovery does not overwrite a result completed by a concurrent w
   assert.match(statements[0][0], /^SELECT status FROM live_authoring_text_jobs.*FOR UPDATE/);
   assert.equal(row.actual_micros, 13);
 });
+
+function textPositionFixture() {
+  const npcId = randomUUID();
+  const src = {
+    title: 'Two-room text-only opening',
+    content: contentSchema.parse({
+      locations: [
+        { id: 'hall', name: 'Hall', description: 'A clear entrance with a keeper.' },
+        { id: 'yard', name: 'Yard', description: 'A clear courtyard linked to the hall.' },
+      ],
+      npcIds: [npcId],
+      scenes: [{ id: 'opening', name: 'Arrival', locationId: 'hall', participantNpcIds: [npcId] }],
+      startSceneId: 'opening',
+    }),
+    npcs: [
+      {
+        id: npcId,
+        name: 'Keeper',
+        role: 'Host',
+        description: 'Greets visitors.',
+        appearance: 'An adult.',
+      },
+    ],
+  };
+  const result = {
+    version: 1,
+    rooms: ['hall', 'yard'].map((locationId) => ({
+      locationId,
+      width: 24,
+      height: 24,
+      spawns: [
+        { x: 3, y: 3 },
+        { x: 4, y: 3 },
+        { x: 3, y: 4 },
+        { x: 4, y: 4 },
+      ],
+      blocked: [],
+      surfaces: [],
+    })),
+    connections: [{ a: 'hall', b: 'yard', atA: { x: 8, y: 5 }, atB: { x: 5, y: 5 } }],
+    npcs: [{ sourceNpcId: npcId, locationId: 'hall', x: 6, y: 3, stock: [] }],
+    items: [],
+  };
+  return { src, result, npcId };
+}
+test('asset-free response schema requires positions the compiler needs, without inventing coordinates', () => {
+  const { src, result } = textPositionFixture();
+  const immutable = JSON.stringify(storyPlanDefinition.schema);
+  const strict = storyPlanDefinition.schemaForContext(src);
+  const room = strict.properties.rooms.items;
+  assert.equal(room.properties.spawns.minItems, 4);
+  assert.equal(room.properties.spawns.maxItems, 4);
+  const npc = strict.properties.npcs.items;
+  for (const key of ['x', 'y']) {
+    assert.equal(npc.properties[key].type, 'integer');
+    assert.equal(npc.properties[key].anyOf, undefined);
+    assert.ok(npc.required.includes(key));
+  }
+  for (const key of ['atA', 'atB']) {
+    const connection = strict.properties.connections.items;
+    assert.equal(connection.properties[key].type, 'object');
+    assert.equal(connection.properties[key].anyOf, undefined);
+  }
+  const valid = storyPlanDefinition.validateProposal(result, src);
+  assert.deepEqual(valid, result);
+  for (const mutate of [
+    (p) => {
+      p.rooms[0].spawns = [];
+    },
+    (p) => {
+      p.rooms[0].spawns.pop();
+    },
+    (p) => {
+      delete p.connections[0].atA;
+    },
+    (p) => {
+      p.connections[0].atB = null;
+    },
+    (p) => {
+      delete p.npcs[0].x;
+    },
+    (p) => {
+      p.npcs[0].y = null;
+    },
+  ]) {
+    const malformed = structuredClone(result);
+    mutate(malformed);
+    const before = structuredClone(malformed);
+    assert.throws(() => storyPlanDefinition.validateProposal(malformed, src));
+    assert.deepEqual(malformed, before, 'no fabricated/default placement repairs');
+  }
+  assert.equal(
+    JSON.stringify(storyPlanDefinition.schema),
+    immutable,
+    'shared image schema unchanged',
+  );
+  for (const key of ['mapImages', 'omittedMapImages']) {
+    const imageSource = {
+      ...src,
+      [key]: [{ locationId: 'hall', revisionId: randomUUID(), sha256: 'a'.repeat(64) }],
+    };
+    assert.equal(storyPlanDefinition.schemaForContext(imageSource), storyPlanDefinition.schema);
+    assert.equal(
+      storyPlanDefinition.schemaForContext(imageSource).properties.rooms.items.properties.spawns
+        .minItems,
+      undefined,
+    );
+  }
+});
+
+test('one quoted text-only body survives restart and builds positioned playable state with no additional provider work', async () => {
+  const {
+    BoundedAuthoringTextProvider,
+  } = require('../../apps/api/dist/live-test/authoring-provider');
+  const {
+    createStateFromPlayable,
+    projectState,
+    findPath,
+  } = require('../../packages/game-core/dist');
+  const { requiresMapRecovery } = require('../../apps/api/dist/game/map-readiness');
+  const { src, result, npcId } = textPositionFixture();
+  const profile = {
+    model: 'synthetic-text-plan',
+    contextTokens: 128000,
+    contextBudgetTokens: 60000,
+    maxOutputTokens: 4096,
+    maxInputBytes: 4194304,
+    inputMicrosPerMillion: 1000000,
+    outputMicrosPerMillion: 2000000,
+    upperMicros: 100000,
+    estimation: {
+      kind: 'operator_heuristic',
+      textTokensPerKiBUtf8: 1024,
+      textProtocolTokens: 4096,
+      marginBps: 1000,
+      fixedMarginMicros: 100,
+    },
+    pricing: { reviewedAt: '2026-01-01T00:00:00Z', validUntil: '2030-01-01T00:00:00Z' },
+  };
+  const calls = [];
+  const transport = async (url, init) => {
+    assert.ok(url.endsWith('/responses'), 'no image/count or second generation');
+    calls.push(init.body);
+    return new Response(
+      JSON.stringify({
+        id: 'synthetic-plan',
+        status: 'completed',
+        service_tier: 'default',
+        usage: { input_tokens: 100, output_tokens: 100 },
+        output: [
+          { type: 'message', content: [{ type: 'output_text', text: JSON.stringify(result) }] },
+        ],
+      }),
+    );
+  };
+  const provider = new BoundedAuthoringTextProvider(
+    storyPlanDefinition,
+    'synthetic',
+    transport,
+    profile,
+  );
+  const quoted = provider.prepareTextRequest(src);
+  assert.equal(calls.length, 0);
+  assert.equal(
+    JSON.parse(quoted.body).text.format.schema.properties.rooms.items.properties.spawns.minItems,
+    4,
+  );
+  const restarted = new BoundedAuthoringTextProvider(
+    storyPlanDefinition,
+    'synthetic',
+    transport,
+    profile,
+  );
+  const output = await restarted.generate({
+    jobId: randomUUID(),
+    context: src,
+    signal: new AbortController().signal,
+    textReservationSnapshot: quoted.snapshot,
+    maxCostMicros: quoted.snapshot.reserveMicros,
+  });
+  assert.deepEqual(calls, [quoted.body]);
+  const parsed = storyPlanDefinition.validateProposal(output.proposal, src);
+  const compiled = compileStoryPlan(src, parsed);
+  const state = createStateFromPlayable(compiled.playable, ['player']);
+  assert.equal(requiresMapRecovery(state), false);
+  assert.equal(state.maps.hall.spawns.length, 4);
+  assert.equal(state.maps.yard.spawns.length, 4);
+  const view = projectState(state, 'player');
+  assert.ok(
+    view.entities.some((e) => e.id === npcId && Number.isInteger(e.x) && Number.isInteger(e.y)),
+  );
+  assert.ok(
+    view.entities.some((e) => e.id === 'player' && Number.isInteger(e.x) && Number.isInteger(e.y)),
+  );
+  assert.ok(findPath(state, 'hall', state.entities.player, { x: 5, y: 3 }, 'player'));
+  assert.equal(state.maps.hall.exits[0].destinationMapId, 'yard');
+  assert.equal(calls.length, 1);
+});
