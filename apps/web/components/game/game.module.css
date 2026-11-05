@@ -1229,3 +1229,50 @@
   color: var(--text);
   cursor: pointer;
 }
+
+.locationScene {
+  overflow: auto;
+}
+.locationMap {
+  flex: 0 0 auto;
+  margin: 0;
+  padding: 0;
+  overflow: hidden;
+  border-radius: 12px;
+  background: var(--surface);
+}
+.locationMap img {
+  display: block;
+  width: 100%;
+  height: auto;
+  object-fit: contain;
+}
+.locationMap figcaption,
+.locationMap > p {
+  padding: 12px;
+  color: var(--muted);
+}
+.locationParticipants {
+  flex: 0 0 auto;
+  padding: 0 14px;
+  margin-top: 16px;
+}
+.locationParticipants ul {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 12px;
+  list-style: none;
+  padding: 0;
+}
+.locationParticipants li {
+  flex: 1 1 220px;
+  padding: 14px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+}
+.locationInventory {
+  flex: 0 0 auto;
+  padding: 0 14px 14px;
+  position: relative;
+  min-height: 48px;
+}

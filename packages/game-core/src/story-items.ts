@@ -1,4 +1,5 @@
 import {
+  hasPosition,
   footprintDistance,
   type GameAction,
   type GameEntity,
@@ -120,7 +121,8 @@ export function materializeStoryItem(
 ): GameResult {
   if (!proposal) return { state, events: [] };
   const actor = state.entities[actorId];
-  if (actor?.kind !== 'player' || actor.encounterId) return fail(state, 'FORBIDDEN');
+  if (actor?.kind !== 'player' || !hasPosition(actor) || actor.encounterId)
+    return fail(state, 'FORBIDDEN');
   const id = `prop-${turnId}`;
   if (
     state.entities[id] ||
@@ -194,6 +196,7 @@ export function applyStoryPickup(
   )
     return fail(state, 'STALE_STATE');
   if (item.ownerId === actorId && actor.inventory?.includes(item.id)) return { state, events: [] };
+  if (!hasPosition(actor) || !hasPosition(item)) return fail(state, 'WRONG_MODE');
   if (item.ownerId || !visible(state, actor, item)) return fail(state, 'TARGET_UNAVAILABLE');
   if (footprintDistance(actor, item) > 1) return fail(state, 'OUT_OF_RANGE');
   const action: GameAction = { kind: 'pick_up', targetId: itemId },

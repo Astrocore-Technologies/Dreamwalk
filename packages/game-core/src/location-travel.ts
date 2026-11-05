@@ -1,3 +1,4 @@
+import { enterScene, copyEntityPlacement } from './scene-presence';
 import {
   footprintIntersectsArea,
   isActorConscious,
@@ -122,6 +123,19 @@ export function travelToLocation(state: GameState, actorId: string, mapId: strin
     )
     .map(([id]) => id)
     .sort();
+  if (map.spatialMode === 'location_only') {
+    for (const id of [actorId, ...companions]) {
+      const entity = next.entities[id];
+      if (!enterScene(next, entity, mapId)) return reject('TARGET_UNAVAILABLE');
+      entity.revision++;
+      entity.movementGeneration = (entity.movementGeneration ?? 0) + 1;
+      const agreement = next.npcBrains?.[id]?.living?.companionship;
+      if (agreement) agreement.crossings = [];
+      events.push({ kind: 'actor.transitioned', actorId: id, mapId });
+    }
+    next.revision++;
+    return { state: next, events };
+  }
   const points = [...map.spawns];
   for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) points.push({ x, y });
   const safe = (entity: GameEntity, point: { x: number; y: number }) =>
@@ -130,7 +144,7 @@ export function travelToLocation(state: GameState, actorId: string, mapId: strin
       (encounter) =>
         encounter.phase === 'planning' &&
         encounter.mapId === mapId &&
-        footprintIntersectsArea({ ...entity, ...point }, encounter.area),
+        footprintIntersectsArea({ ...entity, ...point, spatialMode: undefined }, encounter.area),
     );
   for (const id of [actorId, ...companions]) {
     const entity = next.entities[id];
@@ -139,6 +153,15 @@ export function travelToLocation(state: GameState, actorId: string, mapId: strin
       if (id === actorId) return reject('PATH_BLOCKED');
       continue; // A companion without room stays behind. Never overlap or move another actor.
     }
+    for (const sourceMap of Object.values(next.maps))
+      for (const scene of sourceMap.scenePresence?.scenes ?? [])
+        if (scene.participantIds.includes(id)) {
+          scene.participantIds = scene.participantIds.filter((member) => member !== id);
+          sourceMap.revision++;
+        }
+    const record = entity as unknown as Record<string, unknown>;
+    delete record.spatialMode;
+    delete record.sceneId;
     Object.assign(entity, point, {
       mapId,
       path: [],
@@ -146,6 +169,8 @@ export function travelToLocation(state: GameState, actorId: string, mapId: strin
       revision: entity.revision + 1,
     });
     delete entity.movementTrace;
+    for (const itemId of entity.inventory ?? [])
+      if (next.entities[itemId]) copyEntityPlacement(next.entities[itemId], entity);
     const agreement = next.npcBrains?.[id]?.living?.companionship;
     if (agreement) agreement.crossings = [];
     events.push({ kind: 'actor.transitioned', actorId: id, mapId });

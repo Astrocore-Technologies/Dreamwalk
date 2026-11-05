@@ -103,6 +103,7 @@ export class StoryBuildService {
       const location = content.locations.find((l) => binding.slot === `map:${l.id}:background`);
       if (location) effectiveImages.set(location.id, binding.revisionId);
     }
+    // A location image is its game map even before a playable map_id can be assigned.
     for (const image of images)
       if (content.locations.some((l) => l.id === image.location_id))
         effectiveImages.set(image.location_id, image.revision_id);

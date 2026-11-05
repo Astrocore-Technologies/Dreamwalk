@@ -1,3 +1,4 @@
+import { hasPosition } from '@dreamwalk/contracts';
 import {
   supportingNpcProposalSchema,
   type GameState,
@@ -70,18 +71,19 @@ export function buildSupportingNpcContext(state: GameState, actorId: string) {
           continue;
         spawnCandidates.push({ mapId: map.id, x, y });
       }
-  spawnCandidates.sort(
-    (a, b) =>
-      Math.abs(a.x - actor.x) +
-        Math.abs(a.y - actor.y) -
-        (Math.abs(b.x - actor.x) + Math.abs(b.y - actor.y)) ||
-      a.y - b.y ||
-      a.x - b.x,
-  );
+  if (hasPosition(actor))
+    spawnCandidates.sort(
+      (a, b) =>
+        Math.abs(a.x - actor.x) +
+          Math.abs(a.y - actor.y) -
+          (Math.abs(b.x - actor.x) + Math.abs(b.y - actor.y)) ||
+        a.y - b.y ||
+        a.x - b.x,
+    );
   const context = {
     actorId,
     mapId: actor?.mapId ?? null,
-    actorPosition: actor ? { x: actor.x, y: actor.y } : null,
+    actorPosition: hasPosition(actor) ? { x: actor.x, y: actor.y } : null,
     canonHash: npcContextFingerprint(policy ?? null),
     remainingSlots,
     allowedRoles,

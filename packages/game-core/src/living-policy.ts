@@ -1,3 +1,5 @@
+import { sharesScene } from './scene-presence';
+import type { GameEntity } from '@dreamwalk/contracts';
 import { isActorConscious } from '@dreamwalk/contracts';
 import {
   footprintDistance,
@@ -12,10 +14,8 @@ import {
 import { findPath, visible, walkable } from './index';
 import { acceptNpcPlan } from './npc';
 import { npcContextFingerprint, proposeNpcObligation, proposeNpcActionObligation } from './living';
-const near = (
-  a: { mapId: string; x: number; y: number },
-  b: { mapId: string; x: number; y: number },
-) => a.mapId === b.mapId && footprintDistance(a, b) <= 1;
+const near = (s: GameState, a: GameEntity, b: GameEntity) =>
+  sharesScene(s, a, b) || (a.mapId === b.mapId && footprintDistance(a, b) <= 1);
 export function npcConditionsMet(
   s: GameState,
   npcId: string,
@@ -35,14 +35,14 @@ export function npcConditionsMet(
       case 'elapsed':
         return s.tick - startedTick >= c.ticks;
       case 'recipient_near':
-        return !!recipient && near(npc, recipient) && visible(s, npc, recipient);
+        return !!recipient && near(s, npc, recipient) && visible(s, npc, recipient);
       case 'trust_at_least':
         return !!recipientId && (m.relationships[recipientId]?.trust ?? 0) >= c.minimum;
       case 'owns_item':
         return s.entities[c.itemId]?.ownerId === npcId && !!npc.inventory?.includes(c.itemId);
       case 'near_entity': {
         const t = s.entities[c.entityId];
-        return !!t && visible(s, npc, t) && near(npc, t);
+        return !!t && visible(s, npc, t) && near(s, npc, t);
       }
       case 'observed':
         return m.observations.some(
@@ -102,7 +102,7 @@ export function npcActionAllowed(s: GameState, npcId: string, a: GameAction): bo
     if (
       door &&
       Object.values(s.entities).some(
-        (e) => e.id !== npcId && ['player', 'npc'].includes(e.kind) && near(e, door),
+        (e) => e.id !== npcId && ['player', 'npc'].includes(e.kind) && near(s, e, door),
       )
     )
       return false;
@@ -174,20 +174,21 @@ function actionsForGoal(s: GameState, npcId: string, d: NpcGoalDefinition): Game
   const n = s.entities[npcId],
     b = s.npcBrains![npcId],
     target = d.targetId ? s.entities[d.targetId] : undefined;
-  if (d.kind === 'patrol') return [{ kind: 'move_to', target: b.patrolTarget }];
+  if (d.kind === 'patrol')
+    return b.patrolTarget ? [{ kind: 'move_to', target: b.patrolTarget }] : [{ kind: 'wait' }];
   if (!target || !visible(s, n, target)) return null;
   if (
     d.risk === 'cautious' &&
     Object.values(s.entities).some(
       (e) =>
         e.id !== npcId &&
-        near(e, target) &&
+        near(s, e, target) &&
         (s.npcBrains![npcId].living!.relationships[e.id]?.alertness ?? 0) >= 3,
     )
   )
     return null;
   const actions: GameAction[] = [];
-  if (!near(n, target)) {
+  if (!near(s, n, target)) {
     const adjacent = adjacentFootprintAnchors(n, target).find(
       (p) => walkable(s, n.mapId, p, npcId, true) && findPath(s, n.mapId, n, p, npcId) !== null,
     );
@@ -206,9 +207,10 @@ function defaultGoalSuccess(s: GameState, npcId: string, d: NpcGoalDefinition): 
   const n = s.entities[npcId],
     b = s.npcBrains![npcId],
     target = d.targetId ? s.entities[d.targetId] : undefined;
-  if (d.kind === 'patrol') return n.x === b.patrolTarget.x && n.y === b.patrolTarget.y;
+  if (d.kind === 'patrol')
+    return !!b.patrolTarget && n.x === b.patrolTarget.x && n.y === b.patrolTarget.y;
   if (d.kind === 'assist') return !!d.itemId && s.entities[d.itemId]?.ownerId === d.targetId;
-  if (!target || !visible(s, n, target) || !near(n, target)) return false;
+  if (!target || !visible(s, n, target) || !near(s, n, target)) return false;
   return d.kind === 'guard' ? target.kind === 'door' && !target.open : true;
 }
 

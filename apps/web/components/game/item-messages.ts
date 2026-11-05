@@ -1,6 +1,9 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const itemMessages = {
+  locationMap: ['Карта локации', 'Location map', 'Карта локації'],
+  sceneParticipants: ['В этой сцене', 'In this scene', 'У цій сцені'],
+  sceneParticipant: ['Участник сцены', 'Scene participant', 'Учасник сцени'],
   inventory: ['Инвентарь', 'Inventory', 'Інвентар'],
   empty: ['Инвентарь пуст', 'Your inventory is empty', 'Інвентар порожній'],
   close: ['Закрыть', 'Close', 'Закрити'],

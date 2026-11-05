@@ -1,3 +1,5 @@
+import { sharesScene } from './scene-presence';
+import { hasPosition } from '@dreamwalk/contracts';
 import { actorLifeState, type ActorLifeState } from '@dreamwalk/contracts';
 import {
   occupiedCells,
@@ -22,6 +24,8 @@ export interface RuntimeMapMarker {
 /** A public, current-map-only observation. Never an action/collision authority. */
 export interface RuntimeMapView {
   version: 1;
+  spatialMode?: 'location_only';
+  sceneId?: string;
   mapId: string;
   width: number;
   height: number;
@@ -48,6 +52,23 @@ export function runtimeMapView(state: GameState, observerIds: string[]): Runtime
   const map = state.maps[observers[0].mapId];
   if (!map || observers.some((actor) => actor.mapId !== map.id))
     throw new Error('RUNTIME_MAP_OBSERVERS_DIFFERENT_MAPS');
+  if (map.spatialMode === 'location_only') {
+    const sceneId = observers[0].sceneId;
+    if (!sceneId || observers.some((actor) => !sharesScene(state, observers[0], actor)))
+      throw new Error('RUNTIME_MAP_OBSERVERS_DIFFERENT_SCENES');
+    return {
+      version: 1,
+      spatialMode: 'location_only',
+      sceneId,
+      mapId: map.id,
+      width: map.width,
+      height: map.height,
+      mapRevision: map.revision,
+      observerIds: ids,
+      visibleCells: [],
+      markers: [],
+    };
+  }
   if (
     !Number.isSafeInteger(map.width) ||
     !Number.isSafeInteger(map.height) ||
@@ -73,6 +94,7 @@ export function runtimeMapView(state: GameState, observerIds: string[]): Runtime
     }
   const perceived = new Set(visibleCells.map(pointKey));
   const markers = Object.values(state.entities)
+    .filter(hasPosition)
     .filter(
       (entity) =>
         entity.mapId === map.id &&

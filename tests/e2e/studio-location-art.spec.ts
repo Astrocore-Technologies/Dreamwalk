@@ -413,9 +413,11 @@ test('a permitted library image can be stored and recovered for a location witho
     .click();
   const selected = dialog.getByTestId('location-image-selection');
   await expect(
-    selected.getByRole('combobox', { name: 'Image attachment', exact: true }),
+    selected.getByRole('combobox', { name: 'Playable layout link', exact: true }),
   ).toHaveValue('');
-  await expect(selected).toContainText('There is no linked saved map yet.');
+  await expect(selected).toContainText(
+    'The playable layout is not prepared yet. Save the location map now; game preparation will use this image.',
+  );
   await selected.getByRole('button', { name: 'Save image for location', exact: true }).click();
   await expect(dialog.getByRole('heading', { name: 'Saved image', exact: true })).toBeVisible();
   await page.evaluate(() => (document.activeElement as HTMLElement | null)?.blur());
@@ -435,7 +437,7 @@ test('a permitted library image can be stored and recovered for a location witho
   expect(mock.calls.mapWrites).toBe(0);
   expect(mock.calls.unexpected).toBe(0);
 });
-test('ordinary author invalid source edits block image work; explicit illustration-only reuse preserves saved geometry', async ({
+test('ordinary author invalid source edits block image work; location-map reuse without a layout link preserves saved geometry', async ({
   page,
 }) => {
   const mock = await setup(page, false, true, true);
@@ -518,12 +520,18 @@ test('ordinary author invalid source edits block image work; explicit illustrati
     name: revisedName,
     revision: acknowledged.editRevision,
   });
-  // Select illustration-only explicitly; an old saved map binding must not be reused implicitly.
+  // Save the location map without a layout link; never reuse an old saved layout implicitly.
   await dialog.getByRole('button', { name: 'Use the saved revision', exact: true }).click();
   const selected = dialog.getByTestId('location-image-selection');
-  const attachment = selected.getByRole('combobox', { name: 'Image attachment', exact: true });
+  const attachment = selected.getByRole('combobox', { name: 'Playable layout link', exact: true });
   await expect(attachment).toHaveValue('room');
   await expect(attachment).toBeEnabled();
+  await expect(
+    attachment.getByRole('option', {
+      name: 'Location map without an existing layout link',
+      exact: true,
+    }),
+  ).toHaveAttribute('value', '');
   await attachment.selectOption('');
   const save = selected.getByRole('button', { name: 'Save image for location', exact: true });
   await expect(save).toBeEnabled();

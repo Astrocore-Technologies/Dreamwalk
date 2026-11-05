@@ -59,12 +59,19 @@ test('new image-aware starts cannot reuse schematic, mismatched or low-confidenc
   );
 });
 
-test('text-only preparation reuse stays free and existing layouts stay unchanged', () => {
+test('text-only reuse stays free, but a saved image cannot reuse an ungrounded schematic layout', () => {
   const compiled = { maps: { tower: { backgroundMode: 'schematic', spawns: [{ x: 3, y: 4 }] } } };
   const before = structuredClone(compiled);
   assert.equal(
-    startMapGroundingCompatible({ omittedMapImages: [{ locationId: 'tower' }] }, compiled),
-    true,
+    startMapGroundingCompatible(
+      {
+        omittedMapImages: [
+          { locationId: 'tower', revisionId: randomUUID(), sha256: 'a'.repeat(64) },
+        ],
+      },
+      compiled,
+    ),
+    false,
   );
   assert.equal(startMapGroundingCompatible({}, compiled), true);
   assert.deepEqual(compiled, before);

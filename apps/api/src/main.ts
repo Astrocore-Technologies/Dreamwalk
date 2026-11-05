@@ -18,6 +18,7 @@ import { SpatialPlannerService } from './visual-authoring/spatial-planner';
 import { spatialPlanDefinition } from './visual-authoring/spatial-plan';
 import { createAuthoringTextEngine } from './live-test/authoring-text';
 import { LiveTestController } from './live-test/controller';
+import { KnownAuthoringSettlement } from './live-test/known-authoring-settlement';
 import { LiveTestService } from './live-test/service';
 import { GenerationAuthority } from './generation/service';
 import { readGenerationConfig } from './generation/config';
@@ -147,6 +148,7 @@ class Health {
     NpcAiService,
     GameService,
     KnownNpcSettlement,
+    KnownAuthoringSettlement,
     PlayableService,
   ],
 })

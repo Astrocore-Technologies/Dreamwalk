@@ -12,10 +12,10 @@ export function MapImageNotice({
     return (
       <p data-schematic-map-notice>
         {locale === 'ru'
-          ? 'Сохранённая карта будет показана с сеткой и персонажами. Анализ изображения не входит в эту оценку.'
+          ? 'Карта сохранится целиком. Игра начнётся без точных позиций; анализ изображения не входит в эту оценку.'
           : locale === 'uk'
-            ? 'Збережену мапу буде показано із сіткою та персонажами. Аналіз зображення не входить до цієї оцінки.'
-            : 'The saved map will be shown with its grid and characters. Image analysis is not included in this estimate.'}
+            ? 'Карта збережеться повністю. Гра почнеться без точних позицій; аналіз зображення не входить до цієї оцінки.'
+            : 'The full map is preserved. Play starts without exact positions; image analysis is not included in this estimate.'}
       </p>
     );
   if (!count) return null;

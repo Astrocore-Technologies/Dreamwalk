@@ -87,6 +87,7 @@ export function UnifiedStory({
   onWorldRefresh: () => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
+  const locationOnly = projection.map.spatialMode === 'location_only';
   const turnText = useTurnText();
   const h = useStoryText(),
     { t, locale } = useT(),
@@ -559,12 +560,16 @@ export function UnifiedStory({
                   ? `${h('target')}: ${storyRecipientLabel(projection, activeRecipient)}`
                   : h(
                       channel === 'whisper'
-                        ? projection.turn
-                          ? 'nearbyWhisper'
-                          : 'legacyWhisper'
-                        : projection.turn
-                          ? 'nearbySpeech'
-                          : 'scene',
+                        ? locationOnly
+                          ? 'sceneWhisper'
+                          : projection.turn
+                            ? 'nearbyWhisper'
+                            : 'legacyWhisper'
+                        : locationOnly
+                          ? 'sceneSpeech'
+                          : projection.turn
+                            ? 'nearbySpeech'
+                            : 'scene',
                     )}
               </span>
               {activeRecipient && (
@@ -596,7 +601,13 @@ export function UnifiedStory({
             )}
             {channel === 'whisper' && !activeRecipient && (
               <p className={styles.status} role="status">
-                {h(projection.turn ? 'areaWhisper' : 'legacyChooseWhisper')}
+                {h(
+                  locationOnly
+                    ? 'sceneWhisperHint'
+                    : projection.turn
+                      ? 'areaWhisper'
+                      : 'legacyChooseWhisper',
+                )}
               </p>
             )}
             <div className={styles.composerInput}>
@@ -630,7 +641,17 @@ export function UnifiedStory({
             <p id={hintId} className={styles.hint}>
               {h('hint')}{' '}
               <span data-testid={projection.turn ? 'area-speech-hint' : 'legacy-speech-hint'}>
-                {h(projection.turn ? 'areaSpeech' : 'legacySpeech')}
+                {h(
+                  locationOnly
+                    ? channel === 'whisper'
+                      ? activeRecipient
+                        ? 'sceneTargetWhisperHint'
+                        : 'sceneWhisperHint'
+                      : 'sceneSpeechHint'
+                    : projection.turn
+                      ? 'areaSpeech'
+                      : 'legacySpeech',
+                )}
               </span>
             </p>
             <div className={styles.composerFeedback}>

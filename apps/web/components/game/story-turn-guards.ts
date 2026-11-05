@@ -1,11 +1,11 @@
 import { npcUnavailable } from './turn-ui';
 import type { GameProjection } from '@dreamwalk/contracts';
-/** Grid speech has listeners, not a selected addressee. Keep old saves compatible. */
+/** Grid speech uses ranged listeners; scene-only play preserves an explicit addressee. */
 export function storyRecipientForProjection(
-  projection: Pick<GameProjection, 'turn'>,
+  projection: Pick<GameProjection, 'turn'> & Partial<Pick<GameProjection, 'map'>>,
   recipient: { id: string; label: string } | null,
 ) {
-  return projection.turn ? null : recipient;
+  return projection.turn && projection.map?.spatialMode !== 'location_only' ? null : recipient;
 }
 /** A stale selected recipient fails closed; area whispers require turn-based play. */
 export function storyTargetVisible(projection: GameProjection, targetNpcId?: string) {

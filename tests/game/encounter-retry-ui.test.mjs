@@ -109,3 +109,43 @@ test('actual hook keeps unknown request IDs and limits retry to explicit stale b
   assert.match(page, /removeEventListener\('visibilitychange', reloadIfVisible\)/);
   assert.match(page, /data-member-status=\{member.status\}/);
 });
+
+test('unpositioned scene actors never acquire a numeric encounter retry snapshot', () => {
+  assert.equal(
+    encounterRetryContext({
+      streamId: 'scene',
+      connectionEpoch: 1,
+      projection: {
+        actorId: 'hero',
+        revision: 2,
+        map: { id: 'hall', spatialMode: 'location_only' },
+        entities: [
+          { id: 'hero', mapId: 'hall', sceneId: 'greeting', spatialMode: 'location_only' },
+        ],
+      },
+    }),
+    null,
+  );
+  assert.equal(
+    encounterRetryContext({
+      streamId: 'scene',
+      connectionEpoch: 1,
+      projection: {
+        actorId: 'hero',
+        revision: 2,
+        map: { id: 'hall', spatialMode: 'location_only' },
+        entities: [
+          {
+            id: 'hero',
+            mapId: 'hall',
+            sceneId: 'greeting',
+            spatialMode: 'location_only',
+            x: 0,
+            y: 0,
+          },
+        ],
+      },
+    }),
+    null,
+  );
+});

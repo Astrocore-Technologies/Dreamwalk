@@ -40,6 +40,13 @@ export function settlementScope(ownerId: string, campaignId: string, jobId: stri
     storageKey: `dreamwalk:npc-settlement:v1:${ownerId}:${campaignId}:${jobId}`,
   };
 }
+export function authoringSettlementScope(ownerId: string, jobId: string) {
+  if (![ownerId, jobId].every((id) => uuid.test(id))) throw new Error('unavailable');
+  return {
+    path: `/generation/authoring-text/jobs/${jobId}/settlement`,
+    storageKey: `dreamwalk:authoring-settlement:v1:${ownerId}:${jobId}`,
+  };
+}
 export function readKnownSettlement(value: unknown, jobId: string): KnownSettlementQuote {
   const q = value as KnownSettlementQuote | null;
   if (
@@ -119,16 +126,18 @@ export class KnownSettlementController {
   constructor(
     private input: {
       ownerId: string;
-      campaignId: string;
       jobId: string;
       storage: Pick<Storage, 'getItem' | 'setItem'>;
       read: (path: string) => Promise<unknown>;
       post: (path: string, body: KnownSettlementConsent) => Promise<unknown>;
       operationId: () => string;
       changed: (state: SettlementState) => void;
-    },
+    } & ({ kind: 'authoring' } | { kind?: 'npc'; campaignId: string }),
   ) {
-    this.scope = settlementScope(input.ownerId, input.campaignId, input.jobId);
+    this.scope =
+      input.kind === 'authoring'
+        ? authoringSettlementScope(input.ownerId, input.jobId)
+        : settlementScope(input.ownerId, input.campaignId, input.jobId);
   }
   private publish(patch: Partial<SettlementState>) {
     if (!this.active) return;

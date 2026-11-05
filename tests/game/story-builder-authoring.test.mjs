@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
+import { selectSceneParticipant } from '../../apps/web/components/studio/scene-participant-selection.ts';
 const source = await readFile(
   new URL('../../apps/web/components/visual-authoring/story-playable-builder.tsx', import.meta.url),
   'utf8',
@@ -71,4 +72,52 @@ test('application is reviewed and separate from publication, with localized dura
     'Історія змінилася',
   ])
     assert.ok(source.includes(text));
+});
+
+test('Studio preview exposes the saved story builder outside the editor form', async () => {
+  const studio = await readFile(
+    new URL('../../apps/web/components/studio.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    studio,
+    /import \{ StoryPlayableBuilder \} from '\.\/visual-authoring\/story-playable-builder'/,
+  );
+  const mount = studio.indexOf('<StoryPlayableBuilder');
+  assert.ok(
+    mount > studio.indexOf('</form>'),
+    'builder controls must not nest in the authoring form',
+  );
+  assert.match(studio.slice(mount - 50, mount), /!isNew && step === 6/);
+  assert.match(
+    studio.slice(mount, mount + 220),
+    /adventureId=\{id\}[\s\S]*beforePrepare=\{autosave.flush\}[\s\S]*onApplied=\{refreshArtModeration\}/,
+  );
+  const preview = studio.slice(studio.indexOf('{step === 6 &&'), studio.indexOf('{step === 7 &&'));
+  assert.match(preview, /isNew \?/);
+  assert.match(preview, /onClick=\{\(\) => void save\(\)\}/);
+});
+
+test('scene encounter membership requires explicit selection of an owned story NPC', async () => {
+  const original = ['keeper'];
+  assert.deepEqual(selectSceneParticipant(original, ['keeper', 'guide'], 'guide', true), [
+    'keeper',
+    'guide',
+  ]);
+  assert.deepEqual(selectSceneParticipant(original, ['keeper'], 'outsider', true), ['keeper']);
+  assert.deepEqual(selectSceneParticipant(original, ['keeper'], 'keeper', true), ['keeper']);
+  assert.deepEqual(selectSceneParticipant(original, ['keeper'], 'keeper', false), []);
+  assert.deepEqual(original, ['keeper']);
+  const control = await readFile(
+    new URL('../../apps/web/components/studio/scene-participants.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(control, /checked=\{value\?\.includes\(npc.id\)/);
+  assert.doesNotMatch(control, /description|biography|secrets|useEffect|method: 'POST'/);
+  const studio = await readFile(
+    new URL('../../apps/web/components/studio.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(studio, /value=\{scene.participantNpcIds\}/);
+  assert.match(studio, /storyNpcIds=\{draft.content.npcIds\}/);
 });

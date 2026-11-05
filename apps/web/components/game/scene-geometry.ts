@@ -1,6 +1,6 @@
 import { TOKEN_FOOTPRINT, footprintCells } from '@dreamwalk/contracts';
-import type { GameProjection } from '@dreamwalk/contracts';
-export type SceneEntity = GameProjection['entities'][number];
+import type { PositionedGameEntity } from '@dreamwalk/contracts';
+export type SceneEntity = PositionedGameEntity;
 export type SceneRect = { x: number; y: number; width: number; height: number };
 export function containsScenePoint(r: SceneRect, p: { x: number; y: number }) {
   return p.x >= r.x && p.y >= r.y && p.x <= r.x + r.width && p.y <= r.y + r.height;

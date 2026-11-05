@@ -203,7 +203,8 @@ export function createMockNpcPlan(state: GameState, id: string): unknown {
     }
     actions.push({ kind: 'give', targetId: recipient.id, itemId: npc.inventory[0] });
   }
-  if (!continuing) actions.push({ kind: 'move_to', target: brain.patrolTarget });
+  if (!continuing && brain.patrolTarget)
+    actions.push({ kind: 'move_to', target: brain.patrolTarget });
   if (validateNpcPlanActions(state, id, actions, npcTargetRevisions(state, actions)))
     actions.splice(0, actions.length, { kind: 'wait' });
   const targetRevisions = npcTargetRevisions(state, actions);
