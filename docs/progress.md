@@ -1328,3 +1328,12 @@ execution is blocked locally: Chromium cannot create its required socket in the
 shell sandbox, and the approved escalation fails during sandbox mount setup.
 No browser assertions ran; exact-head CI remains the browser acceptance gate.
 No production data, real providers or wallet funds changed in this slice.
+
+First exact-head CI passed production/static checks, isolated PostgreSQL and two
+browser shards; all five paid-start recovery journeys passed. The remaining
+story browser shard exposed a missing explicit accessible name on the save
+selector and two pre-existing ready-preparation fixtures that incorrectly marked
+an already-created campaign. Added the translated selector name and retained
+picker-lock coverage with genuinely unstarted preparations. The 42 focused
+launch/hero checks, web typecheck and changed-file lint/format checks pass after
+these corrections. A fresh exact-head browser run remains required.

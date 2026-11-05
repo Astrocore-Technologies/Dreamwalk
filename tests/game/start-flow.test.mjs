@@ -888,6 +888,10 @@ test('story saves continue directly across revisions and new playthrough keeps b
   h.render();
   await h.flush();
   assert.equal(h.nodes().find((n) => n.type === 'link').props.href, '/game/recent');
+  assert.equal(
+    h.nodes().find((n) => n.type === 'select').props['aria-label'],
+    'Сохранённое прохождение',
+  );
   h.nodes()
     .find((n) => n.type === 'select')
     .props.onChange({ target: { value: 'earlier' } });

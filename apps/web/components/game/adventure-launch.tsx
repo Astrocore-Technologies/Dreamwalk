@@ -338,7 +338,11 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
         <div className="stack" data-testid="story-saves">
           {saveIds.length > 1 && (
             <Field label={t('Сохранённое прохождение')}>
-              <Select value={continueId} onChange={(event) => setSelectedSave(event.target.value)}>
+              <Select
+                aria-label={t('Сохранённое прохождение')}
+                value={continueId}
+                onChange={(event) => setSelectedSave(event.target.value)}
+              >
                 {saveIds.map((id) => {
                   const save = savedCampaigns.find((entry) => entry.id === id);
                   const updated = save?.updatedAt ? new Date(save.updatedAt) : null;

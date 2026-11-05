@@ -510,7 +510,8 @@ test('hero picker loading and restored pinned preparations keep all choices disa
   );
   await page.route('**/api/v1/game/start-preparations/by-operation/owned-operation', (route) =>
     route.fulfill({
-      json: { id: 'restored', status: 'ready', campaignId: 'ready-campaign', jobs: [] },
+      // Ready but not started: completed campaigns deliberately release their local pin.
+      json: { id: 'restored', status: 'ready', campaignId: null, jobs: [] },
     }),
   );
   await page.reload();
@@ -535,7 +536,7 @@ test('closing a picker locked by selection restoration focuses its enabled local
   );
   await page.route('**/api/v1/game/start-preparations/by-operation/hero-owned-operation', (route) =>
     route.fulfill({
-      json: { id: 'hero-restored', status: 'ready', campaignId: 'hero-ready-campaign', jobs: [] },
+      json: { id: 'hero-restored', status: 'ready', campaignId: null, jobs: [] },
     }),
   );
   await page.goto(storyPath);
