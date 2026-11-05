@@ -175,9 +175,10 @@ test('private canon cannot add shared scenes or NPCs or choose its own audience'
   assert.deepEqual(state, before);
 });
 
-test('projection filters before truncation, keeps legacy public turns, and fails closed on missing scope', () => {
+test('projection filters before truncation, preserves scoped public presentation, and fails closed on missing scope', () => {
   const state = world(),
     publicTurn = turn('Public canon'),
+    scopedPublic = turn('SCOPED_ALICE_CANON', { channel: 'public', audienceIds: ['alice'] }),
     privateTurns = Array.from({ length: 20 }, () =>
       turn('PRIVATE_ALICE_KEEPER', { channel: 'whisper', audienceIds: ['alice', 'keeper'] }),
     );
@@ -188,7 +189,7 @@ test('projection filters before truncation, keeps legacy public turns, and fails
       ...privateTurns,
       turn('PRIVATE_NO_RECIPIENTS', { channel: 'whisper' }),
       turn('PRIVATE_EMPTY_RECIPIENTS', { audienceIds: [] }),
-      turn('PRIVATE_CONTRADICTORY_SCOPE', { channel: 'public', audienceIds: ['alice'] }),
+      scopedPublic,
     ],
   };
   assert.deepEqual(g.projectState(state, 'bob').narrative.turns, [
@@ -196,8 +197,27 @@ test('projection filters before truncation, keeps legacy public turns, and fails
   ]);
   const own = g.projectState(state, 'alice');
   assert.equal(own.narrative.turns.length, 16);
-  assert.equal(own.narrative.turns.at(-1).narration, 'PRIVATE_CONTRADICTORY_SCOPE');
-  assert.ok(own.narrative.turns.every((entry) => entry.channel === 'whisper'));
+  assert.deepEqual(own.narrative.turns.at(-1), {
+    id: scopedPublic.id,
+    tick: scopedPublic.tick,
+    narration: scopedPublic.narration,
+  });
+  assert.ok(own.narrative.turns.slice(0, -1).every((entry) => entry.channel === 'whisper'));
+  assert.equal(g.narrativeTurnIsPublic(scopedPublic), false);
+  for (const readerId of ['bob', 'keeper'])
+    assert.equal(g.narrativeTurnVisibleTo(scopedPublic, readerId), false);
+  for (const actorId of ['alice', 'bob']) {
+    const shared = g.buildNarrativeContext(state, actorId, 'Continue');
+    assert.equal(shared.evidenceIds.includes(scopedPublic.id), false);
+    assert.equal(JSON.stringify(shared).includes('SCOPED_ALICE_CANON'), false);
+    assert.equal(JSON.stringify(shared).includes('PRIVATE_'), false);
+  }
+  const privateContext = g.buildNarrativeContext(state, 'alice', 'Continue', 'en', [
+    'alice',
+    'keeper',
+  ]);
+  assert.equal(privateContext.evidenceIds.includes(scopedPublic.id), false);
+  assert.equal(JSON.stringify(privateContext).includes('SCOPED_ALICE_CANON'), false);
   assert.equal(JSON.stringify(own.narrative).includes('PRIVATE_NO_RECIPIENTS'), false);
   assert.equal(JSON.stringify(own.narrative).includes('PRIVATE_EMPTY_RECIPIENTS'), false);
   assert.ok(g.gameProjectionSchema.safeParse(own).success);

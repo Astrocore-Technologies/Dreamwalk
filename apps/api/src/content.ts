@@ -1,3 +1,4 @@
+import { remapSceneParticipants } from './story-authoring/scene-participants';
 import { remapCopiedCharacterProfile, remapCopiedStoryLore } from './game/character-authoring';
 import { ownedCharacterPackage } from './visual-authoring/character-package';
 import {
@@ -1093,6 +1094,7 @@ export class ContentController {
       if (data.content.lorebook)
         data.content.lorebook = remapCopiedStoryLore(data.content.lorebook, copies);
       data.content.npcIds = data.content.npcIds.map((npcId) => copies.get(npcId)!);
+      data.content.scenes = remapSceneParticipants(data.content.scenes, copies);
       await c.query('UPDATE adventures SET data=$2 WHERE id=$1', [newId, JSON.stringify(data)]);
     });
     return adventureView(await this.content.own(newId, u.id));

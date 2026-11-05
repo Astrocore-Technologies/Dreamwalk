@@ -1,3 +1,4 @@
+import { hasPosition } from '@dreamwalk/contracts';
 import { isActorConscious } from '@dreamwalk/contracts';
 import {
   adjacentFootprintAnchors,
@@ -15,6 +16,7 @@ export function companionAction(state: GameState, npcId: string): GameAction | u
   const leader = state.entities[agreement.actorId];
   if (!leader || leader.kind !== 'player' || npc.encounterId || leader.encounterId)
     return { kind: 'wait' };
+  if (!hasPosition(npc) || !hasPosition(leader)) return { kind: 'wait' };
   const crossing = agreement.crossings[0];
   const exit =
     leader.mapId !== npc.mapId && crossing?.mapId === npc.mapId

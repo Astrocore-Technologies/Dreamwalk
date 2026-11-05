@@ -326,21 +326,34 @@ export const locationSchema = z.object({
   description: text(6000).default(''),
 });
 export const sceneSchema = z.object({
+  /** Author-confirmed encounter membership, never inferred from matching prose or map identity. */
+  participantNpcIds: z
+    .array(z.uuid())
+    .max(30)
+    .refine((ids) => new Set(ids).size === ids.length, 'Duplicate scene participant')
+    .optional(),
   id: text(80).min(1),
   name: text(120).min(1),
   locationId: text(80).min(1),
   description: text(6000).default(''),
 });
-export const contentSchema = z.object({
-  lorebook: storyLorebookSchema.optional(),
-  world: text(12000).default(''),
-  rules: text(8000).default(''),
-  locations: z.array(locationSchema).max(30).default([]),
-  npcIds: z.array(idSchema).max(30).default([]),
-  scenes: z.array(sceneSchema).max(50).default([]),
-  startSceneId: text(80).default(''),
-  boundaries: z.array(text(120)).max(20).default([]),
-});
+export const contentSchema = z
+  .object({
+    lorebook: storyLorebookSchema.optional(),
+    world: text(12000).default(''),
+    rules: text(8000).default(''),
+    locations: z.array(locationSchema).max(30).default([]),
+    npcIds: z.array(idSchema).max(30).default([]),
+    scenes: z.array(sceneSchema).max(50).default([]),
+    startSceneId: text(80).default(''),
+    boundaries: z.array(text(120)).max(20).default([]),
+  })
+  .superRefine((content, ctx) => {
+    for (const scene of content.scenes)
+      for (const id of scene.participantNpcIds ?? [])
+        if (!content.npcIds.includes(id))
+          ctx.addIssue({ code: 'custom', message: 'Unknown scene participant', path: ['scenes'] });
+  });
 export const adventureSchema = z
   .object({
     title: text(120).min(2),

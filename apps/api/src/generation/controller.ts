@@ -3,13 +3,28 @@ import type { Request } from 'express';
 import { Auth } from '../auth';
 import { ImageGenerationService } from '../image-generation/service';
 import { GenerationAuthority } from './service';
+import { KnownAuthoringSettlement } from '../live-test/known-authoring-settlement';
 @Controller(['api/v1/generation', 'api/v1/live-test'])
 export class GenerationController {
   constructor(
     @Inject(Auth) private auth: Auth,
     @Inject(GenerationAuthority) private live: GenerationAuthority,
     @Inject(ImageGenerationService) private images: ImageGenerationService,
+    @Inject(KnownAuthoringSettlement) private authoringSettlement: KnownAuthoringSettlement,
   ) {}
+  @Get('authoring-text/jobs/:id/settlement') async reviewAuthoringSettlement(
+    @Req() req: Request,
+    @Param('id') id: string,
+  ) {
+    return this.authoringSettlement.handle((await this.auth.require(req)).id, id);
+  }
+  @Post('authoring-text/jobs/:id/settlement') async settleAuthoring(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.authoringSettlement.handle((await this.auth.require(req)).id, id, body);
+  }
   @Post('bounded-authoring-tests') async createBounded(@Req() req: Request, @Body() body: unknown) {
     return this.live.createBoundedAuthoringTest((await this.auth.require(req)).id, body);
   }

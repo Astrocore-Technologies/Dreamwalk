@@ -41,9 +41,10 @@ export function mapCoordinateTicks(
 /** Shares pointer movement's top-left, x-right/y-down, 0-based cell convention. */
 export function mapCoordinateAt(
   point: GamePoint,
-  map: { width: number; height: number },
+  map: { width: number; height: number; spatialMode?: 'location_only' },
   tile: number,
 ): GamePoint | null {
+  if (map.spatialMode === 'location_only') return null;
   if (!Number.isFinite(tile) || tile <= 0) return null;
   const x = Math.floor(point.x / tile),
     y = Math.floor(point.y / tile);

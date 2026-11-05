@@ -11,7 +11,7 @@ import {
 import { readDirectorCatalog, directorProfile, transactionQueries } from '../ai/director-style';
 import { WorldGenerationBatch } from './world-generation-batch';
 import { NarrativeCorrections } from './narrative-corrections';
-import { npcPublicReplySchema, footprintDistance } from '@dreamwalk/contracts';
+import { npcPublicReplySchema, footprintDistance, hasPosition } from '@dreamwalk/contracts';
 import { StoryTurnRuntime } from './story-turn-runtime';
 import { resolveReplyLocale } from './reply-locale';
 import { mediaPreparationSchema, prepareSceneMedia } from './media-preparation';
@@ -101,6 +101,7 @@ import {
   npcSpeechListenerIds,
   npcRoleplayObserverIds,
   npcSpeechProspectiveListenerIds,
+  sharesScene,
   npcContextFingerprint,
   recordNpcEvents,
   recordNpcCognition,
@@ -1360,12 +1361,16 @@ export class GameService implements OnModuleDestroy {
       !isActorConscious(npc) ||
       !recipient ||
       !isActorConscious(recipient) ||
-      (!deferred && (npc.mapId !== recipient.mapId || footprintDistance(npc, recipient) > 1)) ||
+      (!deferred &&
+        !sharesScene(state, npc, recipient) &&
+        (npc.mapId !== recipient.mapId || footprintDistance(npc, recipient) > 1)) ||
       npc.encounterId ||
       recipient.encounterId
     )
       fail(409, 'OUT_OF_RANGE', 'OUT_OF_RANGE');
-    const audience = npcSpeechProspectiveListenerIds(state, npcId, channel);
+    const audience = npcSpeechProspectiveListenerIds(state, npcId, channel).filter(
+      (id) => hasPosition(npc) || channel !== 'whisper' || id === npcId || id === recipientId,
+    );
     const namedTopic = topicId ? resolveNpcFactTopic(state, npcId, topicId) : [];
     if (
       topicId &&

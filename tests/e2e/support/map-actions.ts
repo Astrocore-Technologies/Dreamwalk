@@ -1,5 +1,5 @@
 import { expect, type Page } from '@playwright/test';
-import type { GameProjection } from '@dreamwalk/contracts';
+import { hasPosition, type GameProjection } from '@dreamwalk/contracts';
 import { entityLayout } from '../../../apps/web/components/game/scene-geometry';
 export async function readProjection(page: Page, campaignId: string): Promise<GameProjection> {
   const response = await page.request.get(`/api/v1/game/campaigns/${campaignId}/snapshot`);
@@ -9,6 +9,7 @@ export async function readProjection(page: Page, campaignId: string): Promise<Ga
 export async function position(page: Page, campaignId: string) {
   const projection = await readProjection(page, campaignId);
   const actor = projection.entities.find((entity) => entity.id === projection.actorId)!;
+  if (!hasPosition(actor)) throw new Error('Coordinate inspection requires a positioned actor');
   return [actor.x, actor.y];
 }
 export async function mapMenu(page: Page, campaignId: string, id: string, exit = false) {
@@ -17,6 +18,8 @@ export async function mapMenu(page: Page, campaignId: string, id: string, exit =
     ? projection.map.exits.find((e) => e.id === id)
     : projection.entities.find((e) => e.id === id);
   expect(target, `Visible map target ${id} must exist`).toBeTruthy();
+  if (!hasPosition(target))
+    throw new Error(`Visible map target ${id} must have a committed position`);
   const canvas = page.locator('[data-camera-scale]');
   // One rendered DOM roundtrip: four live canvases make separate trace/actionability
   // snapshots expensive. This changes test observation cost, never simulation.
@@ -41,12 +44,13 @@ export async function mapMenu(page: Page, campaignId: string, id: string, exit =
     };
   });
   expect(camera.scale).toBeGreaterThan(0);
-  const layout = exit
-    ? { x: target!.x * 48, y: target!.y * 48, width: 48, height: 48 }
-    : entityLayout(
-        projection.entities.find((entity) => entity.id === id)!,
-        projection.entities,
-      );
+  const layout = (() => {
+    if (exit) return { x: target!.x * 48, y: target!.y * 48, width: 48, height: 48 };
+    const entity = projection.entities.find((entry) => entry.id === id);
+    if (!entity || !hasPosition(entity))
+      throw new Error(`Visible map target ${id} must have a committed position`);
+    return entityLayout(entity, projection.entities.filter(hasPosition));
+  })();
   await page.mouse.click(
     camera.left + camera.x + (layout.x + layout.width / 2) * camera.scale,
     camera.top + camera.y + (layout.y + layout.height / 2) * camera.scale,
@@ -106,6 +110,8 @@ export async function approachTarget(page: Page, campaignId: string, id: string,
         ? p.map.exits.find((e) => e.id === id)!
         : p.entities.find((e) => e.id === id)!;
       expect(target?.id, 'Approach retains the intended visible target').toBe(id);
+      if (!hasPosition(actor) || !hasPosition(target))
+        throw new Error('Numeric approach requires committed actor and target positions');
       return Math.abs(actor.x - target.x) + Math.abs(actor.y - target.y);
     })
     .toBeLessThanOrEqual(1);

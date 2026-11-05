@@ -1,6 +1,7 @@
 /** Offline synthetic counting/transport only; no key, .env, network or database. */
 import test from 'node:test';
 import assert from 'node:assert/strict';
+import { createObservatoryState } from '@dreamwalk/game-core';
 import {
   measureTextContext,
   assertTextContext,
@@ -210,7 +211,7 @@ test('director retrieval grows beyond hot turns, filters shared audience and exc
     db,
     ai,
     'campaign',
-    {},
+    createObservatoryState(['player', 'friend']),
     'player',
     { contextHash: 'canon', sharedAudience: [{ id: 'friend' }], rules: 'CANON' },
     'narrative',

@@ -1,4 +1,5 @@
 import {
+  hasPosition,
   isActorConscious,
   footprintDistance,
   adjacentFootprintAnchors,
@@ -17,6 +18,7 @@ export function npcActionContext(state: GameState, npcId: string, audienceIds: s
   const npc = state.entities[npcId];
   if (
     !isActorConscious(npc) ||
+    !hasPosition(npc) ||
     audienceIds.some(
       (id) => !state.entities[id] || !observedVisible(state, state.entities[id], npc),
     )
@@ -81,6 +83,8 @@ export function prepareNpcActionIntent(
   if (!parsed.success) return undefined;
   const npc = state.entities[npcId],
     context = npcActionContext(state, npcId, audienceIds);
+  if (!hasPosition(npc))
+    return parsed.data.actions.every((action) => action.kind === 'wait') ? [] : undefined;
   const actions: GameAction[] = [];
   let endpoint = { ...npc };
   for (const action of parsed.data.actions) {
@@ -95,6 +99,7 @@ export function prepareNpcActionIntent(
     } else if (action.kind === 'approach') {
       if (!context.targets.some((e) => e.id === action.targetId)) return undefined;
       const target = state.entities[action.targetId];
+      if (!hasPosition(target)) return undefined;
       const paths = adjacentFootprintAnchors(npc, target)
         .map((p) => findPath(state, npc.mapId, npc, p, npcId, true))
         .filter((p) => p !== null)
@@ -140,7 +145,8 @@ function withNpcActionOutcome(
 
 /** One ordinary action per world phase. Long paths continue, with fresh collision checks. */
 export function stepWorldNpcPlan(state: GameState, npcId: string): GameResult {
-  if (!isActorConscious(state.entities[npcId])) return { state, events: [] };
+  if (!isActorConscious(state.entities[npcId]) || !hasPosition(state.entities[npcId]))
+    return { state, events: [] };
   if (state.turnController?.phase !== 'world') return { state, events: [], error: 'WRONG_MODE' };
   const original = state.npcBrains?.[npcId],
     entity = state.entities[npcId];
@@ -172,7 +178,8 @@ export function stepWorldNpcPlan(state: GameState, npcId: string): GameResult {
   for (let skipped = 0; skipped < 3; skipped++) {
     const brain = next.npcBrains?.[npcId],
       npc = next.entities[npcId];
-    if (!brain || !npc || brain.cursor >= brain.plan.length) return { state: next, events: [] };
+    if (!brain || !npc || !hasPosition(npc) || brain.cursor >= brain.plan.length)
+      return { state: next, events: [] };
     const planned = brain.plan[brain.cursor];
     let action = planned;
     if (planned.kind === 'move_to') {

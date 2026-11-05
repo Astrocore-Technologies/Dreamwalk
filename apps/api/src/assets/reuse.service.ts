@@ -741,7 +741,7 @@ export class AssetReuseService {
     if (
       !version ||
       version.adventure_id !== prepared.adventureId ||
-      hash(version.package.compiled?.artBindings ?? version.package.sourceArtBindings ?? []) !==
+      hash(version.package.sourceArtBindings ?? version.package.compiled?.artBindings ?? []) !==
         prepared.checksum
     )
       fail(409, 'MANIFEST_CONFLICT', 'MANIFEST_CONFLICT');
@@ -835,7 +835,7 @@ export class AssetReuseService {
     ).rows[0];
     if (!version) fail(409, 'ART_UNAVAILABLE', 'ART_UNAVAILABLE');
     const bindings = frozenArtBindingsSchema.parse(
-      version.package.compiled?.artBindings ?? version.package.sourceArtBindings ?? [],
+      version.package.sourceArtBindings ?? version.package.compiled?.artBindings ?? [],
     );
     for (const binding of bindings) {
       const owner = (

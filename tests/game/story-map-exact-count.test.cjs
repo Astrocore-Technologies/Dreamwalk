@@ -215,7 +215,12 @@ test('exact image count, accepted quote and restarted dispatch use one identical
   );
   const unsafe = structuredClone(proposal);
   unsafe.rooms[0].spawns[0] = { x: 2, y: 8 };
-  assert.throws(() => compileStoryPlan(source, unsafe), /MAP_IMAGE_UNSAFE_SPAWN/);
+  const repaired = compileStoryPlan(source, unsafe).playable.maps.tower;
+  assert.deepEqual(repaired.spawns.slice(1), unsafe.rooms[0].spawns.slice(1));
+  assert.ok(repaired.spawns.every((p) => repaired.spatialGrounding.rows[p.y][p.x] === '.'));
+  const noSafeAnchor = structuredClone(unsafe);
+  noSafeAnchor.rooms[0].spawns = [2, 3, 4, 5].map((x) => ({ x, y: 8 }));
+  assert.throws(() => compileStoryPlan(source, noSafeAnchor), /MAP_IMAGE_UNSAFE_SPAWN/);
   source.title = 'Changed source';
   assert.throws(
     () => restarted.prepareTextRequest(source, prepared.snapshot),

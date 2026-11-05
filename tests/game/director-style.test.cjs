@@ -1,5 +1,6 @@
 const test = require('node:test');
 const assert = require('node:assert/strict');
+const { createObservatoryState } = require('../../packages/game-core/dist');
 const {
   directorStyleUpdateSchema,
   directorStyleSettingsSchema,
@@ -105,7 +106,7 @@ test('admin snapshot is loaded before packing, freezes across retry, and separat
     db,
     { contextWindow: () => undefined },
     'c',
-    {},
+    createObservatoryState(['p']),
     'p',
     base,
     'story_turn',
@@ -133,7 +134,7 @@ test('admin snapshot is loaded before packing, freezes across retry, and separat
       packContext: (value) => packNpcContextWindow(value, () => true),
     },
     'c',
-    {},
+    createObservatoryState(['p']),
     'p',
     base,
     'story_turn',
@@ -180,7 +181,7 @@ test('a quote uses its existing transaction connection to capture settings', asy
     db,
     { contextWindow: () => undefined },
     'campaign',
-    {},
+    createObservatoryState(['player']),
     'player',
     { mode: 'director', contextHash: 'canon' },
     'story_turn',

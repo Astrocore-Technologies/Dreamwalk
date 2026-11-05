@@ -1,5 +1,5 @@
 'use client';
-import { BATTLEMAP_CELLS, BATTLEMAP_TILE } from '@dreamwalk/contracts';
+import { BATTLEMAP_CELLS, BATTLEMAP_TILE, hasPosition } from '@dreamwalk/contracts';
 import {
   drawNpcSilhouette,
   npcSilhouetteKey,
@@ -9,6 +9,8 @@ import {
 import { intersectsViewport, rendererActivity } from './renderer-activity';
 import { sceneClick } from './scene-input';
 import { entityLayout, containsScenePoint } from './scene-geometry';
+import { LocationOnlyScene } from './location-only-scene';
+import type { PositionedGameEntity } from '@dreamwalk/contracts';
 import { MapActions, InventoryPanel } from './map-actions';
 import { useTurnText } from './turn-messages';
 import { useItemText } from './item-messages';
@@ -28,21 +30,7 @@ import { resolveGameAtlas } from '@/lib/game-assets';
 import { useT } from '@/lib/i18n';
 import styles from './game.module.css';
 
-/** Rendering only: never advances a logical position or applies a game action. */
-export function GameCanvas({
-  projection,
-  art = [],
-  illustration = null,
-  onMove,
-  onSelectNpc,
-  onInspectNpc,
-  onAction,
-  onApproach,
-  onStop,
-  disabled,
-  reducedMotion,
-  planning = false,
-}: {
+type GameCanvasProps = {
   projection: GameProjection;
   art?: VisibleArtBinding[];
   illustration?: SceneIllustration | null;
@@ -55,6 +43,39 @@ export function GameCanvas({
   disabled: boolean;
   reducedMotion: boolean;
   planning?: boolean;
+};
+
+/** Location-only maps never mount the coordinate renderer or its input handlers. */
+export function GameCanvas(props: GameCanvasProps) {
+  if (props.projection.map.spatialMode === 'location_only')
+    return <LocationOnlyScene key={props.projection.map.id} {...props} />;
+  return (
+    <PositionedGameCanvas
+      {...props}
+      projection={{
+        ...props.projection,
+        entities: props.projection.entities.filter(hasPosition),
+      }}
+    />
+  );
+}
+
+/** Rendering only: never advances a logical position or applies a game action. */
+function PositionedGameCanvas({
+  projection,
+  art = [],
+  illustration = null,
+  onMove,
+  onSelectNpc,
+  onInspectNpc,
+  onAction,
+  onApproach,
+  onStop,
+  disabled,
+  reducedMotion,
+  planning = false,
+}: Omit<GameCanvasProps, 'projection'> & {
+  projection: Omit<GameProjection, 'entities'> & { entities: PositionedGameEntity[] };
 }) {
   const { t } = useT();
   const itemText = useItemText();
