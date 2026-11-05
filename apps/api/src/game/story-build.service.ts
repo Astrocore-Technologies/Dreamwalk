@@ -229,10 +229,10 @@ export class StoryBuildService {
   }
   async latest(owner: string, adventureId: string) {
     z.uuid().parse(adventureId);
-    const story = await this.db.query('SELECT id FROM adventures WHERE id=$1 AND owner_id=$2', [
-      adventureId,
-      owner,
-    ]);
+    const story = await this.db.query(
+      'SELECT id FROM adventures WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL',
+      [adventureId, owner],
+    );
     if (!story.length) fail(404, 'NOT_FOUND', 'NOT_FOUND');
     const row = (
       await this.db.query(

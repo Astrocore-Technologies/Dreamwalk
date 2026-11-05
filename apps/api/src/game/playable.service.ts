@@ -64,7 +64,10 @@ export class PlayableService {
     const owner = await this.auth.require(req);
     if (
       !(
-        await this.db.query('SELECT id FROM adventures WHERE id=$1 AND owner_id=$2', [id, owner.id])
+        await this.db.query(
+          'SELECT id FROM adventures WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL',
+          [id, owner.id],
+        )
       ).length
     )
       fail(404, 'NOT_FOUND', 'NOT_FOUND');
@@ -206,10 +209,10 @@ export class PlayableService {
     if (!compiled.playable) fail(400, 'INVALID_MAP', compiled.errors.join(';'));
     const saved = await this.db.tx(async (c) => {
       const story = (
-        await c.query('SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 FOR UPDATE', [
-          id,
-          user.id,
-        ])
+        await c.query(
+          'SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL FOR UPDATE',
+          [id, user.id],
+        )
       ).rows[0];
       if (!story) fail(404, 'NOT_FOUND', 'NOT_FOUND');
       await this.validateNpcReferences(c, user.id, input.draft, id);

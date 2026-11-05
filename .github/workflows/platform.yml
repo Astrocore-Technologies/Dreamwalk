@@ -82,7 +82,7 @@ jobs:
       - name: Game runtime and isolated PostgreSQL integration
         run: npm run test:game:integration
       - name: Private release and opt-in Sparks accounting (disposable databases)
-        run: node --test tests/game/paid-start.integration.test.cjs tests/game/private-release.integration.test.cjs tests/game/story-local-npcs.test.cjs tests/game/sparks-accounting.test.cjs tests/game/sparks-dispatch.integration.test.cjs tests/game/npc-sparks.integration.test.cjs
+        run: node --test tests/game/paid-start.integration.test.cjs tests/game/private-release.integration.test.cjs tests/game/admin-story-deletion.integration.test.cjs tests/game/story-local-npcs.test.cjs tests/game/sparks-accounting.test.cjs tests/game/sparks-dispatch.integration.test.cjs tests/game/npc-sparks.integration.test.cjs
       - name: Durable translation cache and erasure (disposable database)
         run: node --test tests/game/automatic-translation.integration.test.cjs
       - name: Private authoring HTTP persistence journey (synthetic only)

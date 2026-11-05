@@ -52,7 +52,7 @@ function checkEditRevision(row: Record<string, unknown>, expected: number | unde
     fail(409, 'STALE_STATE', 'Draft changed in another editor. Reload before saving.');
 }
 export const publicAdventureSql =
-  "a.visibility='public' AND a.published_snapshot IS NOT NULL AND a.status<>'archived' AND EXISTS(SELECT 1 FROM users public_owner WHERE public_owner.id=a.owner_id AND public_owner.deleted_at IS NULL)";
+  "a.deleted_at IS NULL AND a.visibility='public' AND a.published_snapshot IS NOT NULL AND a.status<>'archived' AND EXISTS(SELECT 1 FROM users public_owner WHERE public_owner.id=a.owner_id AND public_owner.deleted_at IS NULL)";
 // Separate correlated aggregates avoid multiplying rounds by likes or party members.
 // Only approved source versions contribute; private/draft playtests remain private.
 export const adventureSelect = `SELECT a.*,(SELECT r.snapshot FROM adventure_private_releases r WHERE r.id=a.private_release_id) AS private_snapshot,u.name AS author_name,u.handle AS author_handle,
@@ -66,7 +66,7 @@ export const adventureSelect = `SELECT a.*,(SELECT r.snapshot FROM adventure_pri
     WHERE v.adventure_id=a.id) ELSE 0 END AS total_rounds
   FROM adventures a JOIN users u ON u.id=a.owner_id`;
 export const readableAdventureSql = (userParameter: string) =>
-  `(a.owner_id=${userParameter} OR (${publicAdventureSql}) OR (a.visibility='private' AND a.private_release_id IS NOT NULL AND a.status<>'archived' AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id AND i.recipient_id=${userParameter} AND i.status='accepted')))`;
+  `(a.deleted_at IS NULL AND (a.owner_id=${userParameter} OR (${publicAdventureSql}) OR (a.visibility='private' AND a.private_release_id IS NOT NULL AND a.status<>'archived' AND EXISTS(SELECT 1 FROM adventure_invitations i WHERE i.adventure_id=a.id AND i.recipient_id=${userParameter} AND i.status='accepted'))))`;
 export function adventureView(
   row: Record<string, unknown>,
   usePublished = false,
@@ -159,16 +159,17 @@ export class Content {
     readonly auth: Auth,
   ) {}
   async own(id: string, userId: string) {
-    const rows = await this.db.query(adventureSelect + ' WHERE a.id=$1 AND a.owner_id=$2', [
-      id,
-      userId,
-    ]);
+    const rows = await this.db.query(
+      adventureSelect + ' WHERE a.id=$1 AND a.owner_id=$2 AND a.deleted_at IS NULL',
+      [id, userId],
+    );
     return rows[0] ?? fail(404, 'NOT_FOUND', 'Приключение не найдено.');
   }
   async access(
     row: Record<string, unknown>,
     user: User | null,
   ): Promise<'owner' | 'invited' | 'public' | 'reviewer' | null> {
+    if (row.deleted_at) return null;
     if (user?.id === row.owner_id) return 'owner';
     if (row.status === 'archived') return null;
     if (row.visibility === 'public') {
@@ -232,10 +233,10 @@ export class Content {
       fail(403, 'FORBIDDEN', 'Для публикации отправьте историю на модерацию.');
     const saved = await this.db.tx(async (c) => {
       const old = (
-        await c.query('SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 FOR UPDATE', [
-          id,
-          userId,
-        ])
+        await c.query(
+          'SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL FOR UPDATE',
+          [id, userId],
+        )
       ).rows[0];
       if (!old) fail(404, 'NOT_FOUND', 'Приключение не найдено.');
       checkEditRevision(old, input.expectedEditRevision);
@@ -486,9 +487,11 @@ export class ContentController {
         )
       ).map((r) => adventureView(r, true)),
       drafts: (
-        await this.db.query(adventureSelect + ' WHERE a.owner_id=$1 ORDER BY a.updated_at DESC', [
-          u.id,
-        ])
+        await this.db.query(
+          adventureSelect +
+            ' WHERE a.owner_id=$1 AND a.deleted_at IS NULL ORDER BY a.updated_at DESC',
+          [u.id],
+        )
       ).map((r) => adventureView(r)),
       heroes: (
         await this.db.query('SELECT * FROM heroes WHERE owner_id=$1 ORDER BY updated_at DESC', [
@@ -873,9 +876,11 @@ export class ContentController {
   ) {
     const u = await this.auth.require(req);
     return (
-      await this.db.query(adventureSelect + ' WHERE a.owner_id=$1 ORDER BY a.updated_at DESC', [
-        u.id,
-      ])
+      await this.db.query(
+        adventureSelect +
+          ' WHERE a.owner_id=$1 AND a.deleted_at IS NULL ORDER BY a.updated_at DESC',
+        [u.id],
+      )
     ).map((r) => adventureView(r));
   }
   @Get('studio/adventures/:id')
@@ -955,7 +960,10 @@ export class ContentController {
       .parse(body);
     await this.db.tx(async (c) => {
       const row = (
-        await c.query('SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 FOR UPDATE', [id, u.id])
+        await c.query(
+          'SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL FOR UPDATE',
+          [id, u.id],
+        )
       ).rows[0];
       if (!row) fail(404, 'NOT_FOUND', 'Приключение не найдено.');
       checkEditRevision(row, b.expectedEditRevision);
@@ -1024,7 +1032,10 @@ export class ContentController {
       newId = randomUUID();
     await this.db.tx(async (c) => {
       const row = (
-        await c.query('SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 FOR UPDATE', [id, u.id])
+        await c.query(
+          'SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL FOR UPDATE',
+          [id, u.id],
+        )
       ).rows[0];
       if (!row) fail(404, 'NOT_FOUND', 'NOT_FOUND');
       const data = adventureSchema.parse({
@@ -1114,7 +1125,10 @@ export class ContentController {
     await this.db.tx(async (c) => {
       await this.playable.lockAuthor(c, u.id);
       const row = (
-        await c.query('SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 FOR UPDATE', [id, u.id])
+        await c.query(
+          'SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL FOR UPDATE',
+          [id, u.id],
+        )
       ).rows[0];
       if (!row) fail(404, 'NOT_FOUND', 'NOT_FOUND');
       if (row.visibility !== 'public') fail(400, 'VALIDATION_FAILED', 'Public visibility required');

@@ -1,4 +1,6 @@
 'use client';
+import { AdminStoryDeleteButton, AdminStoryTrash } from './studio/admin-story-deletion';
+import { adminStoryDeletionCopy } from './studio/admin-story-deletion-copy';
 import { AdminDirector } from './studio/admin-director';
 import { PlayableReview } from './studio/playable-review';
 import { formatSparkSubunits, selectAdventureText, selectNpcText } from '@dreamwalk/contracts';
@@ -88,6 +90,8 @@ const actionLabels: Record<string, string> = {
   'adventure.approve': 'История опубликована',
   'adventure.reject': 'История возвращена автору',
   'adventure.quarantine': 'История помещена в карантин',
+  'adventure.delete': 'История перемещена в удалённые',
+  'adventure.restore': 'История восстановлена в черновики',
   'model.create': 'Поведенческий профиль создан',
   'model.update': 'Поведенческий профиль обновлён',
   'runtime.create': 'Runtime-конфигурация создана',
@@ -423,10 +427,10 @@ function AdminUsers() {
 function AdminContent() {
   const date = useDate();
   const { t, locale, taxonomy } = useT();
-  const [tab, setTab] = useState<'adventures' | 'npcs'>('adventures'),
+  const [tab, setTab] = useState<'adventures' | 'npcs' | 'deleted'>('adventures'),
     [filter, setFilter] = useState('pending_review'),
     [query, setQuery] = useState('');
-  const adventures = useResource<Adventure[]>(
+  const adventures = useResource<(Adventure & { deletionRevision: string })[]>(
       `/admin/adventures${filter ? `?status=${filter}` : ''}`,
     ),
     npcs = useResource<Npc[]>(tab === 'npcs' ? '/admin/npcs' : null),
@@ -438,6 +442,18 @@ function AdminContent() {
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     { toast } = useClient();
+  const contentHeading = useRef<HTMLHeadingElement>(null);
+  const focusAfterReload = useRef(false);
+  useEffect(() => {
+    if (!adventures.loading && focusAfterReload.current) {
+      focusAfterReload.current = false;
+      contentHeading.current?.focus();
+    }
+  }, [adventures.loading, adventures.data]);
+  const afterRemoval = () => {
+    focusAfterReload.current = true;
+    adventures.reload();
+  };
   const launcher = useAdminDialogFocus(!!target);
   const pending = useRef(false);
   const close = () => {
@@ -489,7 +505,9 @@ function AdminContent() {
     <section className={detailStyles.surface}>
       <div className={detailStyles.heading}>
         <Shield size={22} />
-        <h2>{t('Модерация контента')}</h2>
+        <h2 ref={contentHeading} tabIndex={-1}>
+          {t('Модерация контента')}
+        </h2>
       </div>
       <div className={detailStyles.contentTabs}>
         <Button
@@ -500,6 +518,12 @@ function AdminContent() {
         </Button>
         <Button variant={tab === 'npcs' ? 'primary' : 'secondary'} onClick={() => setTab('npcs')}>
           NPC
+        </Button>
+        <Button
+          variant={tab === 'deleted' ? 'primary' : 'secondary'}
+          onClick={() => setTab('deleted')}
+        >
+          {adminStoryDeletionCopy[locale].trash}
         </Button>
       </div>
       <div className={detailStyles.filters}>
@@ -526,7 +550,9 @@ function AdminContent() {
           </Select>
         )}
       </div>
-      {tab === 'adventures' ? (
+      {tab === 'deleted' ? (
+        <AdminStoryTrash query={query} onChange={adventures.reload} />
+      ) : tab === 'adventures' ? (
         <>
           <ErrorBox message={adventures.error} retry={adventures.reload} />
           {adventures.loading ? (
@@ -594,6 +620,14 @@ function AdminContent() {
                           {t('Рассмотреть')}
                           <ArrowRight size={18} aria-hidden="true" />
                         </Button>
+                        <AdminStoryDeleteButton
+                          story={{
+                            id: a.id,
+                            title: selectAdventureText(a, locale).title,
+                            deletionRevision: a.deletionRevision,
+                          }}
+                          onChange={afterRemoval}
+                        />
                       </td>
                     </tr>
                   ))}
