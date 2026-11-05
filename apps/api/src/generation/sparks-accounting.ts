@@ -1,4 +1,5 @@
 import { readAutonomousSpeechBoundEntry } from './autonomous-speech-envelope';
+import { pendingWorldBatchFunding } from './world-batch-funding';
 import {
   acceptedWorldKnownCostPolicyMatches,
   worldKnownCostPolicyRequired,
@@ -60,7 +61,7 @@ export async function verifyAcceptedWorldBatch(
   ownerId: string,
   proof: AcceptedWorldBatchProof,
   sparkQuoteId?: string,
-): Promise<void> {
+): Promise<{ optionalSpeech: boolean }> {
   z.uuid().parse(proof.batchId);
   const batch = (
     await c.query('SELECT * FROM game_world_generation_batches WHERE id=$1 FOR UPDATE', [
@@ -174,6 +175,7 @@ export async function verifyAcceptedWorldBatch(
     )
       reject('WORLD_BATCH_CONSENT_STALE');
   }
+  return { optionalSpeech: !!child };
 }
 
 export interface SparkQuoteInput {
@@ -376,10 +378,13 @@ export class SparksAccounting {
   ) {
     z.uuid().parse(ownerId);
     z.uuid().parse(quoteId);
+    let optionalSpeech = false;
     if (worldBatch) {
       if ('preparationId' in worldBatch)
         await verifyAcceptedTravelBatch(c, ownerId, worldBatch, quoteId);
-      else await verifyAcceptedWorldBatch(c, ownerId, worldBatch, quoteId);
+      else
+        optionalSpeech = (await verifyAcceptedWorldBatch(c, ownerId, worldBatch, quoteId))
+          .optionalSpeech;
     }
     const wallet = (
       await c.query('SELECT * FROM spark_wallets WHERE owner_id=$1 FOR UPDATE', [ownerId])
@@ -414,6 +419,17 @@ export class SparksAccounting {
       parseSparkInteger(String(wallet.balance_subunits)) -
       parseSparkInteger(String(wallet.held_subunits));
     if (sparkReserve > available) reject('INSUFFICIENT_SPARKS');
+    if (optionalSpeech) {
+      // The exact child is affordable only after every accepted mandatory sibling,
+      // including other campaigns of this payer. Acceptance uses this same wallet
+      // lock; never lock another campaign/batch while holding it.
+      const mandatory = await pendingWorldBatchFunding(c, ownerId);
+      if (
+        available + dreamAvailable - reserve < mandatory.total ||
+        available - sparkReserve < mandatory.sparksOnly
+      )
+        reject('AUTONOMOUS_SPEECH_INSUFFICIENT_FUNDS');
+    }
     const duplicateSource = (
       await c.query(
         'SELECT id FROM spark_holds WHERE owner_id=$1 AND source_kind=$2 AND source_id=$3',

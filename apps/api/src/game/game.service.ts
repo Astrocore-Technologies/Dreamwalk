@@ -6,6 +6,8 @@ import { LocationTravelGeneration } from './location-travel-generation';
 import { previewPendingStorySpeech } from './pending-story-speech';
 import { isActorConscious } from '@dreamwalk/contracts';
 import { forecastWorldRound } from './round-cost-forecast';
+import { autonomousSpeechForecastContexts } from './autonomous-speech-forecast';
+import { readRoundFundingAvailability } from './round-funding-availability';
 import { stampNpcThoughtAudience, projectNpcInnerThought } from './npc-thought-access';
 import {
   campaignDirectorUpdateSchema,
@@ -614,9 +616,21 @@ export class GameService implements OnModuleDestroy {
         status.unknown ||
         !live.state.turnController
           ? null
-          : await forecastWorldRound(this.db, this.ai, id, live.state, (state, request) =>
-              this.deferredSpeechContext(state, request),
+          : await forecastWorldRound(
+              this.db,
+              this.ai,
+              id,
+              live.state,
+              (state, request) => this.deferredSpeechContext(state, request),
+              (state, npcId) =>
+                autonomousSpeechForecastContexts(
+                  state,
+                  npcId,
+                  this.ai.contextBudgetBytes(),
+                  localeSchema.safeParse(a.user.settings?.language).data ?? 'en',
+                ),
             );
+      const availableFunding = await readRoundFundingAvailability(this.db, a.user.id);
       const ordinary =
         (
           await this.db.query(
@@ -625,7 +639,7 @@ export class GameService implements OnModuleDestroy {
             [id, a.user.id],
           )
         )[0] ?? null;
-      return { ...status, forecast, ordinary };
+      return { ...status, forecast, ordinary, availableFunding };
     });
   }
   worldGenerationQuote(req: Request, id: string, body: unknown) {
@@ -2721,7 +2735,11 @@ export class GameService implements OnModuleDestroy {
             await this.worldGeneration.failUnspent(
               id,
               r.id,
-              /^[A-Z0-9_]{1,80}$/.test(message) ? message : 'WORLD_ADMISSION_FAILED',
+              r.context.worldPlanCommunication && message === 'INSUFFICIENT_SPARKS'
+                ? 'AUTONOMOUS_SPEECH_INSUFFICIENT_FUNDS'
+                : /^[A-Z0-9_]{1,80}$/.test(message)
+                  ? message
+                  : 'WORLD_ADMISSION_FAILED',
             );
           else if (worldReply) await this.worldGeneration.invalidate(id, r.id);
           else

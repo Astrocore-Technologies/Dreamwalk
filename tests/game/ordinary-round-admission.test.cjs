@@ -108,7 +108,8 @@ function consentFixture() {
   const c = {
     query: async (sql, values) => {
       let rows = [];
-      if (sql.startsWith('SELECT * FROM game_world_generation_batches')) rows = [batch];
+      if (sql.startsWith('WITH accepted AS')) rows = [];
+      else if (sql.startsWith('SELECT * FROM game_world_generation_batches')) rows = [batch];
       else if (sql.includes('FROM game_ordinary_round_consents'))
         rows = authority ? [{ policy_version: null }] : [];
       else if (sql.includes('FROM npc_ai_quotes'))

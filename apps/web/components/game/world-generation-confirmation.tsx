@@ -14,6 +14,11 @@ import { useStoryText, type StoryMessageKey } from './story-messages';
 type WorldGenerationStatus = {
   ordinary?: { state: 'pending' | 'accepted' | 'blocked'; code: string | null } | null;
   available: boolean;
+  availableFunding?: {
+    sparksSubunits: string;
+    dreamsSubunits: string;
+    totalSubunits: string;
+  } | null;
   speechReceipts?: AutonomousSpeechReceipt[];
   speechReceiptNext?: string;
   speechSkips?: AutonomousSpeechSkip[];
@@ -29,6 +34,8 @@ type WorldGenerationStatus = {
     requestCount: number;
     optionalAutonomousSpeechRequests?: number;
     optionalAutonomousSpeechSparkSubunits?: string | null;
+    optionalAutonomousSpeechAllowanceSubunits?: string | null;
+    optionalAutonomousSpeechUnestimatedRequests?: number;
     baseEstimatedSparkSubunits?: string | null;
     basis: 'local_round_forecast';
     includesMapAnalysis: false;
@@ -58,6 +65,11 @@ export function WorldGenerationConfirmation({
   const h = useStoryText();
   const { locale, t } = useT();
   const [status, setStatus] = useState<WorldGenerationStatus | null>(null);
+  const pricingKey = `${campaignId}:${access}:${scope}`;
+  const pricingScope = useRef({ key: pricingKey });
+  if (pricingScope.current.key !== pricingKey) pricingScope.current = { key: pricingKey };
+  const currentPricingScope = pricingScope.current;
+  const [pricedScope, setPricedScope] = useState<typeof currentPricingScope | null>(null);
   const [error, setError] = useState('');
   const [receiptBefore, setReceiptBefore] = useState<string>();
   const receiptKey = `${campaignId}:${access}:${receiptBefore ?? ''}`;
@@ -84,6 +96,7 @@ export function WorldGenerationConfirmation({
       );
       if (stamp === epoch.current && currentReceiptKey.current === receiptKey) {
         setStatus(result);
+        setPricedScope(currentPricingScope);
         setReceiptPage({
           key: receiptKey,
           items: result.speechReceipts ?? [],
@@ -101,7 +114,7 @@ export function WorldGenerationConfirmation({
     } finally {
       polling.current = false;
     }
-  }, [path, access, receiptBefore, receiptKey]);
+  }, [path, access, receiptBefore, receiptKey, currentPricingScope]);
   useEffect(() => {
     setReceiptBefore(undefined);
   }, [campaignId, access]);
@@ -131,6 +144,14 @@ export function WorldGenerationConfirmation({
     ) : (
       <p role="status">{h(access === 'loading' ? 'worldCheckingOwner' : 'worldOwnerReview')}</p>
     );
+  // A retained consent/receipt may outlive a refresh, but its prices and balance
+  // must never be presented as current after navigation or an unsuccessful read.
+  const pricingCurrent =
+    pricedScope === currentPricingScope && !error && !membershipError && !membershipPending;
+  const forecast = pricingCurrent ? status?.forecast : null;
+  const availableFunding = pricingCurrent ? status?.availableFunding : null;
+  const baseEstimate = forecast?.baseEstimatedSparkSubunits ?? forecast?.estimatedSparkSubunits;
+  const optionalRequests = forecast?.optionalAutonomousSpeechRequests ?? 0;
   const blockedCode = status?.ordinary?.code;
   const blockedCopy: Record<string, StoryMessageKey> = {
     GENERATION_UNAVAILABLE: 'worldGenerationUnavailable',
@@ -152,6 +173,15 @@ export function WorldGenerationConfirmation({
     <div data-testid="world-generation-confirmation">
       <ErrorBox message={membershipError ? h('worldMembersError') : error} />
       {membershipPending && <p role="status">{h('worldCheckingOwner')}</p>}
+      <p data-testid="world-available-funding">
+        {availableFunding
+          ? h('worldAvailableFunding', {
+              sparks: formatSparkSubunits(availableFunding.sparksSubunits, locale),
+              dreams: formatSparkSubunits(availableFunding.dreamsSubunits, locale),
+              total: formatSparkSubunits(availableFunding.totalSubunits, locale),
+            })
+          : h('worldFundingUnavailable')}
+      </p>
       {status?.unknown ? (
         <p role="status">{h('worldCostUnresolved')}</p>
       ) : status?.pending ? (
@@ -190,31 +220,50 @@ export function WorldGenerationConfirmation({
         <div data-testid="world-cost-forecast">
           <p>{h('worldCostForecastHint')}</p>
           <p role="status">
-            {status?.forecast?.estimatedSparkSubunits != null &&
-            !error &&
-            !membershipError &&
-            !membershipPending
-              ? h('worldCostForecast', {
-                  amount: formatSparkSubunits(
-                    status.forecast.baseEstimatedSparkSubunits ??
-                      status.forecast.estimatedSparkSubunits,
-                    locale,
-                  ),
-                })
+            {baseEstimate != null
+              ? h('worldCostForecast', { amount: formatSparkSubunits(baseEstimate, locale) })
               : h(error || status ? 'worldCostUnavailable' : 'worldCostCalculating')}
           </p>
-          {!!status?.forecast?.optionalAutonomousSpeechRequests &&
-            status.forecast.optionalAutonomousSpeechSparkSubunits != null && (
+          {optionalRequests > 0 && (
+            <>
               <p>
-                {h('worldOptionalSpeechForecast', {
-                  amount: formatSparkSubunits(
-                    status.forecast.optionalAutonomousSpeechSparkSubunits,
-                    locale,
-                  ),
-                  count: status.forecast.optionalAutonomousSpeechRequests,
-                })}
+                {forecast?.optionalAutonomousSpeechSparkSubunits != null
+                  ? h('worldOptionalSpeechForecast', {
+                      amount: formatSparkSubunits(
+                        forecast.optionalAutonomousSpeechSparkSubunits,
+                        locale,
+                      ),
+                      count: optionalRequests,
+                    })
+                  : h('worldOptionalSpeechForecastUnavailable', {
+                      count:
+                        forecast?.optionalAutonomousSpeechUnestimatedRequests || optionalRequests,
+                    })}
               </p>
-            )}
+              {forecast?.estimatedSparkSubunits != null && (
+                <p>
+                  {h('worldTotalCostForecast', {
+                    amount: formatSparkSubunits(forecast.estimatedSparkSubunits, locale),
+                  })}
+                </p>
+              )}
+              <p>{h('worldOptionalSpeechConditions')}</p>
+              {forecast?.optionalAutonomousSpeechAllowanceSubunits != null && (
+                <details data-testid="world-speech-allowance">
+                  <summary>{h('worldSpeechAllowanceDetails')}</summary>
+                  <p>
+                    {h('worldOptionalSpeechAllowance', {
+                      amount: formatSparkSubunits(
+                        forecast.optionalAutonomousSpeechAllowanceSubunits,
+                        locale,
+                      ),
+                      count: optionalRequests,
+                    })}
+                  </p>
+                </details>
+              )}
+            </>
+          )}
         </div>
       ) : (
         <p role="status">
@@ -240,11 +289,13 @@ export function WorldGenerationConfirmation({
                 </time>
                 <p>
                   {h(
-                    skip.reason === 'allowance_exhausted'
-                      ? 'worldSpeechSkipExhausted'
-                      : skip.reason === 'legacy_uncovered'
-                        ? 'worldSpeechSkipLegacy'
-                        : 'worldSpeechSkipUnavailable',
+                    skip.reason === 'insufficient_funds'
+                      ? 'worldSpeechSkipInsufficientFunds'
+                      : skip.reason === 'allowance_exhausted'
+                        ? 'worldSpeechSkipExhausted'
+                        : skip.reason === 'legacy_uncovered'
+                          ? 'worldSpeechSkipLegacy'
+                          : 'worldSpeechSkipUnavailable',
                   )}
                 </p>
               </li>

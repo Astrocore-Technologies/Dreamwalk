@@ -20,6 +20,10 @@ import { travelGroundingConsentHash } from '../generation/travel-grounding-envel
 import { LocationTravelGeneration } from './location-travel-generation';
 import { captureWorldQuoteRoster } from '../ai/runtime-map-preflight';
 import { aggregateFunding, optionalFunding } from '../generation/currency-funding';
+import {
+  mandatoryWorldBatchFunding,
+  pendingWorldBatchFunding,
+} from '../generation/world-batch-funding';
 import { totalQuotedSparkSubunits, commonQuotedSparkRate } from '../generation/sparks-quote-total';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -585,6 +589,10 @@ export class WorldGenerationBatch {
         external: true,
         requiresConsent: true,
         chargeUnit: 'sparks',
+        requiredSparkSubunits: mandatoryWorldBatchFunding({
+          entries,
+          media_entries: mediaEntries,
+        }).total.toString(),
         sparkReservedSubunits: totalQuotedSparkSubunits(pricedEntries.map((entry) => entry.quote)),
         ...commonQuotedSparkRate(pricedEntries.map((entry) => entry.quote)),
         ...optionalFunding(aggregateFunding(pricedEntries.map((entry) => entry.quote))),
@@ -828,9 +836,17 @@ export class WorldGenerationBatch {
       const dreamAvailable = dreams?.enabled
         ? BigInt(dreams.balance_subunits) - BigInt(dreams.held_subunits)
         : 0n;
+      const mandatory = mandatoryWorldBatchFunding(
+        batch as {
+          entries: Entry[];
+          media_entries?: { quote: StoryQuote; grounding?: { quote: StoryQuote } }[];
+        },
+      );
+      const pending = await pendingWorldBatchFunding(c, userId);
+      const sparkAvailable = BigInt(wallet.balance_subunits) - BigInt(wallet.held_subunits);
       if (
-        BigInt(wallet.balance_subunits) - BigInt(wallet.held_subunits) + dreamAvailable <
-        BigInt(batch.quote.sparkReservedSubunits)
+        sparkAvailable + dreamAvailable < mandatory.total + pending.total ||
+        sparkAvailable < mandatory.sparksOnly + pending.sparksOnly
       )
         fail(409, 'INSUFFICIENT_SPARKS', 'INSUFFICIENT_SPARKS');
       if (Array.isArray(batch.media_entries) && batch.media_entries.length)
@@ -1259,6 +1275,8 @@ export class WorldGenerationBatch {
     } catch (error) {
       await c.query('ROLLBACK TO SAVEPOINT optional_speech_quote');
       await c.query('RELEASE SAVEPOINT optional_speech_quote');
+      if (error instanceof Error && error.message === 'INSUFFICIENT_SPARKS')
+        return skip('AUTONOMOUS_SPEECH_INSUFFICIENT_FUNDS');
       if (
         error instanceof ApiException ||
         (error instanceof Error &&
@@ -1293,15 +1311,38 @@ export class WorldGenerationBatch {
       await this.failUnspent(campaignId, request.id, 'WORLD_PROVIDER_OUTCOME_UNKNOWN');
   }
   /** Terminalize only a proven-unspent request; never erase a permit, hold or uncertain liability. */
-  async failUnspent(campaignId: string, requestId: string, code: string, client?: PoolClient) {
+  async failUnspent(
+    campaignId: string,
+    requestId: string,
+    code: string,
+    client?: PoolClient,
+  ): Promise<void> {
+    if (!client) return this.db.tx((c) => this.failUnspent(campaignId, requestId, code, c));
+    // Native enqueue takes this request lock before creating any reservation.
+    // Use a fresh statement after acquiring it so a waited-for enqueue commit is
+    // visible even if its request-status acknowledgement has not arrived yet.
+    await client.query(
+      'SELECT id FROM game_npc_decision_requests WHERE campaign_id=$1 AND id=$2 FOR UPDATE',
+      [campaignId, requestId],
+    );
     const sql = `UPDATE game_npc_decision_requests r SET status='failed',result_code=$3
       WHERE r.campaign_id=$1 AND r.id=$2 AND r.status='queued' AND r.job_id IS NULL
       AND NOT EXISTS(SELECT 1 FROM npc_ai_jobs j WHERE j.operation_id=r.id OR j.request_meta->>'runtimeRequestId'=r.id::text)
       AND NOT EXISTS(SELECT 1 FROM live_test_text_permits p WHERE p.request_id=r.id)
       AND NOT EXISTS(SELECT 1 FROM generation_budget_reservations b WHERE b.operation_key='manual-text:'||r.id::text)
-      AND NOT EXISTS(SELECT 1 FROM spark_holds h WHERE h.source_id=r.id::text)`;
-    if (client) await client.query(sql, [campaignId, requestId, code]);
-    else await this.db.query(sql, [campaignId, requestId, code]);
+      AND NOT EXISTS(SELECT 1 FROM spark_holds h WHERE h.source_id=r.id::text)
+    AND NOT EXISTS(SELECT 1 FROM (
+      SELECT child.native_quote_id FROM game_autonomous_speech_bindings child WHERE child.request_id=r.id
+      UNION ALL
+      SELECT (entry->'quote'->>'id')::uuid FROM game_world_generation_batches accepted
+        CROSS JOIN LATERAL jsonb_array_elements(accepted.entries) entry
+        WHERE accepted.campaign_id=r.campaign_id AND entry->>'requestId'=r.id::text
+    ) linked WHERE EXISTS(SELECT 1 FROM spark_holds h
+        WHERE h.source_kind='npc' AND h.source_id=linked.native_quote_id::text)
+      OR EXISTS(SELECT 1 FROM spark_quotes q
+        JOIN generation_budget_reservations liability ON liability.spark_quote_id=q.id
+        WHERE q.source_kind='npc' AND q.source_id=linked.native_quote_id::text))`;
+    await client.query(sql, [campaignId, requestId, code]);
   }
   async invalidate(campaignId: string, requestId: string) {
     await this.db.query(

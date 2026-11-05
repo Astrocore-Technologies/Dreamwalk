@@ -431,7 +431,13 @@ export class NpcAiEngine {
       return null;
     }
   }
-  localAutonomousSpeechForecast(): number | null {
+  /** Current frozen body estimate, never the whole future context allowance. */
+  localAutonomousSpeechForecast(context: DecisionContext): number | null {
+    if (this.isFreeBuiltInSimulation()) return 0;
+    if (!context.worldPlanCommunication) return null;
+    return this.localRequestForecast('speech', context);
+  }
+  localAutonomousSpeechAllowance(): number | null {
     if (this.isFreeBuiltInSimulation()) return 0;
     const snapshot = this.autonomousSpeechSnapshot();
     if (!snapshot) return null;
@@ -445,7 +451,7 @@ export class NpcAiEngine {
         sourceContextDigest: 'forecast',
         npcId: 'forecast',
         turnFence: null,
-      }).estimatedTotalMicros;
+      }).reserveMicros;
     } catch {
       return null;
     }
