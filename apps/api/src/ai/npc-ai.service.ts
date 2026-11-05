@@ -1296,6 +1296,7 @@ export class NpcAiEngine {
             requestKey: input.requestKey ?? '',
             sponsorId: input.sponsorId ?? null,
             runtimeRequestId: input.runtimeRequestId ?? null,
+            acceptedWorldBatchId: input.acceptedWorldBatchId ?? null,
           }),
           input.sponsorId ?? null,
           scope.subjectKind ?? 'npc',

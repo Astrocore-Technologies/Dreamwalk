@@ -83,6 +83,20 @@ export function knownAuthoringSettlementQuote(
   automatic = false,
 ) {
   const admitted = quote.price_snapshot?.providerQuote;
+  const legacyConsentHash = digest({
+    quoteId: native.id,
+    operationId: job.operation_id,
+    consent: true,
+  });
+  const policyConsentHash =
+    admitted?.automaticKnownCostPolicy === 'known-cost-v1'
+      ? digest({
+          quoteId: native.id,
+          operationId: job.operation_id,
+          consent: true,
+          automaticKnownCostPolicy: 'known-cost-v1',
+        })
+      : undefined;
   if (
     !(automatic ? ['stale', 'failed', 'cancelled'] : ['stale', 'failed']).includes(job.status) ||
     !job.dispatched_at ||
@@ -104,8 +118,10 @@ export function knownAuthoringSettlementQuote(
       'generation_policy_revision',
       'generation_policy_hash',
     ].some((key) => job[key] !== native[key]) ||
-    job.request_hash !==
-      digest({ quoteId: native.id, operationId: job.operation_id, consent: true }) ||
+    (automatic
+      ? !policyConsentHash || job.request_hash !== policyConsentHash
+      : job.request_hash !== legacyConsentHash &&
+        (!policyConsentHash || job.request_hash !== policyConsentHash)) ||
     authorization.id !== job.session_id ||
     authorization.mode !== 'release' ||
     authorization.owner_id !== job.actor_id ||
@@ -321,7 +337,9 @@ export class KnownAuthoringSettlement implements OnModuleInit, OnModuleDestroy {
       SELECT j.id,j.actor_id FROM live_authoring_text_jobs j
       JOIN live_test_sessions s ON s.id=j.session_id
       JOIN spark_holds h ON h.id=j.spark_quote_id
-      WHERE s.mode='release' AND j.status IN ('failed','stale','cancelled')
+      JOIN spark_quotes q ON q.id=h.id
+      WHERE q.price_snapshot->'providerQuote'->>'automaticKnownCostPolicy'='known-cost-v1'
+        AND s.mode='release' AND j.status IN ('failed','stale','cancelled')
         AND j.actual_micros IS NOT NULL AND j.provider_usage IS NOT NULL
         AND j.spark_cost_evidence='configured_rates'
         AND h.status='pending' AND h.reason IN ('failure_policy_pending','unknown')

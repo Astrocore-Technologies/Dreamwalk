@@ -20,3 +20,9 @@ successful compilation without model scene metadata and isolation of unintroduce
 It also proves that malformed model grouping cannot grant contacts. This addresses a
 reproducible failure class; it does not establish the exact cause of historical jobs whose
 proposal was already discarded.
+
+## Original authorization and failure settlement
+
+New release authoring quotes advertise `automaticKnownCostPolicy: known-cost-v1` from their immutable Spark price snapshot. The existing single confirmation explicitly includes that policy in the durable enqueue request hash. Known-cost automatic settlement requires both values, the original provider request and verified usage, and the accepted reserve/tariff. A newer server cannot opt an older client into this policy implicitly.
+
+Historical unmarked quotes and old-client consent remain untouched by background recovery, even when their cost is known. There is no backfill, user ID allowlist or timestamp cutoff. A separately authorized exact historical settlement can use the authenticated owner endpoint and its durable receipt. That action does not launch the game or repeat a provider request. Unknown or over-reserve liabilities remain retained without an invented charge.

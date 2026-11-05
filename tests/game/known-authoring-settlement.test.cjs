@@ -63,7 +63,12 @@ function fixture() {
     completed_at: new Date(),
     request_snapshot: snapshot,
   };
-  job.request_hash = digest({ quoteId: nativeId, operationId: job.operation_id, consent: true });
+  job.request_hash = digest({
+    quoteId: nativeId,
+    operationId: job.operation_id,
+    consent: true,
+    automaticKnownCostPolicy: 'known-cost-v1',
+  });
   const native = {
     ...structuredClone(job),
     id: nativeId,
@@ -110,6 +115,7 @@ function fixture() {
     price_snapshot: {
       tariff: structuredClone(sparkTariff(snapshot, 'openai', job.provider_version)),
       providerQuote: {
+        automaticKnownCostPolicy: 'known-cost-v1',
         quoteId: nativeId,
         providerVersion: job.provider_version,
         requestHash: native.request_hash,
@@ -388,6 +394,23 @@ const automaticReview = (f, previous) =>
     f.dreams,
     true,
   );
+test('historical and old-client consent never authorizes automatic capture', async () => {
+  for (const policy of [undefined, 'other-policy', 'known-cost-v1']) {
+    const f = fixture();
+    f.quote.price_snapshot.providerQuote.automaticKnownCostPolicy = policy;
+    f.job.request_hash = digest({
+      quoteId: f.native.id,
+      operationId: f.job.operation_id,
+      consent: true,
+    });
+    assert.throws(() => automaticReview(f), rejected);
+    assert.equal(review(f).requiresConsent, true);
+  }
+  const { f, c, service } = serviceFixture();
+  delete f.quote.price_snapshot.providerQuote.automaticKnownCostPolicy;
+  assert.equal(await service.settleAutomatic(c, f.job.actor_id, f.job.id), undefined);
+  assert.deepEqual(f.writes, []);
+});
 test('automatic proof closes semantic failure, cancellation and a verified late receipt, never unknown usage', () => {
   for (const status of ['failed', 'stale', 'cancelled']) {
     const f = addDreams(fixture());
@@ -493,6 +516,7 @@ test('recovery is bounded, advances past rejected rows, resets cursor and never 
   service.db = {
     query: async (sql, values) => {
       assert.match(sql, /h.status='pending'/);
+      assert.match(sql, /automaticKnownCostPolicy'='known-cost-v1'/);
       assert.match(sql, /ORDER BY j.id LIMIT 25/);
       cursors.push(values[0]);
       return values[0] ? [] : ids.map((id) => ({ id, actor_id: 'actor' }));

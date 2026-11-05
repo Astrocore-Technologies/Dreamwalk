@@ -153,7 +153,12 @@ export class AuthoringTextEngine {
     };
   }
   private async quoteDto(c: PoolClient, row: QueryResultRow) {
+    const policy = row.spark_quote_id
+      ? (await c.query('SELECT price_snapshot FROM spark_quotes WHERE id=$1', [row.spark_quote_id]))
+          .rows[0]?.price_snapshot?.providerQuote?.automaticKnownCostPolicy
+      : undefined;
     return {
+      ...(policy === 'known-cost-v1' ? { automaticKnownCostPolicy: policy } : {}),
       id: row.id,
       ...(await sparkQuoteView(c, row.spark_quote_id)),
       policyRevision: row.generation_policy_revision ?? null,
@@ -350,6 +355,7 @@ export class AuthoringTextEngine {
             this.provider.version,
           ),
           providerQuote: {
+            ...(this.live.mode === 'release' ? { automaticKnownCostPolicy: 'known-cost-v1' } : {}),
             quoteId: id,
             providerVersion: this.provider.version,
             requestHash,
@@ -369,12 +375,22 @@ export class AuthoringTextEngine {
   }
   async enqueue(
     ownerId: string,
-    input: { quoteId: string; operationId: string; consent: true },
+    input: {
+      quoteId: string;
+      operationId: string;
+      consent: true;
+      automaticKnownCostPolicy?: 'known-cost-v1';
+    },
     validateFence: AuthoringTextFence,
   ) {
     await this.live.requireOwner(ownerId);
     const value = z
-      .object({ quoteId: z.uuid(), operationId: z.uuid(), consent: z.literal(true) })
+      .object({
+        quoteId: z.uuid(),
+        operationId: z.uuid(),
+        consent: z.literal(true),
+        automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
+      })
       .strict()
       .parse(input);
     const requestHash = digest(value);
@@ -397,6 +413,18 @@ export class AuthoringTextEngine {
         ])
       ).rows[0];
       if (!quote) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+      if (value.automaticKnownCostPolicy) {
+        const policyQuote = (
+          await c.query('SELECT price_snapshot FROM spark_quotes WHERE id=$1', [
+            quote.spark_quote_id,
+          ])
+        ).rows[0];
+        if (
+          policyQuote?.price_snapshot?.providerQuote?.automaticKnownCostPolicy !==
+          value.automaticKnownCostPolicy
+        )
+          fail(409, 'AUTHORING_COST_POLICY_CHANGED', 'AUTHORING_COST_POLICY_CHANGED');
+      }
       const binding = this.binding(quote);
       await this.lockSource(c, ownerId);
       // A concurrent identical request may have committed while this transaction waited for the owner lock.

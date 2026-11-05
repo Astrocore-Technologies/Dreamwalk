@@ -303,3 +303,107 @@ test('opaque locked roster cannot be forged, narrowed, or reused across requests
   rows[0].context.privatePlan = 'changed';
   assert.deepEqual(readWorldQuoteRoster(token, ...args), ['r1', 'r2']);
 });
+
+test('native queue persists verified world batch identity with original consent and request hash', async () => {
+  process.env.NODE_ENV = 'test';
+  process.env.DATABASE_URL ??= 'postgresql://fixture:fixture@127.0.0.1:1/fixture';
+  const { NpcAiEngine } = require('../../apps/api/dist/ai/npc-ai.service');
+  const f = fixture();
+  Object.assign(f.native, { credits: 0, upper_micros: '0' });
+  let inserted;
+  const client = {
+    query: async (sql, values = []) => {
+      if (sql.startsWith('INSERT INTO npc_ai_jobs')) {
+        inserted = { id: values[0], request_hash: values[4], request_meta: JSON.parse(values[19]) };
+        return { rows: [inserted], rowCount: 1 };
+      }
+      if (sql.includes('FROM npc_ai_provider_budgets'))
+        return {
+          rows: [
+            {
+              blocked: false,
+              reserved_micros: '0',
+              spent_micros: '0',
+              unknown_micros: '0',
+              cap_micros: '100',
+            },
+          ],
+          rowCount: 1,
+        };
+      if (sql.includes('count(*) FROM npc_ai_jobs')) return { rows: [{ count: '0' }], rowCount: 1 };
+      if (sql.includes('FROM wallets')) return { rows: [{ balance: 100 }], rowCount: 1 };
+      if (sql.includes('sum(credits)')) return { rows: [{ held: '0' }], rowCount: 1 };
+      if (sql.includes('FROM spark_wallets') || sql.includes('FROM npc_ai_jobs WHERE campaign_id'))
+        return { rows: [], rowCount: 0 };
+      if (
+        sql.startsWith('SELECT a.id') ||
+        sql.includes('pg_advisory_xact_lock') ||
+        sql.includes('FROM game_members') ||
+        sql.includes('FROM adventure_invitations') ||
+        sql.startsWith('INSERT ') ||
+        sql.startsWith('UPDATE ')
+      )
+        return { rows: [], rowCount: 0 };
+      return f.client.query(sql, values);
+    },
+  };
+  const engine = Object.create(NpcAiEngine.prototype);
+  Object.assign(engine, {
+    db: { tx: (fn) => fn(client) },
+    provider: { id: f.proof.providerId, version: f.proof.providerVersion, external: false },
+    policy: {
+      maxContextBytes: 64000,
+      version: 'p1',
+      creditPrice: 0,
+      maxQueuedPerCampaign: 8,
+      providerCapMicros: 100,
+      reservationMs: 60000,
+    },
+    authorize: async () => {},
+    turnAuthorized: async () => true,
+    contextFits: () => true,
+    requestPlan: async () => ({ reserveMicros: 0, snapshot: f.native.request_snapshot }),
+    excludeLegacyOwnerBypass: async () => {},
+    isFreeBuiltInSimulation: () => true,
+    dto: async (_c, job) => job,
+  });
+  const scope = {
+    campaignId: f.proof.campaignId,
+    npcId: f.request.npc_id,
+    origin: 'user',
+    requesterUserId: f.owner,
+    purpose: 'plan',
+  };
+  const input = {
+    scope,
+    context: f.request.context,
+    operationId: randomUUID(),
+    quoteId: f.native.id,
+    consent: true,
+    runtimeRequestId: f.request.id,
+    expectedRuntimeContextDigest: digest(f.request.context),
+    acceptedWorldBatchId: f.batch.id,
+  };
+  await engine.queue(input);
+  assert.equal(inserted.request_meta.acceptedWorldBatchId, f.batch.id);
+  assert.equal(inserted.request_meta.consent, true);
+  assert.equal(
+    inserted.request_hash,
+    digest({
+      scope,
+      context: input.context,
+      quoteId: input.quoteId,
+      consent: true,
+      requestKey: '',
+      sponsorId: null,
+      runtimeRequestId: input.runtimeRequestId,
+      acceptedWorldBatchId: f.batch.id,
+    }),
+  );
+  inserted = undefined;
+  await assert.rejects(
+    engine.queue({ ...input, acceptedWorldBatchId: randomUUID() }),
+    /WORLD_BATCH_CONSENT_STALE/,
+  );
+  assert.equal(inserted, undefined, 'unverified identity never reaches the insert');
+});

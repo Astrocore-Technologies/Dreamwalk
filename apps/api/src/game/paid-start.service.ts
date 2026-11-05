@@ -218,7 +218,13 @@ export class PaidStartService {
     return this.configured().quote(actor, binding, this.guard(actor));
   }
   async dispatch(actor: string, id: string, input: unknown) {
-    const body = operation.extend({ quoteId: z.uuid(), consent: z.literal(true) }).parse(input),
+    const body = operation
+        .extend({
+          quoteId: z.uuid(),
+          consent: z.literal(true),
+          automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
+        })
+        .parse(input),
       engine = this.configured();
     const quote = (
       await this.db.query(

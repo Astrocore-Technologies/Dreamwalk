@@ -125,11 +125,23 @@ test('all huge NPC footprint cells are excluded, including overlapping player sl
   ]);
   assert.deepEqual(result.proposal.npcs, f.proposal.npcs);
 });
-test('low confidence and stale revision/hash fail before a repairable proposal is admitted', () => {
+test('low confidence stays unpositioned while stale revision/hash still fail closed', () => {
+  const uncertain = fixture();
+  uncertain.room.spatialGrounding.confidence = 0.849999;
+  uncertain.room.spawns[0] = { x: 1, y: 1 };
+  const before = structuredClone(uncertain);
+  const compiled = compileStoryPlan(uncertain.source, uncertain.proposal).playable.maps.opening;
+  assert.equal(compiled.spatialMode, 'location_only');
+  assert.deepEqual(compiled.spawns, []);
+  assert.deepEqual(compiled.blocked, []);
+  assert.equal(compiled.spatialGrounding, undefined);
+  assert.deepEqual(compiled.scenePresence.scenes[0].participantIds, []);
+  assert.deepEqual(compiled.locationImage, {
+    revisionId: uncertain.source.mapImages[0].revisionId,
+    sha256: uncertain.source.mapImages[0].sha256,
+  });
+  assert.deepEqual(uncertain, before);
   for (const mutate of [
-    (f) => {
-      f.room.spatialGrounding.confidence = 0.849999;
-    },
     (f) => {
       f.room.spatialGrounding.imageRevisionId = randomUUID();
     },
@@ -140,10 +152,7 @@ test('low confidence and stale revision/hash fail before a repairable proposal i
     const f = fixture();
     f.room.spawns[0] = { x: 1, y: 1 };
     mutate(f);
-    assert.throws(
-      () => compileStoryPlan(f.source, f.proposal),
-      /MAP_IMAGE_(UNCERTAIN|SOURCE_MISMATCH)/,
-    );
+    assert.throws(() => compileStoryPlan(f.source, f.proposal), /MAP_IMAGE_SOURCE_MISMATCH/);
   }
 });
 test('no valid anchor, even with a large safe room, cannot select a new opening', () => {

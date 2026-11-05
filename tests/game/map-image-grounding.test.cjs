@@ -202,7 +202,17 @@ test('rocks, water, unknown, disconnected floor and low confidence never become 
   }
   const { source, proposal } = fixture();
   proposal.rooms[0].spatialGrounding.confidence = 0.2;
-  assert.throws(() => compileStoryPlan(source, proposal), /UNCERTAIN/);
+  const before = structuredClone({ source, proposal });
+  const uncertain = compileStoryPlan(source, proposal).playable.maps.room;
+  assert.equal(uncertain.spatialMode, 'location_only');
+  assert.deepEqual(uncertain.spawns, []);
+  assert.deepEqual(uncertain.blocked, []);
+  assert.equal(uncertain.spatialGrounding, undefined);
+  assert.deepEqual(uncertain.locationImage, {
+    revisionId: source.mapImages[0].revisionId,
+    sha256: source.mapImages[0].sha256,
+  });
+  assert.deepEqual({ source, proposal }, before);
   const f = fixture();
   const r = f.proposal.rooms[0];
   r.spawns[3] = { x: 2, y: 2 };

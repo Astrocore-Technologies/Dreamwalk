@@ -60,6 +60,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
     `${user?.id}:${adventure.id}:${versionId}:${heroSelection.heroId}:${directorSelection.profileId}`,
   );
   type Quote = {
+    automaticKnownCostPolicy?: 'known-cost-v1';
     imageInputCount?: number;
     schematicMapCount?: number;
     id: string;
@@ -193,6 +194,9 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
             operationId: operation('dispatch:' + quote.id),
             quoteId: quote.id,
             consent: true,
+            ...(quote.automaticKnownCostPolicy === 'known-cost-v1'
+              ? { automaticKnownCostPolicy: quote.automaticKnownCostPolicy }
+              : {}),
           }),
         });
       }
@@ -452,7 +456,11 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
             {quote.sparks ? formatSparkSubunits(quote.sparks.reserveSubunits) : '—'}
           </p>
           <small>
-            {t('После подготовки спишется фактическая стоимость, остаток резерва вернётся.')}
+            {t(
+              quote.automaticKnownCostPolicy === 'known-cost-v1'
+                ? 'Подтверждённый расход спишется автоматически в пределах резерва, даже если подготовка не удалась.'
+                : 'После подготовки спишется фактическая стоимость, остаток резерва вернётся.',
+            )}
           </small>
           <Button
             busy={busy}
