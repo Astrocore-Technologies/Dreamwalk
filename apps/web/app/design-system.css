@@ -1373,6 +1373,10 @@ td {
 .account-privacy-panel form {
   min-width: 0;
   padding-right: 28px;
+  gap: 16px;
+}
+.account-design .account-privacy-panel .toggle-row {
+  padding-block: 8px;
 }
 .account-privacy-art {
   max-width: none;
@@ -1414,13 +1418,41 @@ td {
   align-items: stretch;
   gap: 8px;
 }
+.account-design .account-export-actions > .button,
+.account-design .account-delete-row > .button {
+  min-width: 230px;
+  min-height: 52px;
+  font-size: 18px;
+}
+.account-design .account-export-refresh {
+  align-self: flex-start;
+  padding-inline: 0;
+  min-height: 44px;
+  font-size: 14px;
+}
+.account-design .account-exports {
+  gap: 12px;
+}
+.account-design .account-privacy-panel .toggle-row strong,
+.account-design .account-privacy-panel .field {
+  font-size: 20px;
+  line-height: 1.4;
+}
+.account-design .account-privacy-panel .toggle-row small,
+.account-design .account-privacy-panel .notice {
+  font-size: 17px;
+  line-height: 1.5;
+}
+.account-design .account-privacy-panel .input {
+  font-size: 18px;
+}
 .account-design .account-data-copy h3 {
   margin: 0 0 8px;
   font-size: 22px;
 }
 .account-design .account-data-copy p {
   margin: 0;
-  font-size: 16px;
+  font-size: 17px;
   line-height: 1.5;
 }
 .account-exports,
@@ -1655,6 +1687,9 @@ td {
 .account-profile-story .account-story-art {
   aspect-ratio: 16 / 9;
 }
+.account-design .account-preferences-panel > form {
+  gap: 16px;
+}
 .account-design .account-preferences-panel .input {
   font-size: 18px;
 }
@@ -1670,6 +1705,30 @@ td {
 .account-design .account-security-layout {
   grid-template-columns: minmax(0, 0.85fr) minmax(0, 1.15fr);
   align-items: stretch;
+}
+.account-design .account-email-copy {
+  width: fit-content;
+  min-width: min(100%, 480px);
+  max-width: 100%;
+  background: linear-gradient(90deg, #21172ded, #21172dcc);
+  box-shadow: none;
+}
+.account-design .account-email-status.verified {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  min-height: 44px;
+  padding: 6px 18px;
+  border: 1px solid #9fbf76;
+  border-radius: 999px;
+  background: #17251bd9;
+  color: #c5efaf;
+  font-size: 20px;
+  line-height: 1.4;
+}
+.account-email-status > svg {
+  flex-shrink: 0;
+  vertical-align: middle;
 }
 .account-design .account-session-panel > .muted {
   font-size: 18px;
@@ -1697,17 +1756,18 @@ td {
 }
 .account-design .account-preference-toggles .toggle-row {
   min-height: 64px;
-  padding: 10px 0;
+  padding: 8px 0;
   border-color: var(--account-border);
 }
 .account-design .account-preference-toggles .toggle-row strong {
   font-size: 20px;
+  line-height: 24px;
 }
 .account-design .account-preference-toggles .toggle-row small {
   max-width: none;
   margin-top: 2px;
   font-size: 16px;
-  line-height: 1.4;
+  line-height: 21px;
 }
 .account-design .toggle-row input {
   width: 64px;
@@ -1787,15 +1847,27 @@ td {
   color: var(--accent);
 }
 .account-design .session-row strong {
-  font-size: 18px;
+  font-size: 20px;
+  line-height: 1.3;
   margin-bottom: 4px;
 }
+.account-design .session-row[data-current='true'] strong {
+  display: inline-flex;
+  padding: 2px 10px;
+  border: 1px solid var(--account-border);
+  border-radius: 999px;
+  color: var(--accent);
+  font-size: 16px;
+  line-height: 1.5;
+}
 .account-design .session-row small {
-  font-size: 15px;
+  font-size: 16px;
   line-height: 1.5;
 }
 .account-design .session-row .button {
+  min-height: 50px;
   border-color: var(--account-border);
+  font-size: 16px;
 }
 @media (max-width: 1100px) {
   .account-design .account-security-layout {
@@ -1839,6 +1911,29 @@ td {
     font-size: 16px;
   }
   .account-design .account-preference-toggles .toggle-row small {
+    font-size: 14px;
+  }
+  .account-design .account-export-actions > .button,
+  .account-design .account-delete-row > .button {
+    min-width: 0;
+    width: 100%;
+  }
+  .account-design .account-privacy-panel .toggle-row strong,
+  .account-design .account-privacy-panel .field {
+    font-size: 18px;
+  }
+  .account-design .account-privacy-panel .toggle-row small,
+  .account-design .account-privacy-panel .notice {
+    font-size: 16px;
+  }
+  .account-design .account-email-status.verified {
+    font-size: 17px;
+    padding-inline: 12px;
+  }
+  .account-design .session-row small {
+    font-size: 14px;
+  }
+  .account-design .session-row .button {
     font-size: 14px;
   }
   .account-design .account-data-copy h3 {

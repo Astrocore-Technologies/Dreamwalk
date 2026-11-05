@@ -817,18 +817,18 @@ export class AuthoringTextEngine {
   ) {
     if (!Number.isSafeInteger(result.usage.costMicros) || result.usage.costMicros < 0)
       throw new ProviderFailure('PROVIDER_USAGE_UNKNOWN', true);
-    let proposal: unknown = null;
-    let errorCode = result.failureCode ?? null;
-    if (!errorCode)
-      try {
-        proposal = this.definition.validateProposal(result.proposal);
-      } catch {
-        errorCode = 'AUTHORING_PROPOSAL_INVALID';
-      }
     const current = (
       await this.db.query<AuthoringJob>('SELECT * FROM live_authoring_text_jobs WHERE id=$1', [id])
     )[0];
     if (!current) return;
+    let proposal: unknown = null;
+    let errorCode = result.failureCode ?? null;
+    if (!errorCode)
+      try {
+        proposal = this.definition.validateProposal(result.proposal, current.context);
+      } catch {
+        errorCode = 'AUTHORING_PROPOSAL_INVALID';
+      }
     let cacheCostVerified = true;
     if (
       (result.usage.cachedInputTokens ?? 0) > 0 ||
@@ -971,7 +971,7 @@ export class AuthoringTextEngine {
         resultPhase = 'validate';
         const proposal =
           this.live.mode === 'release'
-            ? this.definition.validateProposal(row.proposal)
+            ? this.definition.validateProposal(row.proposal, row.context)
             : row.proposal;
         resultPhase = 'apply';
         const applied = await commit(c, this.binding(row), proposal);

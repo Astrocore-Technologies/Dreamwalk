@@ -57,6 +57,15 @@ shown in their references. Shared search, utility controls, navigation and gamep
 styles are unchanged. Responsive layouts retain natural height and readable controls
 rather than forcing real data into the mockups' fixed-height examples.
 
-Validation is pending fresh exact-head CI and pixel inspection of the resulting
-RU/UK/EN, desktop/mobile, dark/light captures. Source comparisons and added synthetic
-interaction assertions do not establish a live account or full sitewide 1:1 acceptance.
+The first exact-head CI480 passed static/build/types, PostgreSQL and fifteen of the
+seventeen account cases. Two export cases exposed an unsupported browser-filename
+assumption, now replaced by validation of the actual downloaded JSON bytes and endpoint.
+All sixty attached account/admin/state images were inspected. That review prompted
+further preference line-height/density, privacy typography/action/refresh placement and
+security status/banner refinements. Required email verification is correctly a separate
+access gate; tests now distinguish it from optional account-banner feedback and add
+scrolled mobile viewport evidence instead of relying on full-page fixed-navigation pixels.
+
+Fresh full CI and resulting image inspection remain required for these refinements.
+Source comparisons and synthetic checks do not establish live-account or full sitewide
+1:1 acceptance. Shared shell controls and real account data remain unchanged.

@@ -37,7 +37,7 @@ export function AccountExports() {
         </div>
         <div className="account-export-actions">
           <Button
-            variant="secondary"
+            variant="primary"
             busy={busy}
             onClick={async () => {
               setBusy(true);
@@ -55,11 +55,11 @@ export function AccountExports() {
           >
             {t('Запросить экспорт')}
           </Button>
-          <Button variant="ghost" onClick={requests.reload}>
-            {t('Обновить список архивов')}
-          </Button>
         </div>
       </div>
+      <Button variant="ghost" className="account-export-refresh" onClick={requests.reload}>
+        {t('Обновить список архивов')}
+      </Button>
       <ErrorBox message={error || requests.error} />
       {requests.loading ? (
         <Loading />

@@ -23,7 +23,7 @@ type State = {
   jobs: {
     id: string;
     status: string;
-    error_code: string;
+    error_code: string | null;
     sparkStatus?: string;
     sparkReservedSubunits?: string;
     sparkCapturedSubunits?: string | null;
@@ -128,6 +128,11 @@ const copy = {
     'No plan was created. You can explicitly start a new preparation.',
     'План не створено. Можна явно почати нову підготовку.',
   ],
+  notApplied: [
+    'AI-план не применён к карте; автоматического повтора нет.',
+    'The AI plan was not applied to the map; there is no automatic retry.',
+    'AI-план не застосовано до карти; автоматичного повтору немає.',
+  ],
   cancelled: ['Запрос отменён', 'Request cancelled', 'Запит скасовано'],
   unknown: [
     'Результат запроса уточняется. Не повторяйте генерацию; обновите состояние.',
@@ -223,10 +228,10 @@ export function StoryPlayableBuilder({
   }
   function localizedError(e: unknown) {
     const code = (e as { code?: string })?.code;
-    if (code === 'STORY_CONTEXT_STALE' || code === 'AUTHORING_STALE') return copyText('stale');
+    if (code === 'STORY_CONTEXT_STALE') return copyText('stale');
     if (code === 'STORY_PLAN_CAPACITY') return copyText('capacity');
     if (code === 'STORY_PLANNER_UNAVAILABLE') return copyText('unavailable');
-    return errorMessage(e);
+    return mapPlanningMessage(code, locale) ?? errorMessage(e);
   }
   const unresolved = state?.jobs.some(
     (j) =>
@@ -377,11 +382,17 @@ export function StoryPlayableBuilder({
         committed: 'committed',
         failed: 'failed',
         rejected: 'failed',
-        stale: 'stale',
+        // Legacy jobs use stale for both source fences and result validation failures.
+        stale: 'notApplied',
         cancelled: 'cancelled',
       } as Record<string, keyof typeof copy>
     )[status];
     return copyText(key ?? 'unavailable');
+  };
+  const jobMessage = (j: State['jobs'][number]) => {
+    if (j.error_code === 'STORY_CONTEXT_STALE') return copyText('stale');
+    if (j.error_code === 'STORY_MAP_INTENT_MISMATCH') return copyText('mapIntentMismatch');
+    return mapPlanningMessage(j.error_code, locale) ?? statusText(j.status);
   };
   const sparkAmount = (micros: number) => {
     const subunits = providerSparkSubunits(
@@ -532,9 +543,7 @@ export function StoryPlayableBuilder({
           {state.jobs.map((j) => (
             <div key={j.id}>
               <p role="status" className={styles.jobStatus}>
-                {j.error_code === 'STORY_MAP_INTENT_MISMATCH'
-                  ? copyText('mapIntentMismatch')
-                  : (mapPlanningMessage(j.error_code, locale) ?? statusText(j.status))}
+                {jobMessage(j)}
                 {j.sparkStatus && (
                   <>
                     {' '}

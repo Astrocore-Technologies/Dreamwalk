@@ -1,3 +1,4 @@
+import { readFile } from 'node:fs/promises';
 import { withShellPreferences } from './support/shell-preferences';
 import { test, expect, type Page } from '@playwright/test';
 import { settingsSchema, type Settings, type User } from '../../packages/contracts/src/index';
@@ -235,7 +236,12 @@ for (const locale of ['ru', 'uk', 'en'] as const) {
             );
             for (const [index, box] of boxes.entries()) {
               expect(box.height).toBeGreaterThanOrEqual(width === 1536 ? 64 : 68);
+              if (width === 1536) expect(box.height).toBeLessThanOrEqual(80);
               if (index > 0) expect(Math.abs(box.y - boxes[index - 1].bottom)).toBeLessThan(2);
+            }
+            if (width === 1536) {
+              const preferencesBox = await page.locator('.account-preferences-panel').boundingBox();
+              expect(preferencesBox!.height).toBeLessThanOrEqual(875);
             }
             await expect(page.locator('.account-preferences-panel select')).toHaveCount(3);
             await expect(
@@ -253,7 +259,14 @@ for (const locale of ['ru', 'uk', 'en'] as const) {
             await expect(page.locator('.account-data-row > svg')).toHaveCount(1);
             await expect(page.locator('.account-export-summary h3')).toBeVisible();
             await expect(page.locator('.account-export-summary p')).toBeVisible();
-            await expect(page.locator('.account-export-actions button')).toHaveCount(2);
+            await expect(page.locator('.account-export-actions button')).toHaveCount(1);
+            await expect(page.locator('.account-export-actions button')).toHaveClass(/\bprimary\b/);
+            await expect(
+              page.locator('.account-exports button.account-export-refresh'),
+            ).toBeEnabled();
+            await expect(
+              page.locator('.account-export-summary .account-export-refresh'),
+            ).toHaveCount(0);
             await expect(page.locator('.account-delete-row > svg')).toHaveCount(1);
             await expect(page.locator('.account-delete-row .account-data-copy h3')).toBeVisible();
             await expect(page.locator('.account-delete-row .account-data-copy p')).toBeVisible();
@@ -314,6 +327,35 @@ for (const locale of ['ru', 'uk', 'en'] as const) {
               body: await page.screenshot({ fullPage: true, type: 'jpeg', quality: 80 }),
               contentType: 'image/jpeg',
             });
+          if (width === 390 && (route === '/account/privacy' || route === '/account/sessions')) {
+            const control = page.locator(
+              route === '/account/privacy'
+                ? '.account-privacy-panel select'
+                : '.account-password-panel #account-current-password',
+            );
+            await control.scrollIntoViewIfNeeded();
+            await control.focus();
+            // Center the focused field deliberately: viewport intersection alone does
+            // not account for the shared fixed bottom navigation.
+            await control.evaluate((node) =>
+              node.scrollIntoView({ block: 'center', behavior: 'instant' }),
+            );
+            await expect(control).toBeFocused();
+            const bottomNav = page.locator('.bottom-nav');
+            await expect(bottomNav).toBeVisible();
+            const controlBox = await control.boundingBox();
+            const bottomNavBox = await bottomNav.boundingBox();
+            expect(controlBox).not.toBeNull();
+            expect(bottomNavBox).not.toBeNull();
+            expect(controlBox!.y + controlBox!.height).toBeLessThanOrEqual(bottomNavBox!.y);
+            await info.attach(
+              `${locale}-${route.replaceAll('/', '-')}-${width}-${theme}-field-viewport`,
+              {
+                body: await page.screenshot({ fullPage: false, type: 'jpeg', quality: 80 }),
+                contentType: 'image/jpeg',
+              },
+            );
+          }
         }
       }
     }
@@ -420,12 +462,18 @@ for (const width of [1536, 390]) {
       const fixture = await mockAccount(page);
       await page.goto('/account/privacy');
       const exports = page.locator('.account-exports');
-      const actions = exports.locator('.account-export-actions button');
-      await expect(actions).toHaveCount(2);
+      const requestExport = exports.locator('.account-export-actions button');
+      const refreshExports = exports.locator('button.account-export-refresh');
+      await expect(requestExport).toHaveCount(1);
+      await expect(requestExport).toHaveClass(/\bprimary\b/);
+      await expect(refreshExports).toBeEnabled();
+      await expect(exports.locator('.account-export-summary .account-export-refresh')).toHaveCount(
+        0,
+      );
       await expect(exports.locator('a[download]')).toHaveCount(0);
       await expect.poll(() => fixture.exportReads).toBeGreaterThan(0);
       const reads = fixture.exportReads;
-      await actions.nth(0).click();
+      await requestExport.click();
       await expect.poll(() => fixture.exportRequests).toEqual([{}]);
       await expect.poll(() => fixture.exportReads).toBeGreaterThan(reads);
       await expect(exports.locator('li')).toHaveCount(1);
@@ -443,7 +491,7 @@ for (const width of [1536, 390]) {
         expiresAt: '2026-10-08T12:00:00Z',
       });
       const beforeRefresh = fixture.exportReads;
-      await actions.nth(1).focus();
+      await refreshExports.focus();
       await page.keyboard.press('Enter');
       await expect.poll(() => fixture.exportReads).toBeGreaterThan(beforeRefresh);
       await expect(exports.locator('li')).toHaveCount(2);
@@ -457,8 +505,14 @@ for (const width of [1536, 390]) {
       const downloaded = page.waitForEvent('download');
       await downloadLink.click();
       const download = await downloaded;
-      expect(download.suggestedFilename()).toBe('synthetic-account-export.json');
+      expect(download.suggestedFilename()).toMatch(/\.json$/i);
       expect(await download.failure()).toBeNull();
+      const downloadPath = await download.path();
+      expect(downloadPath).not.toBeNull();
+      expect(JSON.parse(await readFile(downloadPath!, 'utf8'))).toEqual({
+        synthetic: true,
+        accountId: fixture.user.id,
+      });
       expect(fixture.downloads).toEqual(['synthetic-export-1']);
       expect(fixture.exportRequests).toHaveLength(1);
       await expect(page).toHaveURL(/\/account\/privacy$/);
@@ -573,18 +627,19 @@ for (const width of [1536, 390]) {
       expect(fixture.sessionDeletes).toHaveLength(0);
     });
 
-    test('email verification states and resend results stay readable inside the security banner', async ({
+    test('account email feedback and the required verification gate remain distinct and readable', async ({
       page,
     }, info) => {
       const fixture = await mockAccount(page);
       fixture.user.emailVerified = true;
       fixture.user.emailVerificationRequired = true;
       await page.goto('/account/sessions');
-      const banner = page.locator('.account-email-banner');
+      const account = page.locator('.account-design');
+      const banner = account.locator('.account-email-banner');
       const copy = banner.locator('.account-email-copy');
       const resend = copy.getByRole('button');
-      async function assertBannerBounds() {
-        const contained = await banner.evaluate((node) => {
+      async function assertBannerBounds(target = banner) {
+        const contained = await target.evaluate((node) => {
           const bounds = node.getBoundingClientRect();
           return [...node.querySelectorAll('h2, p, button, [role="alert"]')].every((child) => {
             const box = child.getBoundingClientRect();
@@ -609,14 +664,19 @@ for (const width of [1536, 390]) {
           contentType: 'image/jpeg',
         });
       }
+      await expect(account.locator('.account-password-panel')).toBeVisible();
+      await expect(account.locator('.account-session-panel')).toBeVisible();
       await expect(copy.locator('p').first()).toHaveText('Email verified');
       await expect(resend).toHaveCount(0);
       await capture('verified');
 
       fixture.user.emailVerified = false;
+      fixture.user.emailVerificationRequired = false;
       await page.reload();
+      await expect(account.locator('.account-password-panel')).toBeVisible();
+      await expect(account.locator('.account-session-panel')).toBeVisible();
       await expect(copy.locator('p').first()).toHaveText('Email not yet verified');
-      await expect(copy).toContainText(
+      await expect(copy).not.toContainText(
         'Verify your email to start playing and receive your welcome gift.',
       );
       await expect(resend).toHaveAccessibleName(/\S/);
@@ -627,7 +687,7 @@ for (const width of [1536, 390]) {
       );
       await expect(resend).toBeEnabled();
       await expect(copy.getByRole('alert')).toHaveCount(0);
-      await capture('required-unavailable');
+      await capture('unverified-unavailable');
 
       fixture.emailResponse = { status: 503, code: 'SYNTHETIC_EMAIL_FAILURE' };
       await resend.click();
@@ -635,7 +695,7 @@ for (const width of [1536, 390]) {
       await expect(copy.getByRole('alert')).toContainText(/\S/);
       await expect(copy.getByRole('status')).toHaveCount(0);
       await expect(resend).toBeEnabled();
-      await capture('required-error');
+      await capture('unverified-error');
 
       fixture.emailResponse = { status: 200, code: 'EMAIL_VERIFICATION_REQUESTED' };
       await resend.click();
@@ -645,9 +705,25 @@ for (const width of [1536, 390]) {
       await expect(copy.getByRole('alert')).toHaveCount(0);
       await expect(copy.locator('p').first()).toHaveText('Email not yet verified');
       await expect(resend).toBeEnabled();
-      await capture('required-requested');
+      await capture('unverified-requested');
       expect(fixture.emailRequests).toEqual([{}, {}, {}]);
       expect(fixture.user.emailVerified).toBe(false);
+
+      fixture.user.emailVerificationRequired = true;
+      await page.reload();
+      const gate = page.locator('.account-email-banner');
+      await expect(account).toHaveCount(0);
+      await expect(page.locator('.account-password-panel, .account-session-panel')).toHaveCount(0);
+      await expect(gate.locator('.account-email-copy')).toContainText(
+        'Verify your email to start playing and receive your welcome gift.',
+      );
+      await expect(gate.getByRole('button')).toBeEnabled();
+      await assertBannerBounds(gate);
+      await info.attach(`en-email-verification-required-gate-${width}-dark`, {
+        body: await page.screenshot({ fullPage: true, type: 'jpeg', quality: 80 }),
+        contentType: 'image/jpeg',
+      });
+      expect(fixture.emailRequests).toEqual([{}, {}, {}]);
     });
 
     test('other and current session actions retain revoke, reload and auth refresh behavior', async ({
