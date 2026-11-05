@@ -283,7 +283,7 @@ test('NPC may stop or disagree; cancellation invalidates a preexisting patrol/pa
   assert.deepEqual(r.state.entities.keeper.path, []);
 });
 
-test('observed exits, doors and destination occupancy gate following across scenes without teleportation', () => {
+test('observed exits and doors gate following, with a free nearby arrival when the leader occupies the exit', () => {
   let s = story(fixture()).state;
   Object.assign(s.entities.alice, { x: 13, y: 5 });
   Object.assign(s.entities.keeper, { x: 12, y: 5 });
@@ -320,7 +320,13 @@ test('observed exits, doors and destination occupancy gate following across scen
     ).error,
     'FORBIDDEN',
   );
-  assert.equal(g.applyWorldTurnAction(s, 'keeper', action, g.turnFence(s)).error, 'PATH_BLOCKED');
+  const followed = g.applyWorldTurnAction(s, 'keeper', action, g.turnFence(s));
+  assert.equal(followed.error, undefined);
+  assert.equal(followed.state.entities.keeper.mapId, 'roof');
+  assert.deepEqual(followed.state.entities.alice, s.entities.alice);
+  assert.equal(g.footprintOverlaps(followed.state.entities.keeper, s.entities.alice), false);
+  assert.deepEqual(followed.state.npcBrains.keeper.living.companionship.crossings, []);
+  assert.equal(followed.state.turnController.worldNpcActions.keeper, 1);
   Object.assign(s.entities.alice, { x: 4, y: 3 });
   s.entities.door.open = false;
   s.maps.observatory.exits[0].doorId = 'door';

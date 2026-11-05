@@ -79,6 +79,60 @@ export function walkable(
           (e.kind === 'player' || e.kind === 'npc'))),
   );
 }
+
+/** An occupied exit may land nearby, but never across unverified or blocked geometry. */
+function transitionArrival(
+  state: GameState,
+  actorId: string,
+  mapId: string,
+  origin: GamePoint,
+  admission: ReturnType<typeof groundedArrivalArea>,
+): GamePoint | undefined {
+  const actor = state.entities[actorId];
+  // Only occupants of the intended landing can be bypassed. Other actors still
+  // block the search, and no entity is moved or removed from the actual state.
+  const collisionState = {
+    ...state,
+    entities: Object.fromEntries(
+      Object.entries(state.entities).filter(
+        ([id, entity]) =>
+          id === actorId ||
+          entity.mapId !== mapId ||
+          entity.ownerId ||
+          !['player', 'npc'].includes(entity.kind) ||
+          !footprintOverlaps(entity, { ...actor, ...origin }),
+      ),
+    ),
+  };
+  const safe = (point: GamePoint) =>
+    admission.allows(actor, point) &&
+    walkable(collisionState, mapId, point, actorId, true) &&
+    !Object.values(state.encounters).some(
+      (encounter) =>
+        encounter.phase === 'planning' &&
+        encounter.mapId === mapId &&
+        footprintIntersectsArea({ ...actor, ...point }, encounter.area),
+    );
+  // A wall, closed door, unknown image cell or invalid footprint at the original
+  // destination is not an occupancy problem and must not unlock a fallback.
+  if (!safe(origin)) return undefined;
+  const queue = [{ point: origin, steps: 0 }],
+    seen = new Set([key(origin)]);
+  for (let i = 0; i < queue.length; i++) {
+    const { point, steps } = queue[i];
+    if (walkable(state, mapId, point, actorId, true)) return point;
+    // Four cardinal steps keep arrivals local, including large/huge footprints.
+    if (steps >= 4) continue;
+    for (const direction of directions) {
+      const next = { x: point.x + direction.x, y: point.y + direction.y };
+      if (seen.has(key(next)) || !safe(next)) continue;
+      seen.add(key(next));
+      queue.push({ point: next, steps: steps + 1 });
+    }
+  }
+  return undefined;
+}
+
 export function findPath(
   s: GameState,
   mapId: string,
@@ -462,11 +516,14 @@ function actionInternal(
       return fail(state, 'WRONG_MODE');
     const admission = groundedArrivalArea(state, exit.destinationMapId);
     if (!admission.valid) return fail(state, 'TARGET_UNAVAILABLE');
-    if (
-      !admission.allows(a, exit.destination) ||
-      !walkable(state, exit.destinationMapId, exit.destination, id, true)
-    )
-      return fail(state, 'PATH_BLOCKED');
+    const arrival = transitionArrival(
+      state,
+      id,
+      exit.destinationMapId,
+      exit.destination,
+      admission,
+    );
+    if (!arrival) return fail(state, 'PATH_BLOCKED');
     const s = copy(state);
     for (const [npcId, brain] of Object.entries(s.npcBrains ?? {})) {
       const agreement = brain.living?.companionship;
@@ -487,7 +544,7 @@ function actionInternal(
       )
         agreement.crossings.shift();
     }
-    Object.assign(s.entities[id], exit.destination, {
+    Object.assign(s.entities[id], arrival, {
       mapId: exit.destinationMapId,
       path: [],
       movementGeneration: (a.movementGeneration ?? 0) + 1,
