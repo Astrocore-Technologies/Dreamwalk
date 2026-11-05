@@ -1,4 +1,17 @@
 import {
+  readAutonomousSpeechReceipts,
+  readAutonomousSpeechSkips,
+} from './autonomous-speech-receipts';
+import {
+  AUTONOMOUS_SPEECH_POLICY,
+  autonomousSpeechConsentHash,
+  acceptedAutonomousSpeechMatches,
+  autonomousSpeechPlanMatches,
+  assertAutonomousSpeechSnapshot,
+  readAutonomousSpeechBoundEntry,
+  type AutonomousSpeechEntry,
+} from '../generation/autonomous-speech-envelope';
+import {
   worldKnownCostPolicyHash,
   worldKnownCostPolicyRequired,
   acceptedWorldKnownCostPolicyMatches,
@@ -17,7 +30,7 @@ import { Db } from '../db';
 import { NpcAiService } from '../ai/npc-ai.service';
 import { digest } from '../ai/context';
 import type { AiPurpose } from '../ai/types';
-import { fail } from '../errors';
+import { ApiException, fail } from '../errors';
 import { sourceAccessSql } from './source-access';
 
 type Entry = {
@@ -32,6 +45,7 @@ const quoteInput = z
   .object({
     operationId: z.uuid(),
     automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
+    autonomousSpeechPolicy: z.literal(AUTONOMOUS_SPEECH_POLICY).optional(),
   })
   .strict();
 const consentInput = quoteInput
@@ -40,6 +54,10 @@ const consentInput = quoteInput
     consent: z.literal(true),
     estimateRiskConsent: z.literal(true).optional(),
     automaticKnownCostPolicyHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    autonomousSpeechPolicyHash: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
@@ -101,11 +119,13 @@ export class WorldGenerationBatch {
       WHERE r.campaign_id=$1 AND r.status='queued' AND r.job_id IS NULL
       AND (r.requester_user_id IS NULL OR r.requester_user_id=$2 OR r.context->>'generationPolicy'='world-batch-v1')
       AND r.purpose IN ('plan','summary','speech','story_turn')
+      AND NOT(r.context ? 'worldPlanCommunication')
       AND (NOT(r.context ? 'storyTurnId') OR r.context->>'generationPolicy'='world-batch-v1')
       AND NOT EXISTS(SELECT 1 FROM live_test_text_permits p WHERE p.request_id=r.id)
       AND NOT EXISTS(SELECT 1 FROM npc_ai_jobs j WHERE j.id=r.job_id OR j.operation_id=r.id OR j.request_meta->>'runtimeRequestId'=r.id::text)
       AND NOT EXISTS(SELECT 1 FROM generation_budget_reservations br WHERE br.operation_key='manual-text:'||r.id::text)
       AND NOT EXISTS(SELECT 1 FROM spark_holds h WHERE h.source_id=r.id::text)
+      AND NOT EXISTS(SELECT 1 FROM game_autonomous_speech_bindings child WHERE child.request_id=r.id)
       AND NOT EXISTS(SELECT 1 FROM game_world_generation_batches accepted WHERE accepted.campaign_id=$1
         AND accepted.accepted_at IS NOT NULL
         AND (r.context ? 'worldRoundDecision' OR r.context->>'generationPolicy'='world-batch-v1')
@@ -134,7 +154,7 @@ export class WorldGenerationBatch {
       await c.query(
         `SELECT b.id,b.state,b.expires_at,b.turn_fence,r.id AS request_id,r.status AS request_status,
       COALESCE(r.job_id,j.id) AS job_id,j.status AS job_status,h.status AS hold_status
-      FROM game_world_generation_batches b CROSS JOIN LATERAL jsonb_array_elements(b.entries) e
+      FROM game_world_generation_batches b CROSS JOIN LATERAL jsonb_array_elements(b.entries || COALESCE((SELECT jsonb_agg(jsonb_build_object('requestId',child.request_id)) FROM game_autonomous_speech_bindings child WHERE child.batch_id=b.id),'[]'::jsonb)) e
       JOIN game_npc_decision_requests r ON r.id=(e->>'requestId')::uuid
       LEFT JOIN npc_ai_jobs j ON j.id=r.job_id OR j.operation_id=r.id OR j.request_meta->>'runtimeRequestId'=r.id::text LEFT JOIN spark_holds h ON h.id=j.spark_hold_id
       WHERE b.campaign_id=$1 AND b.state IN ('accepted','stale')`,
@@ -200,6 +220,34 @@ export class WorldGenerationBatch {
     return this.db.tx(async (c) => {
       await this.authorize(c, userId, campaignId, false);
       await this.lock(c, campaignId);
+      const speeches = (
+        await c.query(
+          `SELECT id,context FROM game_npc_decision_requests
+        WHERE campaign_id=$1 AND id=ANY($2::uuid[]) AND purpose='speech' AND context ? 'worldPlanCommunication' FOR UPDATE`,
+          [campaignId, ids],
+        )
+      ).rows;
+      if (speeches.length) {
+        if (
+          speeches.length !== ids.length ||
+          speeches.some((row) => !matchesTurnFence(state, row.context.turnFence))
+        )
+          fail(409, 'AUTONOMOUS_SPEECH_CONSENT_STALE', 'AUTONOMOUS_SPEECH_CONSENT_STALE');
+        for (const row of speeches) {
+          await this.failUnspent(campaignId, row.id, 'AUTONOMOUS_SPEECH_DECLINED', c);
+          const terminal = (
+            await c.query('SELECT status,result_code FROM game_npc_decision_requests WHERE id=$1', [
+              row.id,
+            ])
+          ).rows[0];
+          if (
+            terminal?.status !== 'failed' ||
+            terminal.result_code !== 'AUTONOMOUS_SPEECH_DECLINED'
+          )
+            fail(409, 'LOCATION_TRAVEL_ALREADY_STARTED', 'LOCATION_TRAVEL_ALREADY_STARTED');
+        }
+        return { declined: true as const, requestIds: ids };
+      }
       const rows = (
         await c.query(
           `SELECT t.id,t.input,r.status,r.result_code,r.job_id
@@ -270,9 +318,18 @@ export class WorldGenerationBatch {
       return { declined: true as const, requestIds: ids };
     });
   }
-  async status(userId: string, campaignId: string, state: GameState) {
+  async status(
+    userId: string,
+    campaignId: string,
+    state: GameState,
+    speechReceiptBefore?: unknown,
+  ) {
+    const cursor = z.string().uuid().optional().safeParse(speechReceiptBefore);
+    if (!cursor.success) fail(400, 'VALIDATION_FAILED', 'VALIDATION_FAILED');
     return this.db.tx(async (c) => {
       await this.authorize(c, userId, campaignId, false);
+      const receiptPage = await readAutonomousSpeechReceipts(c, campaignId, userId, cursor.data);
+      const speechSkips = cursor.data ? [] : await readAutonomousSpeechSkips(c, campaignId, userId);
       const generatedLocationImages = await this.pendingLocationCount(c, campaignId, state);
       const pendingLocationIds = generatedLocationImages
         ? (
@@ -310,6 +367,8 @@ export class WorldGenerationBatch {
           active = evidence.active === true;
         return {
           available: false,
+          ...(receiptPage.speechReceipts.length ? receiptPage : {}),
+          ...(speechSkips.length ? { speechSkips } : {}),
           generatedLocationImages,
           pendingLocationIds,
           estimateRiskConsentRequired: generatedLocationImages > 0,
@@ -346,6 +405,8 @@ export class WorldGenerationBatch {
           (await this.eligible(c, userId, campaignId, state, false)).length > 0);
       return {
         available,
+        ...(receiptPage.speechReceipts.length ? receiptPage : {}),
+        ...(speechSkips.length ? { speechSkips } : {}),
         generatedLocationImages,
         pendingLocationIds,
         estimateRiskConsentRequired: generatedLocationImages > 0,
@@ -445,7 +506,33 @@ export class WorldGenerationBatch {
         )
       )
         fail(409, 'LOCATION_MEDIA_UNAVAILABLE', 'LOCATION_MEDIA_UNAVAILABLE');
+      const speechEntries: AutonomousSpeechEntry[] = [];
+      if (input.autonomousSpeechPolicy === AUTONOMOUS_SPEECH_POLICY) {
+        const campaign = (
+          await c.query('SELECT source_version_id FROM game_campaigns WHERE id=$1', [campaignId])
+        ).rows[0];
+        const seen = new Set<string>();
+        for (const request of requests) {
+          if (
+            request.purpose !== 'plan' ||
+            !request.context.worldRoundDecision ||
+            seen.has(request.npc_id)
+          )
+            continue;
+          seen.add(request.npc_id);
+          speechEntries.push(
+            await this.ai.quoteAutonomousSpeech(c, userId, {
+              sourceVersionId: campaign.source_version_id,
+              sourceRequestId: request.id,
+              sourceContextDigest: digest(request.context),
+              npcId: request.npc_id,
+              turnFence: turnFence(state),
+            }),
+          );
+        }
+      }
       const pricedEntries = [
+        ...speechEntries,
         ...entries,
         ...mediaEntries,
         ...mediaEntries.map((entry) => entry.grounding),
@@ -477,6 +564,20 @@ export class WorldGenerationBatch {
           ? {
               automaticKnownCostPolicy: 'known-cost-v1' as const,
               automaticKnownCostPolicyHash: worldKnownCostPolicyHash(entries, mediaEntries),
+            }
+          : {}),
+        ...(speechEntries.length
+          ? {
+              autonomousSpeechPolicy: AUTONOMOUS_SPEECH_POLICY,
+              autonomousSpeechPolicyHash: autonomousSpeechConsentHash(
+                entries,
+                mediaEntries,
+                speechEntries,
+              ),
+              optionalAutonomousSpeechRequests: speechEntries.length,
+              optionalAutonomousSpeechSparkSubunits: totalQuotedSparkSubunits(
+                speechEntries.map((entry) => entry.quote),
+              ),
             }
           : {}),
         credits: 0,
@@ -517,8 +618,8 @@ export class WorldGenerationBatch {
         },
       };
       await c.query(
-        `INSERT INTO game_world_generation_batches(id,campaign_id,owner_id,operation_id,state_hash,request_hash,turn_fence,entries,quote,expires_at,media_entries)
-        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11)`,
+        `INSERT INTO game_world_generation_batches(id,campaign_id,owner_id,operation_id,state_hash,request_hash,turn_fence,entries,quote,expires_at,media_entries,autonomous_speech_entries)
+        VALUES($1,$2,$3,$4,$5,$6,$7,$8,$9,$10,$11,$12)`,
         [
           id,
           campaignId,
@@ -531,6 +632,7 @@ export class WorldGenerationBatch {
           JSON.stringify(quote),
           expiresAt,
           JSON.stringify(mediaEntries),
+          JSON.stringify(speechEntries),
         ],
       );
       return { status: 'quoted' as const, operationId: input.operationId, quote };
@@ -572,7 +674,7 @@ export class WorldGenerationBatch {
       if (ordinaryRoundId !== undefined) {
         const authority = (
           await c.query(
-            `SELECT 1 FROM game_ordinary_round_consents
+            `SELECT policy_version FROM game_ordinary_round_consents
            WHERE campaign_id=$1 AND round_id=$2 AND owner_id=$3 AND operation_id=$4
            AND state IN ('pending','accepted') FOR UPDATE`,
             [campaignId, ordinaryRoundId, userId, input.operationId],
@@ -586,6 +688,11 @@ export class WorldGenerationBatch {
         )
           fail(409, 'ORDINARY_ROUND_NOT_AUTHORIZED', 'ORDINARY_ROUND_NOT_AUTHORIZED');
         if (
+          (batch.autonomous_speech_entries?.length ?? 0) > 0 &&
+          authority.policy_version !== AUTONOMOUS_SPEECH_POLICY
+        )
+          fail(409, 'AUTONOMOUS_SPEECH_CONSENT_REQUIRED', 'AUTONOMOUS_SPEECH_CONSENT_REQUIRED');
+        if (
           batch.quote.generatedLocationImages > 0 ||
           batch.quote.estimateRiskConsentRequired ||
           (Array.isArray(batch.media_entries) && batch.media_entries.length > 0) ||
@@ -595,6 +702,14 @@ export class WorldGenerationBatch {
         )
           fail(409, 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED', 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED');
       }
+      if ((batch.autonomous_speech_entries?.length ?? 0) > 0) {
+        if (
+          !acceptedAutonomousSpeechMatches(batch) ||
+          input.autonomousSpeechPolicyHash !== batch.quote.autonomousSpeechPolicyHash
+        )
+          fail(409, 'AUTONOMOUS_SPEECH_CONSENT_REQUIRED', 'AUTONOMOUS_SPEECH_CONSENT_REQUIRED');
+      } else if (input.autonomousSpeechPolicyHash)
+        fail(409, 'AUTONOMOUS_SPEECH_CONSENT_STALE', 'AUTONOMOUS_SPEECH_CONSENT_STALE');
       if (batch.media_entries?.some((entry: { grounding?: unknown }) => entry.grounding)) {
         const fingerprint = travelGroundingConsentHash(batch.entries, batch.media_entries);
         if (
@@ -677,6 +792,26 @@ export class WorldGenerationBatch {
         )
           fail(409, 'QUOTE_CONSUMED', 'QUOTE_CONSUMED');
       }
+      for (const allowance of (batch.autonomous_speech_entries ?? []) as AutonomousSpeechEntry[]) {
+        const spark = (
+          await c.query('SELECT * FROM spark_quotes WHERE id=$1 AND owner_id=$2', [
+            allowance.quote.sparkQuoteId,
+            userId,
+          ])
+        ).rows[0];
+        if (
+          !spark ||
+          spark.source_kind !== 'npc' ||
+          spark.source_id !== allowance.quote.id ||
+          spark.operation_id !== allowance.quote.id ||
+          new Date(spark.expires_at).getTime() <= Date.now() ||
+          String(spark.reserve_subunits) !== allowance.quote.sparkReservedSubunits ||
+          spark.price_snapshot?.tariff?.sparkRateVersion !== allowance.quote.sparkRateVersion ||
+          digest(spark.price_snapshot?.providerQuote?.autonomousSpeechEnvelope ?? null) !==
+            digest(allowance.envelope)
+        )
+          fail(409, 'AUTONOMOUS_SPEECH_CONSENT_STALE', 'AUTONOMOUS_SPEECH_CONSENT_STALE');
+      }
       const wallet = (
         await c.query(
           'SELECT enabled,balance_subunits,held_subunits FROM spark_wallets WHERE owner_id=$1 FOR UPDATE',
@@ -743,18 +878,33 @@ export class WorldGenerationBatch {
       const candidate = (
         await c.query(
           `SELECT owner_id FROM game_world_generation_batches WHERE campaign_id=$1 AND state='accepted'
-        AND entries @> jsonb_build_array(jsonb_build_object('requestId',$2::text)) ORDER BY accepted_at DESC LIMIT 1`,
-          [campaignId, callerRequest.id],
+        AND (entries @> jsonb_build_array(jsonb_build_object('requestId',$2::text))
+          OR EXISTS(SELECT 1 FROM game_autonomous_speech_bindings child WHERE child.batch_id=game_world_generation_batches.id AND child.request_id=$2::uuid)
+          OR ($3::text IS NOT NULL AND autonomous_speech_entries @> jsonb_build_array(jsonb_build_object('envelope',jsonb_build_object('sourceRequestId',$3::text))))) ORDER BY accepted_at DESC LIMIT 1`,
+          [
+            campaignId,
+            callerRequest.id,
+            callerRequest.context?.worldPlanCommunication?.sourceRequestId ?? null,
+          ],
         )
       ).rows[0];
-      if (!candidate) return null;
+      if (!candidate) {
+        await this.skipUncoveredLegacySpeech(c, campaignId, callerRequest);
+        return null;
+      }
       await this.authorize(c, candidate.owner_id, campaignId);
       await this.lock(c, campaignId);
       const batch = (
         await c.query(
           `SELECT * FROM game_world_generation_batches WHERE campaign_id=$1 AND state='accepted'
-        AND entries @> jsonb_build_array(jsonb_build_object('requestId',$2::text)) ORDER BY accepted_at DESC LIMIT 1 FOR UPDATE`,
-          [campaignId, callerRequest.id],
+        AND (entries @> jsonb_build_array(jsonb_build_object('requestId',$2::text))
+          OR EXISTS(SELECT 1 FROM game_autonomous_speech_bindings child WHERE child.batch_id=game_world_generation_batches.id AND child.request_id=$2::uuid)
+          OR ($3::text IS NOT NULL AND autonomous_speech_entries @> jsonb_build_array(jsonb_build_object('envelope',jsonb_build_object('sourceRequestId',$3::text))))) ORDER BY accepted_at DESC LIMIT 1 FOR UPDATE`,
+          [
+            campaignId,
+            callerRequest.id,
+            callerRequest.context?.worldPlanCommunication?.sourceRequestId ?? null,
+          ],
         )
       ).rows[0];
       if (!batch) return null;
@@ -803,7 +953,12 @@ export class WorldGenerationBatch {
       ).rows[0];
       const state = (await c.query('SELECT state FROM game_campaigns WHERE id=$1', [campaignId]))
         .rows[0]?.state;
-      const entry = (batch.entries as Entry[]).find((e) => e.requestId === callerRequest.id)!;
+      let entry = (batch.entries as Entry[]).find((e) => e.requestId === callerRequest.id);
+      if (!entry && request && state) {
+        entry = await this.bindAutonomousSpeech(c, batch, request, state);
+        if (!entry) return null;
+      }
+      if (!entry) return null;
       if (
         (!(
           request?.context.worldRoundDecision ||
@@ -851,6 +1006,269 @@ export class WorldGenerationBatch {
           : {}),
       };
     });
+  }
+  /** Old rounds cannot acquire speech permission retroactively. No accepted exact child is touched. */
+  private async skipUncoveredLegacySpeech(
+    c: PoolClient,
+    campaignId: string,
+    caller: QueryResultRow,
+  ) {
+    if (!caller.context?.worldPlanCommunication || !this.ai.releaseGeneration()) return;
+    const campaign = (
+      await c.query('SELECT owner_id,state FROM game_campaigns WHERE id=$1', [campaignId])
+    ).rows[0];
+    if (!campaign) return;
+    await this.authorize(c, campaign.owner_id, campaignId);
+    await this.lock(c, campaignId);
+    const request = (
+      await c.query(
+        'SELECT * FROM game_npc_decision_requests WHERE id=$1 AND campaign_id=$2 FOR UPDATE',
+        [caller.id, campaignId],
+      )
+    ).rows[0];
+    if (
+      !request ||
+      request.status !== 'queued' ||
+      request.job_id ||
+      request.purpose !== 'speech' ||
+      !request.context?.worldPlanCommunication ||
+      digest(request.context) !== digest(caller.context)
+    )
+      return;
+    const coverage = (
+      await c.query(
+        `SELECT COALESCE(bool_or(state<>'stale'),false) AS protected,count(*)>0 AS historical FROM (
+          SELECT b.state FROM game_world_generation_batches b WHERE b.campaign_id=$1 AND b.accepted_at IS NOT NULL
+            AND b.entries @> jsonb_build_array(jsonb_build_object('requestId',$2::text))
+          UNION ALL SELECT b.state FROM game_autonomous_speech_bindings child
+            JOIN game_world_generation_batches b ON b.id=child.batch_id
+            WHERE child.request_id=$2::uuid AND b.campaign_id=$1
+        ) covered`,
+        [campaignId, request.id],
+      )
+    ).rows[0];
+    // A terminal stale batch cannot keep a never-enqueued child alive forever.
+    // All non-stale accepted coverage and every real liability remain protected.
+    if (!coverage || coverage.protected) return;
+    const sourceId = z
+      .string()
+      .uuid()
+      .safeParse(request.context.worldPlanCommunication.sourceRequestId);
+    const source = sourceId.success
+      ? (
+          await c.query(
+            `SELECT r.*,j.status AS source_job_status,j.quote_id AS source_job_quote_id,j.proposal AS source_proposal
+      FROM game_npc_decision_requests r JOIN npc_ai_jobs j ON j.id=r.job_id WHERE r.id=$1 AND r.campaign_id=$2 FOR SHARE OF r,j`,
+            [sourceId.data, campaignId],
+          )
+        ).rows[0]
+      : undefined;
+    const batches = source
+      ? (
+          await c.query(
+            `SELECT * FROM game_world_generation_batches WHERE campaign_id=$1 AND owner_id=$2
+      AND accepted_at IS NOT NULL AND entries @> jsonb_build_array(jsonb_build_object('requestId',$3::text,'purpose','plan')) ORDER BY accepted_at DESC LIMIT 2`,
+            [campaignId, campaign.owner_id, source.id],
+          )
+        ).rows
+      : [];
+    const batch = batches.length === 1 ? batches[0] : undefined;
+    const entries =
+      batch && Array.isArray(batch.entries)
+        ? batch.entries.filter((entry: Entry) => entry.requestId === source.id)
+        : [];
+    const verified =
+      !coverage.historical &&
+      !!batch &&
+      !!source &&
+      source.purpose === 'plan' &&
+      source.status === 'scheduled' &&
+      source.npc_id === request.npc_id &&
+      source.source_job_status === 'committed' &&
+      entries.length === 1 &&
+      entries[0].quote?.id === source.source_job_quote_id &&
+      entries[0].contextDigest === digest(source.context) &&
+      entries[0].npcId === request.npc_id &&
+      new Date(batch.accepted_at).getTime() < new Date(batch.expires_at).getTime() &&
+      batch.quote?.autonomousSpeechPolicy !== 'bounded-npc-speech-v1' &&
+      digest(batch.turn_fence) === digest(request.context.turnFence) &&
+      matchesTurnFence(campaign.state, request.context.turnFence) &&
+      autonomousSpeechPlanMatches(source, request);
+    // Missing/pruned parent proof cannot grant spending. It can only stop this
+    // exact proven-unspent request, with a truthful unavailable outcome.
+    await this.failUnspent(
+      campaignId,
+      request.id,
+      verified ? 'AUTONOMOUS_SPEECH_LEGACY_UNCOVERED' : 'AUTONOMOUS_SPEECH_ALLOWANCE_UNAVAILABLE',
+      c,
+    );
+    await c.query(
+      "UPDATE game_npc_decision_requests SET requester_user_id=$3 WHERE campaign_id=$1 AND id=$2 AND status='failed' AND job_id IS NULL",
+      [campaignId, request.id, campaign.owner_id],
+    );
+  }
+  /** Bind once after the paid plan: the original accepted entries never change. No dispatch or counts here. */
+  private async bindAutonomousSpeech(
+    c: PoolClient,
+    batch: QueryResultRow,
+    request: QueryResultRow,
+    state: GameState,
+  ): Promise<Entry | undefined> {
+    const skip = async (code = 'AUTONOMOUS_SPEECH_ALLOWANCE_UNAVAILABLE') => {
+      await this.failUnspent(batch.campaign_id, request.id, code, c);
+      return undefined;
+    };
+    if (
+      !acceptedAutonomousSpeechMatches(batch) ||
+      request.purpose !== 'speech' ||
+      !request.context.worldPlanCommunication ||
+      !matchesTurnFence(state, batch.turn_fence)
+    )
+      return skip();
+    const bound = (
+      await c.query(
+        'SELECT * FROM game_autonomous_speech_bindings WHERE batch_id=$1 AND npc_id=$2',
+        [batch.id, request.npc_id],
+      )
+    ).rows[0];
+    if (bound) {
+      // The accepted allowance is one child, not one child per plan action.
+      // Exhausted capacity is an unspent skipped action, never another mid-round confirmation.
+      if (bound.request_id !== request.id) return skip('AUTONOMOUS_SPEECH_ALLOWANCE_EXHAUSTED');
+      const native = (
+        await c.query('SELECT * FROM npc_ai_quotes WHERE id=$1', [bound.native_quote_id])
+      ).rows[0];
+      const entry = native && (await readAutonomousSpeechBoundEntry(c, batch, request, native));
+      if (!entry) {
+        await this.failUnspent(batch.campaign_id, request.id, 'AUTONOMOUS_SPEECH_BINDING_STALE', c);
+        return undefined;
+      }
+      return { ...entry, purpose: 'speech', originalRequesterId: batch.owner_id };
+    }
+    if (request.result_code === 'AUTONOMOUS_SPEECH_CONSENT_REQUIRED') return skip();
+    const allowed = (batch.autonomous_speech_entries as AutonomousSpeechEntry[]).filter(
+      (entry) =>
+        entry.envelope.sourceRequestId === request.context.worldPlanCommunication.sourceRequestId &&
+        entry.envelope.npcId === request.npc_id,
+    );
+    const campaign = (
+      await c.query('SELECT source_version_id FROM game_campaigns WHERE id=$1', [batch.campaign_id])
+    ).rows[0];
+    const source = (
+      await c.query(
+        `SELECT r.*,j.status AS source_job_status,j.proposal AS source_proposal FROM game_npc_decision_requests r
+      JOIN npc_ai_jobs j ON j.id=r.job_id WHERE r.id=$1`,
+        [request.context.worldPlanCommunication.sourceRequestId],
+      )
+    ).rows[0];
+    if (
+      allowed.length !== 1 ||
+      request.status !== 'queued' ||
+      request.job_id ||
+      request.context.runtimeMapImage ||
+      request.context.textCountEvidence ||
+      !source ||
+      source.status !== 'scheduled' ||
+      source.source_job_status !== 'committed' ||
+      !autonomousSpeechPlanMatches(source, request) ||
+      source.campaign_id !== batch.campaign_id ||
+      source.npc_id !== request.npc_id ||
+      digest(source.context) !== allowed[0].envelope.sourceContextDigest ||
+      campaign?.source_version_id !== allowed[0].envelope.sourceVersionId
+    )
+      return skip();
+    // Validate locally before persisting a quote. No future map-analysis authority is inferred.
+    let snapshot;
+    try {
+      snapshot = this.ai.autonomousSpeechRequestSnapshot(request.context);
+    } catch {
+      return skip();
+    }
+    // A new body requires still-reviewed pricing. Once bound, its exact quote may
+    // survive ordinary expiry through the durable proof, without another quote.
+    if (
+      !snapshot?.pricing ||
+      !(
+        Date.parse(snapshot.pricing.reviewedAt) <= Date.now() &&
+        Date.now() < Date.parse(snapshot.pricing.validUntil)
+      )
+    )
+      return skip();
+    try {
+      assertAutonomousSpeechSnapshot(allowed[0].envelope, snapshot!);
+    } catch {
+      return skip();
+    }
+    await c.query(
+      "UPDATE game_npc_decision_requests SET requester_user_id=$2 WHERE id=$1 AND status='queued' AND job_id IS NULL",
+      [request.id, batch.owner_id],
+    );
+    request.requester_user_id = batch.owner_id;
+    // Native quote creation is local. Roll back partial local writes before an
+    // unspent skip; never turn a database/unknown error into a false safe outcome.
+    await c.query('SAVEPOINT optional_speech_quote');
+    try {
+      const quote = await this.ai.quote(
+        {
+          campaignId: batch.campaign_id,
+          npcId: request.npc_id,
+          purpose: 'speech',
+          subjectKind: 'npc',
+          origin: 'user',
+          requesterUserId: batch.owner_id,
+        },
+        request.context,
+        batch.owner_id,
+        c,
+        request.id,
+        captureWorldQuoteRoster(c, batch.owner_id, batch.campaign_id, [
+          {
+            id: request.id,
+            npc_id: request.npc_id,
+            purpose: request.purpose,
+            context: request.context,
+          },
+        ]),
+      );
+      const native = (await c.query('SELECT * FROM npc_ai_quotes WHERE id=$1', [quote.id])).rows[0];
+      assertAutonomousSpeechSnapshot(allowed[0].envelope, native.request_snapshot);
+      if (
+        quote.sparkRateVersion !== allowed[0].quote.sparkRateVersion ||
+        BigInt(quote.sparkReservedSubunits ?? '-1') >
+          BigInt(allowed[0].quote.sparkReservedSubunits ?? '-1')
+      )
+        fail(409, 'AUTONOMOUS_SPEECH_ALLOWANCE_EXCEEDED', 'AUTONOMOUS_SPEECH_ALLOWANCE_EXCEEDED');
+      await c.query(
+        `INSERT INTO game_autonomous_speech_bindings(batch_id,npc_id,source_request_id,request_id,context_digest,native_quote_id,quote)
+      VALUES($1,$2,$3,$4,$5,$6,$7)`,
+        [
+          batch.id,
+          request.npc_id,
+          source.id,
+          request.id,
+          digest(request.context),
+          quote.id,
+          JSON.stringify(quote),
+        ],
+      );
+      const verified = await readAutonomousSpeechBoundEntry(c, batch, request, native);
+      if (!verified)
+        fail(409, 'AUTONOMOUS_SPEECH_CONSENT_STALE', 'AUTONOMOUS_SPEECH_CONSENT_STALE');
+      await c.query('RELEASE SAVEPOINT optional_speech_quote');
+      return { ...verified!, purpose: 'speech', originalRequesterId: batch.owner_id };
+    } catch (error) {
+      await c.query('ROLLBACK TO SAVEPOINT optional_speech_quote');
+      await c.query('RELEASE SAVEPOINT optional_speech_quote');
+      if (
+        error instanceof ApiException ||
+        (error instanceof Error &&
+          ['AUTONOMOUS_SPEECH_ALLOWANCE_EXCEEDED', 'INVALID_DECISION_CONTEXT'].includes(
+            error.message,
+          ))
+      )
+        return skip();
+      throw error;
+    }
   }
   /** An unresolved prior round must not create a new charge or strand later rounds. */
   async stopUnspentForUnknown(campaignId: string) {

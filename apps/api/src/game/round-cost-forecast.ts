@@ -11,6 +11,9 @@ export interface WorldRoundForecast {
   estimatedTotalMicros: number | null;
   estimatedSparkSubunits: string | null;
   requestCount: number;
+  optionalAutonomousSpeechRequests: number;
+  optionalAutonomousSpeechSparkSubunits: string | null;
+  baseEstimatedSparkSubunits: string | null;
   includesMapAnalysis: false;
   finalQuoteRequired: true;
   unavailableReason?: 'pricing_unavailable' | 'context_unavailable';
@@ -22,7 +25,8 @@ export interface WorldRoundForecast {
  * No private IDs, observations, context, or cognition leave this server boundary. */
 export async function forecastWorldRound(
   db: Pick<Db, 'query'>,
-  ai: Pick<NpcAiEngine, 'localRequestForecast'>,
+  ai: Pick<NpcAiEngine, 'localRequestForecast'> &
+    Partial<Pick<NpcAiEngine, 'localAutonomousSpeechForecast'>>,
   campaignId: string,
   state: GameState,
   prepareSpeech?: (state: GameState, request: NpcDecisionRequest) => DecisionContext,
@@ -139,6 +143,9 @@ export async function forecastWorldRound(
       contextUnavailable = true;
     }
   }
+  const optionalAutonomousSpeechRequests = requests.filter(
+    (request) => request.purpose === 'plan',
+  ).length;
   let amount = 0;
   let unavailableReason: WorldRoundForecast['unavailableReason'] = contextUnavailable
     ? 'context_unavailable'
@@ -152,13 +159,39 @@ export async function forecastWorldRound(
     amount += estimate;
     if (!Number.isSafeInteger(amount)) unavailableReason = 'pricing_unavailable';
   }
+  const baseAmount = amount;
+  let optionalAmount = 0;
+  if (optionalAutonomousSpeechRequests && ai.localAutonomousSpeechForecast) {
+    const optional = ai.localAutonomousSpeechForecast();
+    if (
+      optional === null ||
+      !Number.isSafeInteger(optional) ||
+      optional < 0 ||
+      !Number.isSafeInteger(amount + optional * optionalAutonomousSpeechRequests)
+    )
+      unavailableReason = 'pricing_unavailable';
+    else {
+      optionalAmount = optional * optionalAutonomousSpeechRequests;
+      amount += optionalAmount;
+    }
+  }
   return {
     basis: 'local_round_forecast',
     estimatedTotalMicros: unavailableReason ? null : amount,
     estimatedSparkSubunits: unavailableReason
       ? null
       : providerMicrosToSparkSubunits(String(amount)),
-    requestCount: requests.length,
+    baseEstimatedSparkSubunits: unavailableReason
+      ? null
+      : providerMicrosToSparkSubunits(String(baseAmount)),
+    optionalAutonomousSpeechSparkSubunits: unavailableReason
+      ? null
+      : providerMicrosToSparkSubunits(String(optionalAmount)),
+    requestCount:
+      requests.length + (ai.localAutonomousSpeechForecast ? optionalAutonomousSpeechRequests : 0),
+    optionalAutonomousSpeechRequests: ai.localAutonomousSpeechForecast
+      ? optionalAutonomousSpeechRequests
+      : 0,
     includesMapAnalysis: false,
     finalQuoteRequired: true,
     ...(unavailableReason ? { unavailableReason } : {}),

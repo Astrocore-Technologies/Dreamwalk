@@ -314,6 +314,68 @@ test('public utterance audience is bound to safe context; whisper text stays pri
   assert.equal(g.projectState(r.state, 'bob').npcUtterances.length, 0);
   assert.strictEqual(g.commitNpcPublicUtterance(r.state, 'keeper', input).state, r.state);
 });
+
+test('a later public audience filters a retained whisper without exposing its existence or erasing private memory', () => {
+  let s = world();
+  Object.assign(s.entities.alice, { x: 4, y: 5 });
+  Object.assign(s.entities.helper, { x: 8, y: 8 });
+  const whispered = g.applyNpcSpeech(
+    s,
+    'alice',
+    'keeper',
+    { channel: 'whisper', text: 'PRIVATE_WHISPER: the lantern is in the workshop.' },
+    { suppressReply: true },
+  );
+  assert.equal(whispered.error, undefined);
+  s = whispered.state;
+  const privateObservation = s.npcBrains.keeper.living.observations.find(
+    (o) => o.kind === 'said' && o.text?.includes('PRIVATE_WHISPER'),
+  );
+  assert.ok(privateObservation);
+  assert.equal(privateObservation.audienceIds.includes('bob'), false);
+  Object.assign(s.entities.bob, { x: 3, y: 4 });
+  const publicSpeech = g.applyNpcSpeech(
+    s,
+    'alice',
+    'keeper',
+    { channel: 'say', text: 'Boris, what did we discuss earlier?' },
+    { suppressReply: true },
+  );
+  assert.equal(publicSpeech.error, undefined);
+  s = JSON.parse(JSON.stringify(publicSpeech.state));
+  assert.ok(
+    g.buildNpcDecisionContext(s, 'keeper').observations.some((o) => o.id === privateObservation.id),
+    'restored private planning memory still knows the actual whisper',
+  );
+  const ids = s.npcBrains.keeper.living.observations.map((o) => o.id);
+  const speechContext = (state) =>
+    g.buildNpcPublicSpeechContext(
+      state,
+      'keeper',
+      ['alice', 'bob', 'keeper'],
+      ids,
+      [],
+      undefined,
+      'en',
+      'alice',
+    );
+  const safe = speechContext(s);
+  assert.ok(
+    safe.claims.some((c) => c.untrustedUtterance === 'Boris, what did we discuss earlier?'),
+  );
+  assert.doesNotMatch(JSON.stringify(safe), /PRIVATE_WHISPER/);
+  const noPrivateMemory = structuredClone(s);
+  noPrivateMemory.npcBrains.keeper.living.observations =
+    noPrivateMemory.npcBrains.keeper.living.observations.filter(
+      (o) => o.disclosure !== 'participants',
+    );
+  assert.deepEqual(safe, speechContext(noPrivateMemory));
+  assert.equal(
+    g.npcContextFingerprint(safe),
+    g.npcContextFingerprint(speechContext(noPrivateMemory)),
+  );
+  assert.ok(s.npcBrains.keeper.living.observations.some((o) => o.id === privateObservation.id));
+});
 test('all promise deadlines are processed even when only three fit context', () => {
   let s = world();
   const m = s.npcBrains.helper.living;
@@ -761,4 +823,52 @@ test('speech identity does not expose unseen or unauthorized authored speakers',
     g.buildNpcPublicSpeechContext(s, 'keeper', ['keeper', 'alice'], []).publicIdentity,
     undefined,
   );
+});
+
+test('native delivery identity distinguishes same words across channels, recipients and jobs while replay stays idempotent', () => {
+  const original = world();
+  Object.assign(original.entities.alice, { x: 4, y: 5 });
+  Object.assign(original.entities.bob, { x: 3, y: 4 });
+  Object.assign(original.entities.helper, { x: 3, y: 3 });
+  let state = original;
+  const ids = [];
+  for (const [channel, recipientId, deliveryId] of [
+    ['say', 'alice', 'native-job-one'],
+    ['whisper', 'alice', 'native-job-two'],
+    ['say', 'alice', 'native-job-three'],
+    ['say', 'bob', 'native-job-four'],
+  ]) {
+    const audience = g.npcSpeechProspectiveListenerIds(state, 'keeper', channel);
+    const context = g.buildNpcPublicSpeechContext(
+      state,
+      'keeper',
+      audience,
+      [],
+      [],
+      undefined,
+      'en',
+      recipientId,
+    );
+    const input = {
+      channel,
+      recipientId,
+      deliveryId,
+      observationIds: [],
+      text: 'I heard you.',
+      contextHash: g.npcContextFingerprint(context),
+      replyLocale: 'en',
+    };
+    const result = g.commitNpcPublicUtterance(state, 'keeper', input);
+    assert.equal(result.error, undefined);
+    assert.equal(result.state.npcUtterances.length, (state.npcUtterances?.length ?? 0) + 1);
+    assert.ok(result.events.some((event) => event.kind === 'npc.spoke'));
+    state = JSON.parse(JSON.stringify(result.state));
+    ids.push(state.npcUtterances.at(-1).id);
+    const replay = g.commitNpcPublicUtterance(state, 'keeper', input);
+    assert.equal(replay.error, undefined);
+    assert.strictEqual(replay.state, state);
+    assert.equal(replay.events.length, 0);
+    assert.equal(JSON.stringify(g.projectState(state, 'alice')).includes(deliveryId), false);
+  }
+  assert.equal(new Set(ids).size, 4);
 });

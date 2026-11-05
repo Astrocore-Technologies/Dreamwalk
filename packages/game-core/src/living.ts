@@ -67,6 +67,29 @@ const hash = (value: string) => {
   }
   return `${a >>> 0}-${b >>> 0}`;
 };
+/** Native delivery identity distinguishes separately admitted utterances without rewriting legacy IDs. */
+function publicUtteranceId(
+  npcId: string,
+  contextHash: string,
+  content: string | undefined,
+  channel: 'say' | 'whisper',
+  recipientId: string,
+  deliveryId?: string,
+) {
+  return `utterance-${hash(
+    deliveryId
+      ? JSON.stringify([
+          'native-delivery-v1',
+          deliveryId,
+          npcId,
+          channel,
+          recipientId,
+          contextHash,
+          content,
+        ])
+      : `${npcId}:${contextHash}:${content}`,
+  )}`;
+}
 const stable = (value: unknown): unknown =>
   Array.isArray(value)
     ? value.map(stable)
@@ -1371,6 +1394,11 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
     ...(npcCurrentPlace(state, npcId) ? { currentPlace: npcCurrentPlace(state, npcId) } : {}),
     actionContext: npcActionContext(state, npcId, []),
     currentPlan,
+    // This is an already admitted NPC choice, not consent inferred from dialogue.
+    // Recompute its optional next step against the leader's current position.
+    companionship: m.companionship
+      ? { actorId: m.companionship.actorId, nextAction: companionAction(state, npcId) ?? null }
+      : null,
     previousCognition: m.cognition ? clone(m.cognition) : null,
     lastActionOutcome: m.lastActionOutcome ? clone(m.lastActionOutcome) : null,
     ...(state.turnController
@@ -1717,6 +1745,24 @@ export function buildNpcPublicSpeechContext(
   const socialTone = admitted.some((o) => o.actorId === conversationalActor)
     ? socialConversationTone(m, conversationalActor, audience)
     : undefined;
+  const agreement = m.companionship;
+  const agreementUtterance = agreement
+    ? state.npcUtterances?.find((utterance) => utterance.id === agreement.utteranceId)
+    : undefined;
+  // Public generation must not learn another conversation's commitment or route.
+  // Missing context means no audience-safe established agreement, not permission
+  // to infer one from a past offer or the player's invitation.
+  const publicCompanionship =
+    agreement &&
+    agreement.actorId === conversationalActor &&
+    agreementUtterance?.speakerId === npcId &&
+    audience.every(
+      (id) =>
+        agreementUtterance.audienceIds.includes(id) &&
+        agreementUtterance.speakerKnownToIds.includes(id),
+    )
+      ? { actorId: agreement.actorId }
+      : undefined;
   const claims = admitted.map((o) => ({
     observationId: o.id,
     kind: o.kind,
@@ -1750,6 +1796,7 @@ export function buildNpcPublicSpeechContext(
       : {}),
     publicSpeechStyle: publicNpcSpeechStyle(m.personality),
     ...(socialTone ? { socialTone } : {}),
+    ...(publicCompanionship ? { companionship: publicCompanionship } : {}),
     claims,
     ...(m.personality.characterization
       ? {
@@ -1836,6 +1883,8 @@ export function commitNpcPublicUtterance(
     observationIds: string[];
     requestedFactIds?: string[];
     contextHash: string;
+    /** Server-only immutable admitted job/request identity; never authored by the provider. */
+    deliveryId?: string;
     deferredSpeechId?: string;
     replyToObservationId?: string;
     replyLocale?: Locale;
@@ -1888,6 +1937,10 @@ export function commitNpcPublicUtterance(
         input.code === undefined) ||
       (input.code === 'acknowledged' && input.text === undefined)
     ) ||
+    (input.deliveryId !== undefined &&
+      (typeof input.deliveryId !== 'string' ||
+        !input.deliveryId.length ||
+        input.deliveryId.length > 200)) ||
     !['say', 'whisper'].includes(input.channel) ||
     !localeSchema.safeParse(input.replyLocale ?? 'en').success ||
     !Array.isArray(input.observationIds) ||
@@ -1912,7 +1965,14 @@ export function commitNpcPublicUtterance(
   if (new Set(input.observationIds).size !== context.claims.length)
     return result(state, [], 'FORBIDDEN');
   if (npcContextFingerprint(context) !== input.contextHash) return result(state, [], 'STALE_STATE');
-  const id = `utterance-${hash(`${npcId}:${input.contextHash}:${input.code ?? input.text}`)}`;
+  const id = publicUtteranceId(
+    npcId,
+    input.contextHash,
+    input.code ?? input.text,
+    input.channel,
+    input.recipientId,
+    input.deliveryId,
+  );
   if (state.npcUtterances?.some((u) => u.id === id)) return result(state);
   let actionPlan: GameAction[] | undefined;
   if (input.actionIntent) {
@@ -2363,11 +2423,28 @@ export function proposeNpcActionObligation(
   return result(s, [{ kind: 'npc.promise_offered', actorId: npcId, mapId: npc.mapId }]);
 }
 
-/** A planner selects evidence, never a private prose string or its own disclosure permission. */
+/** A realized public reply is supplied by the server, never by a private plan. */
+export type NpcCommunicationDelivery =
+  | { text: string; replyLocale?: Locale; deliveryId?: string }
+  | { utteranceId: string; replyLocale?: Locale };
+
+/** Admission must not render or commit fixture speech, even on a discarded clone. */
+export function validateNpcCommunication(
+  state: GameState,
+  npcId: string,
+  action: GameAction,
+): GameResult {
+  return communicateNpcObservations(state, npcId, action, { validateOnly: true });
+}
+
+/** A planner selects evidence, never a private prose string or its own disclosure permission.
+ * The omitted delivery is the deterministic offline/mock adapter. Live orchestration
+ * must supply an admitted public reply or a verified already-committed utterance. */
 export function communicateNpcObservations(
   state: GameState,
   npcId: string,
   action: GameAction,
+  delivery?: NpcCommunicationDelivery | { validateOnly: true },
 ): GameResult {
   const npc = state.entities[npcId],
     recipient = action.targetId ? state.entities[action.targetId] : undefined,
@@ -2395,22 +2472,68 @@ export function communicateNpcObservations(
   const audienceIds = npcSpeechProspectiveListenerIds(state, npcId, action.channel).filter(
     (id) => hasPosition(npc) || action.channel !== 'whisper' || id === npcId || id === recipient.id,
   );
-  const context = buildNpcPublicSpeechContext(state, npcId, audienceIds, action.observationIds, []);
+  const context = buildNpcPublicSpeechContext(
+    state,
+    npcId,
+    audienceIds,
+    action.observationIds,
+    [],
+    undefined,
+    delivery && 'replyLocale' in delivery ? delivery.replyLocale : undefined,
+    recipient.id,
+  );
   if (context.claims.length !== action.observationIds.length) return result(state, [], 'FORBIDDEN');
   const sources = action.observationIds.map((id) => m.observations.find((o) => o.id === id)!);
   if (sources.some((o) => o.depth >= 3)) return result(state, [], 'FORBIDDEN');
-  const rendered = createMockNpcPublicResponse(context);
-  const committed = commitNpcPublicUtterance(state, npcId, {
-    ...rendered,
-    channel: action.channel,
-    recipientId: recipient.id,
-    observationIds: action.observationIds,
-    contextHash: npcContextFingerprint(context),
-  });
+  if (delivery && 'validateOnly' in delivery) return result(state);
+  const existing =
+    delivery && 'utteranceId' in delivery
+      ? state.npcUtterances?.find((utterance) => utterance.id === delivery.utteranceId)
+      : undefined;
+  if (
+    delivery &&
+    'utteranceId' in delivery &&
+    (!existing ||
+      existing.speakerId !== npcId ||
+      !existing.text ||
+      !existing.audienceIds.includes(recipient.id) ||
+      npcContextFingerprint([...(existing.sourceObservationIds ?? [])].sort()) !==
+        npcContextFingerprint([...action.observationIds].sort()) ||
+      npcContextFingerprint([...existing.audienceIds].sort()) !==
+        npcContextFingerprint([...audienceIds].sort()))
+  )
+    return result(state, [], 'STALE_STATE');
+  const rendered = existing
+    ? { text: existing.text! }
+    : delivery && 'text' in delivery
+      ? { text: delivery.text }
+      : createMockNpcPublicResponse(context);
+  const committed = existing
+    ? result(state)
+    : commitNpcPublicUtterance(state, npcId, {
+        ...rendered,
+        channel: action.channel,
+        recipientId: recipient.id,
+        observationIds: action.observationIds,
+        contextHash: npcContextFingerprint(context),
+        replyLocale: context.replyLocale,
+        ...(delivery && 'deliveryId' in delivery ? { deliveryId: delivery.deliveryId } : {}),
+      });
   if (committed.error) return committed;
+  const utteranceId = publicUtteranceId(
+    npcId,
+    npcContextFingerprint(context),
+    'text' in rendered ? rendered.text : rendered.code,
+    action.channel,
+    recipient.id,
+    delivery && 'deliveryId' in delivery ? delivery.deliveryId : undefined,
+  );
+  const utterance =
+    existing ?? committed.state.npcUtterances?.find((item) => item.id === utteranceId);
+  if (!utterance) return result(state, [], 'STALE_STATE');
   let s = committed.state;
   let changed = false;
-  const heardBy = committed.state.npcUtterances?.at(-1)?.audienceIds ?? [];
+  const heardBy = utterance.audienceIds;
   for (const listenerId of heardBy) {
     if (listenerId === npcId) continue;
     const memory = s.npcBrains?.[listenerId]?.living;

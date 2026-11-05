@@ -7,7 +7,7 @@ import { recordNpcCognition, reviseNpcBelief } from './living-reasoning';
 import { npcActionAllowed, npcConditionsMet } from './living-policy';
 import {
   recordLivingNpcEvents,
-  communicateNpcObservations,
+  validateNpcCommunication,
   npcReplyObservation,
   npcContextFingerprint,
 } from './living';
@@ -41,7 +41,7 @@ function validateNpcPlanActions(
   const npc = state.entities[id];
   for (const a of actions) {
     if (a.kind === 'communicate') {
-      const checked = communicateNpcObservations(state, id, a);
+      const checked = validateNpcCommunication(state, id, a);
       if (checked.error) return checked.error;
     }
     if (!npcActionAllowed(state, id, a)) return 'FORBIDDEN';

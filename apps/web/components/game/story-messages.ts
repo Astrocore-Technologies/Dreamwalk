@@ -2,6 +2,7 @@
 import { useT } from '@/lib/i18n';
 export const storyMessages = {
   title: ['История', 'Story', 'Історія'],
+  declineSpeech: ['Пропустить эти реплики', 'Skip these utterances', 'Пропустити ці репліки'],
   declineLocation: [
     'Продолжить без новой локации',
     'Continue without the new location',
@@ -207,9 +208,76 @@ export const storyMessages = {
     'Хід: приблизно {amount} в еквіваленті Іскор',
   ],
   worldCostForecastHint: [
-    'Предварительно, без анализа карты. Завершение хода оплачивает обычную генерацию: сначала Грёзы, затем Искры.',
-    'Preliminary, before map analysis. Ending your turn pays for normal generation: Dreams first, then Sparks.',
-    'Попередньо, без аналізу мапи. Завершення ходу оплачує звичайну генерацію: спочатку Мрії, потім Іскри.',
+    'Базовая оценка решений без анализа карты. Запас на необязательные реплики указан отдельно ниже. Завершение хода оплачивает фактическую генерацию: сначала Грёзы, затем Искры. Автоматических повторов нет.',
+    'Base estimate for decisions before map analysis. The optional speech allowance is shown separately below. Ending your turn pays for actual generation: Dreams first, then Sparks. No automatic retries.',
+    'Базова оцінка рішень без аналізу мапи. Запас на необов’язкові репліки вказано окремо нижче. Завершення ходу оплачує фактичну генерацію: спочатку Мрії, потім Іскри. Автоматичних повторів немає.',
+  ],
+  worldSpeechReceipts: ['Обработка речи NPC', 'NPC speech processing', 'Обробка мовлення NPC'],
+  worldSpeechReceiptHistory: [
+    'До 20 операций на странице. Более ранние списания доступны в истории.',
+    'Up to 20 operations per page. Earlier charges remain available in history.',
+    'До 20 операцій на сторінці. Раніші списання доступні в історії.',
+  ],
+  worldSpeechSkips: [
+    'Пропущенные реплики: последние 20',
+    'Skipped speech: most recent 20',
+    'Пропущені репліки: останні 20',
+  ],
+  worldSpeechSkipLegacy: [
+    'Необязательная реплика пропущена: прежнее согласие на раунд её не включало. Запрос не отправлен, списания не было.',
+    'Optional speech was skipped because the earlier round consent did not include it. No request was sent and no charge was made.',
+    'Необов’язкову репліку пропущено: попередня згода на раунд її не включала. Запит не надіслано, списання не було.',
+  ],
+  worldSpeechSkipExhausted: [
+    'Необязательная реплика пропущена: согласованный запас на этот раунд использован. Дополнительного запроса и списания не было.',
+    'Optional speech was skipped because this round’s agreed allowance was used. No additional request or charge was made.',
+    'Необов’язкову репліку пропущено: погоджений запас на цей раунд використано. Додаткового запиту та списання не було.',
+  ],
+  worldSpeechSkipUnavailable: [
+    'Необязательная реплика пропущена: безопасно выполнить её в согласованных пределах не удалось. Запрос не отправлен, списания не было.',
+    'Optional speech was skipped because it could not safely fit the agreed limits. No request was sent and no charge was made.',
+    'Необов’язкову репліку пропущено: безпечно виконати її в погоджених межах не вдалося. Запит не надіслано, списання не було.',
+  ],
+  worldSpeechNewest: ['Новые', 'Newest', 'Нові'],
+  worldSpeechOlder: ['Более ранние', 'Older', 'Раніші'],
+  worldSpeechDelivered: ['Реплика доставлена', 'Speech delivered', 'Репліку доставлено'],
+  worldSpeechSilent: ['NPC промолчал', 'NPC remained silent', 'NPC промовчав'],
+  worldSpeechFailed: ['Реплика не доставлена', 'Speech was not delivered', 'Репліку не доставлено'],
+  worldSpeechPending: ['Ожидание результата', 'Awaiting result', 'Очікування результату'],
+  worldOptionalSpeechIncluded: [
+    'Из этого резерва до {amount} в эквиваленте Искр включено на {count} необязательных реплик. Это запас на предел контекста, а не дополнительное списание или ожидаемая цена.',
+    'Of this reserve, up to {amount} Sparks equivalent is included for {count} optional utterances. This covers the context ceiling; it is not an additional charge or an expected price.',
+    'Із цього резерву до {amount} в еквіваленті Іскор включено на {count} необов’язкових реплік. Це запас на межу контексту, а не додаткове списання чи очікувана ціна.',
+  ],
+  worldSpeechReceiptCharged: [
+    'Фактически списано: {amount} в эквиваленте Искр',
+    'Actually charged: {amount} Sparks equivalent',
+    'Фактично списано: {amount} в еквіваленті Іскор',
+  ],
+  worldSpeechReceiptHeld: [
+    'Реплика ещё обрабатывается. Удержано: {amount} в эквиваленте Искр',
+    'Speech generation is pending. Held: {amount} Sparks equivalent',
+    'Репліка ще обробляється. Утримано: {amount} в еквіваленті Іскор',
+  ],
+  worldSpeechReceiptUnknown: [
+    'Стоимость реплики на сверке. Резерв: {amount} в эквиваленте Искр; окончательное списание неизвестно.',
+    'Speech cost is being reconciled. Reserved: {amount} Sparks equivalent; the final charge is unknown.',
+    'Вартість репліки на звірці. Резерв: {amount} в еквіваленті Іскор; остаточне списання невідоме.',
+  ],
+  worldSpeechReceiptFunding: [
+    'Из Грёз: {dreams}; из Искр: {sparks}',
+    'From Dreams: {dreams}; from Sparks: {sparks}',
+    'З Мрій: {dreams}; з Іскор: {sparks}',
+  ],
+  worldOptionalSpeechForecast: [
+    'Дополнительно заложено до {amount} в эквиваленте Искр для {count} необязательных реплик. Это оценочный запас на предел контекста, а не ожидаемая плата или лимит провайдера.',
+    'An additional allowance of up to {amount} Sparks equivalent covers {count} optional utterances. This estimates the configured context ceiling, not an expected charge or a provider-enforced limit.',
+    'Додатково закладено до {amount} в еквіваленті Іскор для {count} необов’язкових реплік. Це оцінний запас на межу контексту, а не очікувана плата чи ліміт провайдера.',
+  ],
+  worldOptionalSpeech: [
+    'Включено до {count} необязательных реплик: не более одной на NPC в этом раунде, в пределах настроенного контекста. Оплачивается фактическое использование, включая ответы, не прошедшие проверку. Повторов нет.',
+    'Includes up to {count} optional utterances: at most one per NPC this round, within the configured context limit. Actual usage is charged, including responses that fail validation. No retries.',
+    'Включено до {count} необов’язкових реплік: не більше однієї на NPC у цьому раунді, у межах налаштованого контексту. Оплачується фактичне використання, включно з відповідями, що не пройшли перевірку. Повторів немає.',
   ],
   worldCostUnavailable: [
     'Стоимость хода пока недоступна',

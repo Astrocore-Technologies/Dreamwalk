@@ -135,8 +135,11 @@ export async function extendContextHistory<T extends object>(
     const rows = await db.query(
       `SELECT f.id,f.sequence,f.ordinal,f.entry->>'kind' AS kind,f.entry->>'authorId' AS "authorId",f.entry->>'text' AS text,
       f.entry->'speakerKnownToIds' AS "speakerKnownToIds"
-      FROM game_story_feed f JOIN game_story_turns t ON t.id=f.turn_id
-      WHERE f.campaign_id=$1 AND t.erased_at IS NULL AND t.status='committed' AND ($4::boolean OR f.channel='say')
+      FROM game_story_feed f LEFT JOIN game_story_turns t ON t.id=f.turn_id
+      LEFT JOIN npc_ai_jobs j ON j.id=f.npc_job_id AND j.campaign_id=f.campaign_id
+      WHERE f.campaign_id=$1 AND ((f.turn_id IS NOT NULL AND t.id IS NOT NULL AND t.erased_at IS NULL AND t.status='committed')
+        OR (f.npc_job_id IS NOT NULL AND j.status='committed' AND j.context_hash<>'erased' AND j.result_code IS DISTINCT FROM 'DATA_ERASED'))
+      AND ($4::boolean OR f.channel='say')
       AND (($5::boolean AND '*'=ANY(f.audience_ids)) OR f.audience_ids @> $2::text[])
       ORDER BY f.sequence DESC,f.ordinal DESC LIMIT $3`,
       [

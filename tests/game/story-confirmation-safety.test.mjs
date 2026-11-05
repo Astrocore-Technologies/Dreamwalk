@@ -868,7 +868,7 @@ test('ordinary world status never mounts consent or makes writes, including acro
   ui.render({ campaignId: 'campaign', scope: 'round-22', disabled: false, access: 'owner' });
   await ui.flush();
   assert.equal(ui.elements('reply-confirmation').length, 0);
-  assert.equal(ui.has('worldCostForecastHint'), false);
+  assert.equal(ui.has('worldCostForecastHint'), true, 'base estimate explains its limited scope');
   assert.match(ui.text(), /worldCostForecast:/);
   ui.expire();
   await ui.flush();
@@ -1522,3 +1522,226 @@ for (const [status, jobStatus, sparkStatus, sparkCapturedSubunits, message] of [
     );
     ui.unmount();
   });
+
+const autonomousReceipt = (id, outcome, amount) => ({
+  id,
+  createdAt: '2026-01-02T12:30:00.000Z',
+  status: 'settled',
+  outcome,
+  reservedSubunits: '10000',
+  capturedSubunits: amount,
+  funding: { dreamsCapturedSubunits: '0', sparksCapturedSubunits: amount },
+});
+for (const locale of ['ru', 'en', 'uk']) {
+  test(`autonomous receipt pagination reads only and retains the current unknown-liability warning (${locale})`, async () => {
+    const calls = [];
+    let finishOlder;
+    const current = {
+      available: false,
+      pending: true,
+      unknown: true,
+      speechReceipts: [autonomousReceipt('new', 'delivered', '1664')],
+      speechReceiptNext: 'older-cursor',
+    };
+    const ui = await harness(
+      'world-generation-confirmation',
+      (...args) => {
+        calls.push(args);
+        return args[0].includes('?')
+          ? new Promise((resolve) => {
+              finishOlder = resolve;
+            })
+          : Promise.resolve(current);
+      },
+      locale,
+    );
+    ui.render({
+      campaignId: 'campaign',
+      scope: 'round',
+      disabled: false,
+      access: 'owner',
+      phase: 'players',
+    });
+    await ui.flush();
+    assert.equal(ui.has('worldSpeechDelivered'), true);
+    assert.equal(ui.elements('time').length, 1);
+    assert.equal(ui.has('worldCostUnresolved'), true);
+    ui.button('worldSpeechOlder')();
+    ui.render();
+    assert.equal(ui.has('worldSpeechDelivered'), false, 'old receipt page disappears immediately');
+    assert.equal(ui.has('worldCostUnresolved'), true, 'billing gate is not the receipt page');
+    finishOlder({
+      ...current,
+      speechReceipts: [autonomousReceipt('old', 'failed', '888')],
+      speechReceiptNext: undefined,
+    });
+    await ui.flush();
+    assert.equal(ui.has('worldSpeechFailed'), true);
+    assert.equal(ui.has('worldSpeechDelivered'), false);
+    assert.equal(ui.has('worldCostUnresolved'), true);
+    ui.button('worldSpeechNewest')();
+    ui.render();
+    await ui.flush();
+    assert.equal(ui.has('worldSpeechDelivered'), true);
+    assert.equal(ui.has('worldSpeechFailed'), false);
+    assert.deepEqual(
+      calls.map((args) => args[0]),
+      [
+        '/game/campaigns/campaign/world-generation',
+        '/game/campaigns/campaign/world-generation?speechReceiptBefore=older-cursor',
+        '/game/campaigns/campaign/world-generation',
+      ],
+    );
+    assert.ok(
+      calls.every((args) => args.length === 1),
+      'no quote, consent, retry or mutation',
+    );
+    ui.unmount();
+  });
+}
+
+for (const interruption of ['campaign', 'access']) {
+  test(`late autonomous receipt page cannot cross ${interruption} boundary`, async () => {
+    const calls = [];
+    let finishOlder;
+    const initial = {
+      campaignId: 'campaign',
+      scope: 'round',
+      disabled: false,
+      access: 'owner',
+      phase: 'players',
+    };
+    const ui = await harness('world-generation-confirmation', (...args) => {
+      calls.push(args);
+      if (args[0].includes('?'))
+        return new Promise((resolve) => {
+          finishOlder = resolve;
+        });
+      return Promise.resolve({
+        available: false,
+        pending: false,
+        speechReceipts: [autonomousReceipt('new', 'delivered', '1664')],
+        speechReceiptNext: 'older-cursor',
+      });
+    });
+    ui.render(initial);
+    await ui.flush();
+    ui.button('worldSpeechOlder')();
+    ui.render();
+    ui.render({
+      ...initial,
+      ...(interruption === 'campaign' ? { campaignId: 'other' } : { access: 'member' }),
+    });
+    assert.equal(ui.has('worldSpeechDelivered'), false);
+    finishOlder({
+      available: false,
+      pending: false,
+      speechReceipts: [autonomousReceipt('old', 'failed', '888')],
+    });
+    await ui.flush();
+    assert.equal(ui.has('worldSpeechFailed'), false, 'late old-page reply is ignored');
+    if (interruption === 'access') ui.render(initial);
+    ui.expire();
+    await ui.flush();
+    assert.equal(ui.has('worldSpeechFailed'), false);
+    assert.ok(
+      !calls.slice(2).some((args) => args[0].includes('speechReceiptBefore')),
+      'page cursor resets at the ownership/campaign boundary',
+    );
+    assert.ok(calls.every((args) => args.length === 1));
+    ui.unmount();
+  });
+}
+
+test('failed older receipt read does not display a stale page or erase current unknown liability', async () => {
+  const calls = [];
+  const ui = await harness('world-generation-confirmation', async (...args) => {
+    calls.push(args);
+    if (args[0].includes('?')) throw Error('STATUS_FAILED');
+    return {
+      available: false,
+      pending: true,
+      unknown: true,
+      speechReceipts: [autonomousReceipt('new', 'silent', '555')],
+      speechReceiptNext: 'older-cursor',
+    };
+  });
+  ui.render({
+    campaignId: 'campaign',
+    scope: 'round',
+    disabled: false,
+    access: 'owner',
+    phase: 'players',
+  });
+  await ui.flush();
+  assert.equal(ui.has('worldSpeechSilent'), true);
+  ui.button('worldSpeechOlder')();
+  ui.render();
+  await ui.flush();
+  assert.equal(ui.has('worldSpeechSilent'), false);
+  assert.equal(ui.has('worldCostUnresolved'), true);
+  assert.equal(ui.elements('reply-confirmation').length, 0);
+  assert.ok(calls.every((args) => args.length === 1));
+  ui.unmount();
+});
+
+for (const locale of ['ru', 'en', 'uk']) {
+  test(`bounded ordinary speech skip is explained without intermediate consent or a fake charge (${locale})`, async () => {
+    const calls = [];
+    const ui = await harness(
+      'world-generation-confirmation',
+      async (...args) => {
+        calls.push(args);
+        return {
+          available: false,
+          pending: false,
+          speechSkips: [
+            {
+              id: 'skip-one',
+              createdAt: '2026-01-02T12:30:00.000Z',
+              reason: 'allowance_exhausted',
+            },
+            {
+              id: 'skip-two',
+              createdAt: '2026-01-02T12:31:00.000Z',
+              reason: 'allowance_unavailable',
+            },
+            {
+              id: 'skip-three',
+              createdAt: '2026-01-02T12:32:00.000Z',
+              reason: 'legacy_uncovered',
+            },
+          ],
+        };
+      },
+      locale,
+    );
+    const initial = {
+      campaignId: 'campaign',
+      scope: 'round',
+      disabled: false,
+      access: 'owner',
+      phase: 'world',
+    };
+    ui.render(initial);
+    await ui.flush();
+    assert.equal(ui.has('worldSpeechSkipExhausted'), true);
+    assert.equal(ui.has('worldSpeechSkipUnavailable'), true);
+    assert.equal(ui.has('worldSpeechSkipLegacy'), true);
+    assert.equal(ui.elements('reply-confirmation').length, 0);
+    assert.equal(ui.has('worldSpeechReceipts'), false);
+    assert.equal(ui.has('worldPending'), false);
+    ui.render({ ...initial, phase: 'players' });
+    await ui.flush();
+    assert.equal(ui.elements('reply-confirmation').length, 0);
+    ui.render({ ...initial, access: 'member', phase: 'players' });
+    assert.equal(ui.has('worldSpeechSkipExhausted'), false);
+    assert.equal(ui.has('worldSpeechSkipUnavailable'), false);
+    assert.equal(ui.has('worldSpeechSkipLegacy'), false);
+    assert.ok(
+      calls.every((args) => args.length === 1),
+      'status only; no additional consent/quote',
+    );
+    ui.unmount();
+  });
+}

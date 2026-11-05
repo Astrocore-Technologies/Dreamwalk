@@ -62,7 +62,7 @@ test('owner End turn persists exact-round authority once, even before the co-op 
   const first = await f.game.command({}, 'campaign', f.command);
   assert.equal(first.status, 'committed');
   assert.equal(f.live.state.turnController.phase, 'player');
-  assert.deepEqual(f.authorities, [['campaign', round, 'payer', f.command.operationId]]);
+  assert.deepEqual(f.authorities, [['campaign', round, 'payer', f.command.operationId, null]]);
   const replay = await f.game.command({}, 'campaign', f.command);
   assert.equal(replay.status, 'committed');
   assert.equal(f.authorities.length, 1);
@@ -109,8 +109,8 @@ function consentFixture() {
     query: async (sql, values) => {
       let rows = [];
       if (sql.startsWith('SELECT * FROM game_world_generation_batches')) rows = [batch];
-      else if (sql.includes('SELECT 1 FROM game_ordinary_round_consents'))
-        rows = authority ? [{}] : [];
+      else if (sql.includes('FROM game_ordinary_round_consents'))
+        rows = authority ? [{ policy_version: null }] : [];
       else if (sql.includes('FROM npc_ai_quotes'))
         rows = [
           {
@@ -199,7 +199,7 @@ test('manual consent cannot inject ordinary policy through public body', async (
   await f.service.consent(f.owner, f.campaign, f.state, f.body);
   assert.equal(f.batch.quote.ordinaryTurnConsentVersion, undefined);
 });
-function schedulerFixture() {
+function schedulerFixture(policyVersion) {
   const game = Object.create(GameService.prototype),
     live = { state: worldState(), paused: false };
   let authority = 'pending',
@@ -214,7 +214,9 @@ function schedulerFixture() {
   game.scheduleRoundRequests = async () => {};
   game.db = {
     query: async () =>
-      authority === 'pending' ? [{ owner_id: 'owner', operation_id: 'operation' }] : [],
+      authority === 'pending'
+        ? [{ owner_id: 'owner', operation_id: 'operation', policy_version: policyVersion }]
+        : [],
     tx: async (work) =>
       work({
         query: async (sql) => {
@@ -294,4 +296,38 @@ test('new-location intent stops ordinary admission before quoting and preserves 
   f.game.ordinaryAdmissionChecks.clear();
   await f.game.admitOrdinaryRound('campaign');
   assert.deepEqual(f.counts(), { quotes: 0, consents: 0, failures: 0, authority: 'blocked' });
+});
+
+test('bounded autonomous speech authority requires the explicit new End turn policy version', async () => {
+  const f = commandFixture();
+  f.command.ordinarySpeechPolicy = 'bounded-npc-speech-v1';
+  const round = f.live.state.turnController.roundId;
+  await f.game.command({}, 'campaign', f.command);
+  assert.deepEqual(f.authorities, [
+    ['campaign', round, 'payer', f.command.operationId, 'bounded-npc-speech-v1'],
+  ]);
+  await f.game.command({}, 'campaign', f.command);
+  assert.equal(f.authorities.length, 1);
+  for (const policy of [undefined, 'bounded-npc-speech-v1']) {
+    const scheduled = schedulerFixture(policy);
+    let quoted, consented;
+    scheduled.game.worldGeneration.quote = async (_owner, _campaign, _state, body) => {
+      quoted = body;
+      return {
+        quote: {
+          id: 'quote',
+          autonomousSpeechPolicyHash: 'speech-policy',
+          automaticKnownCostPolicyHash: 'known-cost-policy',
+        },
+      };
+    };
+    scheduled.game.worldGeneration.consent = async (_owner, _campaign, _state, body) => {
+      consented = body;
+    };
+    await scheduled.game.admitOrdinaryRound('campaign');
+    assert.equal(quoted.autonomousSpeechPolicy, policy);
+    assert.equal(quoted.automaticKnownCostPolicy, policy ? 'known-cost-v1' : undefined);
+    assert.equal(consented.autonomousSpeechPolicyHash, policy ? 'speech-policy' : undefined);
+    assert.equal(consented.automaticKnownCostPolicyHash, policy ? 'known-cost-policy' : undefined);
+  }
 });
