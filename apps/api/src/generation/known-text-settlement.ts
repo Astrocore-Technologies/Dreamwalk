@@ -108,11 +108,13 @@ function countTokens(value: unknown): number | undefined {
   return Number(value);
 }
 /** Fixed-price count receipt, including late/stale success. Never adopt its token count. */
+/** historicalSourceProof is read-only liability classification, never capture authority. */
 export function knownCountSettlement(
   job: QueryResultRow,
   a: QueryResultRow,
   r: QueryResultRow,
   f: Funding,
+  historicalSourceProof = false,
 ) {
   try {
     const p = f.quote.price_snapshot?.providerQuote;
@@ -129,9 +131,12 @@ export function knownCountSettlement(
       !job.body_sha256 ||
       !job.source_hash ||
       !p ||
-      p.automaticKnownCostPolicy !== 'known-cost-v1' ||
-      digest(p.automaticKnownCostAcceptance ?? null) !==
-        digest({ policy: 'known-cost-v1', requestHash: job.request_hash }) ||
+      ((!historicalSourceProof ||
+        p.automaticKnownCostPolicy != null ||
+        p.automaticKnownCostAcceptance != null) &&
+        (p.automaticKnownCostPolicy !== 'known-cost-v1' ||
+          digest(p.automaticKnownCostAcceptance ?? null) !==
+            digest({ policy: 'known-cost-v1', requestHash: job.request_hash }))) ||
       p.countId !== job.id ||
       p.model !== job.model ||
       p.providerVersion !== job.provider_version ||
@@ -166,6 +171,7 @@ export function knownCountSettlement(
   }
 }
 /** Permit admission is durable consent; final NPC usage must independently verify the bill. */
+/** terminalProof is read-only liability classification; mutation callers retain false. */
 export function knownPermitSettlement(
   p: QueryResultRow,
   j: QueryResultRow,
@@ -174,6 +180,7 @@ export function knownPermitSettlement(
   r: QueryResultRow,
   f: Funding,
   live = false,
+  terminalProof = false,
 ) {
   try {
     const admitted = f.quote.price_snapshot?.providerQuote,
@@ -183,22 +190,29 @@ export function knownPermitSettlement(
       !snapshot ||
       !usage ||
       !admitted ||
-      admitted.automaticKnownCostPolicy !== 'known-cost-v1' ||
-      digest(admitted.automaticKnownCostAcceptance ?? null) !==
-        digest({
-          policy: 'known-cost-v1',
-          operationId: p.operation_id,
-          requestId: p.request_id,
-          campaignId: p.campaign_id,
-          authorizationId: p.session_id,
-          contextHash: p.context_hash,
-        }) ||
+      ((!terminalProof ||
+        admitted.automaticKnownCostPolicy != null ||
+        admitted.automaticKnownCostAcceptance != null) &&
+        (admitted.automaticKnownCostPolicy !== 'known-cost-v1' ||
+          digest(admitted.automaticKnownCostAcceptance ?? null) !==
+            digest({
+              policy: 'known-cost-v1',
+              operationId: p.operation_id,
+              requestId: p.request_id,
+              campaignId: p.campaign_id,
+              authorizationId: p.session_id,
+              contextHash: p.context_hash,
+            }))) ||
       !p.dispatched_at ||
       !p.completed_at ||
       p.state !== 'settled' ||
-      !(live ? ['running', 'result_received', 'stale', 'failed'] : ['stale', 'failed']).includes(
-        j.status,
-      ) ||
+      !(
+        terminalProof
+          ? ['committed', 'stale', 'failed', 'cancelled']
+          : live
+            ? ['running', 'result_received', 'stale', 'failed']
+            : ['stale', 'failed']
+      ).includes(j.status) ||
       p.context_hash === 'erased' ||
       p.result_code === 'DATA_ERASED' ||
       p.session_id !== a.id ||

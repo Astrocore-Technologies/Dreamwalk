@@ -1,4 +1,9 @@
 import {
+  nativeRequestStop,
+  stopGenerationAuthorization,
+  withGenerationStop,
+} from '../generation/stop-provenance';
+import {
   extendRuntimeMap,
   runtimeMapStillCurrent,
   runtimeMapSourceStillCurrent,
@@ -1602,14 +1607,27 @@ export class NpcAiEngine {
             j,
             this.provider instanceof ReleaseGenerationProvider ? result.usage.costMicros : null,
             !(this.provider instanceof ReleaseGenerationProvider),
+            'COST_BOUND_EXCEEDED',
           );
-          await c.query(
-            'UPDATE npc_ai_provider_budgets SET blocked=blocked OR $3,overrun_micros=overrun_micros+$2 WHERE provider_id=$1',
-            [
-              j.provider_id,
-              result.usage.costMicros - Number(j.provider_upper_micros),
-              !(this.provider instanceof ReleaseGenerationProvider),
-            ],
+          await withGenerationStop(
+            c,
+            {
+              authorizationId: j.generation_authorization_id ?? undefined,
+              sourceKind: 'npc',
+              sourceId: j.id,
+              providerId: j.provider_id,
+              reason: 'COST_BOUND_EXCEEDED',
+            },
+            async () => {
+              await c.query(
+                'UPDATE npc_ai_provider_budgets SET blocked=blocked OR $3,overrun_micros=overrun_micros+$2 WHERE provider_id=$1',
+                [
+                  j.provider_id,
+                  result.usage.costMicros - Number(j.provider_upper_micros),
+                  !(this.provider instanceof ReleaseGenerationProvider),
+                ],
+              );
+            },
           );
           await c.query(
             'UPDATE npc_ai_jobs SET provider_actual_micros=$2,provider_request_id=$3 WHERE id=$1',
@@ -1644,9 +1662,20 @@ export class NpcAiEngine {
             result.failureCode === 'PROVIDER_LIMIT_VIOLATION' &&
             !(this.provider instanceof ReleaseGenerationProvider)
           )
-            await c.query('UPDATE npc_ai_provider_budgets SET blocked=true WHERE provider_id=$1', [
-              j.provider_id,
-            ]);
+            await withGenerationStop(
+              c,
+              {
+                authorizationId: j.generation_authorization_id ?? undefined,
+                sourceKind: 'npc',
+                sourceId: j.id,
+                providerId: j.provider_id,
+                reason: 'PROVIDER_LIMIT_VIOLATION',
+              },
+              () =>
+                c.query('UPDATE npc_ai_provider_budgets SET blocked=true WHERE provider_id=$1', [
+                  j.provider_id,
+                ]),
+            );
           await this.finalize(c, id, 'stale');
           await c.query('UPDATE npc_ai_jobs SET result_code=$2 WHERE id=$1', [
             id,
@@ -1682,7 +1711,13 @@ export class NpcAiEngine {
           outcome: 'failure_policy_pending',
           receiptId: `failure:${j.id}`,
         });
-        await this.settleProvider(c, j, uncertain ? null : 0, uncertain);
+        await this.settleProvider(
+          c,
+          j,
+          uncertain ? null : 0,
+          uncertain,
+          error instanceof ProviderFailure ? error.code : 'UNATTRIBUTED_PROVIDER_FAILURE',
+        );
         await c.query(
           "UPDATE npc_ai_jobs SET status=$2,result_code=$3,reservation_status=CASE WHEN reservation_status='held' THEN 'released' ELSE reservation_status END,completed_at=now() WHERE id=$1",
           [
@@ -1747,7 +1782,16 @@ export class NpcAiEngine {
       .rows[0];
     return ordinaryFailureSettlement(j, batch, request, hold, quote);
   }
-  private async settleProvider(c: PoolClient, j: Job, actual: number | null, unknown: boolean) {
+  private async settleProvider(
+    c: PoolClient,
+    j: Job,
+    actual: number | null,
+    unknown: boolean,
+    cause = 'UNATTRIBUTED_PROVIDER_FAILURE',
+  ) {
+    if (unknown && j.deadline_at && j.deadline_at.getTime() <= Date.now())
+      cause = 'PROVIDER_DEADLINE_EXCEEDED';
+    if (unknown && j.cancel_requested) cause = 'PROVIDER_CANCELLED_IN_FLIGHT';
     // Wrapped settlement can acquire authorization/scope -> global fence. Enqueue
     // already holds the provider budget before that fence, so acquire it first here too.
     await c.query('SELECT * FROM npc_ai_provider_budgets WHERE provider_id=$1 FOR UPDATE', [
@@ -1759,7 +1803,7 @@ export class NpcAiEngine {
     )
       await fenceGenerationAdmission(c);
     if (this.provider instanceof ManualLiveProvider)
-      await this.provider.session.settleJob(c, j.id, actual, unknown);
+      await this.provider.session.settleJob(c, j.id, actual, unknown, cause);
     if (this.provider instanceof ReleaseGenerationProvider) {
       if (!j.generation_authorization_id || !j.generation_reservation_id)
         fail(409, 'GENERATION_RESERVATION_REQUIRED', 'GENERATION_RESERVATION_REQUIRED');
@@ -1771,16 +1815,19 @@ export class NpcAiEngine {
           actual === null ||
           (actual !== null && actual > Number(j.provider_upper_micros))
         ) {
-          await c.query(
-            "UPDATE live_test_sessions SET state='stopped',stop_code=COALESCE(stop_code,'GENERATION_ACCOUNT_REVIEW_REQUIRED') WHERE id=$1",
-            [j.generation_authorization_id],
-          );
-          await c.query(
-            'UPDATE generation_budget_scopes SET blocked=true WHERE id=(SELECT scope_id FROM live_test_sessions WHERE id=$1)',
-            [j.generation_authorization_id],
-          );
+          const reason =
+            actual !== null && actual > Number(j.provider_upper_micros)
+              ? 'COST_BOUND_EXCEEDED'
+              : cause;
+          await stopGenerationAuthorization(c, {
+            authorizationId: j.generation_authorization_id!,
+            sourceKind: 'npc',
+            sourceId: j.id,
+            providerId: j.provider_id,
+            ...nativeRequestStop(reason),
+          });
         }
-      } else await this.provider.session.settleJob(c, j.id, actual, unknown);
+      } else await this.provider.session.settleJob(c, j.id, actual, unknown, cause);
     }
     if (unknown)
       await this.settleNpcSparks(c, j, { outcome: 'unknown', receiptId: `unknown:${j.id}` });
@@ -1949,7 +1996,13 @@ export class NpcAiEngine {
         },
       );
       if (j.provider_budget_status === 'reserved')
-        await this.settleProvider(c, j, j.status === 'running' ? null : 0, j.status === 'running');
+        await this.settleProvider(
+          c,
+          j,
+          j.status === 'running' ? null : 0,
+          j.status === 'running',
+          'PROVIDER_FINALIZED_IN_FLIGHT',
+        );
     }
     if (
       this.provider instanceof ManualLiveProvider ||
@@ -2073,7 +2126,7 @@ export class NpcAiEngine {
       );
       for (const j of jobs) {
         if (j.status === 'running') {
-          await this.settleProvider(c, j, null, true);
+          await this.settleProvider(c, j, null, true, 'PROVIDER_RESERVATION_EXPIRED');
           await c.query(
             "UPDATE npc_ai_jobs SET status='reconciling',reservation_status=CASE WHEN reservation_status='held' THEN 'released' ELSE reservation_status END,result_code='OUTCOME_UNKNOWN',completed_at=now() WHERE id=$1",
             [j.id],
@@ -2115,13 +2168,25 @@ export class NpcAiEngine {
         const previousOverrun = Math.max(0, Number(j.provider_actual_micros ?? 0) - upper);
         const nextOverrun = Math.max(0, actualMicros - upper);
         if (nextOverrun > 0 || previousOverrun > 0)
-          await c.query(
-            'UPDATE npc_ai_provider_budgets SET blocked=blocked OR $3,overrun_micros=overrun_micros+$2 WHERE provider_id=$1',
-            [
-              j.provider_id,
-              nextOverrun - previousOverrun,
-              !(this.provider instanceof ReleaseGenerationProvider),
-            ],
+          await withGenerationStop(
+            c,
+            {
+              authorizationId: j.generation_authorization_id ?? undefined,
+              sourceKind: 'npc',
+              sourceId: j.id,
+              providerId: j.provider_id,
+              reason: 'COST_BOUND_EXCEEDED',
+            },
+            async () => {
+              await c.query(
+                'UPDATE npc_ai_provider_budgets SET blocked=blocked OR $3,overrun_micros=overrun_micros+$2 WHERE provider_id=$1',
+                [
+                  j.provider_id,
+                  nextOverrun - previousOverrun,
+                  !(this.provider instanceof ReleaseGenerationProvider),
+                ],
+              );
+            },
           );
         // The shared ledger has no separate overrun column: retain the entire late bill.
         if (this.provider instanceof ManualLiveProvider)

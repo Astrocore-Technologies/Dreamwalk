@@ -71,6 +71,7 @@ const receipt = (operationId: string, actualMicros: string) => ({
 });
 
 /** Original authoring admission and known usage only. Never infer cost from today's tariff. */
+/** originalTerminalReceipt validates the original success receipt in read-only proofs. */
 export function knownAuthoringSettlementQuote(
   job: QueryResultRow,
   native: QueryResultRow,
@@ -81,6 +82,7 @@ export function knownAuthoringSettlementQuote(
   previous?: QueryResultRow,
   dreams?: { hold: QueryResultRow; quote: QueryResultRow },
   automatic = false,
+  originalTerminalReceipt = false,
 ) {
   const admitted = quote.price_snapshot?.providerQuote;
   const legacyConsentHash = digest({
@@ -98,7 +100,13 @@ export function knownAuthoringSettlementQuote(
         })
       : undefined;
   if (
-    !(automatic ? ['stale', 'failed', 'cancelled'] : ['stale', 'failed']).includes(job.status) ||
+    !(
+      originalTerminalReceipt
+        ? ['committed', 'stale', 'failed', 'cancelled']
+        : automatic
+          ? ['stale', 'failed', 'cancelled']
+          : ['stale', 'failed']
+    ).includes(job.status) ||
     !job.dispatched_at ||
     !job.completed_at ||
     job.context_hash === 'erased' ||
@@ -205,7 +213,15 @@ export function knownAuthoringSettlementQuote(
     const capture = BigInt(captureSubunits),
       releaseSubunits = (reserve - capture).toString();
     if (hold.status !== 'pending') {
-      const details = previous?.details;
+      const details = originalTerminalReceipt
+        ? {
+            operationId: job.operation_id,
+            holdId: hold.id,
+            actualMicros,
+            captureSubunits,
+            releaseSubunits,
+          }
+        : previous?.details;
       if (
         !details ||
         !z.uuid().safeParse(details.operationId).success ||
@@ -217,7 +233,14 @@ export function knownAuthoringSettlementQuote(
         hold.status !== (capture === 0n ? 'released' : 'settled') ||
         !planSparkSettlement(
           { ...hold, spark_rate_version: rateVersion } as SparkHold,
-          receipt(details.operationId, actualMicros),
+          originalTerminalReceipt
+            ? {
+                outcome: 'success',
+                actualMicros,
+                evidence: 'configured_rates',
+                receiptId: `authoring:${job.id}`,
+              }
+            : receipt(details.operationId, actualMicros),
           true,
         ).duplicate
       )
@@ -269,7 +292,9 @@ export function knownAuthoringSettlementQuote(
             actualSubunits: dreamCapture.toString(),
             policyVersion: DREAMS_FIRST_POLICY,
             evidence: 'configured_rates',
-            receiptId: receipt(previous!.details.operationId, actualMicros).receiptId,
+            receiptId: originalTerminalReceipt
+              ? `authoring:${job.id}`
+              : receipt(previous!.details.operationId, actualMicros).receiptId,
           },
           true,
         ).duplicate

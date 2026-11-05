@@ -1,6 +1,8 @@
-# Verified liability reopening: report-only design
+# Verified liability settlement and future access recovery
 
-This slice does not reopen authorization, unblock scopes, retry a provider or change canon.
+The original settlement slice does not reopen authorization, unblock scopes, retry a provider or change canon.
+The separate future-only reopening layer and its typed request-versus-authorization stop
+rules are documented in [verified-generation-access.md](verified-generation-access.md).
 It also does not automatically capture historical pending image holds without explicit
 native `known-cost-v1` policy authority. No old quote or job is backfilled.
 
@@ -39,17 +41,20 @@ successful-image idempotency. A missing, altered, erased, unverified or over-bud
 retains the hold; a number alone is not billing authority. Generic Sparks hooks are not
 relaxed. No provider billing is inferred from HTTP rejection or silence.
 
-## Proposed future reopening admission
+## Original reopening requirements (implemented separately)
 
 A future helper should acquire no new foreign scope or authorization locks. Caller must
 lock all authorizations for the target scope in ID order, then scope, then the shared
 admission fence, before any source/wallet locks. A concurrent admission, settlement or
 policy amendment must not invalidate the checked snapshot before any update commits.
 
-Only exact uncertainty stops `IMAGE_RESULT_UNKNOWN` and `PROVIDER_OUTCOME_UNKNOWN` are
-candidates. Preserve every other stop, including explicit administrator/user stops,
+The implemented layer distinguishes exact unknown-result causes from typed request-only
+timeout/cancellation causes. See the finite allowlist and discarded-result requirement in
+`verified-generation-access.md`; authorization-level causes never qualify. Preserve every other stop, including explicit administrator/user stops,
 security/model-access denials, policy/configuration changes, expired authorizations,
-provider deadlines, erasure, overrun and revoked source access. A recoverable stop does
+authorization expiry/deadlines, erasure, overrun and revoked source access. A deadline of one
+request is distinct: the future layer may resolve only its typed request stop after exact
+known liability and terminal discarded output, while retaining every authorization veto. A recoverable stop does
 not itself prove why the scope is blocked: the current boolean has no reason history.
 The all-liabilities proof below is mandatory, and financial review must decide whether
 additional durable block provenance is necessary before automatic reopening is safe.
@@ -59,7 +64,9 @@ Report a stable source-specific blocker rather than mutate when any condition fa
 - All authorizations sharing the scope have matching ownership, valid current policy
   revision/configuration, and permitted states. A retained migrated manual row stopped
   for `OWNER_GENERATION_MODE_ACTIVE` may be inert; no other stop is silently removed.
-- Every reservation is terminal. Settled values are present, nonnegative, within the
+- Every provider reservation is terminal. The implemented layer additionally permits an
+  unrelated historical known, fully funded pending currency hold only through its strict
+  read-only retained-funding proof, without capture authority. Settled values are present, nonnegative, within the
   original reserve and matching their exact source receipt. Released reservations have
   proof of no dispatch or exact verified zero, not merely an empty actual column.
   Scope totals and purpose totals remain within bounded caps; unlimited authorization

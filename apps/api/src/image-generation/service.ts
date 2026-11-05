@@ -1,3 +1,4 @@
+import { nativeRequestStop, stopGenerationAuthorization } from '../generation/stop-provenance';
 import {
   verifyAcceptedTravelBatch,
   type AcceptedTravelBatchProof,
@@ -1259,21 +1260,28 @@ export class ImageGenerationEngine {
       [job.reservation_id],
     );
   }
-  /** Durable owner stop: later receipts settle liability but never silently re-enable generation. */
-  private async stopOwnerUnknown(c: PoolClient, job: Job) {
+  /** Each cause is retained separately; a late receipt cannot erase a prior veto. */
+  private async stopOwnerUnknown(c: PoolClient, job: Job, reason = 'IMAGE_RESULT_UNKNOWN') {
     if (job.mode !== 'external') return;
+    if (job.cancel_requested && reason === 'IMAGE_RESULT_UNKNOWN')
+      reason = 'PROVIDER_CANCELLED_IN_FLIGHT';
     await settleReservationSparks(c, job.reservation_id, {
       outcome: 'unknown',
       receiptId: `image:${job.id}`,
     });
-    const stopped = await c.query(
-      "UPDATE live_test_sessions s SET state='stopped',stop_code=COALESCE(stop_code,'IMAGE_RESULT_UNKNOWN') FROM generation_budget_reservations r WHERE r.id=$1 AND s.scope_id=r.scope_id AND s.mode='owner' RETURNING s.scope_id",
-      [job.reservation_id],
-    );
-    if (stopped.rowCount)
-      await c.query('UPDATE generation_budget_scopes SET blocked=true WHERE id=$1', [
-        stopped.rows[0].scope_id,
-      ]);
+    const owners = (
+      await c.query(
+        "SELECT s.id FROM live_test_sessions s JOIN generation_budget_reservations r ON r.scope_id=s.scope_id WHERE r.id=$1 AND s.mode IN ('owner','release') ORDER BY s.id",
+        [job.reservation_id],
+      )
+    ).rows;
+    for (const owner of owners)
+      await stopGenerationAuthorization(c, {
+        authorizationId: owner.id,
+        sourceKind: 'image',
+        sourceId: job.id,
+        ...nativeRequestStop(reason),
+      });
   }
   async maintenance() {
     await this.recoverKnownSettlements();
@@ -1328,7 +1336,7 @@ export class ImageGenerationEngine {
           j.dispatch_deadline &&
           j.dispatch_deadline.getTime() <= Date.now()
         ) {
-          await this.stopOwnerUnknown(c, j);
+          await this.stopOwnerUnknown(c, j, 'IMAGE_PROVIDER_DEADLINE_EXCEEDED');
           await c.query(
             "UPDATE image_generation_jobs SET status='unknown',error_code='DISPATCH_UNCERTAIN',updated_at=now() WHERE id=$1",
             [j.id],
@@ -1449,7 +1457,19 @@ export class ImageGenerationEngine {
         // Erasure/revocation may have completed while the provider was in flight.
         // Never reattach diagnostics or identifiers to erased personal data.
         if (!current || current.status !== 'dispatched' || current.error_code === 'ERASED') return;
-        await this.stopOwnerUnknown(c, claimed.job);
+        await this.stopOwnerUnknown(
+          c,
+          claimed.job,
+          diagnostic
+            ? 'IMAGE_PROVIDER_ACCESS_OR_HTTP_FAILURE'
+            : claimed.job.dispatch_deadline && claimed.job.dispatch_deadline.getTime() <= Date.now()
+              ? 'IMAGE_PROVIDER_DEADLINE_EXCEEDED'
+              : error instanceof Error &&
+                  (error.message === 'PROVIDER_RESULT_UNKNOWN' ||
+                    (error.name === 'TypeError' && error.message === 'fetch failed'))
+                ? 'IMAGE_RESULT_UNKNOWN'
+                : 'UNATTRIBUTED_IMAGE_FAILURE',
+        );
         await c.query(
           "UPDATE image_generation_jobs SET status='unknown',error_code='DISPATCH_UNCERTAIN',safe_diagnostic=$2,provider_request_id=COALESCE($3,provider_request_id),updated_at=now() WHERE id=$1",
           [claimed.job.id, diagnostic ?? null, diagnostic?.requestId ?? null],
@@ -1527,7 +1547,13 @@ export class ImageGenerationEngine {
           j.dispatch_deadline &&
           j.dispatch_deadline.getTime() <= Date.now())
       )
-        await this.stopOwnerUnknown(c, j);
+        await this.stopOwnerUnknown(
+          c,
+          j,
+          j.dispatch_deadline && j.dispatch_deadline.getTime() <= Date.now()
+            ? 'IMAGE_PROVIDER_DEADLINE_EXCEEDED'
+            : 'IMAGE_RESULT_UNKNOWN',
+        );
       if (result.actualMicros !== undefined)
         await settleGenerationSpend(c, j.reservation_id, result.actualMicros);
       if (
@@ -1553,7 +1579,15 @@ export class ImageGenerationEngine {
         'UPDATE image_generation_attempts SET result_received_at=now(),actual_micros=COALESCE($2,actual_micros),provider_request_id=$3 WHERE job_id=$1',
         [id, result.actualMicros ?? null, erased ? null : result.requestId],
       );
+      // A timed-out/cancelled request may settle, but its late output cannot be applied.
+      const discardedRequest = !!(
+        await c.query(
+          "SELECT 1 FROM generation_stop_events WHERE source_kind='image' AND source_id=$1 AND stop_class='request' AND reason IN ('REQUEST_TIMEOUT','REQUEST_DEADLINE_EXCEEDED','JOB_CANCELLED_UNKNOWN') LIMIT 1",
+          [id],
+        )
+      ).rowCount;
       const rejected =
+        discardedRequest ||
         erased ||
         j.cancel_requested ||
         (result.actualMicros !== undefined && result.actualMicros > Number(j.upper_micros));
@@ -1596,11 +1630,15 @@ export class ImageGenerationEngine {
           rejected,
           erased
             ? 'ERASED'
-            : rejected
-              ? 'ADMISSION_REVOKED_OR_OVERRUN'
-              : result.actualMicros === undefined
-                ? 'COST_RECONCILIATION_REQUIRED'
-                : null,
+            : /REVOK|ERASE|DELETED/.test(j.error_code ?? '')
+              ? j.error_code
+              : rejected
+                ? result.actualMicros !== undefined && result.actualMicros > Number(j.upper_micros)
+                  ? 'ADMISSION_REVOKED_OR_OVERRUN'
+                  : 'REQUEST_RESULT_DISCARDED'
+                : result.actualMicros === undefined
+                  ? 'COST_RECONCILIATION_REQUIRED'
+                  : null,
         ],
       );
       await settleKnownImageTx(c, id);

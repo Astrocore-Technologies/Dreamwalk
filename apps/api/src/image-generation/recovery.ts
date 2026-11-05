@@ -115,6 +115,13 @@ export async function recoverModelRejectionTx(
     fail(409, 'STALE_STATE', 'STALE_STATE');
   if (owner.state !== 'stopped' || owner.stop_code !== 'IMAGE_RESULT_UNKNOWN' || !scope?.blocked)
     fail(409, 'IMAGE_RECOVERY_STOP_MISMATCH', 'IMAGE_RECOVERY_STOP_MISMATCH');
+  // This legacy explicit recovery does not prove the new complete stop history.
+  if (scope.stop_epoch_id != null || owner.stop_epoch_id != null)
+    fail(
+      409,
+      'IMAGE_RECOVERY_DURABLE_STOP_REQUIRES_REVIEW',
+      'IMAGE_RECOVERY_DURABLE_STOP_REQUIRES_REVIEW',
+    );
   const job = (await c.query('SELECT * FROM image_generation_jobs WHERE id=$1 FOR UPDATE', [jobId]))
     .rows[0];
   const attempt = (

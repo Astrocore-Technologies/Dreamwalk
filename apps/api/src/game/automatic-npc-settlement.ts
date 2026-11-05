@@ -8,6 +8,7 @@ import { digest } from '../ai/context';
 import { DREAMS_FIRST_POLICY, sparkQuoteRateVersion } from '../generation/sparks-accounting';
 
 /** Reconstruct original admission, never a fresh permission from current campaign state. */
+/** historicalSourceProof checks original consent, not authority to capture an old bill. */
 export function automaticNpcAdmission(
   job: QueryResultRow,
   native: QueryResultRow | undefined,
@@ -18,6 +19,7 @@ export function automaticNpcAdmission(
   batch?: QueryResultRow,
   request?: QueryResultRow,
   dreams?: { hold: QueryResultRow; quote: QueryResultRow },
+  historicalSourceProof = false,
 ): boolean {
   try {
     const p = job.request_snapshot;
@@ -103,7 +105,10 @@ export function automaticNpcAdmission(
         admitted.automaticKnownCostPolicy === 'known-cost-v1' &&
         job.request_meta.automaticKnownCostPolicy === 'known-cost-v1'
       ) &&
-      !ordinary
+      !ordinary &&
+      (!historicalSourceProof ||
+        admitted.automaticKnownCostPolicy != null ||
+        job.request_meta.automaticKnownCostPolicy != null)
     )
       return false;
     let acceptedWorldBatchId = job.request_meta.acceptedWorldBatchId ?? null;

@@ -42,14 +42,18 @@ export type KnownImageProof = {
 };
 /** Source authority is the admitted, unique native image job and its original hold,
  * not the presence of an actual_micros number. No current tariff or current consent. */
-export function knownImageSettlementQuote(p: KnownImageProof) {
+/** historicalSourceProof is used only by read-only liability proof, never settlement. */
+export function knownImageSettlementQuote(p: KnownImageProof, historicalSourceProof = false) {
   const { job: j, native: n, authorization: a, attempt: t, reservation: r, hold: h, quote: q } = p;
   const admitted = q.price_snapshot?.providerQuote,
     profile = j.pricing_profile_snapshot;
   if (
     !['generated', 'admitted', 'rejected', 'cancelled'].includes(j.status) ||
-    j.input?.automaticKnownCostPolicy !== AUTOMATIC_IMAGE_SETTLEMENT_POLICY ||
-    admitted?.automaticKnownCostPolicy !== AUTOMATIC_IMAGE_SETTLEMENT_POLICY ||
+    ((!historicalSourceProof ||
+      j.input?.automaticKnownCostPolicy != null ||
+      admitted?.automaticKnownCostPolicy != null) &&
+      (j.input?.automaticKnownCostPolicy !== AUTOMATIC_IMAGE_SETTLEMENT_POLICY ||
+        admitted?.automaticKnownCostPolicy !== AUTOMATIC_IMAGE_SETTLEMENT_POLICY)) ||
     j.mode !== 'external' ||
     j.spark_cost_verified !== true ||
     !j.dispatched_at ||
@@ -117,13 +121,16 @@ export function knownImageSettlementQuote(p: KnownImageProof) {
   )
     unavailable();
   if (
+    (!historicalSourceProof ||
+      j.input?.automaticKnownCostPolicy != null ||
+      admitted?.automaticKnownCostPolicy != null) &&
     admitted.automaticKnownCostPolicyHash !==
-    imageKnownCostPolicy({
-      quoteId: n.id,
-      requestHash: n.request_hash,
-      reserveMicros: String(n.upper_micros),
-      costBasis: n.cost_basis,
-    }).fingerprint
+      imageKnownCostPolicy({
+        quoteId: n.id,
+        requestHash: n.request_hash,
+        reserveMicros: String(n.upper_micros),
+        costBasis: n.cost_basis,
+      }).fingerprint
   )
     unavailable();
   const expected = digest({

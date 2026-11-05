@@ -1,3 +1,4 @@
+import { VerifiedGenerationAccessRecovery } from './generation/verified-access-recovery';
 import { resolveReplyLocale } from './game/reply-locale';
 import { CachedTranslations, PostgresTranslationCache } from './translation/service';
 import { TranslationInterceptor } from './translation/interceptor';
@@ -149,6 +150,7 @@ class Health {
     GameService,
     KnownNpcSettlement,
     KnownAuthoringSettlement,
+    VerifiedGenerationAccessRecovery,
     PlayableService,
   ],
 })

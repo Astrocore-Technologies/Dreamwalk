@@ -1,3 +1,10 @@
+import {
+  nativeRequestStop,
+  countFailureCode,
+  stopGenerationAuthorization,
+  stopGenerationReservation,
+  withGenerationStop,
+} from './stop-provenance';
 import { currentReleaseDeployment } from './release-deployment';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import {
@@ -463,10 +470,7 @@ export class GenerationAuthority implements OnModuleInit, OnModuleDestroy {
       if (!Number.isSafeInteger(tokens) || tokens < 0)
         throw new Error('TEXT_COUNT_INVALID_RESPONSE');
     } catch (e) {
-      code =
-        e instanceof Error && e.message === 'PROVIDER_HTTP_403'
-          ? 'PROVIDER_HTTP_403'
-          : 'TEXT_COUNT_OUTCOME_UNKNOWN';
+      code = countFailureCode(e);
     }
     return this.db.tx(async (c) => {
       await this.lockAuthorization(c, job.authorization_id);
@@ -506,13 +510,14 @@ export class GenerationAuthority implements OnModuleInit, OnModuleDestroy {
           "UPDATE generation_text_counts SET status='unknown',result_code=$2,completed_at=clock_timestamp() WHERE id=$1",
           [job.id, code ?? 'TEXT_COUNT_DEADLINE_EXCEEDED'],
         );
-        await c.query(
-          "UPDATE live_test_sessions SET state='stopped',stop_code=COALESCE(stop_code,$2) WHERE id=$1",
-          [job.authorization_id, code ?? 'TEXT_COUNT_DEADLINE_EXCEEDED'],
-        );
-        await c.query('UPDATE generation_budget_scopes SET blocked=true WHERE id=$1', [
-          job.scope_id,
-        ]);
+        await stopGenerationAuthorization(c, {
+          authorizationId: job.authorization_id,
+          sourceKind: 'count',
+          sourceId: job.id,
+          ...nativeRequestStop(
+            deadline ? 'TEXT_COUNT_DEADLINE_EXCEEDED' : (code ?? 'TEXT_COUNT_RESULT_UNVERIFIED'),
+          ),
+        });
         if (!code && tokens !== null) {
           await settleGenerationSpend(
             c,
@@ -1212,10 +1217,27 @@ export class GenerationAuthority implements OnModuleInit, OnModuleDestroy {
           operationId: randomUUID(),
           requestHash: policyRequestHash({ kind: 'initial_claim', hash: this.identity() }),
         });
-        await c.query(
-          "UPDATE live_test_sessions SET state='stopped',stop_code=COALESCE(stop_code,'OWNER_GENERATION_MODE_ACTIVE') WHERE scope_id=$1 AND mode='manual' AND state='active'",
-          [GENERATION_SCOPE_ID],
-        );
+        const manualGrants = (
+          await c.query(
+            "SELECT id FROM live_test_sessions WHERE scope_id=$1 AND mode='manual' AND state='active' ORDER BY id",
+            [GENERATION_SCOPE_ID],
+          )
+        ).rows;
+        for (const manual of manualGrants)
+          await withGenerationStop(
+            c,
+            {
+              authorizationId: manual.id,
+              sourceKind: 'policy',
+              sourceId: ownerAuthorizationId,
+              reason: 'OWNER_GENERATION_MODE_ACTIVE',
+            },
+            () =>
+              c.query(
+                "UPDATE live_test_sessions SET state='stopped',stop_code=COALESCE(stop_code,'OWNER_GENERATION_MODE_ACTIVE') WHERE id=$1",
+                [manual.id],
+              ),
+          );
       } else {
         await c.query(
           "INSERT INTO live_test_sessions(id,owner_id,scope_id,expires_at,cap_micros,state) VALUES($1,$2,$3,$4,1000000,'active') ON CONFLICT DO NOTHING",
@@ -1354,9 +1376,9 @@ export class GenerationAuthority implements OnModuleInit, OnModuleDestroy {
     return !!(
       await c.query(
         `SELECT 1 FROM live_test_text_permits WHERE reservation_id=$1
-      AND (state='unknown' OR (state='dispatched' AND dispatched_at<=clock_timestamp()-interval '60 seconds'))
+      AND state IN ('dispatched','unknown') AND dispatched_at<=clock_timestamp()-interval '60 seconds'
       UNION ALL SELECT 1 FROM live_authoring_text_jobs WHERE reservation_id=$1
-      AND (status='unknown' OR (status='dispatched' AND deadline_at<=clock_timestamp())) LIMIT 1`,
+      AND status IN ('dispatched','unknown') AND deadline_at<=clock_timestamp() LIMIT 1`,
         [reservationId],
       )
     ).rowCount;
@@ -1391,13 +1413,16 @@ export class GenerationAuthority implements OnModuleInit, OnModuleDestroy {
       code === 'PROVIDER_LIMIT_VIOLATION' ||
       (actualMicros !== null && actualMicros > Number(reserve.upper_micros))
     ) {
-      await c.query(
-        "UPDATE live_test_sessions SET state='stopped',stop_code=COALESCE(stop_code,$2) WHERE id=$1",
-        [sessionId, overdue ? 'PROVIDER_DEADLINE_EXCEEDED' : code],
+      await stopGenerationReservation(
+        c,
+        sessionId,
+        reservationId,
+        overdue
+          ? 'PROVIDER_DEADLINE_EXCEEDED'
+          : actualMicros !== null && actualMicros > Number(reserve.upper_micros)
+            ? 'COST_BOUND_EXCEEDED'
+            : code,
       );
-      await c.query('UPDATE generation_budget_scopes SET blocked=true WHERE id=$1', [
-        session.scope_id,
-      ]);
     }
   }
   async authorizeImage(
@@ -2020,14 +2045,17 @@ export class GenerationAuthority implements OnModuleInit, OnModuleDestroy {
         code === 'PROVIDER_DEADLINE_EXCEEDED' ||
         (actual !== null && actual > Number(reserve.upper_micros));
       if (stop) {
-        await c.query(
-          "UPDATE live_test_sessions SET state='stopped',stop_code=COALESCE(stop_code,$2) WHERE id=$1",
-          [p.session_id, overdue ? 'PROVIDER_DEADLINE_EXCEEDED' : code],
-        );
-        await c.query(
-          'UPDATE generation_budget_scopes SET blocked=true WHERE id=(SELECT scope_id FROM live_test_sessions WHERE id=$1)',
-          [p.session_id],
-        );
+        const reason = overdue
+          ? 'PROVIDER_DEADLINE_EXCEEDED'
+          : actual !== null && actual > Number(reserve.upper_micros)
+            ? 'COST_BOUND_EXCEEDED'
+            : code;
+        await stopGenerationAuthorization(c, {
+          authorizationId: p.session_id,
+          sourceKind: 'permit',
+          sourceId: p.id,
+          ...nativeRequestStop(reason),
+        });
       }
       const erased = p.context_hash === 'erased' || p.result_code === 'DATA_ERASED';
       await c.query(
@@ -2084,7 +2112,13 @@ export class GenerationAuthority implements OnModuleInit, OnModuleDestroy {
     );
     if (authorization) await settleKnownPermit(c, p, authorization, true);
   }
-  async settleJob(c: PoolClient, jobId: string, actual: number | null, unknown: boolean) {
+  async settleJob(
+    c: PoolClient,
+    jobId: string,
+    actual: number | null,
+    unknown: boolean,
+    cause = 'UNATTRIBUTED_PROVIDER_FAILURE',
+  ) {
     const peek = (
       await c.query(
         "SELECT p.id,p.session_id FROM live_test_text_permits p JOIN npc_ai_jobs j ON (j.id=p.job_id OR j.request_meta->>'runtimeRequestId'=p.request_id::text) WHERE j.id=$1",
@@ -2112,6 +2146,14 @@ export class GenerationAuthority implements OnModuleInit, OnModuleDestroy {
         "UPDATE live_test_text_permits SET state='settled',completed_at=now(),result_code=CASE WHEN context_hash='erased' OR result_code='DATA_ERASED' THEN 'DATA_ERASED' ELSE 'LATE_COST_RECONCILED' END WHERE id=$1",
         [p.id],
       );
+    } else if (p.state === 'unknown' && unknown) {
+      // Later deadline/security/cancellation causes must survive a previous uncertainty.
+      await stopGenerationAuthorization(c, {
+        authorizationId: peek.session_id,
+        sourceKind: 'permit',
+        sourceId: p.id,
+        ...nativeRequestStop(cause),
+      });
     } else if (p.state === 'dispatched' && unknown) {
       await settleReservationSparks(c, p.reservation_id, {
         outcome: 'unknown',
@@ -2121,14 +2163,12 @@ export class GenerationAuthority implements OnModuleInit, OnModuleDestroy {
         "UPDATE live_test_text_permits SET state='unknown',result_code='PROVIDER_OUTCOME_UNKNOWN' WHERE id=$1",
         [p.id],
       );
-      await c.query(
-        "UPDATE live_test_sessions SET state='stopped',stop_code='PROVIDER_OUTCOME_UNKNOWN' WHERE id=$1",
-        [peek.session_id],
-      );
-      await c.query(
-        'UPDATE generation_budget_scopes SET blocked=true WHERE id=(SELECT scope_id FROM live_test_sessions WHERE id=$1)',
-        [peek.session_id],
-      );
+      await stopGenerationAuthorization(c, {
+        authorizationId: peek.session_id,
+        sourceKind: 'permit',
+        sourceId: p.id,
+        ...nativeRequestStop(cause),
+      });
     }
   }
 

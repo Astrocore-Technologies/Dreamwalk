@@ -65,12 +65,14 @@ export function knownNpcSettlementQuote(
   job: QueryResultRow,
   hold: QueryResultRow,
   quote: QueryResultRow,
-  lifecycle: 'recovery' | 'ordinary-failure' | 'automatic' = 'recovery',
+  lifecycle: 'recovery' | 'ordinary-failure' | 'automatic' | 'terminal' = 'recovery',
 ) {
   if (
-    !(lifecycle !== 'ordinary-failure'
-      ? ['stale', 'failed'].includes(job.status)
-      : ['running', 'result_received'].includes(job.status)) ||
+    !(lifecycle === 'terminal'
+      ? ['committed', 'stale', 'failed', 'cancelled'].includes(job.status)
+      : lifecycle !== 'ordinary-failure'
+        ? ['stale', 'failed'].includes(job.status)
+        : ['running', 'result_received'].includes(job.status)) ||
     job.provider_budget_status !== 'spent' ||
     job.provider_external !== true ||
     job.provider_cost_evidence !== 'configured_rates' ||
@@ -78,6 +80,7 @@ export function knownNpcSettlementQuote(
       job.subject_kind === 'npc' ||
       (job.subject_kind === 'player' &&
         (lifecycle === 'automatic' ||
+          lifecycle === 'terminal' ||
           (lifecycle === 'ordinary-failure' && job.purpose === 'story_turn')))
     ) ||
     job.credits !== 0 ||
