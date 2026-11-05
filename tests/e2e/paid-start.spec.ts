@@ -130,7 +130,7 @@ for (const outcome of ['ready', 'failed', 'stale', 'queued', 'unknown'] as const
       const path = '/adventures/old-observatory?heroId=' + heroId;
       await page.goto(path);
       expect(dispatches).toBe(0);
-      await page.getByRole('button', { name: 'Начать прохождение', exact: true }).click();
+      await page.getByRole('button', { name: 'Начать заново', exact: true }).click();
       await expect(page.getByRole('dialog')).toBeVisible();
       await expect(page.getByRole('dialog')).toContainText('0.20');
       await expect(page.getByRole('dialog')).toContainText('1.00');
@@ -140,7 +140,7 @@ for (const outcome of ['ready', 'failed', 'stale', 'queued', 'unknown'] as const
       await expect(page.getByRole('dialog')).toHaveCount(0);
       expect(dispatches).toBe(0);
       await page.reload();
-      await page.getByRole('button', { name: 'Начать прохождение', exact: true }).click();
+      await page.getByRole('button', { name: 'Начать заново', exact: true }).click();
       await expect(page.getByRole('dialog')).toBeVisible();
       expect(quotes).toBe(2);
       expect(dispatches).toBe(0);
@@ -156,7 +156,7 @@ for (const outcome of ['ready', 'failed', 'stale', 'queued', 'unknown'] as const
         await expect(page.getByRole('dialog')).toHaveCount(0);
         expect(dispatches).toBe(1);
         expect(starts).toBe(0);
-        await page.getByRole('button', { name: 'Начать прохождение', exact: true }).click();
+        await page.getByRole('button', { name: 'Начать заново', exact: true }).click();
         await expect(page.getByRole('dialog')).toBeVisible();
         expect(quotes).toBe(3);
         expect(dispatches).toBe(1);
@@ -197,9 +197,9 @@ for (const outcome of ['ready', 'failed', 'stale', 'queued', 'unknown'] as const
         await expect(page.getByRole('button', { name: 'Новая оценка', exact: true })).toHaveCount(
           0,
         );
-        await expect(
-          page.getByRole('button', { name: 'Начать прохождение', exact: true }),
-        ).toHaveCount(0);
+        await expect(page.getByRole('button', { name: 'Начать заново', exact: true })).toHaveCount(
+          0,
+        );
         await page.reload();
         await expect(
           page.getByRole('status').filter({ hasText: 'Подготовка не удалась.' }),
@@ -220,11 +220,12 @@ for (const outcome of ['ready', 'failed', 'stale', 'queued', 'unknown'] as const
       expect(preparePosts).toBe(postsBeforeRevisit);
       restoredCampaign = true;
       await page.reload();
-      await expect(page.getByRole('button', { name: 'Открыть игру', exact: true })).toBeVisible();
+      await expect(page.getByRole('link', { name: 'Продолжить игру', exact: true })).toBeVisible();
+      await expect(page.getByRole('button', { name: 'Начать заново', exact: true })).toBeVisible();
       await expect(page).toHaveURL(new RegExp('/adventures/old-observatory'));
       expect(starts).toBe(1);
       expect(preparePosts).toBe(postsBeforeRevisit);
-      await page.getByRole('button', { name: 'Открыть игру', exact: true }).click();
+      await page.getByRole('link', { name: 'Продолжить игру', exact: true }).click();
       await expect(page).toHaveURL(new RegExp('/game/' + campaignId + '$'));
       expect(starts).toBe(1);
     },

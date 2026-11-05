@@ -1304,3 +1304,27 @@ constrained. Fresh exact-head remote checks and rendered evidence still gate mer
 - Turn-based speech selection is removed without losing NPC inspection or legacy real-time compatibility. Cell-based hearing remains authoritative, stale selected-recipient metadata cannot block speech, and pure emotes reach visible observers with strict whisper privacy.
 - RP extras now derive from the complete reply-audience-authorized claims at freeze, dispatch and commit; new observation identities remain pinned. Mixed emote/speech does not add duplicate NPC reply jobs. Existing targetless coauthor continuation is preserved in the explicit combined quote.
 - Definitive Cancel/rejection/expiry retires quote identity; uncertain transport and consent retain the same immutable retry. Browser layout assertions remain intact; only the full journey budget changes from60s to90s after measured runner-wide slowdown.
+
+## Continue or start an independent save — 2026-11-05
+
+Story entry now offers Continue and Start over, with a compact selector when
+several accepted saves exist. Lookup spans playable revisions of the same story
+and retains live-owner, membership and source-access checks. Continue is a direct
+link, with no preparation or financial mutation. A confirmed finished local
+launch releases its operation/director pin; a fresh start uses a new operation
+and the unchanged preparation, cache reuse, consent and settlement path. Old
+campaigns and snapshots are retained. Failed restore reads expose status recovery
+instead of a misleading fresh-start button; unknown or pending dispatch identities
+are not retired.
+
+Verified locally: contracts/core/API build, web typecheck, 55 focused launch,
+hero, metadata, return and list tests; 15 localization and private-access source
+tests; changed-file ESLint and diff whitespace checks; all 18 isolated paid-start
+PostgreSQL checks, including old campaign/snapshot preservation, scoped save
+access and unchanged generation charge/reuse. Independent source review passed.
+Added RU/EN/UK browser cases for selection, Continue, Back, reload, repeated Start
+over and save retention, including a legacy completed director pin. Browser
+execution is blocked locally: Chromium cannot create its required socket in the
+shell sandbox, and the approved escalation fails during sandbox mount setup.
+No browser assertions ran; exact-head CI remains the browser acceptance gate.
+No production data, real providers or wallet funds changed in this slice.

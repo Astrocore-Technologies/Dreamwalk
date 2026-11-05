@@ -8,6 +8,7 @@ import {
   Param,
   Post,
   Req,
+  Query,
   Res,
 } from '@nestjs/common';
 import type { Request, Response } from 'express';
@@ -241,8 +242,8 @@ export class GameController {
   ) {
     return this.game.mediaPreparation(req, id, body);
   }
-  @Get('campaigns') list(@Req() req: Request) {
-    return this.game.list(req);
+  @Get('campaigns') list(@Req() req: Request, @Query('adventureId') adventureId?: unknown) {
+    return this.game.list(req, adventureId);
   }
   @Get('campaigns/:id/members')
   members(@Req() req: Request, @Param('id') id: string) {

@@ -62,6 +62,7 @@ async function fixture(
     data.playableVersionId = '';
   }
   const state = {
+    saves: [] as { id: string; updatedAt?: string }[],
     readsFail: false,
     delay: 0,
     heroFail: false,
@@ -126,6 +127,10 @@ async function fixture(
                   },
                 ],
           });
+    if (path === '/game/campaigns' && req.method() === 'GET')
+      return route.fulfill({
+        json: { userId: ownerId, adventureId: data.id, campaigns: state.saves },
+      });
     if (path === '/game/directors') return route.fulfill({ json: defaultDirectorCatalog() });
     if (path.endsWith('/playable-versions'))
       return route.fulfill({
@@ -552,3 +557,120 @@ test('closing a picker locked by selection restoration focuses its enabled local
   await expect(page).toHaveURL(new RegExp(storyPath + '$'));
   expect(state.posts).toEqual([]);
 });
+
+for (const variant of [
+  {
+    locale: 'ru',
+    width: 1536,
+    continue: 'Продолжить игру',
+    restart: 'Начать заново',
+    save: 'Сохранённое прохождение',
+  },
+  {
+    locale: 'en',
+    width: 390,
+    continue: 'Continue game',
+    restart: 'Start over',
+    save: 'Saved campaign',
+  },
+  {
+    locale: 'uk',
+    width: 390,
+    continue: 'Продовжити гру',
+    restart: 'Почати заново',
+    save: 'Збережене проходження',
+  },
+]) {
+  test(`story continue and independent restart ${variant.locale} ${variant.width}`, async ({
+    page,
+  }, info) => {
+    const { state } = await fixture(page, { locale: variant.locale });
+    await page.setViewportSize({ width: variant.width, height: 900 });
+    const oldId = '77777777-7777-4777-8777-777777777777';
+    const otherId = '88888888-8888-4888-8888-888888888888';
+    const newId = '99999999-9999-4999-8999-999999999999';
+    state.saves = [{ id: oldId, updatedAt: '2026-11-05T02:00:00Z' }, { id: otherId }];
+    const writes: { path: string; body: Record<string, unknown> }[] = [];
+    const legacy = variant.locale === 'ru';
+    const newDirector = legacy ? 'storyteller' : 'coauthor';
+    let started = false;
+    await page.addInitScript(
+      ({ ownerId, versionId, legacy, adventureId }) => {
+        const key = `dreamwalk-start:${ownerId}:${versionId}:`;
+        if (!sessionStorage.getItem('synthetic-continue-fixture')) {
+          sessionStorage.setItem(
+            key + (legacy ? ':prepare' : ':coauthor:prepare'),
+            'completed-operation',
+          );
+          if (!legacy) sessionStorage.setItem(key + ':director', 'coauthor');
+          if (legacy)
+            sessionStorage.setItem(
+              `dreamwalk-director-choice:adventure:${adventureId}`,
+              'storyteller',
+            );
+          sessionStorage.setItem('synthetic-continue-fixture', 'yes');
+        }
+      },
+      { ownerId, versionId, legacy, adventureId: story().id },
+    );
+    await page.route('**/api/v1/game/start-preparations**', async (route) => {
+      const req = route.request();
+      const path = new URL(req.url()).pathname;
+      if (req.method() === 'POST') {
+        writes.push({ path, body: req.postDataJSON() });
+        await new Promise((resolve) => setTimeout(resolve, 200));
+      }
+      const old = path.endsWith('/completed-operation');
+      return route.fulfill({
+        json: {
+          id: old ? 'old-preparation' : 'new-preparation',
+          status: old || started ? 'started' : 'ready',
+          campaignId: old ? oldId : started ? newId : null,
+          reused: true,
+          directorProfileId: old ? 'coauthor' : newDirector,
+          jobs: [],
+        },
+      });
+    });
+    await page.route('**/api/v1/game/campaigns', async (route) => {
+      if (route.request().method() !== 'POST') return route.fallback();
+      writes.push({ path: '/api/v1/game/campaigns', body: route.request().postDataJSON() });
+      started = true;
+      state.saves.unshift({ id: newId, updatedAt: '2026-11-05T03:00:00Z' });
+      return route.fulfill({ json: { campaignId: newId } });
+    });
+    await page.goto(storyPath);
+    const resume = page.getByRole('link', { name: variant.continue, exact: true });
+    const restart = page.getByRole('button', { name: variant.restart, exact: true });
+    await expect(resume).toHaveAttribute('href', `/game/${oldId}`);
+    await expect(restart).toBeEnabled();
+    expect(writes).toEqual([]);
+    await page.getByLabel(variant.save, { exact: true }).selectOption(otherId);
+    await expect(resume).toHaveAttribute('href', `/game/${otherId}`);
+    await noOverflow(page);
+    await page.screenshot({ path: info.outputPath('continue-new-save.png'), fullPage: true });
+    await resume.click();
+    await expect(page).toHaveURL(new RegExp(`/game/${otherId}$`));
+    expect(writes).toEqual([]);
+    await page.goBack();
+    await expect(restart).toBeEnabled();
+    await page.reload();
+    await expect(restart).toBeEnabled();
+    expect(writes).toEqual([]);
+    await restart.click({ clickCount: 2 });
+    await expect(page).toHaveURL(new RegExp(`/game/${newId}$`));
+    expect(writes.map((write) => write.path)).toEqual([
+      '/api/v1/game/start-preparations',
+      '/api/v1/game/campaigns',
+    ]);
+    expect(writes[0].body.operationId).not.toBe('completed-operation');
+    expect(writes[0].body.directorProfileId).toBe(newDirector);
+    expect(writes[1].body.startPreparationId).toBe('new-preparation');
+    expect(state.saves.map((save) => save.id)).toEqual([newId, oldId, otherId]);
+    await page.goBack();
+    await expect(resume).toBeVisible();
+    await expect(restart).toBeEnabled();
+    expect(writes).toHaveLength(2);
+    await expect(page.getByRole('dialog')).toHaveCount(0);
+  });
+}

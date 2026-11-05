@@ -5,6 +5,8 @@ import { HeroSelection, useHeroSelection } from './hero-selection';
 import { DirectorSelection, useDirectorSelection } from './director-selection';
 import { useLaunchGate } from './use-launch-gate';
 import { useRouter } from 'next/navigation';
+import Link from 'next/link';
+import type { CampaignSummary } from './use-game';
 import { useEffect, useState } from 'react';
 import { startState, type StartPreparation } from './start-state';
 import { formatSparkSubunits } from '@dreamwalk/contracts';
@@ -12,12 +14,26 @@ import { providerSparkSubunits } from '../visual-authoring/spark-equivalent';
 import { selectAdventureText, type Adventure } from '@dreamwalk/contracts';
 import { api, ApiError, coverUrl, errorMessage, useClient, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
-import { Button, ErrorBox, Modal } from '@/components/ui';
+import { Button, ErrorBox, Field, Modal, Select } from '@/components/ui';
 export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
   const { t, locale, taxonomy } = useT();
   const heroSelection = useHeroSelection();
   const router = useRouter();
   const { user, loading: authLoading } = useClient();
+  const saves = useResource<{
+    userId: string;
+    adventureId: string;
+    campaigns: CampaignSummary[];
+  }>(user ? `/game/campaigns?adventureId=${encodeURIComponent(adventure.id)}` : null);
+  const saveScope = `${user?.id}:${adventure.id}`;
+  const [completedSave, setCompletedSave] = useState<{ scope: string; id: string } | null>(null);
+  const [selectedSave, setSelectedSave] = useState('');
+  const savesLoaded = saves.data?.userId === user?.id && saves.data?.adventureId === adventure.id;
+  const savedCampaigns = user && savesLoaded ? saves.data!.campaigns : [];
+  const completedId = completedSave?.scope === saveScope ? completedSave.id : null;
+  const saveIds = savedCampaigns.map((campaign) => campaign.id);
+  if (completedId && !saveIds.includes(completedId)) saveIds.unshift(completedId);
+  const continueId = saveIds.includes(selectedSave) ? selectedSave : saveIds[0];
   const privateAccess =
     adventure.visibility === 'private' && ['owner', 'invited'].includes(adventure.access || '');
   const versions = useResource<{
@@ -61,6 +77,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
   const [confirm, setConfirm] = useState(false);
   const [dispatchUncertain, setDispatchUncertain] = useState(false);
   const [restoredKey, setRestoredKey] = useState('');
+  const [restorationUncertain, setRestorationUncertain] = useState(false);
   // Consent to enter is local to this visit and selection, never restored from storage.
   const [entryKey, setEntryKey] = useState('');
   const [busy, setBusy] = useState(false),
@@ -70,6 +87,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
     : `${baseStorageKey}:${directorSelection.profileId}`;
   useEffect(() => {
     setPreparation(null);
+    setRestorationUncertain(false);
     setEntryKey('');
     setQuote(null);
     setConfirm(false);
@@ -179,7 +197,21 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
       }
       if (!gate.accepts(lease)) return;
       setPreparation(current);
+      if (action === 'restore') setRestorationUncertain(false);
       if (!current) return;
+      if (current.campaignId && action === 'restore') {
+        // A completed launch is a save, not an instruction to enter or reuse its
+        // idempotency key. Only finished starts retire; uncertain/pending starts
+        // retain their identity and the existing settlement/consent protection.
+        setCompletedSave({ scope: saveScope, id: current.campaignId });
+        sessionStorage.removeItem(storageKey + ':prepare');
+        sessionStorage.removeItem(storageKey + ':dispatch-pending');
+        sessionStorage.removeItem(storageKey + ':director-included');
+        setDispatchUncertain(false);
+        setPreparation(null);
+        directorSelection.releaseCompleted();
+        return;
+      }
       if (current.jobs?.length || current.status === 'ready' || current.campaignId) {
         sessionStorage.removeItem(storageKey + ':dispatch-pending');
         setDispatchUncertain(false);
@@ -215,6 +247,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
       }
     } catch (err) {
       if (gate.accepts(lease)) {
+        if (action === 'restore') setRestorationUncertain(true);
         // These explicit responses are rejected before admission. A network error,
         // unknown response, or any other code must retain the pending-dispatch guard.
         if (
@@ -271,7 +304,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
       if (!navigating && gate.finish(lease)) setBusy(false);
     }
   }
-  const state = startState(preparation, dispatchUncertain);
+  const state = startState(preparation, dispatchUncertain || restorationUncertain);
   useEffect(() => {
     if (busy || error || !['running', 'checking'].includes(state)) return;
     const timer = setTimeout(() => void launch('refresh'), 2500);
@@ -301,6 +334,32 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
           : 'prepare';
   return (
     <>
+      {continueId && (
+        <div className="stack" data-testid="story-saves">
+          {saveIds.length > 1 && (
+            <Field label={t('Сохранённое прохождение')}>
+              <Select value={continueId} onChange={(event) => setSelectedSave(event.target.value)}>
+                {saveIds.map((id) => {
+                  const save = savedCampaigns.find((entry) => entry.id === id);
+                  const updated = save?.updatedAt ? new Date(save.updatedAt) : null;
+                  return (
+                    <option key={id} value={id}>
+                      {t('Сохранение')} {id.slice(0, 8)}
+                      {updated && Number.isFinite(updated.getTime())
+                        ? ` · ${updated.toLocaleString(locale, { dateStyle: 'short', timeStyle: 'short' })}`
+                        : ''}
+                    </option>
+                  );
+                })}
+              </Select>
+            </Field>
+          )}
+          <Link className="button" href={`/game/${encodeURIComponent(continueId)}`}>
+            {t('Продолжить игру')}
+          </Link>
+        </div>
+      )}
+      {user && saves.error && <ErrorBox message={saves.error} retry={saves.reload} />}
       <HeroSelection
         selection={heroSelection}
         disabled={busy || directorSelection.locked || state !== 'estimate'}
@@ -335,8 +394,12 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
       {!confirm && (
         <Button
           type="button"
+          variant={continueId ? 'secondary' : 'primary'}
           disabled={
             authLoading ||
+            (!!user &&
+              ['prepare', 'restart'].includes(primaryAction) &&
+              (saves.loading || (!savesLoaded && !saves.error))) ||
             (!!user && restoredKey !== storageKey) ||
             !versionId ||
             versions.loading ||
@@ -359,9 +422,14 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
                   ? 'Подготовка игры'
                   : state === 'ready'
                     ? 'Открыть игру'
-                    : 'Начать прохождение',
+                    : continueId
+                      ? 'Начать заново'
+                      : 'Начать прохождение',
           )}
         </Button>
+      )}
+      {continueId && (
+        <small className="muted">{t('Новое прохождение не удалит сохранения.')}</small>
       )}
       {!versionId && !versions.loading && (
         <small>{t('У этой истории пока нет доступной игровой версии.')}</small>

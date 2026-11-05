@@ -37,6 +37,7 @@ async function harness(
   selection = { heroId: '', ready: true, body: {} },
   client = { user: { id: 'u' }, loading: false },
   director = { profileId: 'coauthor', ready: true },
+  saves = { data: { userId: 'u', adventureId: 'a', campaigns: [] }, loading: false },
 ) {
   const source = await readFile(
     new URL('../../apps/web/components/game/adventure-launch.tsx', import.meta.url),
@@ -108,6 +109,11 @@ async function harness(
             binding.pinnedId = profileId;
             saved.set(key + ':director', profileId);
           },
+          releaseCompleted() {
+            binding.pinnedId = '';
+            binding.legacy = false;
+            saved.delete(key + ':director');
+          },
           unlock() {
             if (binding.legacy) return;
             binding.pinnedId = '';
@@ -126,6 +132,7 @@ async function harness(
       },
     },
     './start-state': { startState },
+    'next/link': 'link',
     'next/navigation': { useRouter: () => ({ push: (path) => paths.push(path) }) },
     '@dreamwalk/contracts': { formatSparkSubunits: String, selectAdventureText: (a) => a },
     '@/lib/client': {
@@ -134,10 +141,16 @@ async function harness(
       api: transport,
       errorMessage: (e) => e.message,
       useClient: () => client,
-      useResource: () => ({ loading: false }),
+      useResource: (path) => (path?.startsWith('/game/campaigns?') ? saves : { loading: false }),
     },
     '@/lib/i18n': { useT: () => ({ t: (s) => s, taxonomy: (s) => s }) },
-    '@/components/ui': { Button: 'button', ErrorBox: 'error', Modal: 'modal' },
+    '@/components/ui': {
+      Button: 'button',
+      ErrorBox: 'error',
+      Modal: 'modal',
+      Field: 'field',
+      Select: 'select',
+    },
   };
   const module = { exports: {} };
   new Function(
@@ -171,7 +184,12 @@ async function harness(
   const nodes = (node = tree) =>
     !node || typeof node !== 'object'
       ? []
-      : [node, ...[].concat(node.props?.children ?? []).flatMap(nodes)];
+      : [
+          node,
+          ...[]
+            .concat(node.props?.children ?? [])
+            .flatMap((child) => (child == null ? [] : nodes(child))),
+        ];
   function render() {
     cursor = 0;
     tree = module.exports.AdventureLaunch({
@@ -673,9 +691,15 @@ for (const status of ['ready', 'started', 'queued', 'dispatched', 'unknown']) {
       await h.click('Проверить состояние');
       assert.deepEqual(h.paths, []);
       assert.ok(calls.every(([, method]) => method === 'GET'));
+    } else if (status === 'started') {
+      await h.flush();
+      assert.equal(h.nodes().find((n) => n.type === 'link').props.href, '/game/existing');
+      assert.equal(h.saved.has('dreamwalk-start:u:v::prepare'), false);
+      assert.deepEqual(h.paths, []);
+      assert.ok(h.nodes().some((n) => n.type === 'button' && n.props.children === 'Начать заново'));
     } else {
       await h.click('Открыть игру');
-      assert.deepEqual(h.paths, [status === 'started' ? '/game/existing' : '/game/new']);
+      assert.deepEqual(h.paths, ['/game/new']);
       assert.equal(
         calls.filter(([, method]) => method === 'POST').length,
         status === 'started' ? 0 : 1,
@@ -835,4 +859,126 @@ test('a replaced legacy preparation preserves its director parameter on later re
   await restored.flush();
   await restored.click('Начать прохождение');
   assert.deepEqual(bodies[2], bodies[1], 'replay uses the identical operation and profile');
+});
+
+test('story saves continue directly across revisions and new playthrough keeps billing consent', async () => {
+  const calls = [];
+  const saves = {
+    data: {
+      userId: 'u',
+      adventureId: 'a',
+      campaigns: [
+        { id: 'recent', playableVersionId: 'older-revision', updatedAt: '2026-11-05T03:00:00Z' },
+        { id: 'earlier', playableVersionId: 'v' },
+      ],
+    },
+    loading: false,
+  };
+  const h = await harness(
+    async (path, options = {}) => {
+      calls.push([path, options.method ?? 'GET']);
+      return path.endsWith('/quote') ? quote : prepared;
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    saves,
+  );
+  h.render();
+  await h.flush();
+  assert.equal(h.nodes().find((n) => n.type === 'link').props.href, '/game/recent');
+  h.nodes()
+    .find((n) => n.type === 'select')
+    .props.onChange({ target: { value: 'earlier' } });
+  h.render();
+  assert.equal(h.nodes().find((n) => n.type === 'link').props.href, '/game/earlier');
+  assert.deepEqual(calls, [], 'continuation is a link, never a prepare or generation call');
+  await h.click('Начать заново');
+  assert.ok(h.nodes().some((n) => n.type === 'modal'));
+  assert.ok(calls.every(([path]) => !path.endsWith('/dispatch')));
+  assert.deepEqual(h.paths, []);
+  assert.equal(saves.data.campaigns.length, 2);
+});
+
+test('completed preparation retires only its local identity before a genuinely independent start', async () => {
+  const saved = new Map([
+    ['dreamwalk-start:u:v::coauthor:prepare', 'completed-operation'],
+    ['dreamwalk-start:u:v::director', 'coauthor'],
+    ['dreamwalk-start:u:another-version::coauthor:prepare', 'unrelated-operation'],
+  ]);
+  const calls = [];
+  const h = await harness(async (path, options = {}) => {
+    calls.push([path, options.method ?? 'GET', options.body && JSON.parse(options.body)]);
+    if (path.endsWith('/completed-operation'))
+      return { ...prepared, status: 'started', campaignId: 'old-save' };
+    if (path === '/game/campaigns') return { campaignId: 'new-save' };
+    return { ...prepared, id: 'new-preparation', status: 'ready', reused: true };
+  }, saved);
+  h.render();
+  await h.flush();
+  await h.flush();
+  assert.equal(h.nodes().find((n) => n.type === 'link').props.href, '/game/old-save');
+  assert.equal(h.nodes().find((n) => n.type === 'director').props.locked, false);
+  assert.deepEqual(h.paths, []);
+  assert.ok(calls.every(([, method]) => method === 'GET'));
+  await h.click('Начать заново');
+  const body = calls.find(([path]) => path === '/game/start-preparations')[2];
+  assert.notEqual(body.operationId, 'completed-operation');
+  assert.equal(body.directorProfileId, 'coauthor');
+  assert.deepEqual(h.paths, ['/game/new-save']);
+  assert.equal(
+    saved.get('dreamwalk-start:u:another-version::coauthor:prepare'),
+    'unrelated-operation',
+  );
+  assert.equal(calls.filter(([path]) => path === '/game/campaigns').length, 1);
+  assert.ok(calls.every(([, method]) => !['DELETE', 'PATCH'].includes(method)));
+});
+
+test('failed restoration exposes only read-only recovery, not a mislabeled fresh launch', async () => {
+  const saved = new Map([['dreamwalk-start:u:v::prepare', 'uncertain-operation']]);
+  const calls = [];
+  let failRead = true;
+  const h = await harness(async (path, options = {}) => {
+    calls.push([path, options.method ?? 'GET']);
+    if (failRead) throw Error('offline');
+    return { ...prepared, status: 'started', campaignId: 'recovered-save' };
+  }, saved);
+  h.render();
+  await h.flush();
+  assert.equal(h.nodes().find((n) => n.type === 'button').props.children, 'Проверить состояние');
+  assert.equal(saved.get('dreamwalk-start:u:v::prepare'), 'uncertain-operation');
+  failRead = false;
+  await h.click('Проверить состояние');
+  await h.flush();
+  assert.ok(calls.every(([, method]) => method === 'GET'));
+  assert.equal(h.nodes().find((n) => n.type === 'link').props.href, '/game/recovered-save');
+  assert.deepEqual(h.paths, []);
+});
+
+test('save loading blocks a new start and stale account/story data never provides continuation', async () => {
+  const saves = {
+    data: { userId: 'other', adventureId: 'a', campaigns: [{ id: 'private-save' }] },
+    loading: true,
+  };
+  const h = await harness(
+    async () => {
+      throw Error('No mutation expected');
+    },
+    undefined,
+    undefined,
+    undefined,
+    undefined,
+    saves,
+  );
+  h.render();
+  await h.flush();
+  assert.equal(h.nodes().filter((n) => n.type === 'link').length, 0);
+  assert.equal(h.nodes().find((n) => n.type === 'button').props.disabled, true);
+  saves.data.userId = 'u';
+  saves.data.adventureId = 'other-story';
+  saves.loading = false;
+  h.render();
+  assert.equal(h.nodes().filter((n) => n.type === 'link').length, 0);
+  assert.equal(h.nodes().find((n) => n.type === 'button').props.disabled, true);
 });

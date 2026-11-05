@@ -450,3 +450,21 @@ It enforces current story access before returning an existing preparation. This 
 never prepares a story, quotes or dispatches generation, or creates a campaign.
 Reopening a story restores status with this read-only endpoint. Entering a restored
 ready/existing game requires the player's “Open game” click on that visit.
+
+### Continue or start a separate playthrough
+
+`GET /game/campaigns?adventureId=<uuid>` returns the current user's accepted,
+active saves for that story across playable revisions, ordered by last update.
+The response includes `userId`, `adventureId` and `campaigns`; each campaign adds
+`adventureId`, `createdAt` and `updatedAt` to its existing summary. Membership,
+live-owner and source-access checks still apply. Without the filter, pending
+invitations and the existing creation ordering are retained.
+
+The story page's Continue action navigates to the selected saved campaign and
+makes no preparation, quote, dispatch or campaign-creation request. Start over
+uses a fresh preparation operation after a server-confirmed completed launch.
+It creates an independent campaign, retaining old saves and the existing paid
+preparation, reuse, consent, settlement and exactly-once creation rules. Reload,
+Back and reading saved preparations never grant entry or payment consent.
+Uncertain preparation reads and unresolved dispatches keep their operation key
+and expose status recovery instead of an unsafe fresh-start action.
