@@ -6,7 +6,10 @@ const source = (file) => readFile(new URL(`../../${file}`, import.meta.url), 'ut
 test('cover uses shared quote/confirmation and owned asset selection outside the story form', async () => {
   const studio = await source('apps/web/components/studio.tsx');
   const dialog = await source('apps/web/components/studio/story-cover-dialog.tsx');
-  assert.match(studio, /<\/form>\s*\{coverGenerationOpen && \(/);
+  const coverStart = studio.indexOf('{coverGenerationOpen && (');
+  const formEnd = studio.lastIndexOf('</form>', coverStart);
+  assert.ok(formEnd >= 0 && coverStart > formEnd, 'cover stays outside the story form');
+  assert.doesNotMatch(studio.slice(formEnd + '</form>'.length, coverStart), /<form\b/);
   assert.match(studio, /<MediaPicker/);
   assert.match(studio, /onSelected=\{\(assetId\) => change\('coverAssetId', assetId\)\}/);
   assert.doesNotMatch(dialog, /defaultImageStylePrompt|Default art:/);

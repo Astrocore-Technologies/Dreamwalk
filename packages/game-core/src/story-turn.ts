@@ -1,3 +1,9 @@
+import {
+  sceneEncounterCandidates,
+  applySceneEncounter,
+  sceneEncounterOutcomeText,
+} from './story-scene-encounters';
+import { sharesScene } from './scene-presence';
 import { applyStoryOrderedAction } from './story-ordered-actions';
 import { admitStoryRoleplayAttempt, storyAttemptEvidenceIds } from './story-roleplay';
 import { explicitStoryPickup, materializeStoryItem, applyStoryPickup } from './story-items';
@@ -11,6 +17,7 @@ import { isNpcStoryContact, storyContactOutcomeCode } from './story-attacks';
 import { applyStoryImpact, narrativeImpactOutcomeText, storyImpactContext } from './story-impact';
 import { observedVisible } from './observation-visibility';
 import {
+  hasPosition,
   actorLifeState,
   isActorConscious,
   footprintDistance,
@@ -51,6 +58,7 @@ import {
   createMockNpcPublicResponse,
 } from './living';
 import {
+  narrativeSceneAudience,
   buildNarrativeContext,
   createMockNarrativeProposal,
   applyNarrativeProposal,
@@ -157,7 +165,12 @@ function safeSpeech(
   const marker = admittedNpcSpeechObservationId(next, actorId, npcId, speech, identity);
   if (!marker) throw new Error('STALE_STATE');
   const audience = npcSpeechProspectiveListenerIds(next, npcId, channel).filter(
-    (id) => !audienceLimit || audienceLimit.includes(id),
+    (id) =>
+      (!audienceLimit || audienceLimit.includes(id)) &&
+      (hasPosition(next.entities[npcId]) ||
+        channel !== 'whisper' ||
+        id === actorId ||
+        id === npcId),
   );
   const topics = publicNpcFactTopics(next, npcId).filter(
     (t) => normalize(t.title) === normalize(segment.text),
@@ -582,6 +595,7 @@ export function buildStoryTurnContext(
   const actor = state.entities[actorId];
   if (actor?.kind !== 'player' || actor.encounterId) throw new Error('WRONG_MODE');
   if (
+    hasPosition(actor) &&
     input.channel === 'whisper' &&
     !input.targetNpcId &&
     !parsed.segments.some((segment) => segment.kind === 'attempt')
@@ -596,6 +610,24 @@ export function buildStoryTurnContext(
       ? parsed.segments.flatMap((segment) => {
           const request =
             segment.kind === 'attempt' ? resolveTravelRequest(state, segment.text) : null;
+          if (
+            request &&
+            !hasPosition(actor) &&
+            !request.mapId &&
+            Object.values(state.entities).some(
+              (entity) =>
+                observedVisible(state, actor, entity) &&
+                [
+                  entity.id,
+                  entity.label ?? '',
+                  ...Object.values(entity.labelTranslations ?? {}),
+                ].some(
+                  (name) =>
+                    normalizeLocationName(name) === normalizeLocationName(request.destinationName),
+                ),
+            )
+          )
+            return [];
           return request ? [{ segmentIndex: segment.index, ...request }] : [];
         })
       : [];
@@ -607,7 +639,9 @@ export function buildStoryTurnContext(
       !state.npcBrains?.[npc.id]?.living ||
       npc.encounterId ||
       !observedVisible(state, actor, npc) ||
-      (mode === 'npc' && footprintDistance(npc, actor) > 1)
+      (mode === 'npc' &&
+        !sharesScene(state, actor, npc) &&
+        (!hasPosition(npc) || !hasPosition(actor) || footprintDistance(npc, actor) > 1))
     )
       throw new Error('OUT_OF_RANGE');
   }
@@ -623,7 +657,10 @@ export function buildStoryTurnContext(
     if (segment.kind === 'attempt') {
       if (mode === 'director') attemptStates.set(segment.index, structuredClone(simulated));
       const action = parsePlayerTextAction(simulated, actorId, segment.text);
-      if (mode === 'director' && (!action || isNpcStoryContact(simulated, action))) {
+      if (
+        (mode === 'director' && (!action || isNpcStoryContact(simulated, action))) ||
+        !hasPosition(actor)
+      ) {
         const observed = admitStoryRoleplayAttempt(simulated, actorId, input, turnId, segment);
         if (observed.error) throw new Error(observed.error);
         simulated = observed.state;
@@ -692,8 +729,9 @@ export function buildStoryTurnContext(
               )
               .sort(
                 (a, b) =>
-                  footprintDistance(speaker, a) - footprintDistance(speaker, b) ||
-                  a.id.localeCompare(b.id),
+                  (hasPosition(speaker) && hasPosition(a) && hasPosition(b)
+                    ? footprintDistance(speaker, a) - footprintDistance(speaker, b)
+                    : 0) || a.id.localeCompare(b.id),
               )
               .slice(0, 4)
               .flatMap((npc) => {
@@ -755,7 +793,9 @@ export function buildStoryTurnContext(
     actorId,
     mode,
     channel: input.channel,
-    ...(privateAudience ? { outputAudienceIds: privateAudience } : {}),
+    ...((privateAudience ?? narrativeSceneAudience(state, actorId))
+      ? { outputAudienceIds: privateAudience ?? narrativeSceneAudience(state, actorId) }
+      : {}),
     replyLocale: input.replyLocale ?? 'en',
     ...(state.narrativePreferences?.[actorId]
       ? { narrativePreferences: readNarrativePreferences(state, actorId) }
@@ -781,6 +821,22 @@ export function buildStoryTurnContext(
     actionPreview,
     actionOutcomes,
     travelRequests,
+    ...(mode === 'director' && parsed.segments.some((segment) => segment.kind === 'attempt')
+      ? {
+          sceneEncounterPolicy: {
+            maxEncounters: 1,
+            candidates: sceneEncounterCandidates(state, actorId),
+            segmentCandidates: parsed.segments
+              .filter((segment) => segment.kind === 'attempt')
+              .map((segment) => ({
+                segmentIndex: segment.index,
+                candidates: sceneEncounterCandidates(attemptStates.get(segment.index)!, actorId),
+              })),
+            instructions:
+              'Use sceneEncounter only for an actual current encounter-seeking player attempt supported by the source fiction. These compiler-qualified unresolved opening NPCs are not already visible, present, or recognized. Respect negation, hypotheticals, quoted speech, explicit source absence and concealment. Do not infer an encounter from ordinary speech or a name mention. One candidate per turn. Do not provide an action, impact, reply or quote for that character in this turn. The server admits a typed encounter summary, then normal dialogue can occur in a later turn. Never expose candidate lists or private author biography.',
+          },
+        }
+      : {}),
     ...(mode === 'director'
       ? {
           narrativeImpactPolicy: {
@@ -818,21 +874,26 @@ export function buildStoryTurnContext(
           ),
         }
       : {}),
-    allowedActions: [
-      'inspect',
-      'open',
-      'close',
-      'unlock',
-      'pick_up',
-      'consume',
-      'give',
-      'wait',
-      ...(mode === 'director' ? ['move_to', 'transition'] : []),
-      ...(mode === 'director' && !state.turnController ? ['approach'] : []),
-      ...(travelRequests.length ? ['travel'] : []),
-    ],
-    itemPolicy:
-      mode === 'director'
+    allowedActions: !hasPosition(actor)
+      ? travelRequests.length
+        ? ['travel']
+        : []
+      : [
+          'inspect',
+          'open',
+          'close',
+          'unlock',
+          'pick_up',
+          'consume',
+          'give',
+          'wait',
+          ...(mode === 'director' ? ['move_to', 'transition'] : []),
+          ...(mode === 'director' && !state.turnController ? ['approach'] : []),
+          ...(travelRequests.length ? ['travel'] : []),
+        ],
+    itemPolicy: !hasPosition(actor)
+      ? 'No coordinate-based pickup or physical action is established. Preserve an attributed attempt unless the semantic consequence is explicitly admitted.'
+      : mode === 'director'
         ? 'An explicit pickup/pocket attempt can use pick_up with an existing visible item ID. For a newly encountered ordinary prop, provide narrative.newItem and targetId=new_item in its matching attempt. No powers, payment, secrets, alleged prior owner or duplicate item. Use referencedInventory only for the actor own current pickup/pocket request; never enumerate private inventory to NPCs or shared narration. Already carried items stay carried.'
         : undefined,
     sceneInteractionPolicy:
@@ -841,7 +902,13 @@ export function buildStoryTurnContext(
         : undefined,
   };
   const readset = {
-    actor: { mapId: actor.mapId, x: actor.x, y: actor.y, inventory: actor.inventory ?? [] },
+    actor: {
+      mapId: actor.mapId,
+      ...(hasPosition(actor)
+        ? { x: actor.x, y: actor.y }
+        : { spatialMode: actor.spatialMode, sceneId: actor.sceneId }),
+      inventory: actor.inventory ?? [],
+    },
     source: state.narrativeSource ?? null,
     ...safe,
   };
@@ -889,6 +956,7 @@ export function createMockStoryTurnProposal(
       : {}),
   }));
   if (
+    hasPosition(state.entities[actorId]) &&
     (context.mode === 'npc' || !state.turnController) &&
     steps.some((step, i) => context.segments[i].kind === 'attempt' && !step.action)
   )
@@ -1008,8 +1076,27 @@ export function applyStoryTurnProposal(
       (context.mode !== 'director' || !['say', 'whisper'].includes(input.channel)))
   )
     return reject('FORBIDDEN');
+  const encounters = p.steps.filter((step) => step.sceneEncounter);
+  if (
+    encounters.length > 1 ||
+    (encounters.length &&
+      (context.mode !== 'director' ||
+        p.steps.some((step) => step.replyNpcId === encounters[0].sceneEncounter!.npcId)))
+  )
+    return reject('FORBIDDEN');
   for (const [i, segment] of context.segments.entries()) {
     const step = p.steps[i];
+    if (
+      step.sceneEncounter &&
+      (segment.kind !== 'attempt' ||
+        step.action ||
+        step.narrativeImpact ||
+        step.reply ||
+        !context.sceneEncounterPolicy?.segmentCandidates
+          .find((entry) => entry.segmentIndex === segment.index)
+          ?.candidates.some((candidate) => candidate.npcId === step.sceneEncounter!.npcId))
+    )
+      return reject('FORBIDDEN');
     if (step.narrativeImpact) {
       if (
         segment.kind !== 'attempt' ||
@@ -1243,7 +1330,8 @@ export function applyStoryTurnProposal(
         segment.kind === 'speech' ? options.sourceSpeechSegments?.[speechOrdinal++] : undefined;
       if (originalSpeech && originalSpeech.text !== segment.text) return reject('STALE_STATE');
       const audience =
-        privateAudience && !(segment.kind === 'speech' && !input.targetNpcId)
+        privateAudience &&
+        (!hasPosition(next.entities[actorId]) || !(segment.kind === 'speech' && !input.targetNpcId))
           ? privateAudience
           : segment.kind === 'speech'
             ? npcSpeechListenerIds(next, actorId, { channel: input.channel, text: segment.text })
@@ -1287,6 +1375,10 @@ export function applyStoryTurnProposal(
             entry.speakerId === actorId && !next.npcUtterances?.some((old) => old.id === entry.id),
         );
         entries[entries.length - 1].sourceId = source?.id;
+        if (source) {
+          entries[entries.length - 1].audienceIds = source.audienceIds;
+          entries[entries.length - 1].speakerKnownToIds = source.speakerKnownToIds;
+        }
         next = recordNpcEvents(
           next,
           spoken.state,
@@ -1305,6 +1397,46 @@ export function applyStoryTurnProposal(
           entries[entries.length - 1].sourceId = observed.source?.id;
           entries[entries.length - 1].audienceIds = observed.source?.audienceIds ?? [];
           entries[entries.length - 1].speakerKnownToIds = observed.source?.speakerKnownToIds ?? [];
+        }
+        const encounter = p.steps[i].sceneEncounter;
+        if (encounter) {
+          const candidate = context
+            .sceneEncounterPolicy!.segmentCandidates.find(
+              (entry) => entry.segmentIndex === segment.index,
+            )!
+            .candidates.find((entry) => entry.npcId === encounter.npcId)!;
+          const outcome = applySceneEncounter(
+            next,
+            actorId,
+            turnId,
+            segment.index,
+            encounter.npcId,
+            candidate.fingerprint,
+            input,
+          );
+          if (outcome.error) return reject(outcome.error);
+          next = recordNpcEvents(
+            next,
+            outcome.state,
+            outcome.events,
+            `scene-encounter:${turnId}:${segment.index}`,
+          ).state;
+          events.push(...outcome.events);
+          push({
+            kind: 'outcome',
+            channel: input.channel,
+            authorId: actorId,
+            code: 'SCENE_ENCOUNTERED',
+            text: sceneEncounterOutcomeText(
+              next.entities[
+                next.narrativeCanon!.turns.find((entry) => entry.id === turnId)!.sceneEncounter!
+                  .npcId
+              ].label ?? 'someone',
+              input.replyLocale,
+            ),
+            audienceIds: privateAudience ?? narrativeSceneAudience(next, actorId) ?? [actorId],
+          });
+          continue;
         }
         const impact = p.steps[i].narrativeImpact;
         if (impact) {
@@ -1349,7 +1481,7 @@ export function applyStoryTurnProposal(
           proposed.kind === 'pick_up'
             ? applyStoryPickup(next, actorId, proposed.targetId!, segment.text, input)
             : proposed.kind === 'travel'
-              ? proposed.targetId === 'new_scene'
+              ? proposed.targetId === 'new_scene' || !hasPosition(next.entities[actorId])
                 ? travelToLocation(next, actorId, resolved.targetId!)
                 : applyStoryOrderedAction(next, actorId, action!, input)
               : proposed.kind === 'approach'
@@ -1501,7 +1633,20 @@ export function applyStoryTurnProposal(
         if (sourceError) return reject(sourceError);
       }
     }
-    let admittedNarration = p.narrative!.narration;
+    const admittedEncounter = next.narrativeCanon!.turns.find(
+      (entry) => entry.id === turnId,
+    )?.sceneEncounter;
+    if (admittedEncounter && p.steps.some((step) => step.replyNpcId === admittedEncounter.npcId))
+      return reject('FORBIDDEN');
+    let admittedNarration = admittedEncounter
+      ? sceneEncounterOutcomeText(
+          next.entities[admittedEncounter.npcId].label ?? admittedEncounter.npcId,
+          input.replyLocale,
+        )
+      : p.narrative!.narration;
+    if (admittedEncounter)
+      next.narrativeCanon!.turns.find((entry) => entry.id === turnId)!.narration =
+        admittedNarration;
     if (advisoryReplyOmitted) {
       // Generated prose may repeat the unadmitted reply. Keep the real consequence,
       // but never canonize fabricated words from an omitted advisory voice.
@@ -1515,11 +1660,29 @@ export function applyStoryTurnProposal(
       );
       admitted.narration = admittedNarration;
     }
+    // A scene-cut narration can contain facts from both sides of the journey.
+    // Neither source nor destination bystanders are authorized for that combined prose.
+    const origin = state.entities[actorId],
+      destination = next.entities[actorId];
+    const scopedTravel =
+      (origin.spatialMode === 'location_only' || destination.spatialMode === 'location_only') &&
+      (origin.mapId !== destination.mapId ||
+        origin.sceneId !== destination.sceneId ||
+        !!p.travelIntent ||
+        p.steps.some((step) => step.action?.kind === 'travel'));
+    const narrationAudience = scopedTravel
+      ? [actorId]
+      : (privateAudience ?? narrativeSceneAudience(state, actorId) ?? ['*']);
+    if (scopedTravel) {
+      const admitted = next.narrativeCanon!.turns.find((entry) => entry.id === turnId)!;
+      admitted.audienceIds = [actorId];
+      admitted.channel = input.channel === 'whisper' ? 'whisper' : 'public';
+    }
     push({
       kind: 'narration',
       channel: input.channel,
       text: admittedNarration,
-      audienceIds: privateAudience ?? ['*'],
+      audienceIds: narrationAudience,
     });
   } else {
     const npcId = input.targetNpcId!;
@@ -1527,7 +1690,16 @@ export function applyStoryTurnProposal(
       const step = p.steps[i];
       const audience =
         segment.kind === 'speech'
-          ? npcSpeechListenerIds(next, actorId, { channel: input.channel, text: segment.text })
+          ? npcSpeechListenerIds(next, actorId, {
+              channel: input.channel,
+              text: segment.text,
+            }).filter(
+              (id) =>
+                hasPosition(next.entities[actorId]) ||
+                input.channel !== 'whisper' ||
+                id === actorId ||
+                id === npcId,
+            )
           : input.channel === 'whisper'
             ? [actorId, npcId]
             : listeners(next, actorId);
@@ -1670,6 +1842,7 @@ function approachStoryNpc(state: GameState, actorId: string, npcId: string): Gam
     !visible(state, actor, npc)
   )
     return reject('FORBIDDEN');
+  if (!hasPosition(actor) || !hasPosition(npc)) return reject('WRONG_MODE');
   if (footprintDistance(actor, npc) <= 1) return { state, events: [] };
   if (state.turnController) return reject('WRONG_MODE');
   const candidates: { x: number; y: number }[] = [];

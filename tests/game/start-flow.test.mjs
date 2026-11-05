@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import { readFile } from 'node:fs/promises';
 import { transformSync } from 'esbuild';
 import { startState } from '../../apps/web/components/game/start-state.ts';
+import { mapPlanningMessage } from '../../apps/web/components/game/map-planning-message.ts';
 import {
   createUnpaidFixtureCampaign,
   setUnpaidFixtureLocale,
@@ -56,6 +57,7 @@ async function harness(
   const jsx = (type, props) => ({ type, props });
   const imports = {
     './map-image-notice': { MapImageNotice: 'MapImageNotice' },
+    './map-planning-message': { mapPlanningMessage },
     '../visual-authoring/spark-equivalent': { providerSparkSubunits },
     react: {
       useState(initial) {
@@ -986,4 +988,48 @@ test('save loading blocks a new start and stale account/story data never provide
   h.render();
   assert.equal(h.nodes().filter((n) => n.type === 'link').length, 0);
   assert.equal(h.nodes().find((n) => n.type === 'button').props.disabled, true);
+});
+
+test('map planning failures explain the established category without inventing an image cause', () => {
+  for (const locale of ['ru', 'en', 'uk']) {
+    const uncertain = mapPlanningMessage('MAP_IMAGE_UNCERTAIN', locale);
+    const placement = mapPlanningMessage('MAP_IMAGE_UNSAFE_NPC', locale);
+    const mismatch = mapPlanningMessage('MAP_IMAGE_SOURCE_MISMATCH', locale);
+    const missing = mapPlanningMessage('MAP_IMAGE_UNAVAILABLE', locale);
+    assert.equal(new Set([uncertain, placement, mismatch, missing]).size, 4);
+    assert.ok(
+      [uncertain, placement, mismatch, missing].every(
+        (text) => typeof text === 'string' && text.length > 20,
+      ),
+    );
+    assert.equal(mapPlanningMessage('SOMETHING_ELSE', locale), null);
+    assert.equal(mapPlanningMessage(undefined, locale), null);
+  }
+  assert.match(mapPlanningMessage('MAP_IMAGE_UNCERTAIN', 'en'), /positions.*confidently/);
+  assert.doesNotMatch(
+    mapPlanningMessage('MAP_IMAGE_UNCERTAIN', 'en'),
+    /illustration|floor|courtyard|wall|water|safe spawn/i,
+  );
+  assert.match(mapPlanningMessage('MAP_IMAGE_UNSAFE_NPC', 'en'), /placement.*validation/);
+});
+
+test('unprepared image framing keeps location-map meaning in every locale', async () => {
+  const source = await readFile(
+    new URL('../../apps/web/components/visual-authoring/image-framing-notice.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /остаётся картой локации/);
+  assert.match(source, /remains the location map/);
+  assert.match(source, /залишається картою локації/);
+  assert.doesNotMatch(source, /illustration, not a map|Это иллюстрация|Це ілюстрація/);
+});
+
+test('unanalysed saved map consent does not promise fabricated grid positions', async () => {
+  const source = await readFile(
+    new URL('../../apps/web/components/game/map-image-notice.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(source, /Play starts without exact positions/);
+  assert.match(source, /image analysis is not included in this estimate/);
+  assert.doesNotMatch(source, /shown with its grid|показана с сеткой|показано із сіткою/);
 });

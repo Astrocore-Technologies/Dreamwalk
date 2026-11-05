@@ -1,5 +1,6 @@
+import { enterScene, sharesScene } from './scene-presence';
 import { travelLocations } from './location-travel';
-import { actorLifeState } from '@dreamwalk/contracts';
+import { hasPosition, actorLifeState, isActorConscious } from '@dreamwalk/contracts';
 import { observedVisible } from './observation-visibility';
 import { spatialContext } from './spatial-context';
 import {
@@ -39,13 +40,31 @@ export function narrativeTurnVisibleTo(turn: ConfirmedNarrativeTurn, readerId: s
     (Array.isArray(turn.audienceIds) && turn.audienceIds.includes(readerId))
   );
 }
+/** Server-stamped encounter scope. A map image is not a campaign-wide audience. */
+export function narrativeSceneAudience(state: GameState, actorId: string): string[] | undefined {
+  const actor = state.entities[actorId];
+  if (!actor || actor.spatialMode !== 'location_only') return undefined;
+  return Object.values(state.entities)
+    .filter(
+      (entity) =>
+        ['player', 'npc'].includes(entity.kind) &&
+        (entity.id === actorId || (isActorConscious(entity) && sharesScene(state, actor, entity))),
+    )
+    .map((entity) => entity.id)
+    .sort();
+}
 function validNarrativeAudience(state: GameState, actorId: string, audienceIds: string[]): boolean {
   return (
     Array.isArray(audienceIds) &&
     audienceIds.length > 0 &&
     audienceIds.includes(actorId) &&
     audienceIds.every(
-      (id) => typeof id === 'string' && ['player', 'npc'].includes(state.entities[id]?.kind),
+      (id) =>
+        typeof id === 'string' &&
+        ['player', 'npc'].includes(state.entities[id]?.kind) &&
+        (state.entities[actorId]?.spatialMode !== 'location_only' ||
+          id === actorId ||
+          sharesScene(state, state.entities[actorId], state.entities[id])),
     )
   );
 }
@@ -53,7 +72,8 @@ function candidates(state: GameState, actorId: string) {
   const actor = state.entities[actorId],
     map = actor && state.maps[actor.mapId],
     points: { x: number; y: number }[] = [];
-  if (!actor || actor.kind !== 'player' || actor.encounterId || !map) return points;
+  if (!actor || !hasPosition(actor) || actor.kind !== 'player' || actor.encounterId || !map)
+    return points;
   for (let y = 0; y < map.height; y++)
     for (let x = 0; x < map.width; x++) {
       if (
@@ -109,20 +129,32 @@ export function buildNarrativeContext(
   const actor = state.entities[actorId],
     constraints = policy(state),
     canon = state.narrativeCanon,
-    audience = audienceIds === undefined ? undefined : [...new Set(audienceIds)].sort(),
-    publicTurns = (canon?.turns ?? []).filter(narrativeTurnIsPublic),
+    audience =
+      audienceIds === undefined
+        ? narrativeSceneAudience(state, actorId)
+        : [...new Set(audienceIds)].sort(),
+    publicTurns = (canon?.turns ?? []).filter(
+      (turn) => actor?.spatialMode !== 'location_only' && narrativeTurnIsPublic(turn),
+    ),
     accessibleTurns = audience
       ? (canon?.turns ?? []).filter(
           (turn) =>
-            narrativeTurnIsPublic(turn) ||
+            (actor?.spatialMode !== 'location_only' && narrativeTurnIsPublic(turn)) ||
             (audience.length > 0 &&
+              (audienceIds !== undefined || turn.channel === 'public') &&
+              (actor?.spatialMode !== 'location_only' || Array.isArray(turn.audienceIds)) &&
               audience.every((readerId) => narrativeTurnVisibleTo(turn, readerId))),
         )
       : publicTurns;
   const context = {
     ...(spatialContext(state, actorId) ? { spatialContext: spatialContext(state, actorId) } : {}),
     actorId,
-    ...(audience ? { channel: 'whisper' as const, audienceIds: [...audience] } : {}),
+    ...(audience
+      ? {
+          channel: audienceIds !== undefined ? ('whisper' as const) : ('public' as const),
+          audienceIds: [...audience],
+        }
+      : {}),
     replyLocale: localeSchema.parse(replyLocale),
     ...(state.narrativePreferences?.[actorId]
       ? { narrativePreferences: readNarrativePreferences(state, actorId) }
@@ -139,9 +171,13 @@ export function buildNarrativeContext(
           description:
             publicTurns.find((turn) => turn.sceneId === actor.mapId)?.introducedScene
               ?.description ?? state.maps[actor.mapId]?.description,
-          actorPosition: { x: actor.x, y: actor.y },
+          ...(hasPosition(actor)
+            ? {
+                actorPosition: { x: actor.x, y: actor.y },
+                positionEvidence: 'committed_state' as const,
+              }
+            : { spatialMode: actor.spatialMode, sceneId: actor.sceneId }),
           descriptionScope: 'whole_location' as const,
-          positionEvidence: 'committed_state' as const,
           // A named building can include an exterior. Its description is not tile evidence.
           terrainAnalysisAvailable: Boolean(spatialContext(state, actorId)),
         }
@@ -156,8 +192,9 @@ export function buildNarrativeContext(
             kind: e.kind,
             label: e.label,
             mapId: e.mapId,
-            x: e.x,
-            y: e.y,
+            ...(hasPosition(e)
+              ? { x: e.x, y: e.y }
+              : { spatialMode: e.spatialMode, sceneId: e.sceneId }),
             revision: e.revision,
             ...(['npc', 'player'].includes(e.kind) ? { lifeState: actorLifeState(e) } : {}),
             ...(e.supportingNpc?.generated ? { publicRole: e.supportingNpc.roleLabel } : {}),
@@ -201,9 +238,12 @@ export function buildNarrativeContext(
       'transition',
       'wait',
     ],
-    narrativePolicy: audience
-      ? 'Private story for the server-stamped audience only. Use only canon accessible to every recipient. Player intent and narrative flavor are not authoritative facts. Do not reveal NPC secrets or use unsupported mechanics. No new scenes or NPCs. New content may extend, never retroactively replace, confirmed canon.'
-      : 'Shared campaign story only. Player intent and narrative flavor are not authoritative facts. Do not use private whispers, NPC secrets or unsupported mechanics. New content may extend, never retroactively replace, confirmed canon.',
+    narrativePolicy:
+      audienceIds !== undefined
+        ? 'Private story for the server-stamped audience only. Use only canon accessible to every recipient. Player intent and narrative flavor are not authoritative facts. Do not reveal NPC secrets or use unsupported mechanics. No new scenes or NPCs. New content may extend, never retroactively replace, confirmed canon.'
+        : audience
+          ? 'Story for the current server-stamped encounter audience only. Use only shared canon accessible to every recipient. Do not reveal private whispers or NPC secrets, invent completed physical outcomes, or claim unseen participants know these events. New content may extend confirmed canon.'
+          : 'Shared campaign story only. Player intent and narrative flavor are not authoritative facts. Do not use private whispers, NPC secrets or unsupported mechanics. New content may extend, never retroactively replace, confirmed canon.',
   };
   const semantic = {
     ...context,
@@ -248,12 +288,17 @@ export function applyNarrativeProposal(
   if (!parsed.success) return error(state, 'INVALID_ACTION');
   if (audienceIds !== undefined && !validNarrativeAudience(state, actorId, audienceIds))
     return error(state, 'FORBIDDEN');
-  const audience = audienceIds === undefined ? undefined : [...new Set(audienceIds)].sort();
+  const audience =
+    audienceIds === undefined
+      ? narrativeSceneAudience(state, actorId)
+      : [...new Set(audienceIds)].sort();
   const p = parsed.data,
     requestHash = npcContextFingerprint({
       actorId,
       proposal: p,
-      ...(audience ? { channel: 'whisper', audienceIds: audience } : {}),
+      ...(audience
+        ? { channel: audienceIds !== undefined ? 'whisper' : 'public', audienceIds: audience }
+        : {}),
     });
   const previous = state.narrativeCanon?.turns.find((t) => t.id === p.turnId);
   if (previous)
@@ -266,8 +311,8 @@ export function applyNarrativeProposal(
   if (actor.encounterId) return error(state, 'WRONG_MODE');
   if (typeof intent !== 'string' || !intent.trim() || intent.length > 2000)
     return error(state, 'INVALID_ACTION');
-  if (audience && (p.newScene || p.newNpc)) return error(state, 'FORBIDDEN');
-  const context = buildNarrativeContext(state, actorId, intent, replyLocale, audience),
+  if (audienceIds !== undefined && (p.newScene || p.newNpc)) return error(state, 'FORBIDDEN');
+  const context = buildNarrativeContext(state, actorId, intent, replyLocale, audienceIds),
     constraints = policy(state);
   if (context.contextHash !== p.contextHash) return error(state, 'STALE_STATE');
   if (!context.remainingTurns) return error(state, 'RATE_LIMITED');
@@ -287,9 +332,12 @@ export function applyNarrativeProposal(
       return error(state, 'RATE_LIMITED');
     if (
       scene.connection.fromMapId !== actor.mapId ||
-      !context.availableConnections.some(
-        (c) => c.x === scene.connection.x && c.y === scene.connection.y,
-      )
+      (hasPosition(actor)
+        ? scene.connection.spatialMode === 'location_only' ||
+          !context.availableConnections.some(
+            (c) => c.x === scene.connection.x && c.y === scene.connection.y,
+          )
+        : scene.connection.spatialMode !== 'location_only')
     )
       return error(state, 'PATH_BLOCKED');
     if (
@@ -299,41 +347,68 @@ export function applyNarrativeProposal(
       )
     )
       return error(state, 'INVALID_ACTION');
-    const blocked: { x: number; y: number }[] = [];
-    if (scene.template === 'room')
-      for (let y = 0; y < BATTLEMAP_CELLS; y++)
-        for (let x = 0; x < BATTLEMAP_CELLS; x++)
-          if (x === 0 || y === 0 || x === BATTLEMAP_CELLS - 1 || y === BATTLEMAP_CELLS - 1)
-            blocked.push({ x, y });
-    next.maps[sceneId!] = {
-      id: sceneId!,
-      label: scene.name,
-      description: scene.description,
-      width: BATTLEMAP_CELLS,
-      height: BATTLEMAP_CELLS,
-      blocked,
-      spawns: [{ x: 2, y: 3 }],
-      exits: [
-        {
-          id: `back-${p.turnId}`,
-          x: 1,
-          y: 3,
-          label: next.maps[actor.mapId].label,
-          destinationMapId: actor.mapId,
-          destination: { x: scene.connection.x, y: scene.connection.y },
+    if (!hasPosition(actor)) {
+      const entrySceneId = `encounter-${p.turnId}`;
+      next.maps[sceneId!] = {
+        id: sceneId!,
+        label: scene.name,
+        description: scene.description,
+        spatialMode: 'location_only',
+        width: BATTLEMAP_CELLS,
+        height: BATTLEMAP_CELLS,
+        blocked: [],
+        spawns: [],
+        exits: [],
+        revision: 0,
+        scenePresence: {
+          version: 1,
+          entrySceneId,
+          scenes: [
+            {
+              id: entrySceneId,
+              participantIds: [],
+              evidence: { kind: 'committed_event', reference: p.turnId },
+            },
+          ],
         },
-      ],
-      revision: 0,
-    };
-    next.maps[actor.mapId].exits.push({
-      id: `link-${p.turnId}`,
-      x: scene.connection.x,
-      y: scene.connection.y,
-      label: scene.name,
-      destinationMapId: sceneId!,
-      destination: { x: 2, y: 3 },
-    });
-    next.maps[actor.mapId].revision++;
+      };
+    } else {
+      const blocked: { x: number; y: number }[] = [];
+      if (scene.template === 'room')
+        for (let y = 0; y < BATTLEMAP_CELLS; y++)
+          for (let x = 0; x < BATTLEMAP_CELLS; x++)
+            if (x === 0 || y === 0 || x === BATTLEMAP_CELLS - 1 || y === BATTLEMAP_CELLS - 1)
+              blocked.push({ x, y });
+      next.maps[sceneId!] = {
+        id: sceneId!,
+        label: scene.name,
+        description: scene.description,
+        width: BATTLEMAP_CELLS,
+        height: BATTLEMAP_CELLS,
+        blocked,
+        spawns: [{ x: 2, y: 3 }],
+        exits: [
+          {
+            id: `back-${p.turnId}`,
+            x: 1,
+            y: 3,
+            label: next.maps[actor.mapId].label,
+            destinationMapId: actor.mapId,
+            destination: { x: scene.connection.x!, y: scene.connection.y! },
+          },
+        ],
+        revision: 0,
+      };
+      next.maps[actor.mapId].exits.push({
+        id: `link-${p.turnId}`,
+        x: scene.connection.x!,
+        y: scene.connection.y!,
+        label: scene.name,
+        destinationMapId: sceneId!,
+        destination: { x: 2, y: 3 },
+      });
+      next.maps[actor.mapId].revision++;
+    }
     events.push({ kind: 'narrative.scene_created', mapId: sceneId });
   }
   if (p.newNpc) {
@@ -355,20 +430,33 @@ export function applyNarrativeProposal(
     const mapId = n.placement === 'new_scene' ? sceneId : actor.mapId;
     if (!mapId) return error(state, 'INVALID_ACTION');
     const map = next.maps[mapId];
-    const proposedFootprint = { ...n.spawn, kind: 'npc', tokenSize: n.tokenSize };
-    if (
-      !walkable(next, mapId, n.spawn, undefined, true) ||
-      map.exits.some((e) => footprintOverlaps(proposedFootprint, e)) ||
-      map.spawns.some((e) => footprintOverlaps(proposedFootprint, e)) ||
-      Object.values(next.entities).some(
-        (e) => e.mapId === mapId && !e.ownerId && footprintOverlaps(proposedFootprint, e),
-      ) ||
-      (n.placement === 'current' &&
-        !context.availableConnections.some((c) => c.x === n.spawn.x && c.y === n.spawn.y))
-    )
-      return error(state, 'PATH_BLOCKED');
-    if (!findPath(next, mapId, n.placement === 'new_scene' ? { x: 2, y: 3 } : actor, n.spawn))
-      return error(state, 'PATH_BLOCKED');
+    const locationOnly = map.spatialMode === 'location_only';
+    if (locationOnly !== (n.spatialMode === 'location_only')) return error(state, 'FORBIDDEN');
+    if (!locationOnly) {
+      if (!n.spawn) return error(state, 'INVALID_ACTION');
+      const proposedFootprint = { ...n.spawn, kind: 'npc', tokenSize: n.tokenSize };
+      if (
+        !walkable(next, mapId, n.spawn, undefined, true) ||
+        map.exits.some((e) => footprintOverlaps(proposedFootprint, e)) ||
+        map.spawns.some((e) => footprintOverlaps(proposedFootprint, e)) ||
+        Object.values(next.entities).some(
+          (e) => e.mapId === mapId && !e.ownerId && footprintOverlaps(proposedFootprint, e),
+        ) ||
+        (n.placement === 'current' &&
+          !context.availableConnections.some((c) => c.x === n.spawn!.x && c.y === n.spawn!.y))
+      )
+        return error(state, 'PATH_BLOCKED');
+      if (n.placement === 'current' && !hasPosition(actor)) return error(state, 'FORBIDDEN');
+      if (
+        !findPath(
+          next,
+          mapId,
+          n.placement === 'new_scene' ? { x: 2, y: 3 } : { x: actor.x!, y: actor.y! },
+          n.spawn,
+        )
+      )
+        return error(state, 'PATH_BLOCKED');
+    }
     const npc: GameEntity = {
       id: npcId!,
       kind: 'npc',
@@ -376,7 +464,12 @@ export function applyNarrativeProposal(
       tokenSize: n.tokenSize ?? 'medium',
       visual: 'traveler',
       mapId,
-      ...n.spawn,
+      ...(locationOnly
+        ? {
+            spatialMode: 'location_only' as const,
+            sceneId: n.placement === 'current' ? actor.sceneId! : map.scenePresence!.entrySceneId,
+          }
+        : { x: n.spawn!.x, y: n.spawn!.y }),
       revision: 0,
       inventory: [],
       movementGeneration: 0,
@@ -390,6 +483,10 @@ export function applyNarrativeProposal(
         personalitySummary: n.personalitySummary,
       },
     };
+    if (locationOnly) {
+      next.entities[npcId!] = npc;
+      if (!enterScene(next, npc, mapId, npc.sceneId)) return error(state, 'FORBIDDEN');
+    }
     if (
       new Set(n.knownEntityIds).size !== n.knownEntityIds.length ||
       n.knownEntityIds.some(
@@ -401,7 +498,8 @@ export function applyNarrativeProposal(
     )
       return error(state, 'FORBIDDEN');
     next.entities[npcId!] = npc;
-    if (!walkable(next, mapId, npc, npc.id, true)) return error(state, 'PATH_BLOCKED');
+    if (hasPosition(npc) && !walkable(next, mapId, npc, npc.id, true))
+      return error(state, 'PATH_BLOCKED');
     next.npcBrains ??= {};
     next.npcBrains[npcId!] = {
       living: createLivingMemory({
@@ -413,7 +511,7 @@ export function applyNarrativeProposal(
       }),
       traits: ['cautious', 'helpful'],
       goal: n.goal,
-      patrolTarget: { ...n.spawn },
+      ...(n.spawn ? { patrolTarget: { ...n.spawn } } : {}),
       facts: [],
       plan: [],
       cursor: 0,
@@ -438,7 +536,12 @@ export function applyNarrativeProposal(
     tick: state.tick,
     narration: p.narration,
     evidenceIds: [...p.evidenceIds],
-    ...(audience ? { channel: 'whisper' as const, audienceIds: [...audience] } : {}),
+    ...(audience
+      ? {
+          channel: audienceIds !== undefined ? ('whisper' as const) : ('public' as const),
+          audienceIds: [...audience],
+        }
+      : {}),
     ...(sceneId
       ? {
           sceneId,
@@ -472,7 +575,22 @@ export function createMockNarrativeProposal(
   audienceIds?: string[],
 ): NarrativeProposal | null {
   const c = buildNarrativeContext(state, actorId, text, replyLocale, audienceIds);
-  if (!c.currentScene || !c.availableConnections.length || !c.remainingTurns) return null;
+  if (!c.currentScene || !c.remainingTurns) return null;
+  if (!hasPosition(state.entities[actorId]))
+    return {
+      turnId,
+      contextHash: c.contextHash,
+      narration: {
+        en: 'The character expresses an intention; its physical outcome is not yet established.',
+        ru: 'Персонаж выражает намерение; его физический результат пока не установлен.',
+        uk: 'Персонаж висловлює намір; його фізичний результат поки не встановлено.',
+      }[c.replyLocale],
+      newScene: null,
+      newNpc: null,
+      actions: [],
+      evidenceIds: c.evidenceIds.slice(-1),
+    };
+  if (!c.availableConnections.length) return null;
   const next = (state.narrativeCanon?.revision ?? 0) + 1,
     extend = !audienceIds && c.constraints.allowNewScenes && c.remainingScenes > 0;
   const copy = {

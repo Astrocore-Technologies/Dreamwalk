@@ -40,6 +40,16 @@ const messages: Record<string, Record<Locale, string>> = {
     en: 'Recently edited',
     uk: 'Нещодавно редагували',
   },
+  'История перемещена в удалённые': {
+    ru: 'История перемещена в удалённые',
+    en: 'Story moved to deleted stories',
+    uk: 'Історію переміщено до видалених',
+  },
+  'История восстановлена в черновики': {
+    ru: 'История восстановлена в черновики',
+    en: 'Story restored as a draft',
+    uk: 'Історію відновлено до чернеток',
+  },
   ...gameMessages,
   ...directorMessages,
   'Показать пароль': { ru: 'Показать пароль', en: 'Show password', uk: 'Показати пароль' },

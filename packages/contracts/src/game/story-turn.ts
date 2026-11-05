@@ -84,6 +84,7 @@ export const storyTurnProposalSchema = z
             segmentIndex: z.number().int().min(0).max(5),
             action: storyActionSchema.nullable(),
             narrativeImpact: narrativeImpactSchema.nullable().optional(),
+            sceneEncounter: z.object({ npcId: id }).strict().optional(),
             replyNpcId: id.nullable().optional(),
             replyContextHash: z.string().min(1).max(160).nullable().optional(),
             reply: z
@@ -99,7 +100,21 @@ export const storyTurnProposalSchema = z
               ])
               .nullable(),
           })
-          .strict(),
+          .strict()
+          .superRefine((step, ctx) => {
+            if (
+              step.sceneEncounter &&
+              (step.action ||
+                step.narrativeImpact ||
+                step.reply ||
+                step.replyNpcId ||
+                step.replyContextHash)
+            )
+              ctx.addIssue({
+                code: 'custom',
+                message: 'Scene encounter cannot be combined with another step effect',
+              });
+          }),
       )
       .max(6),
     narrative: z

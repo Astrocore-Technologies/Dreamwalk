@@ -1,3 +1,4 @@
+import { hasPosition } from '@dreamwalk/contracts';
 import { transitionNpcLifeState } from './lifecycle';
 import { isActorConscious } from '@dreamwalk/contracts';
 import {
@@ -177,13 +178,14 @@ export function applyTurnMove(
   const actor = state.entities[actorId],
     turn = state.turnController!,
     path = findPath(state, actor.mapId, actor, target, actorId, true);
-  if (!path) return fail(state, 'PATH_BLOCKED');
+  if (!hasPosition(actor) || !path) return fail(state, 'PATH_BLOCKED');
   if (path.length > turn.resources[actorId].movement) return fail(state, 'OUT_OF_RANGE');
   if (!path.length) return done(state);
   const next = clone(state),
     moving = next.entities[actorId],
     points = [{ x: actor.x, y: actor.y }],
     events: GameResult['events'] = [];
+  if (!hasPosition(moving)) return fail(state, 'WRONG_MODE');
   // Validate each step against the authoritative evolving snapshot, rather than trusting a final destination.
   for (const point of path) {
     if (distance(moving, point) !== 1 || !walkable(next, moving.mapId, point, actorId, true))
@@ -217,7 +219,8 @@ function contactGate(state: GameState, actorId: string, action: GameAction): Gam
   const actor = state.entities[actorId],
     target = action.targetId ? state.entities[action.targetId] : undefined;
   if (
-    !target ||
+    !hasPosition(actor) ||
+    !hasPosition(target) ||
     !['player', 'npc'].includes(target.kind) ||
     !isActorConscious(target) ||
     target.id === actorId ||
@@ -241,6 +244,7 @@ function resolveContact(
     actor = next.entities[actorId],
     target = next.entities[action.targetId!],
     rules = next.turnController!.ruleset;
+  if (!hasPosition(actor) || !hasPosition(target)) return fail(state, 'WRONG_MODE');
   // Contact is edge-adjacent, so push away along that edge's axis, never a
   // diagonal introduced solely by differently sized rectangle centers.
   const dx =
@@ -697,6 +701,7 @@ export function applyWorldTurnAction(
     if (path.length > turn.ruleset.movement) return fail(state, 'OUT_OF_RANGE');
     const next = clone(state),
       moving = next.entities[npcId];
+    if (!hasPosition(moving)) return fail(state, 'WRONG_MODE');
     for (const point of path) {
       if (!walkable(next, moving.mapId, point, npcId, true)) return fail(state, 'PATH_BLOCKED');
       moving.x = point.x;

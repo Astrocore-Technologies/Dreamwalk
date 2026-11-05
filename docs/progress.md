@@ -1346,3 +1346,10 @@ uses the standard primary button style, with source and browser assertions, so
 the returning-player action is visually emphasized over Start over. The 35
 focused launch tests and changed-file lint/format pass after this one-class fix;
 exact-head CI still gates release.
+
+Integrated onto the main tree after scene/map recovery (#103) and recoverable
+admin deletion (#101). All incoming test registrations and all continue/restart
+checks remain present; map/settlement and deletion/privacy guards are preserved.
+The 47 focused launch, campaign-list, deletion UI and location-only UI checks,
+changed merge-file lint/format and whitespace checks pass. A fresh integrated
+head CI is required before the coordinated final release.

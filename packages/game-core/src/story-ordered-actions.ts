@@ -1,3 +1,4 @@
+import { hasPosition } from '@dreamwalk/contracts';
 import type { GameAction, GameResult, GameState, StoryTurnInput } from '@dreamwalk/contracts';
 import { applyAction } from './index';
 import { applyTurnAction, matchesTurnFence } from './turns';
@@ -11,6 +12,8 @@ export function applyStoryOrderedAction(
   action: GameAction,
   input: StoryTurnInput,
 ): GameResult {
+  if (!hasPosition(state.entities[actorId]) && action.kind !== 'wait')
+    return { state, events: [], error: 'WRONG_MODE' };
   const turn = state.turnController;
   if (!turn) return applyAction(state, actorId, action);
   if (turn.phase === 'player' && input.turnFence)

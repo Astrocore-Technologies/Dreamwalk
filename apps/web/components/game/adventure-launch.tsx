@@ -1,5 +1,6 @@
 'use client';
 import { MapImageNotice } from './map-image-notice';
+import { mapPlanningMessage } from './map-planning-message';
 import { storyReturnPath, withStoryReturn } from '../story-return';
 import { HeroSelection, useHeroSelection } from './hero-selection';
 import { DirectorSelection, useDirectorSelection } from './director-selection';
@@ -389,11 +390,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
       />
       {status && <p role="status">{t(status)}</p>}
       {Boolean(preparation?.jobs?.[0]?.error_code?.startsWith('MAP_IMAGE_')) && (
-        <p>
-          {t(
-            'Не удалось уверенно определить безопасный старт на изображении карты. План не применён.',
-          )}
-        </p>
+        <p>{mapPlanningMessage(preparation?.jobs?.[0]?.error_code, locale)}</p>
       )}
       {!confirm && (
         <Button

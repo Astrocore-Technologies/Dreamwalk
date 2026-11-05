@@ -142,3 +142,21 @@ test('actual confirmation distinguishes wallet holds from provider billing in ev
     assert.notEqual(wallet, provider);
   }
 });
+
+test('location image remains a game map before geometry exists, not a separate illustrative purpose', async () => {
+  const messages = await readFile(
+    'apps/web/components/visual-authoring/location-image-messages.ts',
+    'utf8',
+  );
+  const panel = await readFile('apps/web/components/visual-authoring/location-image.tsx', 'utf8');
+  assert.match(messages, /This image is the location’s game map/);
+  assert.match(messages, /Изображение|изображение/);
+  assert.match(messages, /Це ігрова карта локації/);
+  assert.match(messages, /game preparation will use this image/);
+  assert.match(messages, /do not automatically create collisions/);
+  assert.doesNotMatch(
+    messages,
+    /Location illustration only|Только иллюстрация|Лише ілюстрація|The image is an illustration/,
+  );
+  assert.match(panel, /attachmentMapId = playableDirty \? '' : mapId/);
+});

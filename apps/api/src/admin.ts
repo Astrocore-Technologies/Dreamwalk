@@ -1,3 +1,10 @@
+import {
+  adminAdventureAccessSql,
+  adminDeletionRevisionSql,
+  deletedStories,
+  removeStory,
+  restoreStory,
+} from './admin-story-deletion';
 import { directorStyleUpdateSchema } from '@dreamwalk/contracts/dist/director-style';
 import {
   readDirectorCatalog,
@@ -6,7 +13,18 @@ import {
   profileStyle,
 } from './ai/director-style';
 import { SPARK_RATE_VERSION } from '@dreamwalk/contracts';
-import { Body, Controller, Get, Inject, Param, Patch, Post, Query, Req } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Inject,
+  Param,
+  Patch,
+  Post,
+  Query,
+  Req,
+} from '@nestjs/common';
 import type { Request } from 'express';
 import { z } from 'zod';
 import {
@@ -19,7 +37,7 @@ import {
 } from '@dreamwalk/contracts';
 import { Db, camel } from './db';
 import { Auth, userView } from './auth';
-import { adventureSelect, adventureView, Content, readableAdventureSql } from './content';
+import { adventureSelect, adventureView, Content } from './content';
 import { fail } from './errors';
 import { taxonomyUpdateSchema } from '@dreamwalk/contracts/dist/taxonomy';
 import { normalizeTaxonomy, mergeTaxonomy } from './taxonomy';
@@ -246,7 +264,7 @@ export class AdminController {
     await this.auth.admin(req);
     return (
       await this.db.query(
-        'SELECT (SELECT count(*)::int FROM users WHERE deleted_at IS NULL) AS users,(SELECT count(*)::int FROM adventures) AS adventures,(SELECT count(*)::int FROM adventures WHERE status=\'pending_review\') AS "pendingReview",(SELECT count(*)::int FROM reports WHERE status=\'open\') AS "openReports"',
+        'SELECT (SELECT count(*)::int FROM users WHERE deleted_at IS NULL) AS users,(SELECT count(*)::int FROM adventures WHERE deleted_at IS NULL) AS adventures,(SELECT count(*)::int FROM adventures WHERE status=\'pending_review\') AS "pendingReview",(SELECT count(*)::int FROM reports WHERE status=\'open\') AS "openReports"',
       )
     )[0];
   }
@@ -302,17 +320,39 @@ export class AdminController {
     const u = await this.auth.admin(req);
     return (
       await this.db.query(
-        adventureSelect +
-          ` WHERE ($1='' OR CASE WHEN a.visibility='private' AND a.owner_id<>$2 THEN 'published' ELSE a.status END=$1) AND ((a.visibility='public' AND (a.status IN('pending_review','published') OR a.published_snapshot IS NOT NULL)) OR ${readableAdventureSql('$2')}) AND (a.owner_id=$2 OR a.visibility<>'private' OR EXISTS(SELECT 1 FROM adventure_private_releases pr WHERE pr.id=a.private_release_id AND pr.adventure_id=a.id AND pr.owner_id=a.owner_id)) ORDER BY a.updated_at DESC LIMIT 200`,
+        adventureSelect.replace(
+          'SELECT a.*,',
+          `SELECT a.*,${adminDeletionRevisionSql()} AS deletion_revision,`,
+        ) +
+          ` WHERE ($1='' OR CASE WHEN a.visibility='private' AND a.owner_id<>$2 THEN 'published' ELSE a.status END=$1) AND a.deleted_at IS NULL AND ${adminAdventureAccessSql('$2')} ORDER BY a.updated_at DESC LIMIT 200`,
         [status, u.id],
       )
-    ).map((r) =>
-      adventureView(
+    ).map((r) => ({
+      deletionRevision: r.deletion_revision,
+      ...adventureView(
         r,
         r.owner_id !== u.id && (r.visibility === 'private' || r.status !== 'pending_review'),
         r.owner_id !== u.id,
         r.owner_id !== u.id && r.visibility === 'public' && r.status === 'pending_review',
       ),
+    }));
+  }
+  @Get('admin/adventures/deleted')
+  async deletedAdventures(@Req() req: Request) {
+    return deletedStories(this.db, (await this.auth.admin(req)).id);
+  }
+  @Delete('admin/adventures/:id')
+  async removeAdventure(@Param('id') id: string, @Body() body: unknown, @Req() req: Request) {
+    const admin = await this.auth.admin(req);
+    return removeStory(this.db, admin.id, id, body, (client, owner) =>
+      this.art.lockAuthor(client, owner),
+    );
+  }
+  @Post('admin/adventures/:id/restore')
+  async restoreAdventure(@Param('id') id: string, @Body() body: unknown, @Req() req: Request) {
+    const admin = await this.auth.admin(req);
+    return restoreStory(this.db, admin.id, id, body, (client, owner) =>
+      this.art.lockAuthor(client, owner),
     );
   }
   @Get('admin/npcs')
@@ -360,7 +400,9 @@ export class AdminController {
         })
         .strict()
         .parse(body);
-    const pre = (await this.db.query('SELECT * FROM adventures WHERE id=$1', [id]))[0];
+    const pre = (
+      await this.db.query('SELECT * FROM adventures WHERE id=$1 AND deleted_at IS NULL', [id])
+    )[0];
     if (!pre || pre.visibility !== 'public') fail(404, 'NOT_FOUND', 'Приключение не найдено.');
     if (b.decision === 'approve')
       await this.content.validateReferences(
@@ -371,7 +413,12 @@ export class AdminController {
       );
     await this.db.tx(async (c) => {
       await this.art.lockAuthor(c, String(pre.owner_id));
-      const row = (await c.query('SELECT * FROM adventures WHERE id=$1 FOR UPDATE', [id])).rows[0];
+      const row = (
+        await c.query('SELECT * FROM adventures WHERE id=$1 AND deleted_at IS NULL FOR UPDATE', [
+          id,
+        ])
+      ).rows[0];
+      if (!row) fail(404, 'NOT_FOUND', 'NOT_FOUND');
       if (row.visibility !== 'public')
         fail(409, 'STATE_CONFLICT', 'Приватное приключение не публикуется.');
       if (b.decision === 'approve') {

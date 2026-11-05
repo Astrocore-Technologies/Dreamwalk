@@ -2239,8 +2239,8 @@ export class StoryTurnRuntime {
         live = await this.port.load(id);
       await this.reconcile(id, live.state.tick);
       const rows = await this.db.query(
-        `SELECT f.* FROM game_story_feed f JOIN game_story_turns t ON t.id=f.turn_id WHERE f.campaign_id=$1 AND t.erased_at IS NULL AND ('*'=ANY(f.audience_ids) OR $2=ANY(f.audience_ids)) ORDER BY f.sequence DESC,f.ordinal DESC LIMIT 300`,
-        [id, a.actorId],
+        `SELECT f.* FROM game_story_feed f JOIN game_story_turns t ON t.id=f.turn_id WHERE f.campaign_id=$1 AND t.erased_at IS NULL AND (($3::boolean AND '*'=ANY(f.audience_ids)) OR $2=ANY(f.audience_ids)) ORDER BY f.sequence DESC,f.ordinal DESC LIMIT 300`,
+        [id, a.actorId, live.state.entities[a.actorId]?.spatialMode !== 'location_only'],
       );
       const sources = new Set<string>(rows.map((r) => r.entry.sourceId).filter(Boolean));
       const entries: StoryFeedEntry[] = rows.reverse().map((r) => ({
@@ -2309,10 +2309,13 @@ export class StoryTurnRuntime {
         });
       // The previous normal story view exposed up to 64 committed public
       // turns. Preserve those durable inputs/results, not just the hot last 16.
-      const oldNarrative = await this.db.query(
-        "SELECT id,actor_id,input_text,result,created_at,committed_at FROM game_narrative_turns WHERE campaign_id=$1 AND status='committed' ORDER BY created_at DESC,id DESC LIMIT 64",
-        [id],
-      );
+      const oldNarrative =
+        live.state.entities[a.actorId]?.spatialMode === 'location_only'
+          ? []
+          : await this.db.query(
+              "SELECT id,actor_id,input_text,result,created_at,committed_at FROM game_narrative_turns WHERE campaign_id=$1 AND status='committed' ORDER BY created_at DESC,id DESC LIMIT 64",
+              [id],
+            );
       for (const t of oldNarrative.reverse()) {
         if (turnIds.has(t.id)) continue;
         turnIds.add(t.id);

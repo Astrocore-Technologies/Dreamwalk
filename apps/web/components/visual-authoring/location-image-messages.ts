@@ -28,9 +28,9 @@ export const locationImageMessages = {
     'Зображення використовує збережені назву й опис цієї локації. Відкриття панелі не викликає ШІ.',
   ],
   geometry: [
-    'Изображение — иллюстрация. Стены, двери и проходимость задаёт отдельный игровой план; картинка не создаёт коллизии.',
-    'The image is an illustration. Walls, doors and reachability come from a separate playable plan; the picture does not create collisions.',
-    'Зображення — ілюстрація. Стіни, двері й прохідність визначає окремий ігровий план; картинка не створює колізій.',
+    'Это игровая карта локации. При подготовке игры изображение используется для размещения персонажей. Нарисованные стены и двери сами по себе не создают коллизии или интерактивные объекты.',
+    'This image is the location’s game map. Game preparation uses it to place characters. Drawn walls and doors do not automatically create collisions or interactive objects.',
+    'Це ігрова карта локації. Підготовка гри використовує зображення для розміщення персонажів. Намальовані стіни й двері самі по собі не створюють колізій або інтерактивних об’єктів.',
   ],
   provider: ['Провайдер', 'Provider', 'Провайдер'],
   model: ['Модель', 'Model', 'Модель'],
@@ -57,9 +57,9 @@ export const locationImageMessages = {
     'Потрібна активна ручна сесія власника. Відкрий панель зображення, щоб перевірити бюджет.',
   ],
   saveFirst: [
-    'Сначала сохрани черновик истории. Кнопка изображения останется здесь; игровой план для иллюстрации не нужен.',
-    'Save the story draft first. The image control stays here; an illustration does not require a playable plan.',
-    'Спершу збережи чернетку історії. Кнопка зображення залишиться тут; для ілюстрації ігровий план не потрібен.',
+    'Сначала сохрани черновик истории. Карту локации можно выбрать до подготовки игрового плана.',
+    'Save the story draft first. You can choose the location map before preparing its playable layout.',
+    'Спершу збережи чернетку історії. Карту локації можна вибрати до підготовки ігрового плану.',
   ],
   loading: [
     'Загружается конфигурация изображения…',
@@ -100,11 +100,11 @@ export const locationImageMessages = {
     'Use the saved revision',
     'Використати збережену версію',
   ],
-  attach: ['Назначение изображения', 'Image attachment', 'Призначення зображення'],
+  attach: ['Связь с игровым планом', 'Playable layout link', 'Зв’язок з ігровим планом'],
   illustration: [
-    'Только иллюстрация локации',
-    'Location illustration only',
-    'Лише ілюстрація локації',
+    'Карта локации без привязки к готовому плану',
+    'Location map without an existing layout link',
+    'Карта локації без прив’язки до готового плану',
   ],
   map: [
     'Фон связанной игровой карты',
@@ -112,14 +112,14 @@ export const locationImageMessages = {
     'Тло пов’язаної ігрової карти',
   ],
   noMap: [
-    'Связанной сохранённой карты пока нет. Изображение можно сохранить сейчас и назначить фоном карты позже.',
-    'There is no linked saved map yet. Save the illustration now and attach it to a map later.',
-    'Пов’язаної збереженої карти ще немає. Збережи ілюстрацію зараз і признач її тлом карти пізніше.',
+    'Игровой план ещё не подготовлен. Сохрани выбранную карту локации сейчас; при подготовке игры будет использовано это изображение.',
+    'The playable layout is not prepared yet. Save the location map now; game preparation will use this image.',
+    'Ігровий план ще не підготовлено. Збережи карту локації зараз; підготовка гри використає це зображення.',
   ],
   dirtyMap: [
-    'Есть несохранённые изменения игрового плана или графики. Сначала сохрани их для привязки к карте; иллюстрацию можно сохранить отдельно.',
-    'The playable plan or art has unsaved changes. Save them before attaching to a map; the illustration can still be saved separately.',
-    'Ігровий план або графіка мають незбережені зміни. Збережи їх перед прив’язкою до карти; ілюстрацію можна зберегти окремо.',
+    'Есть несохранённые изменения игрового плана или графики. Сначала сохрани их для привязки к готовому плану. Выбранную карту можно сохранить для локации уже сейчас.',
+    'The playable layout or art has unsaved changes. Save them before linking to that layout. You can save the selected map for this location now.',
+    'Ігровий план або графіка мають незбережені зміни. Збережи їх перед прив’язкою до готового плану. Вибрану карту можна зберегти для локації вже зараз.',
   ],
   prompt: [
     'Сохранённое описание для генерации',

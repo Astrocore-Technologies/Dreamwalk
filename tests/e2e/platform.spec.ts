@@ -96,9 +96,9 @@ test('author: NPC and complete adventure draft survive reload and submit confirm
     .getByRole('navigation', { name: 'Шаги создания приключения', exact: true })
     .getByRole('button', { name: 'Просмотр', exact: true })
     .click();
-  // Narrative-only, not-yet-created drafts cannot launch a playable campaign.
+  // An unsaved source must be saved before playable preparation becomes available.
   await expect(
-    page.getByText(/История без карты остаётся литературным черновиком\./),
+    page.getByText('Сначала сохраните историю и выбранный режим доступа.', { exact: true }),
   ).toBeVisible();
   await expect(page.getByRole('button', { name: 'Подготовить план', exact: true })).toHaveCount(0);
   await page

@@ -5,9 +5,15 @@ import type { PlayablePackage } from '@dreamwalk/contracts';
 /** A cached text-only layout must not stand in for a source whose images can now be analyzed.
  * This only selects a reusable preparation. It never regenerates or moves an existing campaign. */
 export function startMapGroundingCompatible(source: StoryPlanSource, compiled: PlayablePackage) {
-  return (source.mapImages ?? []).every((image) => {
+  return [...(source.mapImages ?? []), ...(source.omittedMapImages ?? [])].every((image) => {
     const map = compiled.maps?.[image.locationId],
       grounding = map?.spatialGrounding;
+    if (map?.spatialMode === 'location_only')
+      return (
+        map.locationImage?.revisionId === image.revisionId &&
+        map.locationImage.sha256 === image.sha256 &&
+        !!map.scenePresence
+      );
     return (
       map?.backgroundMode !== 'schematic' &&
       grounding?.imageRevisionId === image.revisionId &&

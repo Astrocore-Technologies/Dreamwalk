@@ -1,5 +1,7 @@
 'use client';
 import { MapImageNotice } from '../game/map-image-notice';
+import { mapPlanningMessage } from '../game/map-planning-message';
+import { OwnerAuthoringSettlement } from './owner-authoring-settlement';
 import { useEffect, useRef, useState } from 'react';
 import { formatSparkSubunits, type AuthoredGameDraft } from '@dreamwalk/contracts';
 import { providerSparkSubunits } from './spark-equivalent';
@@ -137,7 +139,7 @@ export function StoryPlayableBuilder({
   onApplied?: () => void;
 }) {
   const costs = useSparkCosts();
-  const { locale, t } = useT(),
+  const { locale } = useT(),
     i = locale === 'ru' ? 0 : locale === 'en' ? 1 : 2,
     copyText = (k: keyof typeof copy) => copy[k][i];
   const [state, setState] = useState<State | null>(null),
@@ -208,8 +210,21 @@ export function StoryPlayableBuilder({
     return errorMessage(e);
   }
   const unresolved = state?.jobs.some(
-    (j) => !['committed', 'failed', 'rejected', 'stale', 'cancelled'].includes(j.status),
+    (j) =>
+      !['committed', 'failed', 'rejected', 'stale', 'cancelled'].includes(j.status) ||
+      ['held', 'pending'].includes(j.sparkStatus ?? ''),
   );
+  async function refreshAfterSettlement() {
+    const id = current.current?.id;
+    if (!id) return;
+    const token = epoch.current;
+    try {
+      const next = await api<State>('/story-builds/' + id, { cache: 'no-store' });
+      if (token === epoch.current && current.current?.id === id) receive(next);
+    } catch (e) {
+      if (token === epoch.current) setError(localizedError(e));
+    }
+  }
   async function act(kind: 'prepare' | 'quote' | 'dispatch' | 'apply' | 'refresh') {
     if (lock.current) return;
     if (kind === 'prepare' && (!loaded || unresolved)) return;
@@ -422,27 +437,31 @@ export function StoryPlayableBuilder({
             </div>
           )}
           {state.jobs.map((j) => (
-            <p role="status" key={j.id}>
-              {j.error_code === 'STORY_MAP_INTENT_MISMATCH'
-                ? copyText('mapIntentMismatch')
-                : j.error_code?.startsWith('MAP_IMAGE_')
-                  ? t(
-                      'Не удалось уверенно определить безопасный старт на изображении карты. План не применён.',
-                    )
-                  : statusText(j.status)}
-              {j.sparkStatus && (
-                <>
-                  {' '}
-                  · <SparkReceiptCost receipt={{ ...j, generationCost: null }} />
-                </>
+            <div key={j.id}>
+              <p role="status">
+                {j.error_code === 'STORY_MAP_INTENT_MISMATCH'
+                  ? copyText('mapIntentMismatch')
+                  : (mapPlanningMessage(j.error_code, locale) ?? statusText(j.status))}
+                {j.sparkStatus && (
+                  <>
+                    {' '}
+                    · <SparkReceiptCost receipt={{ ...j, generationCost: null }} />
+                  </>
+                )}
+                {!j.sparkStatus && j.actual_micros !== undefined && j.actual_micros !== null && (
+                  <>
+                    {' '}
+                    · {costs.s('actual')}: {costs.amount(Number(j.actual_micros))}
+                  </>
+                )}
+              </p>
+              {j.sparkStatus === 'pending' && ['stale', 'failed'].includes(j.status) && (
+                <OwnerAuthoringSettlement
+                  jobId={j.id}
+                  onSettled={() => void refreshAfterSettlement()}
+                />
               )}
-              {!j.sparkStatus && j.actual_micros !== undefined && j.actual_micros !== null && (
-                <>
-                  {' '}
-                  · {costs.s('actual')}: {costs.amount(Number(j.actual_micros))}
-                </>
-              )}
-            </p>
+            </div>
           ))}
           {projection && (
             <GameCanvas

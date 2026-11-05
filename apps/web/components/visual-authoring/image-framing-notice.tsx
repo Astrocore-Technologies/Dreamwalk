@@ -22,9 +22,9 @@ export function ImageFramingNotice({
   const index = locale === 'ru' ? 0 : locale === 'uk' ? 2 : 1;
   if (framingVersion !== 1) return null;
   const noMap = [
-    'Нет единственных подтверждённых размеров карты. Это иллюстрация, а не фон, подобранный под карту.',
-    'No unique authoritative map dimensions are available. This is an illustration, not a map-matched background.',
-    'Немає єдиних підтверджених розмірів карти. Це ілюстрація, а не фон, підібраний під карту.',
+    'Размеры игрового размещения ещё не определены. Изображение остаётся картой локации.',
+    'Playable layout dimensions are not established yet. The image remains the location map.',
+    'Розміри ігрового розміщення ще не визначені. Зображення залишається картою локації.',
   ];
   if (!imageFraming) return <p data-image-framing="unavailable">{noMap[index]}</p>;
   const labels = ['Карта / изображение', 'Map / image', 'Карта / зображення'];
