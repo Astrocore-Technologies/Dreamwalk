@@ -15,7 +15,8 @@ import {
   type TextCountAdapter,
   type TextCountEvidence,
 } from '../ai/text-preflight';
-import { Injectable } from '@nestjs/common';
+import { Injectable, Logger, type OnModuleInit, type OnModuleDestroy } from '@nestjs/common';
+import { settleKnownCount, settleKnownPermit } from './known-text-settlement';
 import type { PoolClient } from 'pg';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
@@ -73,13 +74,99 @@ const consentSchema = z
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
     consent: z.literal(true),
+    automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
   })
   .strict()
   .refine((v) => !v.sessionId || !v.authorizationId || v.sessionId === v.authorizationId, {
     message: 'AUTHORIZATION_ID_MISMATCH',
   });
 @Injectable()
-export class GenerationAuthority {
+export class GenerationAuthority implements OnModuleInit, OnModuleDestroy {
+  private recoveryTimer?: ReturnType<typeof setInterval>;
+  private recoveringKnownText?: Promise<void>;
+  private countRecoveryCursor: string | null = null;
+  private permitRecoveryCursor: string | null = null;
+  private readonly settlementLogger = new Logger(GenerationAuthority.name);
+  onModuleInit() {
+    void this.recoverKnownText();
+    this.recoveryTimer = setInterval(() => void this.recoverKnownText(), 30000);
+    this.recoveryTimer.unref();
+  }
+  async onModuleDestroy() {
+    if (this.recoveryTimer) clearInterval(this.recoveryTimer);
+    await this.recoveringKnownText;
+  }
+  async recoverKnownText() {
+    if (this.recoveringKnownText) return this.recoveringKnownText;
+    this.recoveringKnownText = this.recoverKnownTextPage().catch(() => {
+      this.settlementLogger.warn('TEXT_AUTOMATIC_SETTLEMENT_RECOVERY_FAILED');
+    });
+    try {
+      await this.recoveringKnownText;
+    } finally {
+      this.recoveringKnownText = undefined;
+    }
+  }
+  private async recoverKnownTextPage() {
+    const counts = await this.db.query<{ id: string; authorization_id: string }>(
+      `
+      SELECT j.id,j.authorization_id FROM generation_text_counts j JOIN spark_holds h ON h.id=j.spark_quote_id
+      JOIN spark_quotes q ON q.id=h.id
+      WHERE q.price_snapshot->'providerQuote'->>'automaticKnownCostPolicy'='known-cost-v1'
+        AND q.price_snapshot->'providerQuote'->'automaticKnownCostAcceptance'->>'policy'='known-cost-v1' AND j.actual_micros IS NOT NULL AND j.input_tokens IS NOT NULL AND j.status IN ('stale','unknown','over_context','succeeded')
+        AND h.status IN ('held','pending') AND ($1::uuid IS NULL OR j.id>$1::uuid) ORDER BY j.id LIMIT 25`,
+      [this.countRecoveryCursor],
+    );
+    for (const row of counts) {
+      try {
+        await this.db.tx(async (c) => {
+          const authorization = await this.lockAuthorization(c, row.authorization_id);
+          const job = (
+            await c.query('SELECT * FROM generation_text_counts WHERE id=$1 FOR UPDATE', [row.id])
+          ).rows[0];
+          if (job) await settleKnownCount(c, job, authorization);
+        });
+      } catch {
+        this.settlementLogger.warn('COUNT_AUTOMATIC_SETTLEMENT_JOB_FAILED');
+      }
+      this.countRecoveryCursor = row.id;
+    }
+    if (counts.length < 25) this.countRecoveryCursor = null;
+    const permits = await this.db.query<{ id: string; session_id: string; job_id: string }>(
+      `
+      SELECT p.id,p.session_id,p.job_id FROM live_test_text_permits p JOIN spark_holds h ON h.id=p.spark_quote_id
+      JOIN spark_quotes q ON q.id=h.id
+      JOIN npc_ai_jobs j ON j.id=p.job_id WHERE q.price_snapshot->'providerQuote'->>'automaticKnownCostPolicy'='known-cost-v1'
+        AND q.price_snapshot->'providerQuote'->'automaticKnownCostAcceptance'->>'policy'='known-cost-v1' AND p.state='settled' AND j.status IN ('stale','failed')
+        AND j.provider_usage IS NOT NULL AND h.status IN ('held','pending')
+        AND ($1::uuid IS NULL OR p.id>$1::uuid) ORDER BY p.id LIMIT 25`,
+      [this.permitRecoveryCursor],
+    );
+    for (const row of permits) {
+      try {
+        await this.db.tx(async (c) => {
+          // NPC callback order: job, provider budget, authorization/scope, permit, fence, wallet.
+          const job = (
+            await c.query('SELECT * FROM npc_ai_jobs WHERE id=$1 FOR UPDATE', [row.job_id])
+          ).rows[0];
+          if (!job) return;
+          await c.query(
+            'SELECT provider_id FROM npc_ai_provider_budgets WHERE provider_id=$1 FOR UPDATE',
+            [job.provider_id],
+          );
+          const authorization = await this.lockAuthorization(c, row.session_id);
+          const permit = (
+            await c.query('SELECT * FROM live_test_text_permits WHERE id=$1 FOR UPDATE', [row.id])
+          ).rows[0];
+          if (permit) await settleKnownPermit(c, permit, authorization);
+        });
+      } catch {
+        this.settlementLogger.warn('PERMIT_AUTOMATIC_SETTLEMENT_JOB_FAILED');
+      }
+      this.permitRecoveryCursor = row.id;
+    }
+    if (permits.length < 25) this.permitRecoveryCursor = null;
+  }
   readonly config: LiveTestConfig & { mode: 'owner' | 'manual' | 'release' };
   readonly release?: ReleaseAdmission;
   readonly ownerConfig?: OwnerGenerationConfig;
@@ -157,6 +244,7 @@ export class GenerationAuthority {
     const candidate = this.countCandidate(request.context);
     return {
       blockCode: this.countGate(),
+      automaticKnownCostPolicy: 'known-cost-v1' as const,
       candidateFingerprint: digest(candidate),
       historyRecords: Array.isArray(candidate.history) ? candidate.history.length : 0,
       reserveMicros: this.profileConfig!.text.counting?.microsPerRequest ?? null,
@@ -220,6 +308,7 @@ export class GenerationAuthority {
         candidateFingerprint: z.string().regex(/^[a-f0-9]{64}$/),
         keepRecentHistory: z.number().int().min(1).max(32768).optional(),
         consent: z.literal(true),
+        automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
       })
       .strict()
       .parse(input);
@@ -312,6 +401,15 @@ export class GenerationAuthority {
                 expiresAt: new Date(Date.now() + 60000).toISOString(),
                 tariff: sparkTariff(this.textProfile(), 'openai', this.textCountAdapter!.version),
                 providerQuote: {
+                  automaticKnownCostPolicy: 'known-cost-v1',
+                  ...(v.automaticKnownCostPolicy === 'known-cost-v1'
+                    ? {
+                        automaticKnownCostAcceptance: {
+                          policy: v.automaticKnownCostPolicy,
+                          requestHash,
+                        },
+                      }
+                    : {}),
                   countId: id,
                   model: this.profileConfig!.text.model,
                   providerVersion: this.textCountAdapter!.version,
@@ -382,10 +480,17 @@ export class GenerationAuthority {
             job.reservation_id,
             Number(job.pricing_snapshot.microsPerRequest),
           );
-          await c.query('UPDATE generation_text_counts SET actual_micros=$2 WHERE id=$1', [
-            job.id,
-            Number(job.pricing_snapshot.microsPerRequest),
-          ]);
+          await c.query(
+            'UPDATE generation_text_counts SET actual_micros=$2,input_tokens=$3,completed_at=COALESCE(completed_at,clock_timestamp()) WHERE id=$1',
+            [job.id, Number(job.pricing_snapshot.microsPerRequest), tokens],
+          );
+          const known = (
+            await c.query('SELECT * FROM generation_text_counts WHERE id=$1', [job.id])
+          ).rows[0];
+          const authorization = (
+            await c.query('SELECT * FROM live_test_sessions WHERE id=$1', [job.authorization_id])
+          ).rows[0];
+          if (known && authorization) await settleKnownCount(c, known, authorization);
         }
         return this.countReceipt(
           (await c.query('SELECT * FROM generation_text_counts WHERE id=$1', [job.id])).rows[0],
@@ -408,6 +513,24 @@ export class GenerationAuthority {
         await c.query('UPDATE generation_budget_scopes SET blocked=true WHERE id=$1', [
           job.scope_id,
         ]);
+        if (!code && tokens !== null) {
+          await settleGenerationSpend(
+            c,
+            job.reservation_id,
+            Number(job.pricing_snapshot.microsPerRequest),
+          );
+          await c.query(
+            'UPDATE generation_text_counts SET actual_micros=$2,input_tokens=$3 WHERE id=$1',
+            [job.id, Number(job.pricing_snapshot.microsPerRequest), tokens],
+          );
+          const known = (
+            await c.query('SELECT * FROM generation_text_counts WHERE id=$1', [job.id])
+          ).rows[0];
+          const authorization = (
+            await c.query('SELECT * FROM live_test_sessions WHERE id=$1', [job.authorization_id])
+          ).rows[0];
+          if (known && authorization) await settleKnownCount(c, known, authorization);
+        }
       } else {
         await settleGenerationSpend(
           c,
@@ -464,7 +587,10 @@ export class GenerationAuthority {
           c,
           job.reservation_id,
           stale
-            ? { outcome: 'failure_policy_pending', receiptId: `count:${job.id}` }
+            ? {
+                outcome: 'failure_policy_pending',
+                receiptId: `count:${job.id}`,
+              }
             : {
                 outcome: 'success',
                 actualMicros: String(job.pricing_snapshot.microsPerRequest),
@@ -510,6 +636,15 @@ export class GenerationAuthority {
             stale ? 'TEXT_COUNT_CANDIDATE_STALE' : over ? 'TEXT_CONTEXT_WINDOW_EXCEEDED' : null,
           ],
         );
+        if (stale) {
+          const known = (
+            await c.query('SELECT * FROM generation_text_counts WHERE id=$1', [job.id])
+          ).rows[0];
+          const authorization = (
+            await c.query('SELECT * FROM live_test_sessions WHERE id=$1', [job.authorization_id])
+          ).rows[0];
+          if (known && authorization) await settleKnownCount(c, known, authorization);
+        }
       }
       return this.countReceipt(
         (await c.query('SELECT * FROM generation_text_counts WHERE id=$1', [job.id])).rows[0],
@@ -1453,6 +1588,7 @@ export class GenerationAuthority {
             subjectId: r.npc_id,
             purpose: r.purpose,
             errorCode: estimateError ?? r.result_code ?? null,
+            automaticKnownCostPolicy: 'known-cost-v1' as const,
             counting: countViews.get(r.id),
             permitState: r.permit_state ?? null,
             upperMicros:
@@ -1486,6 +1622,19 @@ export class GenerationAuthority {
       ).rows[0];
       if (previous) {
         if (previous.request_id !== requestId || previous.campaign_id !== campaignId)
+          fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+        const originalQuote = previous.spark_quote_id
+          ? (
+              await c.query('SELECT price_snapshot FROM spark_quotes WHERE id=$1', [
+                previous.spark_quote_id,
+              ])
+            ).rows[0]
+          : undefined;
+        if (
+          (originalQuote?.price_snapshot?.providerQuote?.automaticKnownCostAcceptance?.policy ===
+            'known-cost-v1') !==
+          (v.automaticKnownCostPolicy === 'known-cost-v1')
+        )
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
         return {
           id: previous.id,
@@ -1603,6 +1752,19 @@ export class GenerationAuthority {
             activePolicy?.hash || 'manual-live-text-v1',
           ),
           providerQuote: {
+            automaticKnownCostPolicy: 'known-cost-v1',
+            ...(v.automaticKnownCostPolicy === 'known-cost-v1'
+              ? {
+                  automaticKnownCostAcceptance: {
+                    policy: v.automaticKnownCostPolicy,
+                    operationId: v.operationId,
+                    requestId,
+                    campaignId,
+                    authorizationId: sessionId,
+                    contextHash: digest(r.context),
+                  },
+                }
+              : {}),
             permitId: id,
             requestId,
             contextHash: digest(r.context),
@@ -1893,6 +2055,18 @@ export class GenerationAuthority {
       )
     ).rows[0];
     if (!p) return;
+    // Preserve provider -> authorization/scope -> admission fence -> wallet order.
+    let authorization;
+    if (!committed && actualMicros !== null) {
+      const job = (await c.query('SELECT provider_id FROM npc_ai_jobs WHERE id=$1', [jobId]))
+        .rows[0];
+      if (job)
+        await c.query(
+          'SELECT provider_id FROM npc_ai_provider_budgets WHERE provider_id=$1 FOR UPDATE',
+          [job.provider_id],
+        );
+      authorization = await this.lockAuthorization(c, p.session_id);
+    }
     await settleReservationSparks(
       c,
       p.reservation_id,
@@ -1908,6 +2082,7 @@ export class GenerationAuthority {
             receiptId: `permit:${p.id}`,
           },
     );
+    if (authorization) await settleKnownPermit(c, p, authorization, true);
   }
   async settleJob(c: PoolClient, jobId: string, actual: number | null, unknown: boolean) {
     const peek = (

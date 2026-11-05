@@ -400,10 +400,57 @@ test('native queue persists verified world batch identity with original consent 
       acceptedWorldBatchId: f.batch.id,
     }),
   );
+  assert.equal(
+    inserted.request_meta.automaticKnownCostPolicy,
+    undefined,
+    'old client remains unaccepted',
+  );
+  f.spark.price_snapshot.providerQuote.automaticKnownCostPolicy = 'known-cost-v1';
+  f.batch.media_entries = [];
+  f.batch.quote = {
+    automaticKnownCostPolicy: 'known-cost-v1',
+    automaticKnownCostPolicyHash: digest({
+      version: 'known-cost-v1',
+      entries: f.batch.entries,
+      mediaEntries: [],
+    }),
+  };
+  await engine.queue({ ...input, automaticKnownCostPolicy: 'known-cost-v1' });
+  assert.equal(inserted.request_meta.automaticKnownCostPolicy, 'known-cost-v1');
+  assert.equal(
+    inserted.request_hash,
+    digest({
+      scope,
+      context: input.context,
+      quoteId: input.quoteId,
+      consent: true,
+      requestKey: '',
+      sponsorId: null,
+      runtimeRequestId: input.runtimeRequestId,
+      acceptedWorldBatchId: f.batch.id,
+      automaticKnownCostPolicy: 'known-cost-v1',
+    }),
+  );
+  delete f.spark.price_snapshot.providerQuote.automaticKnownCostPolicy;
+  await assert.rejects(
+    engine.queue({ ...input, automaticKnownCostPolicy: 'known-cost-v1' }),
+    /GENERATION_QUOTE_STALE/,
+  );
   inserted = undefined;
   await assert.rejects(
     engine.queue({ ...input, acceptedWorldBatchId: randomUUID() }),
     /WORLD_BATCH_CONSENT_STALE/,
   );
   assert.equal(inserted, undefined, 'unverified identity never reaches the insert');
+});
+
+test('future native policy marker is exact in accepted quote proof, never inferred for legacy', async () => {
+  const f = fixture();
+  f.spark.price_snapshot.providerQuote.automaticKnownCostPolicy = 'known-cost-v1';
+  await verifyAcceptedWorldBatch(f.client, f.owner, f.proof, f.sparkId);
+  f.spark.price_snapshot.providerQuote.automaticKnownCostPolicy = 'unreviewed-policy';
+  await assert.rejects(
+    verifyAcceptedWorldBatch(f.client, f.owner, f.proof, f.sparkId),
+    /WORLD_BATCH_CONSENT_STALE/,
+  );
 });

@@ -92,6 +92,7 @@ async function harness(filename, api = async () => ({}), locale = 'ru') {
     '../wallet-funding': { FundingBreakdown: 'funding', FundingNotice: 'funding-notice' },
     './narrative-guards': { providerBoundKnown },
     './story-messages': { useStoryText: () => copy },
+    '../assets/image-messages': { useImageText: () => copy },
     './story-feed.module.css': {},
   };
   new Function(
@@ -933,6 +934,11 @@ test('one Send quotes and posts once without mounting confirmation, with immutab
   assert.equal(calls.length, 2, 'the first Send also submits');
   assert.equal(ui.has('confirm'), false);
   assert.equal(ui.has('retrySame'), true);
+  assert.equal(
+    calls[1].body.automaticKnownCostPolicy,
+    undefined,
+    'free Send never accepts paid policy',
+  );
   assert.equal(calls[1].body.text, calls[0].body.text);
   assert.equal(calls[1].body.operationId, calls[0].body.operationId);
   ui.button('retrySame')();
@@ -1329,4 +1335,132 @@ test('uncertain decline clears quote timers and retains the exact cancellation w
   assert.equal(original, 2);
   assert.equal(newer, 0);
   assert.equal(prices, 1);
+});
+
+for (const marked of [true, false]) {
+  test(`world image policy ${marked ? 'acceptance' : 'legacy exclusion'} survives unknown-response retries`, async () => {
+    const calls = [];
+    let consentCount = 0;
+    const quoted = quote();
+    if (marked)
+      Object.assign(quoted.quote, {
+        automaticKnownCostPolicy: 'known-cost-v1',
+        automaticKnownCostPolicyHash: 'a'.repeat(64),
+        generatedLocationImages: 1,
+      });
+    const ui = await harness('story-reply-confirmation', async (path, options) => {
+      calls.push({ path, body: JSON.parse(options.body) });
+      if (path.endsWith('/quote')) return quoted;
+      if (++consentCount === 1) throw new Error('NETWORK_ERROR');
+      return {};
+    });
+    ui.render({ ...props(), worldBatch: true });
+    ui.expire();
+    await tick();
+    ui.render();
+    assert.equal(calls.filter((call) => call.path.endsWith('/consent')).length, 0);
+    ui.button('confirm')();
+    await tick();
+    ui.render({ ...props(), worldBatch: true, scope: 'changed' });
+    ui.button('retrySame')();
+    await tick();
+    ui.render();
+    const accepted = calls.filter((call) => call.path.endsWith('/consent'));
+    assert.equal(accepted.length, 2);
+    assert.deepEqual(accepted[0].body, accepted[1].body);
+    assert.equal(
+      accepted[0].body.automaticKnownCostPolicyHash,
+      marked ? 'a'.repeat(64) : undefined,
+    );
+    ui.unmount();
+  });
+}
+test('combined price discloses quoted image policy only for explicitly marked requests', async () => {
+  for (const marked of [false, true]) {
+    const value = quote().quote;
+    if (marked)
+      Object.assign(value, {
+        automaticKnownCostPolicy: 'known-cost-v1',
+        automaticKnownCostPolicyHash: 'b'.repeat(64),
+      });
+    const ui = await harness('story-cost');
+    ui.render({ quote: value });
+    assert.equal(ui.has('automaticKnownCostNotice'), marked);
+  }
+});
+
+for (const marked of [true, false]) {
+  test(`direct reply ${marked ? 'accepts quoted' : 'omits legacy'} policy in original consent and exact retry`, async () => {
+    const calls = [];
+    const result = quote();
+    if (marked) result.quote.automaticKnownCostPolicy = 'known-cost-v1';
+    const ui = await harness('story-reply-confirmation', async (path, options) => {
+      calls.push({ path, body: JSON.parse(options.body) });
+      if (path.endsWith('/quote')) return result;
+      throw new Error('NETWORK_ERROR');
+    });
+    ui.render(props());
+    ui.render();
+    ui.button('refreshEstimate')();
+    await tick();
+    ui.render();
+    assert.deepEqual(Object.keys(calls[0].body), ['operationId']);
+    ui.button('confirm')();
+    await tick();
+    ui.render();
+    ui.button('retrySame')();
+    await tick();
+    ui.render();
+    assert.equal(calls[1].body.automaticKnownCostPolicy, marked ? 'known-cost-v1' : undefined);
+    assert.equal(calls[1].body.automaticKnownCostPolicyHash, undefined);
+    assert.deepEqual(calls[1], calls[2]);
+    ui.unmount();
+  });
+  test(`direct story ${marked ? 'accepts quoted' : 'omits legacy'} policy only after existing confirmation`, async () => {
+    const calls = [];
+    const result = { ...localPostQuote(), ...quote(), turnId: 'turn-one', actionPreview: [] };
+    if (marked) result.quote.automaticKnownCostPolicy = 'known-cost-v1';
+    const ui = await harness('unified-story', async (path, options) => {
+      if (!options?.body)
+        return {
+          canSubmit: true,
+          canonRevision: 4,
+          entries: [],
+          turns: [],
+          configuration: { enabled: true, provider: 'openai', externalCallsEnabled: true },
+        };
+      calls.push({ path, body: JSON.parse(options.body) });
+      if (path.endsWith('/quote')) return result;
+      throw new Error('NETWORK_ERROR');
+    });
+    const p = composerProps();
+    delete p.projection.turn;
+    ui.render(p);
+    await ui.flush();
+    ui.elements('textarea')[0].props.onChange({ target: { value: 'Ответ персонажу' } });
+    ui.render();
+    ui.elements('form')[0].props.onSubmit({ preventDefault() {} });
+    await tick();
+    ui.render();
+    assert.equal(calls.length, 1);
+    assert.equal(calls[0].body.automaticKnownCostPolicy, undefined);
+    assert.equal(ui.has('confirm'), true);
+    ui.elements('form')[0].props.onSubmit({ preventDefault() {} });
+    await tick();
+    ui.render();
+    assert.equal(calls[1].body.automaticKnownCostPolicy, marked ? 'known-cost-v1' : undefined);
+    ui.button('retrySame')();
+    await tick();
+    ui.render();
+    assert.deepEqual(calls[1], calls[2]);
+    ui.unmount();
+  });
+}
+
+test('direct text policy disclosure needs the exact quote marker, not an image hash', async () => {
+  for (const marker of [undefined, 'known-cost-v1']) {
+    const ui = await harness('story-cost');
+    ui.render({ quote: { ...quote().quote, automaticKnownCostPolicy: marker } });
+    assert.equal(ui.has('automaticKnownCostNotice'), marker === 'known-cost-v1');
+  }
 });

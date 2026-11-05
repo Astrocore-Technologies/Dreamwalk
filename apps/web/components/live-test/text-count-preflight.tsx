@@ -87,6 +87,9 @@ export function TextCountPreflight({
                 candidateFingerprint: view!.candidateFingerprint,
                 ...(limit ? { keepRecentHistory: Number(limit) } : {}),
                 consent: true,
+                ...(view?.automaticKnownCostPolicy === 'known-cost-v1'
+                  ? { automaticKnownCostPolicy: view.automaticKnownCostPolicy }
+                  : {}),
               }),
             },
       );
@@ -167,7 +170,11 @@ export function TextCountPreflight({
           disabled={blocked || unknown}
           onChange={(e) => setConsent(e.target.checked)}
         />
-        {m('countConsent')}
+        {m(
+          view.automaticKnownCostPolicy === 'known-cost-v1'
+            ? 'countKnownCostConsent'
+            : 'countConsent',
+        )}
       </label>
       <Button type="button" disabled={blocked || !consent || unknown} onClick={() => void run()}>
         {m('countRun')}

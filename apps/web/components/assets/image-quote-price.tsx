@@ -1,4 +1,6 @@
 'use client';
+import type { ImageKnownCostSettlement } from './image-cost-policy';
+import { useImageText } from './image-messages';
 import { formatSparkSubunits } from '@dreamwalk/contracts';
 import { providerSparkSubunits } from '../visual-authoring/spark-equivalent';
 import { useT } from '@/lib/i18n';
@@ -9,11 +11,13 @@ export function ImageQuotePrice({
   quote,
 }: {
   quote: SparkQuotedCharge & {
+    automaticKnownCostSettlement?: ImageKnownCostSettlement;
     reserveMicros?: number | null;
     upperMicros?: number | null;
   };
 }) {
   const { locale } = useT();
+  const g = useImageText();
   const { s } = useSparkCosts();
   const total =
     quote.funding?.totalReservedSubunits ??
@@ -32,6 +36,9 @@ export function ImageQuotePrice({
           {total != null ? `${formatSparkSubunits(total, locale, 'exact')} ${s('unit')}` : '—'}
         </strong>
       </p>
+      {quote.automaticKnownCostSettlement && (
+        <p data-image-known-cost-policy>{g('automaticKnownCostNotice')}</p>
+      )}
       {quote.funding && (
         <small data-image-funding>
           {copy[0]} {copy[1]}:{' '}

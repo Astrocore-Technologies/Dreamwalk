@@ -1,10 +1,14 @@
 'use client';
-import { useEffect, useRef, useState } from 'react';
+import { useEffect, useState } from 'react';
 import { formatSparkSubunits } from '@dreamwalk/contracts';
 import { api, useClient } from '@/lib/client';
 import { useT } from '@/lib/i18n';
-import { KnownSettlementController, type SettlementState } from '@/lib/known-npc-settlement';
-import { Button, ButtonLink, ErrorBox, PageHeading, Panel } from '../ui';
+import {
+  readKnownSettlement,
+  settlementScope,
+  type SettlementState,
+} from '@/lib/known-npc-settlement';
+import { ButtonLink, ErrorBox, PageHeading, Panel } from '../ui';
 import { settlementMessages } from './known-npc-settlement-messages';
 
 export function KnownNpcSettlementPage({
@@ -41,40 +45,36 @@ function SettlementForm({
     phase: 'loading',
     error: null,
   });
-  const controller = useRef<KnownSettlementController | null>(null);
   useEffect(() => {
-    let instance: KnownSettlementController | undefined;
-    try {
-      instance = new KnownSettlementController({
-        ownerId,
-        campaignId,
-        jobId,
-        storage: window.sessionStorage,
-        operationId: () => crypto.randomUUID(),
-        read: (path) => api(path, { cache: 'no-store' }),
-        post: (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) }),
-        changed: setState,
-      });
-      controller.current = instance;
-      void instance.refresh();
-    } catch {
-      setState({ quote: null, phase: 'error', error: 'storage' });
-    }
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = async () => {
+      let complete = false;
+      try {
+        const path = settlementScope(ownerId, campaignId, jobId).path;
+        const quote = readKnownSettlement(await api(path, { cache: 'no-store' }), jobId);
+        complete = quote.status !== 'pending';
+        if (!disposed) setState({ quote, phase: complete ? 'complete' : 'ready', error: null });
+      } catch {
+        if (!disposed) setState({ quote: null, phase: 'uncertain', error: 'uncertain' });
+      }
+      if (!disposed && !complete) timer = setTimeout(() => void refresh(), 5000);
+    };
+    void refresh();
     return () => {
-      instance?.dispose();
-      controller.current = null;
+      disposed = true;
+      if (timer) clearTimeout(timer);
     };
   }, [ownerId, campaignId, jobId]);
   const quote = state.quote;
   const exact = (amount: string) => formatSparkSubunits(amount, locale, 'exact');
-  const busy = state.phase === 'loading' || state.phase === 'sending';
   return (
     <div className="stack" data-testid="known-npc-settlement">
       <PageHeading title={text.title} description={text.hint} />
       <Panel>
         <div className="stack">
           <p>{text.noNew}</p>
-          {quote && (
+          {quote && state.phase === 'complete' && (
             <>
               <p>
                 {text.reserve}: <strong>{exact(quote.reservedSubunits)}</strong>
@@ -117,39 +117,15 @@ function SettlementForm({
           )}
           <ErrorBox message={state.error ? text[state.error] : ''} />
           <p role="status" aria-live="polite">
-            {state.phase === 'loading'
-              ? text.loading
-              : state.phase === 'sending'
-                ? text.sending
-                : state.phase === 'complete'
-                  ? quote?.status === 'released'
-                    ? text.released
-                    : text.complete
-                  : ''}
+            {state.phase === 'complete'
+              ? quote?.status === 'released'
+                ? text.released
+                : text.complete
+              : state.phase === 'uncertain'
+                ? text.uncertain
+                : text.automatic}
           </p>
           <div className="row wrap">
-            {(state.phase === 'ready' ||
-              state.phase === 'uncertain' ||
-              state.phase === 'sending') && (
-              <Button
-                type="button"
-                busy={state.phase === 'sending'}
-                disabled={busy}
-                onClick={() => void controller.current?.confirm()}
-              >
-                {state.phase === 'uncertain' ? text.retry : text.confirm}
-              </Button>
-            )}
-            {state.phase !== 'complete' && (
-              <Button
-                type="button"
-                variant="secondary"
-                disabled={busy}
-                onClick={() => void controller.current?.refresh()}
-              >
-                {text.refresh}
-              </Button>
-            )}
             <ButtonLink href={`/game/${campaignId}`} variant="ghost">
               {text.back}
             </ButtonLink>

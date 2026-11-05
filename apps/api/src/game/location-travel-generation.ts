@@ -25,7 +25,12 @@ import { generationRequestSchema, type GenerationRequest } from '../image-genera
 import { AssetReuseService } from '../assets/reuse.service';
 import { prepareSceneMedia } from './media-preparation';
 import { sourceAccessSql } from './source-access';
-export type TravelMediaEntry = { preparationId: string; imageQuoteId: string; quote: StoryQuote };
+export type TravelMediaEntry = {
+  preparationId: string;
+  imageQuoteId: string;
+  quote: StoryQuote;
+  automaticKnownCostPolicyHash?: string;
+};
 /** A future scene uses an exact image request fixed before consent, never a blanket future allowance. */
 export class LocationTravelGeneration {
   constructor(
@@ -255,6 +260,7 @@ export class LocationTravelGeneration {
           );
           const imageInput = generationRequestSchema.parse({
             requestPolicyVersion: 2,
+            ...(mode === 'external' ? { automaticKnownCostPolicy: 'known-cost-v1' } : {}),
             adventureId: source.adventure_id,
             travelContext: { preparationId: request.id },
             prompt: prepared.prompt,
@@ -367,8 +373,17 @@ export class LocationTravelGeneration {
       result.push({
         preparationId: row.id,
         imageQuoteId: q.id,
+        ...(q.automaticKnownCostSettlement
+          ? { automaticKnownCostPolicyHash: q.automaticKnownCostSettlement.fingerprint }
+          : {}),
         quote: {
           id: q.id,
+          ...(q.automaticKnownCostSettlement
+            ? {
+                automaticKnownCostPolicy: 'known-cost-v1' as const,
+                automaticKnownCostPolicyHash: q.automaticKnownCostSettlement.fingerprint,
+              }
+            : {}),
           credits: 0,
           demo: false,
           external: true,
@@ -407,6 +422,12 @@ export class LocationTravelGeneration {
       if (!row || row.image_quote?.id !== entry.imageQuoteId || row.state !== 'prepared')
         fail(409, 'GENERATION_QUOTE_STALE', 'GENERATION_QUOTE_STALE');
       await this.validate(c, userId, row);
+      if (
+        entry.automaticKnownCostPolicyHash !==
+          row.image_quote.automaticKnownCostSettlement?.fingerprint ||
+        entry.quote.automaticKnownCostPolicyHash !== entry.automaticKnownCostPolicyHash
+      )
+        fail(409, 'GENERATION_QUOTE_STALE', 'GENERATION_QUOTE_STALE');
       // Like native text entries, each exact child is admitted later in order.
       // The user accepted these immutable native quotes, not arbitrary future image requests.
       await c.query(

@@ -27,6 +27,7 @@ export interface QueueDecision {
   requesterUserId?: string;
   quoteId?: string;
   consent?: boolean;
+  automaticKnownCostPolicy?: 'known-cost-v1';
   requestKey?: string;
   sponsorId?: string;
   runtimeRequestId?: string;

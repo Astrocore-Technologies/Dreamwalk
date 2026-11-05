@@ -112,7 +112,10 @@ export function StoryReplyConfirmation({
     try {
       const result = await api<Pick<StoryTurnQuoteResponse, 'quote'>>(`${path}/quote`, {
         method: 'POST',
-        body: JSON.stringify({ operationId }),
+        body: JSON.stringify({
+          operationId,
+          ...(worldBatch ? { automaticKnownCostPolicy: 'known-cost-v1' } : {}),
+        }),
       });
       if (stamp !== epoch.current || currentScope.current !== scope) return;
       if (!result.quote || !providerBoundKnown(result.quote, result.quote.external)) {
@@ -176,6 +179,14 @@ export function StoryReplyConfirmation({
           operationId: sent.operationId,
           quoteId: quote.id,
           consent: true,
+          ...(!worldBatch && quote.automaticKnownCostPolicy === 'known-cost-v1'
+            ? { automaticKnownCostPolicy: quote.automaticKnownCostPolicy }
+            : {}),
+          ...(worldBatch &&
+          quote.automaticKnownCostPolicy === 'known-cost-v1' &&
+          quote.automaticKnownCostPolicyHash
+            ? { automaticKnownCostPolicyHash: quote.automaticKnownCostPolicyHash }
+            : {}),
           ...(quote.estimateRiskConsentRequired ? { estimateRiskConsent: true } : {}),
         }),
       });

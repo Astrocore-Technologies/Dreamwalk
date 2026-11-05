@@ -124,6 +124,9 @@ function publicRequestMeta(value: unknown) {
     sponsorId: v.sponsorId ?? null,
     runtimeRequestId: v.runtimeRequestId ?? null,
     acceptedWorldBatchId: v.acceptedWorldBatchId ?? null,
+    ...(v.automaticKnownCostPolicy === 'known-cost-v1'
+      ? { automaticKnownCostPolicy: 'known-cost-v1' }
+      : {}),
   };
 }
 export class NpcAiEngine {
@@ -709,6 +712,7 @@ export class NpcAiEngine {
             reserveSubunits: providerMicrosToSparkSubunits(String(requestPlan.reserveMicros)),
             expiresAt: expires.toISOString(),
             providerQuote: {
+              automaticKnownCostPolicy: 'known-cost-v1',
               ...requestPlan.snapshot!,
               policyVersion: this.policy.version,
               contextHash: context.contextHash,
@@ -746,7 +750,10 @@ export class NpcAiEngine {
         sparkReservedSubunits: sparkQuote?.reserve_subunits ?? null,
         ...optionalFunding(await quoteFunding(c, sparkQuote?.id)),
         ...(sparkQuote
-          ? { sparkRateVersion: sparkQuoteRateVersion(sparkQuote.price_snapshot) }
+          ? {
+              sparkRateVersion: sparkQuoteRateVersion(sparkQuote.price_snapshot),
+              automaticKnownCostPolicy: 'known-cost-v1' as const,
+            }
           : {}),
         expiresAt: expires.toISOString(),
         demo: !sparkMode,
@@ -844,6 +851,7 @@ export class NpcAiEngine {
     requestKey = '',
     sponsorId?: string,
     runtimeRequestId?: string,
+    automaticKnownCostPolicy?: 'known-cost-v1',
   ) {
     z.uuid().parse(operationId);
     return this.db.tx(async (c) => {
@@ -862,7 +870,16 @@ export class NpcAiEngine {
         j.requester_user_id !== (scope.requesterUserId ?? null) ||
         j.purpose !== (scope.purpose ?? 'plan') ||
         digest(publicRequestMeta(j.request_meta)) !==
-          digest(publicRequestMeta({ quoteId, consent, requestKey, sponsorId, runtimeRequestId }))
+          digest(
+            publicRequestMeta({
+              quoteId,
+              consent,
+              requestKey,
+              sponsorId,
+              runtimeRequestId,
+              automaticKnownCostPolicy,
+            }),
+          )
       )
         fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
       return this.dto(c, j);
@@ -884,6 +901,9 @@ export class NpcAiEngine {
       sponsorId: input.sponsorId ?? null,
       runtimeRequestId: input.runtimeRequestId ?? null,
       acceptedWorldBatchId: input.acceptedWorldBatchId ?? null,
+      ...(input.automaticKnownCostPolicy
+        ? { automaticKnownCostPolicy: input.automaticKnownCostPolicy }
+        : {}),
     });
     return this.db.tx(async (c) => {
       let generationAuthorizationId =
@@ -979,6 +999,9 @@ export class NpcAiEngine {
         )
           fail(409, 'WORLD_BATCH_CONSENT_STALE', 'WORLD_BATCH_CONSENT_STALE');
         worldBatchProof = {
+          ...(input.automaticKnownCostPolicy
+            ? { automaticKnownCostPolicy: input.automaticKnownCostPolicy }
+            : {}),
           batchId: input.acceptedWorldBatchId,
           nativeQuoteId: input.quoteId!,
           runtimeRequestId: input.runtimeRequestId!,
@@ -1011,6 +1034,19 @@ export class NpcAiEngine {
           (!worldBatchProof && new Date(acceptedQuote.expires_at).getTime() <= Date.now()))
       )
         fail(409, 'QUOTE_EXPIRED', 'QUOTE_EXPIRED');
+      if (input.automaticKnownCostPolicy) {
+        if (
+          input.automaticKnownCostPolicy !== 'known-cost-v1' ||
+          !input.consent ||
+          !acceptedQuote?.spark_quote_id ||
+          (
+            await c.query('SELECT price_snapshot FROM spark_quotes WHERE id=$1', [
+              acceptedQuote.spark_quote_id,
+            ])
+          ).rows[0]?.price_snapshot?.providerQuote?.automaticKnownCostPolicy !== 'known-cost-v1'
+        )
+          fail(409, 'GENERATION_QUOTE_STALE', 'GENERATION_QUOTE_STALE');
+      }
       const pinned = acceptedQuote?.request_snapshot ?? releasePermit?.requestSnapshot ?? undefined;
       const requestPlan = await this.requestPlan(
         { ...scope, requesterUserId: scope.requesterUserId ?? releasePermit?.payerId },
@@ -1297,6 +1333,9 @@ export class NpcAiEngine {
             sponsorId: input.sponsorId ?? null,
             runtimeRequestId: input.runtimeRequestId ?? null,
             acceptedWorldBatchId: input.acceptedWorldBatchId ?? null,
+            ...(input.automaticKnownCostPolicy
+              ? { automaticKnownCostPolicy: input.automaticKnownCostPolicy }
+              : {}),
           }),
           input.sponsorId ?? null,
           scope.subjectKind ?? 'npc',

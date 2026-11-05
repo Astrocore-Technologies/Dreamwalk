@@ -1,3 +1,8 @@
+import {
+  acceptStoryKnownCostPolicy,
+  acceptedStoryKnownCostPolicy,
+  type StoryKnownCostAcceptance,
+} from './story-known-cost-consent';
 import { settlePendingStorySpeech } from './pending-story-speech';
 import { isActorConscious } from '@dreamwalk/contracts';
 import { runtimeQuoteIdentity } from '../ai/runtime-map-preflight';
@@ -137,7 +142,13 @@ interface Port {
   };
 }
 type Row = QueryResultRow;
-type QuotedReply = { request: NpcDecisionRequest; quote: StoryQuote; batchId?: string };
+type QuotedReply = {
+  request: NpcDecisionRequest;
+  quote: StoryQuote;
+  batchId?: string;
+  automaticKnownCostPolicy?: 'known-cost-v1';
+  automaticKnownCostAcceptance?: StoryKnownCostAcceptance;
+};
 const baseInput = (v: Row): StoryTurnInput =>
   storyTurnInputSchema.parse({
     operationId: v.operationId,
@@ -162,6 +173,10 @@ function aggregateReplyQuote(id: string, quotedReplies: QuotedReply[]): StoryQuo
     fail(409, 'SPARK_PRICE_UNVERIFIED', 'SPARK_PRICE_UNVERIFIED');
   return {
     id,
+    ...(quotedReplies.length &&
+    quotedReplies.every((reply) => reply.quote.automaticKnownCostPolicy === 'known-cost-v1')
+      ? { automaticKnownCostPolicy: 'known-cost-v1' as const }
+      : {}),
     credits: 0,
     demo: false,
     external: true,
@@ -900,6 +915,16 @@ export class StoryTurnRuntime {
           await c.query('SELECT status FROM game_story_turns WHERE id=$1 FOR UPDATE', [r.id])
         ).rows[0];
         if (lock?.status !== 'quoted') fail(409, 'STALE_STATE', 'STALE_STATE');
+        const policyAcceptance = acceptStoryKnownCostPolicy(
+          r.quote_result.quote,
+          r.id,
+          input.automaticKnownCostPolicy,
+        );
+        if (policyAcceptance)
+          await c.query(
+            "UPDATE game_story_turns SET quote_result=quote_result||jsonb_build_object('automaticKnownCostAcceptance',$2::jsonb) WHERE id=$1",
+            [r.id, JSON.stringify(policyAcceptance)],
+          );
         const quotedReplies = r.context.quotedReplies as QuotedReply[] | undefined;
         if (quotedReplies?.length) {
           for (const reply of quotedReplies) await insertNpcRequest(c, id, reply.request);
@@ -1138,6 +1163,20 @@ export class StoryTurnRuntime {
       // cannot retarget an already quoted or deferred operation. Legacy clients
       // may omit it, but an explicit different language remains a conflict.
       const base = baseInput({ ...input, replyLocale: input.replyLocale ?? r.input.replyLocale });
+      const policyAcceptance = acceptStoryKnownCostPolicy(
+        r.quote_result.quote,
+        r.id,
+        input.automaticKnownCostPolicy,
+      );
+      if (
+        r.status !== 'quoted' &&
+        (acceptedStoryKnownCostPolicy(
+          r.quote_result.quote,
+          r.id,
+          r.quote_result.automaticKnownCostAcceptance,
+        ) ?? undefined) !== input.automaticKnownCostPolicy
+      )
+        fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
       if ((live.state.turnController && r.context.turnBased) || r.context.localTravel)
         return this.submitTurnBased(id, a, live, input, base, r);
       if (r.request_hash !== digest(base) || r.quote_id !== input.quoteId)
@@ -1182,6 +1221,11 @@ export class StoryTurnRuntime {
           if (!lock) fail(409, 'STALE_STATE', 'STALE_STATE');
           this.erased(lock);
           if (lock.status !== 'quoted') fail(409, 'STALE_STATE', 'STALE_STATE');
+          if (policyAcceptance)
+            await c.query(
+              "UPDATE game_story_turns SET quote_result=quote_result||jsonb_build_object('automaticKnownCostAcceptance',$2::jsonb) WHERE id=$1",
+              [r.id, JSON.stringify(policyAcceptance)],
+            );
           await insertNpcRequest(c, id, {
             id: r.id,
             npcId: a.actorId,
@@ -1337,7 +1381,12 @@ export class StoryTurnRuntime {
   }
   async replyConsent(req: Request, id: string, turnId: string, body: unknown) {
     const input = z
-      .object({ operationId: z.uuid(), quoteId: z.uuid(), consent: z.literal(true) })
+      .object({
+        operationId: z.uuid(),
+        quoteId: z.uuid(),
+        consent: z.literal(true),
+        automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
+      })
       .strict()
       .parse(body);
     return this.port.serial(id, async () => {
@@ -1353,7 +1402,22 @@ export class StoryTurnRuntime {
         recovery.response.quote.id !== input.quoteId
       )
         fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
-      if (recovery.accepted) return this.receipt(turn);
+      const policyAcceptance = acceptStoryKnownCostPolicy(
+        recovery.response.quote,
+        turnId,
+        input.automaticKnownCostPolicy,
+      );
+      if (recovery.accepted) {
+        if (
+          acceptedStoryKnownCostPolicy(
+            recovery.response.quote,
+            turnId,
+            recovery.automaticKnownCostAcceptance,
+          ) !== input.automaticKnownCostPolicy
+        )
+          fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+        return this.receipt(turn);
+      }
       if (turn.status !== 'committed')
         fail(409, 'LIVE_REQUEST_UNAVAILABLE', 'LIVE_REQUEST_UNAVAILABLE');
       if (
@@ -1363,7 +1427,18 @@ export class StoryTurnRuntime {
         fail(409, 'QUOTE_EXPIRED', 'QUOTE_EXPIRED');
       await this.db.tx(async (c) => {
         await this.authorized(c, id, a.user.id);
-        const replies = recovery.replies as QuotedReply[];
+        const replies = (recovery.replies as QuotedReply[]).map((reply) => ({
+          ...reply,
+          ...(policyAcceptance
+            ? {
+                automaticKnownCostAcceptance: acceptStoryKnownCostPolicy(
+                  reply.quote,
+                  reply.request.id,
+                  input.automaticKnownCostPolicy,
+                ),
+              }
+            : {}),
+        }));
         for (const reply of replies) {
           const updated = await c.query(
             `UPDATE game_npc_decision_requests r SET context=$2,result_code=NULL WHERE r.id=$1 AND r.campaign_id=$3 AND r.requester_user_id=$4 AND r.status='queued' AND r.result_code='GENERATION_QUOTE_STALE' AND r.job_id IS NULL
@@ -1388,7 +1463,11 @@ export class StoryTurnRuntime {
           JSON.stringify({
             ...turn.context,
             quotedReplies,
-            replyRecovery: { ...recovery, accepted: true },
+            replyRecovery: {
+              ...recovery,
+              accepted: true,
+              ...(policyAcceptance ? { automaticKnownCostAcceptance: policyAcceptance } : {}),
+            },
           }),
         ]);
       });
@@ -1562,7 +1641,16 @@ export class StoryTurnRuntime {
         value.request.purpose === request.purpose &&
         value.request.requesterUserId === request.requester_user_id,
     );
-    return reply && digest(reply.request.context) === digest(request.context) ? reply : null;
+    return reply && digest(reply.request.context) === digest(request.context)
+      ? {
+          ...reply,
+          automaticKnownCostPolicy: acceptedStoryKnownCostPolicy(
+            reply.quote,
+            reply.request.id,
+            reply.automaticKnownCostAcceptance,
+          ),
+        }
+      : null;
   }
   async schedule(id: string, live: StoryLive, request: Row, worldReply?: QuotedReply | null) {
     const r = await this.row(id, request.id);
@@ -1591,6 +1679,11 @@ export class StoryTurnRuntime {
         operationId: r.id,
         quoteId: r.quote_id,
         consent: true,
+        automaticKnownCostPolicy: acceptedStoryKnownCostPolicy(
+          r.quote_result.quote,
+          r.id,
+          r.quote_result.automaticKnownCostAcceptance,
+        ),
         context: r.context,
         requestKey: `story:${r.id}`,
         runtimeRequestId: r.id,
@@ -1669,6 +1762,9 @@ export class StoryTurnRuntime {
           runtimeRequestId: r.id,
           expectedRuntimeContextDigest: digest(context),
           ...(worldReply?.batchId ? { acceptedWorldBatchId: worldReply.batchId } : {}),
+          ...(frozenReply?.automaticKnownCostPolicy
+            ? { automaticKnownCostPolicy: frozenReply.automaticKnownCostPolicy }
+            : {}),
         });
         live.aiPending = true;
         this.port.dispatch(id);

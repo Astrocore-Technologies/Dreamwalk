@@ -412,7 +412,7 @@ test('structured provider preserves semantic travel intent without requiring par
     OpenAiNpcProvider,
     openAiOutputSchema,
     buildOpenAiNpcRequestBody,
-  } = require('../../apps/api/dist/ai/openai-provider');
+  } = require('../../apps/api/src/ai/openai-provider.ts');
   const intent = {
     segmentIndex: 0,
     destinationName: 'Coffee and Silence',
@@ -480,4 +480,31 @@ test('structured provider preserves semantic travel intent without requiring par
     JSON.parse(buildOpenAiNpcRequestBody(config, 'story_turn', { mode: 'director' })).instructions,
     /not a vocabulary whitelist/,
   );
+});
+test('marked travel admission preserves exact policy entry and rejects a changed child before acceptance', async () => {
+  const quote = q();
+  quote.automaticKnownCostSettlement = { fingerprint: 'a'.repeat(64) };
+  const row = { id: randomUUID(), image_quote: quote, state: 'prepared' };
+  const entries = [
+    {
+      preparationId: row.id,
+      imageQuoteId: quote.id,
+      automaticKnownCostPolicyHash: 'a'.repeat(64),
+      quote: { automaticKnownCostPolicyHash: 'a'.repeat(64) },
+    },
+  ];
+  let accepted = 0;
+  const client = {
+    query: async (sql) => (sql.startsWith('SELECT') ? { rows: [row] } : (accepted++, { rows: [] })),
+  };
+  const travel = subject();
+  travel.validate = async () => ({});
+  await travel.accept(client, 'owner', 'batch', entries, true);
+  assert.equal(accepted, 1);
+  entries[0].automaticKnownCostPolicyHash = 'b'.repeat(64);
+  await assert.rejects(
+    () => travel.accept(client, 'owner', 'batch', entries, true),
+    errorCode('GENERATION_QUOTE_STALE'),
+  );
+  assert.equal(accepted, 1);
 });

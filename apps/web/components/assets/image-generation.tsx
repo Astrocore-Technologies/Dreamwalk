@@ -1,4 +1,5 @@
 'use client';
+import type { ImageKnownCostSettlement } from './image-cost-policy';
 import { imageFramingEvidenceMatches, type ImageFraming } from '@dreamwalk/contracts';
 import { ImageQuotePrice } from './image-quote-price';
 import { ImageConfirmation } from './image-confirmation';
@@ -71,6 +72,7 @@ type Job = {
   canCancel: boolean;
 };
 type Quote = {
+  automaticKnownCostSettlement?: ImageKnownCostSettlement;
   framingVersion?: 1;
   imageFraming?: ImageFraming | null;
   sparks?: { quoteId: string; reserveSubunits: string; rateVersion: string; walletCharging: true };
@@ -369,7 +371,11 @@ export function ImageGeneration({
     try {
       const result = await api<QuoteResponse>('/image-generation/quotes', {
         method: 'POST',
-        body: JSON.stringify({ ...request, ...(declineReuse ? { declineReuse: true } : {}) }),
+        body: JSON.stringify({
+          ...request,
+          ...(request.mode === 'external' ? { automaticKnownCostPolicy: 'known-cost-v1' } : {}),
+          ...(declineReuse ? { declineReuse: true } : {}),
+        }),
       });
       if (generation === epoch.current) {
         setMatches(result.matches);
@@ -429,6 +435,9 @@ export function ImageGeneration({
           quoteId: quote.id,
           operationId: operation.current.id,
           consent: true,
+          ...(quote.automaticKnownCostSettlement
+            ? { automaticKnownCostPolicyHash: quote.automaticKnownCostSettlement.fingerprint }
+            : {}),
           ...(estimatedQuote ? { estimateRiskConsent: true } : {}),
         }),
       });

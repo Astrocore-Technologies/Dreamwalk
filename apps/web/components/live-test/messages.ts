@@ -100,6 +100,11 @@ export const liveMessages = {
     'I authorize one count with the displayed separate reserve. This does not generate a reply.',
     'Дозволяю один підрахунок із показаним окремим резервом. Це не генерація відповіді.',
   ],
+  countKnownCostConsent: [
+    'Разрешаю один подсчёт с показанным отдельным резервом, включая подтверждённую стоимость, если результат устареет. Остаток резерва будет освобождён. Это не запуск ответа.',
+    'I authorize one count with the displayed separate reserve, including its verified cost if the result becomes stale. The remaining reserve will be released. This does not generate a reply.',
+    'Дозволяю один підрахунок із показаним окремим резервом, включно з підтвердженою вартістю, якщо результат застаріє. Решту резерву буде звільнено. Це не генерація відповіді.',
+  ],
   countRun: ['Посчитать один раз', 'Count once', 'Порахувати один раз'],
   countResult: ['Результат подсчёта', 'Count result', 'Результат підрахунку'],
   countReconcile: [
@@ -442,6 +447,11 @@ export const liveMessages = {
     'Запросов для подтверждения нет.',
     'No requests await consent.',
     'Немає запитів для підтвердження.',
+  ],
+  knownCostConsent: [
+    'Подтверждённая стоимость этого запроса учитывается один раз и в случае, если результат нельзя применить. Остаток резерва освобождается; повторного запроса к ИИ не будет.',
+    'The verified cost of this request is charged once even if its result cannot be applied. The remaining reserve is released; no AI request is repeated.',
+    'Підтверджена вартість цього запиту враховується один раз і якщо результат не можна застосувати. Решта резерву звільняється; повторного запиту до ШІ не буде.',
   ],
   requestConsent: [
     'Разрешаю только этот запрос в пределах указанной суммы.',

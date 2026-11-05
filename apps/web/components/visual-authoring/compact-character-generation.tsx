@@ -279,6 +279,12 @@ export function CompactCharacterGeneration({
                             role,
                             quoteId: quote.id,
                             consent: true,
+                            ...(quote.automaticKnownCostSettlement
+                              ? {
+                                  automaticKnownCostPolicyHash:
+                                    quote.automaticKnownCostSettlement.fingerprint,
+                                }
+                              : {}),
                             ...(estimated ? { estimateRiskConsent: true } : {}),
                           },
                           role,
@@ -290,6 +296,7 @@ export function CompactCharacterGeneration({
                             expectedRevision: project.revision,
                             role,
                             declineReuse: true,
+                            automaticKnownCostPolicy: 'known-cost-v1',
                             liveTestSessionId:
                               session?.mode === 'release'
                                 ? undefined
