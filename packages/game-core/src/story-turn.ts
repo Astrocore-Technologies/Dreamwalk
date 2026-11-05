@@ -1,3 +1,4 @@
+import { storyItemTransferContext, claimedStoryItemTransfers } from './story-item-transfers';
 import {
   sceneEncounterCandidates,
   applySceneEncounter,
@@ -818,6 +819,24 @@ export function buildStoryTurnContext(
         ),
       )
       .map((item) => ({ id: item.id, label: item.label, alreadyCarried: true as const })),
+    ...(mode === 'director'
+      ? {
+          itemTransferPolicy: {
+            segmentCandidates: parsed.segments
+              .filter((segment) => segment.kind === 'attempt')
+              .map((segment) => ({
+                segmentIndex: segment.index,
+                ...storyItemTransferContext(
+                  attemptStates.get(segment.index)!,
+                  actorId,
+                  segment.text,
+                ),
+              })),
+            instructions:
+              'Interpret an explicit current handoff semantically, not as a command keyword. Use action give with the matching owned item ID and visible recipient ID from this exact segment. Item mention alone, looking, gesturing, negation, a hypothetical, quoted speech or another actor action is not a handoff. These are private director references, never NPC knowledge or permission to enumerate inventory. Preserve ordinary untracked RP. A completed transfer of a tracked item requires the typed action and successful server admission; otherwise narrate only the attempt, refusal or obstacle. Never claim acceptance without the matching transfer. No invented items, owners or recipients.',
+          },
+        }
+      : {}),
     actionPreview,
     actionOutcomes,
     travelRequests,
@@ -1155,7 +1174,7 @@ export function applyStoryTurnProposal(
       context.mode === 'director' &&
       state.turnController &&
       step.action &&
-      !['pick_up', 'travel'].includes(step.action.kind) &&
+      !['pick_up', 'travel', 'give'].includes(step.action.kind) &&
       !context.actionPreview.some(
         (entry) =>
           entry.segmentIndex === segment.index &&
@@ -1173,6 +1192,20 @@ export function applyStoryTurnProposal(
       )
     )
       return reject('FORBIDDEN');
+    if (step.action?.kind === 'give' && context.mode === 'director') {
+      const candidates = context.itemTransferPolicy?.segmentCandidates.find(
+        (entry) => entry.segmentIndex === segment.index,
+      );
+      if (
+        step.action.target ||
+        !candidates?.items.some((item) => item.id === step.action!.itemId) ||
+        !candidates.recipients.some(
+          (recipient) =>
+            recipient.id === step.action!.targetId && recipient.reachable && recipient.hasCapacity,
+        )
+      )
+        return reject('FORBIDDEN');
+    }
     if (step.action?.kind === 'pick_up') {
       const target =
         step.action.targetId === 'new_item'
@@ -1257,6 +1290,37 @@ export function applyStoryTurnProposal(
     actions: [],
     clarification: 'UNSUPPORTED',
   });
+  const referencedTransferItems = [
+    ...new Map(
+      (context.itemTransferPolicy?.segmentCandidates ?? []).flatMap((entry) =>
+        entry.items.map((item) => [item.id, item] as const),
+      ),
+    ).values(),
+  ];
+  const claimedTransfers = claimedStoryItemTransfers(
+    p.narrative?.narration ?? '',
+    referencedTransferItems,
+    [
+      ...new Map(
+        (context.itemTransferPolicy?.segmentCandidates ?? []).flatMap((entry) =>
+          entry.recipients.map((recipient) => [recipient.id, recipient] as const),
+        ),
+      ).values(),
+    ],
+  );
+  if (
+    claimedTransfers.some(
+      (claim) =>
+        !p.steps.some(
+          (step) =>
+            step.action?.kind === 'give' &&
+            step.action.itemId === claim.itemId &&
+            step.action.targetId === claim.recipientId,
+        ),
+    )
+  )
+    return unsupported();
+  const transferredItems = new Set<string>();
   const entries: StorySafeEntry[] = [];
   let next = structuredClone(state);
   const events: GameResult['events'] = [];
@@ -1477,6 +1541,17 @@ export function applyStoryTurnProposal(
           proposed.kind === 'travel' && proposed.targetId === 'new_scene'
             ? { ...proposed, targetId: `scene-${turnId}` }
             : proposed;
+        if (proposed.kind === 'give') {
+          const candidates = storyItemTransferContext(next, actorId, segment.text);
+          if (
+            !candidates.items.some((item) => item.id === proposed.itemId) ||
+            !candidates.recipients.some(
+              (recipient) =>
+                recipient.id === proposed.targetId && recipient.reachable && recipient.hasCapacity,
+            )
+          )
+            return reject('FORBIDDEN');
+        }
         const action = proposed.kind === 'approach' ? null : allowedAction(next, actorId, resolved);
         if (!action && proposed.kind !== 'approach') return reject('FORBIDDEN');
         const outcome =
@@ -1512,6 +1587,8 @@ export function applyStoryTurnProposal(
             `turn:${turnId}:${segment.index}`,
           ).state;
           events.push(...outcome.events);
+          if (proposed.kind === 'give' && proposed.itemId)
+            transferredItems.add(`${proposed.itemId}:${proposed.targetId}`);
         }
         push({
           kind: 'outcome',
@@ -1646,6 +1723,12 @@ export function applyStoryTurnProposal(
         if (sourceError) return reject(sourceError);
       }
     }
+    if (
+      claimedTransfers.some(
+        (claim) => !transferredItems.has(`${claim.itemId}:${claim.recipientId}`),
+      )
+    )
+      return unsupported();
     const admittedEncounter = next.narrativeCanon!.turns.find(
       (entry) => entry.id === turnId,
     )?.sceneEncounter;
