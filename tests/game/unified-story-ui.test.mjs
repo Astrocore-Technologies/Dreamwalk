@@ -186,8 +186,8 @@ test('legacy whispers require a recipient without blocking turn-based area speec
     new URL('../../apps/web/components/game/unified-story.tsx', import.meta.url),
     'utf8',
   );
-  assert.match(composer, /h\(projection.turn \? 'areaSpeech' : 'legacySpeech'\)/);
-  assert.match(composer, /h\(projection.turn \? 'areaWhisper' : 'legacyChooseWhisper'\)/);
+  assert.match(composer, /:\s*projection.turn\s*\? 'areaSpeech'\s*:\s*'legacySpeech'/);
+  assert.match(composer, /:\s*projection.turn\s*\? 'areaWhisper'\s*:\s*'legacyChooseWhisper'/);
 });
 
 test('selected NPC display label updates with locale without changing the selected identity', () => {
@@ -352,6 +352,9 @@ test('scene-only speech keeps the exact selected recipient without invented prox
     'utf8',
   );
   assert.match(composer, /locationOnly\s*\? 'sceneWhisperHint'/);
-  assert.match(composer, /channel === 'whisper'\s*\? activeRecipient\s*\? 'sceneTargetWhisperHint'/);
+  assert.match(
+    composer,
+    /channel === 'whisper'\s*\? activeRecipient\s*\? 'sceneTargetWhisperHint'/,
+  );
   assert.match(composer, /: 'sceneSpeechHint'/);
 });

@@ -25,6 +25,9 @@ test('location-only RP preserves the full image and public scene without coordin
       })
     ).status(),
   ).toBe(201);
+  expect(
+    (await page.request.patch('/api/v1/account/settings', { data: { language: 'en' } })).ok(),
+  ).toBeTruthy();
   await page.addInitScript(() => localStorage.setItem('dreamwalk-language', 'en'));
   const story = await authoringRequest(page, '/studio/adventures', { title: `Scene ${suffix}` });
   const draft = createAuthoredDraft('courtyard');
@@ -115,6 +118,7 @@ test('location-only RP preserves the full image and public scene without coordin
   const scene = page.getByTestId('location-only-scene');
   const image = page.getByTestId('location-map-image');
   await expect(scene).toBeVisible();
+  await expect(page.locator('html')).toHaveAttribute('lang', 'en');
   await expect(image).toBeVisible();
   const originalUrl = await image.getAttribute('src');
   expect(originalUrl).toContain(original.id);
