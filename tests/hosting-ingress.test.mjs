@@ -95,3 +95,22 @@ test('OAuth cookie is forwarded only to its exact Google endpoint scope', () => 
     Object.assign(process.env, old);
   }
 });
+
+test('API mutation origin requires exact canonical value for hosted traffic and rejects foreign local origins', () => {
+  const { requestOriginAllowed } = require('../apps/api/src/ingress.ts');
+  const expected = 'https://dreamwalk-rho.vercel.app';
+  for (const requireOrigin of [false, true]) {
+    assert.equal(requestOriginAllowed(expected, expected, requireOrigin), true);
+    for (const origin of [
+      '',
+      'null',
+      'https://www.dreamwalk.online',
+      'https://evil.test',
+      `${expected}/`,
+      [expected],
+    ])
+      assert.equal(requestOriginAllowed(origin, expected, requireOrigin), false);
+  }
+  assert.equal(requestOriginAllowed(undefined, expected, true), false);
+  assert.equal(requestOriginAllowed(undefined, expected, false), true);
+});

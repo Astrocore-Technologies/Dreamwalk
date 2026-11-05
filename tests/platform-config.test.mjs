@@ -170,3 +170,17 @@ test('Brevo HTTPS delivery requires both key and sender and excludes ambiguous S
     0,
   );
 });
+
+test('API WEB_ORIGIN must be an exact origin rather than a URL or wildcard', () => {
+  for (const WEB_ORIGIN of [
+    'https://web.example.test/',
+    'https://web.example.test/path',
+    'https://web.example.test?x=1',
+    'https://web.example.test#fragment',
+    'https://user:password@web.example.test',
+    'https://*.example.test',
+  ]) {
+    assert.notEqual(validates({ WEB_ORIGIN }).status, 0, WEB_ORIGIN);
+  }
+  assert.equal(validates({ WEB_ORIGIN: 'https://dreamwalk-rho.vercel.app' }).status, 0);
+});

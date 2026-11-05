@@ -10,381 +10,245 @@ const {
   ENFORCE_BROWSER_ORIGIN,
 } = require('../apps/web/lib/hosted-origin.ts');
 const { socketRelayTarget } = require('../apps/web/lib/game-socket-relay.ts');
+const canonical = 'https://dreamwalk-rho.vercel.app';
+const origins = ['https://www.dreamwalk.online', 'https://dreamwalk.online', canonical];
 const env = {
   VERCEL: '1',
-  WEB_ORIGIN: 'https://dreamwalk-rho.vercel.app',
+  VERCEL_ENV: 'production',
+  API_WEB_ORIGIN: canonical,
+  WEB_ALLOWED_ORIGINS: origins.join(','),
   VERCEL_URL: 'dreamwalk-build-team.vercel.app',
   VERCEL_BRANCH_URL: 'dreamwalk-git-feature-team.vercel.app',
   API_URL: 'https://api.example.test',
   DREAMWALK_INGRESS_SECRET: 'a'.repeat(40),
 };
-function request(origin, headers = {}) {
-  return new NextRequest(origin + '/api/v1/auth/login', {
-    method: 'POST',
-    headers: { origin, 'content-type': 'application/json', ...headers },
+const campaignId = '12345678-1234-1234-1234-123456789012';
+function request(origin, headers = {}, socket = false) {
+  return new NextRequest(
+    origin + (socket ? `/api/v1/game/socket?campaignId=${campaignId}` : '/api/v1/auth/login'),
+    {
+      method: socket ? 'GET' : 'POST',
+      headers: {
+        origin,
+        host: new URL(origin).host,
+        'sec-fetch-site': 'same-origin',
+        'content-type': 'application/json',
+        cookie: `dreamwalk_session=${'b'.repeat(64)}`,
+        ...headers,
+      },
+    },
+  );
+}
+function withEnv(config, fn) {
+  const old = { ...process.env };
+  try {
+    for (const key of [
+      'API_WEB_ORIGIN',
+      'WEB_ORIGIN',
+      'WEB_ALLOWED_ORIGINS',
+      'VERCEL_PROJECT_PRODUCTION_URL',
+      'VERCEL_URL',
+      'VERCEL_BRANCH_URL',
+    ])
+      delete process.env[key];
+    Object.assign(process.env, config);
+    return fn();
+  } finally {
+    for (const key of Object.keys(process.env)) if (!(key in old)) delete process.env[key];
+    Object.assign(process.env, old);
+  }
+}
+function accepted(origin, config = env) {
+  withEnv(config, () => {
+    assert.equal(trustedBrowserOrigin(request(origin), config), true);
+    const result = proxy(request(origin, { 'x-dreamwalk-ingress': 'spoof' }));
+    assert.equal(
+      result.headers.get('x-middleware-rewrite'),
+      'https://api.example.test/api/v1/auth/login',
+    );
+    assert.equal(result.headers.get('x-middleware-request-origin'), canonical);
+    assert.equal(
+      result.headers.get('x-middleware-request-x-dreamwalk-ingress'),
+      env.DREAMWALK_INGRESS_SECRET,
+    );
+    assert.equal(result.headers.get('x-dreamwalk-ingress'), null);
+    const target = socketRelayTarget(request(origin, {}, true), config);
+    assert.equal(target.headers.origin, canonical);
+    assert.equal(target.headers['x-dreamwalk-ingress'], env.DREAMWALK_INGRESS_SECRET);
+    assert.equal(target.url, `wss://api.example.test/api/v1/game/socket?campaignId=${campaignId}`);
   });
 }
-test('temporary web and API policy pauses only origin enforcement without changing trusted ingress', () => {
-  const { ENFORCE_BROWSER_ORIGIN: apiPolicy } = require('../apps/api/src/ingress.ts');
-  assert.equal(ENFORCE_BROWSER_ORIGIN, false);
-  assert.equal(apiPolicy, false);
-  const old = { ...process.env };
-  try {
-    Object.assign(process.env, env, { VERCEL_PROJECT_PRODUCTION_URL: 'play.example.com' });
-    delete process.env.API_WEB_ORIGIN;
-    for (const origin of [env.WEB_ORIGIN, `https://${env.VERCEL_URL}`, 'https://other.example']) {
-      for (const browserOrigin of [origin, 'https://foreign.example', 'null', undefined]) {
-        const req = request(origin, {
-          'sec-fetch-site': 'cross-site',
-          'x-dreamwalk-ingress': 'spoof',
-        });
-        if (browserOrigin === undefined) req.headers.delete('origin');
-        else req.headers.set('origin', browserOrigin);
-        const result = proxy(req);
-        assert.equal(
-          result.headers.get('x-middleware-rewrite'),
-          'https://api.example.test/api/v1/auth/login',
-        );
-        assert.equal(
-          result.headers.get('x-middleware-request-x-dreamwalk-ingress'),
-          env.DREAMWALK_INGRESS_SECRET,
-        );
-        assert.equal(result.headers.get('x-middleware-request-origin'), 'https://play.example.com');
-        const socketRequest = new Request(
-          origin + '/api/v1/game/socket?campaignId=12345678-1234-1234-1234-123456789012',
-          {
-            headers: {
-              ...Object.fromEntries(req.headers),
-              cookie: `dreamwalk_session=${'b'.repeat(64)}`,
-            },
-          },
-        );
-        const socket = socketRelayTarget(socketRequest, process.env);
-        assert.equal(
-          socket.url,
-          'wss://api.example.test/api/v1/game/socket?campaignId=12345678-1234-1234-1234-123456789012',
-        );
-        assert.equal(socket.headers['x-dreamwalk-ingress'], env.DREAMWALK_INGRESS_SECRET);
-        socketRequest.headers.delete('cookie');
-        assert.throws(() => socketRelayTarget(socketRequest, process.env), /RELAY_SESSION/);
-      }
+function rejected(origin, headers = {}, config = env) {
+  withEnv(config, () => {
+    const req = request(origin, headers);
+    const ws = request(origin, headers, true);
+    if (headers.origin === undefined && Object.hasOwn(headers, 'origin')) {
+      req.headers.delete('origin');
+      ws.headers.delete('origin');
     }
-    delete process.env.DREAMWALK_INGRESS_SECRET;
-    assert.equal(proxy(request(env.WEB_ORIGIN)).status, 503);
-    assert.throws(
-      () => socketRelayTarget(new Request(env.WEB_ORIGIN), process.env),
-      /RELAY_CONFIG/,
-    );
-  } finally {
-    for (const key of Object.keys(process.env)) if (!(key in old)) delete process.env[key];
-    Object.assign(process.env, old);
+    assert.equal(trustedBrowserOrigin(req, config), false);
+    assert.equal(proxy(req).status, 403);
+    assert.throws(() => socketRelayTarget(ws, config), /RELAY_ORIGIN/);
+  });
+}
+test('web and API enforce browser origin while retaining trusted ingress', () => {
+  assert.equal(ENFORCE_BROWSER_ORIGIN, true);
+  assert.equal(require('../apps/api/src/ingress.ts').ENFORCE_BROWSER_ORIGIN, true);
+  for (const origin of origins) accepted(origin);
+});
+test('only preview deployments admit their exact deployment and branch URLs', () => {
+  for (const host of [env.VERCEL_URL, env.VERCEL_BRANCH_URL]) {
+    rejected(`https://${host}`);
+    accepted(`https://${host}`, { ...env, VERCEL_ENV: 'preview' });
+  }
+  for (const mode of ['preview', 'production']) {
+    for (const host of [
+      'unrelated.vercel.app',
+      'dreamwalk-other-team.vercel.app',
+      'dreamwalk-build-team.vercel.app.evil.test',
+    ])
+      rejected(`https://${host}`, {}, { ...env, VERCEL_ENV: mode });
   }
 });
-test('preserved strict helper validates exact preview and canonical origins for later re-enable', () => {
-  const old = { ...process.env };
-  try {
-    Object.assign(process.env, env);
-    delete process.env.API_WEB_ORIGIN;
-    delete process.env.VERCEL_PROJECT_PRODUCTION_URL;
-    for (const origin of [
-      env.WEB_ORIGIN,
-      `https://${env.VERCEL_URL}`,
-      `https://${env.VERCEL_BRANCH_URL}`,
-    ]) {
-      assert.equal(trustedBrowserOrigin(request(origin), process.env), true);
-      const result = proxy(request(origin));
-      assert.equal(result.headers.get('x-middleware-request-origin'), env.WEB_ORIGIN);
-      assert.equal(
-        result.headers.get('x-middleware-request-x-dreamwalk-ingress'),
-        env.DREAMWALK_INGRESS_SECRET,
-      );
-    }
+test('HTTP and WS reject missing, null, foreign, cross-origin and forged admission headers', () => {
+  for (const origin of origins) {
     for (const headers of [
-      { origin: 'https://evil.test' },
-      { origin: 'null' },
+      { origin: undefined },
       { origin: '' },
-      { origin: env.WEB_ORIGIN },
-      { 'sec-fetch-site': 'cross-site' },
+      { origin: 'null' },
+      { origin: 'https://evil.test' },
       { host: 'evil.test' },
-    ]) {
-      assert.equal(
-        trustedBrowserOrigin(request(`https://${env.VERCEL_URL}`, headers), process.env),
-        false,
-      );
-    }
-    const missing = request(`https://${env.VERCEL_URL}`);
-    missing.headers.delete('origin');
-    assert.equal(trustedBrowserOrigin(missing, process.env), false);
-    assert.equal(trustedBrowserOrigin(request('https://unrelated.vercel.app'), process.env), false);
-    assert.equal(
-      trustedBrowserOrigin(request('http://dreamwalk-build-team.vercel.app'), process.env),
-      false,
-    );
-    const spoof = request('https://evil.test', {
-      'x-forwarded-host': env.VERCEL_URL,
-      'x-forwarded-proto': 'https',
-      host: env.VERCEL_URL,
-    });
-    assert.equal(trustedBrowserOrigin(spoof, process.env), false);
-    delete process.env.WEB_ORIGIN;
-    assert.equal(trustedBrowserOrigin(request(`https://${env.VERCEL_URL}`), process.env), false);
-  } finally {
-    for (const key of Object.keys(process.env)) if (!(key in old)) delete process.env[key];
-    Object.assign(process.env, old);
+      { 'sec-fetch-site': 'cross-site' },
+      { 'sec-fetch-site': 'same-site' },
+      { 'sec-fetch-site': 'none' },
+    ])
+      rejected(origin, headers);
+  }
+  rejected(origins[0], { origin: canonical });
+  rejected('https://evil.test', {
+    'x-forwarded-host': 'www.dreamwalk.online',
+    'x-forwarded-proto': 'https',
+    forwarded: 'host=www.dreamwalk.online;proto=https',
+  });
+  rejected('http://www.dreamwalk.online');
+  withEnv(env, () => {
+    const req = request(origins[0]);
+    req.headers.delete('host');
+    req.headers.delete('sec-fetch-site');
+    assert.equal(trustedBrowserOrigin(req, env), true);
+  });
+});
+test('mutable platform production domain never changes trust or implicitly admits aliases', () => {
+  for (const value of ['new.example.com', 'evil.test/path', '', 'www.dreamwalk.online']) {
+    const config = {
+      ...env,
+      WEB_ORIGIN: 'https://obsolete.example',
+      VERCEL_PROJECT_PRODUCTION_URL: value,
+    };
+    assert.equal(canonicalWebOrigin(config), canonical);
+    for (const origin of origins) accepted(origin, config);
+    rejected('https://new.example.com', {}, config);
   }
 });
-test('socket preview admission preserves canonical upstream, session and fixed destination', () => {
-  const origin = `https://${env.VERCEL_URL}`;
-  const req = new Request(
-    origin + '/api/v1/game/socket?campaignId=12345678-1234-1234-1234-123456789012',
-    { headers: { origin, cookie: `dreamwalk_session=${'b'.repeat(64)}` } },
-  );
-  const target = socketRelayTarget(req, env);
-  assert.equal(target.headers.origin, env.WEB_ORIGIN);
-  assert.equal(target.headers['x-dreamwalk-ingress'], env.DREAMWALK_INGRESS_SECRET);
-  req.headers.set('origin', 'https://evil.test');
-  assert.equal(trustedBrowserOrigin(req, env), false);
-  assert.equal(socketRelayTarget(req, env).headers.origin, env.WEB_ORIGIN);
-  req.headers.set('origin', origin);
-  req.headers.delete('cookie');
-  assert.throws(() => socketRelayTarget(req, env));
+test('Vercel requires explicit valid canonical configuration without any fallback', () => {
+  const badValues = [
+    undefined,
+    '',
+    'http://web.example.test',
+    'null',
+    'https://web.example.test/',
+    'https://u:p@web.example.test',
+    'https://web.example.test/path',
+    'https://web.example.test?x=1',
+    'https://web.example.test#x',
+    'https://web.example.test\n',
+    'https://*.vercel.app',
+  ];
+  for (const value of badValues) {
+    const config = {
+      ...env,
+      WEB_ORIGIN: canonical,
+      VERCEL_PROJECT_PRODUCTION_URL: 'dreamwalk-rho.vercel.app',
+    };
+    if (value === undefined) delete config.API_WEB_ORIGIN;
+    else config.API_WEB_ORIGIN = value;
+    withEnv(config, () => {
+      assert.equal(canonicalWebOrigin(config), null, String(value));
+      assert.equal(trustedBrowserOrigin(request(origins[0]), config), false);
+      assert.equal(proxy(request(origins[0])).status, 503);
+      assert.throws(() => socketRelayTarget(request(origins[0], {}, true), config), /RELAY_CONFIG/);
+    });
+  }
+  assert.equal(canonicalWebOrigin({ WEB_ORIGIN: canonical }), canonical);
 });
-
-test('socket relay preserves only supported output locales on canonical and preview origins', () => {
-  const campaignId = '12345678-1234-1234-1234-123456789012';
-  for (const origin of [
-    env.WEB_ORIGIN,
-    `https://${env.VERCEL_URL}`,
-    `https://${env.VERCEL_BRANCH_URL}`,
+test('missing, empty, malformed and oversized browser allowlists fail closed', () => {
+  for (const value of [
+    undefined,
+    '',
+    ',',
+    ' '.repeat(4097) + canonical,
+    `${canonical},`,
+    `${canonical},http://bad.test`,
+    `${canonical},https://*.vercel.app`,
+    `${canonical},https://u:p@bad.test`,
+    `${canonical},https://bad.test/path`,
+    Array.from({ length: 17 }, (_, i) => `https://host${i}.test`).join(','),
   ]) {
-    for (const locale of ['uk', 'en', 'ru']) {
+    const config = { ...env };
+    if (value === undefined) delete config.WEB_ALLOWED_ORIGINS;
+    else config.WEB_ALLOWED_ORIGINS = value;
+    withEnv(config, () => {
+      assert.equal(trustedBrowserOrigin(request(canonical), config), false, String(value));
+      assert.ok([403, 503].includes(proxy(request(canonical)).status));
+      assert.throws(() => socketRelayTarget(request(canonical, {}, true), config));
+    });
+  }
+});
+test('admitted sockets retain bounded locales, fixed target, session and ingress requirements', () => {
+  for (const origin of origins) {
+    for (const locale of ['uk', 'en', 'ru', '', 'fr', 'RU', 'en-US']) {
       const req = new Request(
         `${origin}/api/v1/game/socket?campaignId=${campaignId}&locale=${locale}&url=https://evil.test&token=ignored`,
-        { headers: { origin, cookie: `dreamwalk_session=${'b'.repeat(64)}` } },
+        { headers: Object.fromEntries(request(origin, {}, true).headers) },
       );
       const target = socketRelayTarget(req, env);
       assert.equal(
         target.url,
-        `wss://api.example.test/api/v1/game/socket?campaignId=${campaignId}&locale=${locale}`,
+        `wss://api.example.test/api/v1/game/socket?campaignId=${campaignId}${['uk', 'en', 'ru'].includes(locale) ? `&locale=${locale}` : ''}`,
       );
       assert.deepEqual(Object.keys(target.headers).sort(), [
         'cookie',
         'origin',
         'x-dreamwalk-ingress',
       ]);
-      assert.equal(target.headers.origin, env.WEB_ORIGIN);
-      req.headers.set('origin', 'https://evil.test');
-      assert.equal(trustedBrowserOrigin(req, env), false);
-      assert.equal(socketRelayTarget(req, env).headers.origin, env.WEB_ORIGIN);
-      req.headers.set('origin', origin);
       req.headers.delete('cookie');
-      assert.throws(() => socketRelayTarget(req, env));
+      assert.throws(() => socketRelayTarget(req, env), /RELAY_SESSION/);
     }
   }
+  const config = { ...env };
+  delete config.DREAMWALK_INGRESS_SECRET;
+  withEnv(config, () => {
+    delete process.env.DREAMWALK_INGRESS_SECRET;
+    assert.equal(proxy(request(canonical)).status, 503);
+    assert.throws(() => socketRelayTarget(request(canonical, {}, true), config), /RELAY_CONFIG/);
+  });
 });
 
-test('missing or unsupported socket locale keeps the existing account-language fallback', () => {
-  const campaignId = '12345678-1234-1234-1234-123456789012';
-  const origin = `https://${env.VERCEL_URL}`;
-  for (const locale of [undefined, '', 'fr', 'RU', 'en-US', 'ru\r\nx-test: unsafe']) {
-    const url = new URL(`${origin}/api/v1/game/socket?campaignId=${campaignId}`);
-    if (locale !== undefined) url.searchParams.set('locale', locale);
-    const target = socketRelayTarget(
-      new Request(url, {
-        headers: { origin, cookie: `dreamwalk_session=${'b'.repeat(64)}` },
-      }),
-      env,
-    );
-    assert.equal(target.url, `wss://api.example.test/api/v1/game/socket?campaignId=${campaignId}`);
-  }
+test('backend canonical origin is not an implicit browser alias', () => {
+  const config = { ...env, WEB_ALLOWED_ORIGINS: origins[0] };
+  accepted(origins[0], config);
+  rejected(canonical, {}, config);
 });
-
-test('platform production origin wins over stale manual origin and fails closed when malformed', () => {
-  const platform = {
-    ...env,
-    WEB_ORIGIN: 'https://obsolete.example',
-    VERCEL_PROJECT_PRODUCTION_URL: 'dreamwalk-rho.vercel.app',
-  };
-  assert.equal(canonicalWebOrigin(platform), 'https://dreamwalk-rho.vercel.app');
-  assert.equal(
-    canonicalWebOrigin({ ...platform, VERCEL_PROJECT_PRODUCTION_URL: 'play.example.com' }),
-    'https://play.example.com',
-  );
-  for (const value of [
-    '',
-    'https://evil.test',
-    'evil.test/path',
-    'u:p@evil.test',
-    'evil.test:443',
-    'evil.test?x=1',
-    'evil.test#fragment',
-    'evil..test',
-    '-evil.test',
+test('malformed preview platform host fails closed instead of widening trust', () => {
+  for (const host of [
     '*.vercel.app',
-    'evil.test\n',
-  ])
-    assert.equal(canonicalWebOrigin({ ...platform, VERCEL_PROJECT_PRODUCTION_URL: value }), null);
-  const preview = `https://${env.VERCEL_URL}`;
-  const req = new Request(
-    preview + '/api/v1/game/socket?campaignId=12345678-1234-1234-1234-123456789012',
-    { headers: { origin: preview, cookie: `dreamwalk_session=${'b'.repeat(64)}` } },
-  );
-  assert.equal(socketRelayTarget(req, platform).headers.origin, 'https://dreamwalk-rho.vercel.app');
-});
-
-test('explicit API origin stays stable when Vercel selects a custom production domain', () => {
-  const configured = {
-    ...env,
-    API_WEB_ORIGIN: env.WEB_ORIGIN,
-    WEB_ORIGIN: 'https://obsolete.example',
-    VERCEL_PROJECT_PRODUCTION_URL: 'play.example.com',
-  };
-  const old = { ...process.env };
-  try {
-    Object.assign(process.env, configured);
-    const browserOrigins = [
-      configured.API_WEB_ORIGIN,
-      `https://${configured.VERCEL_PROJECT_PRODUCTION_URL}`,
-      `https://${configured.VERCEL_URL}`,
-      `https://${configured.VERCEL_BRANCH_URL}`,
-    ];
-    assert.equal(canonicalWebOrigin(configured), env.WEB_ORIGIN);
-    for (const origin of browserOrigins) {
-      assert.equal(trustedBrowserOrigin(request(origin), configured), true);
-      const result = proxy(
-        request(origin, { host: new URL(origin).host, 'sec-fetch-site': 'same-origin' }),
-      );
-      assert.equal(result.headers.get('x-middleware-request-origin'), configured.API_WEB_ORIGIN);
-      assert.equal(
-        result.headers.get('x-middleware-request-x-dreamwalk-ingress'),
-        env.DREAMWALK_INGRESS_SECRET,
-      );
-      assert.equal(
-        result.headers.get('x-middleware-rewrite'),
-        'https://api.example.test/api/v1/auth/login',
-      );
-      const socket = socketRelayTarget(
-        new Request(
-          origin + '/api/v1/game/socket?campaignId=12345678-1234-1234-1234-123456789012',
-          {
-            headers: {
-              origin,
-              host: new URL(origin).host,
-              'sec-fetch-site': 'same-origin',
-              cookie: `dreamwalk_session=${'b'.repeat(64)}`,
-            },
-          },
-        ),
-        configured,
-      );
-      assert.equal(socket.headers.origin, configured.API_WEB_ORIGIN);
-    }
-    for (const origin of [
-      'https://obsolete.example',
-      'https://unrelated.vercel.app',
-      'https://evil.test',
-    ]) {
-      assert.equal(trustedBrowserOrigin(request(origin), configured), false);
-    }
-    const custom = `https://${configured.VERCEL_PROJECT_PRODUCTION_URL}`;
-    for (const headers of [
-      { origin: configured.API_WEB_ORIGIN },
-      { origin: 'https://evil.test' },
-      { origin: 'null' },
-      { origin: '' },
-      { host: 'evil.test' },
-      { 'sec-fetch-site': 'cross-site' },
-      { 'sec-fetch-site': 'same-site' },
-    ]) {
-      assert.equal(trustedBrowserOrigin(request(custom, headers), configured), false);
-      assert.equal(
-        trustedBrowserOrigin(
-          new Request(
-            custom + '/api/v1/game/socket?campaignId=12345678-1234-1234-1234-123456789012',
-            {
-              headers: {
-                origin: custom,
-                cookie: `dreamwalk_session=${'b'.repeat(64)}`,
-                ...headers,
-              },
-            },
-          ),
-          configured,
-        ),
-        false,
-      );
-    }
-    const missingOrigin = request(custom);
-    missingOrigin.headers.delete('origin');
-    assert.equal(trustedBrowserOrigin(missingOrigin, configured), false);
-    assert.equal(
-      trustedBrowserOrigin(
-        request('https://evil.test', {
-          'x-forwarded-host': configured.VERCEL_PROJECT_PRODUCTION_URL,
-          'x-forwarded-proto': 'https',
-        }),
-        configured,
-      ),
-      false,
-    );
-    // Selecting another verified production domain must not alter the backend hop.
-    process.env.VERCEL_PROJECT_PRODUCTION_URL = 'next.example.com';
-    assert.equal(
-      proxy(request('https://next.example.com')).headers.get('x-middleware-request-origin'),
-      configured.API_WEB_ORIGIN,
-    );
-  } finally {
-    for (const key of Object.keys(process.env)) if (!(key in old)) delete process.env[key];
-    Object.assign(process.env, old);
-  }
-});
-
-test('malformed API origins remain invalid and are never forwarded while enforcement is paused', () => {
-  const configured = { ...env, VERCEL_PROJECT_PRODUCTION_URL: 'play.example.com' };
-  const old = { ...process.env };
-  try {
-    Object.assign(process.env, configured);
-    for (const value of [
-      '',
-      'http://web.example.test',
-      'null',
-      'https://web.example.test/',
-      'https://u:p@web.example.test',
-      'https://web.example.test/path',
-      'https://web.example.test?x=1',
-      'https://web.example.test#x',
-      'https://web.example.test\n',
-      'https://*.vercel.app',
-    ]) {
-      process.env.API_WEB_ORIGIN = value;
-      const bad = { ...configured, API_WEB_ORIGIN: value };
-      assert.equal(canonicalWebOrigin(bad), null, value);
-      assert.equal(
-        proxy(request('https://play.example.com')).headers.get('x-middleware-request-origin'),
-        null,
-        value,
-      );
-      assert.equal(
-        socketRelayTarget(
-          new Request(
-            'https://play.example.com/api/v1/game/socket?campaignId=12345678-1234-1234-1234-123456789012',
-            {
-              headers: {
-                origin: 'https://play.example.com',
-                cookie: `dreamwalk_session=${'b'.repeat(64)}`,
-              },
-            },
-          ),
-          bad,
-        ).headers.origin,
-        undefined,
-      );
-    }
-    process.env.API_WEB_ORIGIN = env.WEB_ORIGIN;
-    process.env.VERCEL_PROJECT_PRODUCTION_URL = 'evil.test/path';
-    assert.equal(trustedBrowserOrigin(request(env.WEB_ORIGIN), process.env), false);
-  } finally {
-    for (const key of Object.keys(process.env)) if (!(key in old)) delete process.env[key];
-    Object.assign(process.env, old);
+    'evil.test',
+    'https://build.vercel.app',
+    'build.vercel.app/path',
+    '-bad.vercel.app',
+    'a..vercel.app',
+  ]) {
+    const config = { ...env, VERCEL_ENV: 'preview', VERCEL_URL: host };
+    rejected(canonical, {}, config);
   }
 });

@@ -14,7 +14,7 @@ Object.assign(process.env, {
   DREAMWALK_INGRESS_SECRET: secret,
 });
 const { attachGameSockets } = require('../apps/api/src/game/game.socket.ts');
-test('foreign-Origin socket upgrades only after synthetic session authorization and still checks each projection', async (t) => {
+test('canonical-Origin socket upgrades only after synthetic session authorization and still checks each projection', async (t) => {
   const server = createServer();
   let authorizedCalls = 0;
   let projectionChecks = 0;
@@ -43,7 +43,7 @@ test('foreign-Origin socket upgrades only after synthetic session authorization 
   const ws = new WebSocket(
     `ws://127.0.0.1:${server.address().port}/api/v1/game/socket?campaignId=00000000-0000-4000-8000-000000000000`,
     {
-      headers: { origin: 'https://foreign.example', cookie, 'x-dreamwalk-ingress': secret },
+      headers: { origin: process.env.WEB_ORIGIN, cookie, 'x-dreamwalk-ingress': secret },
     },
   );
   t.after(async () => {
@@ -60,7 +60,7 @@ test('foreign-Origin socket upgrades only after synthetic session authorization 
   assert.equal(authorizedCalls, 1);
   assert.equal(projectionChecks, 1);
 });
-test('real socket upgrade still requires ingress and session authorization during the temporary origin pause', async () => {
+test('real socket upgrade requires exact Origin, ingress and session authorization', async () => {
   const server = createServer();
   let authorizedCalls = 0;
   const wss = attachGameSockets(server, {
@@ -105,18 +105,19 @@ test('real socket upgrade still requires ingress and session authorization durin
     );
     assert.equal(
       authorizedCalls,
-      1,
-      'foreign Origin reaches session authorization only with valid ingress',
+      0,
+      'foreign Origin cannot reach session authorization even with valid ingress',
     );
     assert.equal(
       await rejected({ origin: process.env.WEB_ORIGIN, 'x-dreamwalk-ingress': secret }),
       403,
     );
-    assert.equal(authorizedCalls, 2, 'valid ingress must still invoke user-session authorization');
+    assert.equal(authorizedCalls, 1, 'valid ingress must still invoke user-session authorization');
+    assert.equal(await rejected({ origin: 'null', 'x-dreamwalk-ingress': secret }), 403);
     assert.equal(await rejected({ 'x-dreamwalk-ingress': secret }), 403);
-    assert.equal(authorizedCalls, 3, 'missing Origin never supplies a user session');
+    assert.equal(authorizedCalls, 1, 'missing Origin cannot reach session authorization');
     assert.equal(await rejected({ origin: 'https://wrong.example' }), 403);
-    assert.equal(authorizedCalls, 3, 'missing ingress cannot reach session authorization');
+    assert.equal(authorizedCalls, 1, 'missing ingress cannot reach session authorization');
   } finally {
     wss.close();
     await new Promise((resolve) => server.close(resolve));

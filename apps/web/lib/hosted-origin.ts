@@ -1,6 +1,6 @@
-// Owner-approved temporary pause until domain setup is complete. Re-enable only
-// after explicit approval and coordinated HTTP/WS verification on web and API.
-export const ENFORCE_BROWSER_ORIGIN = false;
+// The owner approved restoring HTTP and WebSocket origin protection after the
+// custom domains were connected. Keep this policy aligned with the API.
+export const ENFORCE_BROWSER_ORIGIN = true;
 
 function exactHttpsOrigin(value: string): string | null {
   try {
@@ -13,53 +13,43 @@ function exactHttpsOrigin(value: string): string | null {
   }
 }
 
-function platformProductionOrigin(env: NodeJS.ProcessEnv): string | null {
-  try {
-    // Vercel supplies this project-owned production domain even in previews.
-    // Never derive the backend trust origin from a browser/forwarded header.
-    const platformHost = env.VERCEL === '1' ? env.VERCEL_PROJECT_PRODUCTION_URL : undefined;
-    if (platformHost !== undefined) {
-      if (
-        !/^(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?$/.test(
-          platformHost,
-        )
-      )
-        return null;
-      const origin = `https://${platformHost}`;
-      return new URL(origin).origin === origin ? origin : null;
-    }
-    return null;
-  } catch {
-    return null;
-  }
-}
-
-/** Backend trust contract, not Vercel's mutable choice of primary browser domain. */
+/** Stable backend trust contract; never inferred from a platform/browser host. */
 export function canonicalWebOrigin(env: NodeJS.ProcessEnv): string | null {
-  // Match the API's WEB_ORIGIN once for every environment sharing that API.
-  // Never fall back from an explicitly supplied, invalid trust configuration.
   if (env.API_WEB_ORIGIN !== undefined) return exactHttpsOrigin(env.API_WEB_ORIGIN);
-  // Preserve deployments not yet migrated to the explicit backend contract.
-  if (env.VERCEL === '1' && env.VERCEL_PROJECT_PRODUCTION_URL !== undefined)
-    return platformProductionOrigin(env);
+  // Vercel's primary domain can change independently of the API configuration.
+  if (env.VERCEL === '1') return null;
   return exactHttpsOrigin(env.WEB_ORIGIN ?? '');
 }
 
+function browserOrigins(env: NodeJS.ProcessEnv): Set<string> | null {
+  const configured = env.WEB_ALLOWED_ORIGINS;
+  if (configured === undefined) {
+    if (env.VERCEL === '1') return null;
+    const canonical = canonicalWebOrigin(env);
+    return canonical ? new Set([canonical]) : null;
+  }
+  if (configured.length > 4096) return null;
+  const values = configured.split(',').map((value) => value.trim());
+  if (values.length > 16 || values.some((value) => !exactHttpsOrigin(value))) return null;
+  const trusted = new Set(values);
+  if (env.VERCEL === '1' && env.VERCEL_ENV === 'preview') {
+    for (const host of [env.VERCEL_URL, env.VERCEL_BRANCH_URL]) {
+      if (host === undefined) continue;
+      if (
+        !/^[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.vercel\.app$/.test(host) ||
+        !exactHttpsOrigin(`https://${host}`)
+      )
+        return null;
+      trusted.add(`https://${host}`);
+    }
+  }
+  return trusted;
+}
+
 export function trustedBrowserOrigin(request: Request, env: NodeJS.ProcessEnv): boolean {
-  const canonical = canonicalWebOrigin(env);
-  if (!canonical) return false;
-  const trusted = new Set([canonical]);
-  // A new project-owned custom domain is a browser alias, not a new API trust
-  // origin. Admit it separately while retaining the stable canonical host.
-  if (env.VERCEL === '1' && env.VERCEL_PROJECT_PRODUCTION_URL !== undefined) {
-    const production = platformProductionOrigin(env);
-    if (!production) return false;
-    trusted.add(production);
-  }
-  for (const host of [env.VERCEL_URL, env.VERCEL_BRANCH_URL]) {
-    if (!host || !/^[a-z0-9.-]+\.vercel\.app$/i.test(host)) continue;
-    trusted.add(`https://${host.toLowerCase()}`);
-  }
+  if (!canonicalWebOrigin(env)) return false;
+  const trusted = browserOrigins(env);
+  if (!trusted) return false;
   const actual = new URL(request.url);
   const origin = request.headers.get('origin');
   const host = request.headers.get('host');
