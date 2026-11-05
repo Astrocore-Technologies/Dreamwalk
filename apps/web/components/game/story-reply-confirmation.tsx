@@ -188,6 +188,9 @@ export function StoryReplyConfirmation({
             ? { automaticKnownCostPolicyHash: quote.automaticKnownCostPolicyHash }
             : {}),
           ...(quote.estimateRiskConsentRequired ? { estimateRiskConsent: true } : {}),
+          ...(quote.travelGroundingPolicyHash
+            ? { travelGroundingPolicyHash: quote.travelGroundingPolicyHash }
+            : {}),
         }),
       });
       accepted = true;
@@ -270,7 +273,9 @@ export function StoryReplyConfirmation({
           {!!prepared.result.quote.generatedLocationImages && (
             <p>
               {t(
-                'В оценку входит новая локация и её изображение. Фактическая стоимость может отличаться; переход произойдёт после готовности карты.',
+                prepared.result.quote.generatedLocationGroundingStages
+                  ? 'Одна оценка включает изображение новой локации, один подсчёт токенов и одну проверку готового изображения ИИ. Переход произойдёт только после проверки позиций. Оплачивается фактическое использование; автоматических повторов нет.'
+                  : 'В оценку входит новая локация и её изображение. Фактическая стоимость может отличаться; переход произойдёт после готовности карты.',
               )}
             </p>
           )}

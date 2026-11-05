@@ -1,3 +1,4 @@
+import { assertPlayableGrid } from './map-readiness';
 import { schematicStorySource } from './story-map-mode';
 import { prepareStoryMapImages } from './story-map-images';
 import { Inject, Injectable, Optional } from '@nestjs/common';
@@ -306,6 +307,7 @@ export class StoryBuildService {
       const r = await this.own(c, owner, id),
         s = r.source_snapshot.source as StoryPlanSource;
       const checked = compileStoryPlan(s, value);
+      assertPlayableGrid(checked.playable);
       await c.query(
         "UPDATE story_playable_builds SET status='proposed',proposal=$2,draft=$3,job_id=$4 WHERE project_id=$1",
         [id, JSON.stringify(checked.proposal), JSON.stringify(checked.draft), job.id],
@@ -345,6 +347,7 @@ export class StoryBuildService {
       )
         fail(409, 'STORY_CONTEXT_STALE', 'STORY_CONTEXT_STALE');
       const checked = compileStoryPlan(s.source, r.proposal);
+      assertPlayableGrid(checked.playable);
       if (digest(checked.draft) !== digest(r.draft))
         fail(409, 'ASSET_INTEGRITY_FAILED', 'ASSET_INTEGRITY_FAILED');
       const slots = new Set(enumerateArtSlots(checked.draft).map((s) => s.slot));

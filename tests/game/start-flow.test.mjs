@@ -1033,3 +1033,24 @@ test('unanalysed saved map consent does not promise fabricated grid positions', 
   assert.match(source, /image analysis is not included in this estimate/);
   assert.doesNotMatch(source, /shown with its grid|показана с сеткой|показано із сіткою/);
 });
+
+test('legacy incomplete preparation never returns to estimate or hides unsettled costs', () => {
+  const incomplete = {
+    ...prepared,
+    status: 'failed',
+    code: 'MAP_GRID_REQUIRED',
+    mapRecoveryRequired: true,
+  };
+  assert.equal(startState(incomplete), 'failed');
+  assert.equal(
+    startState({ ...incomplete, jobs: [{ status: 'applied', sparkStatus: 'settled' }] }),
+    'failed',
+  );
+  assert.equal(
+    startState({ ...incomplete, jobs: [{ status: 'applied', sparkStatus: 'reserved' }] }),
+    'review',
+  );
+  assert.equal(startState({ ...incomplete, status: 'started', campaignId: 'saved' }), 'ready');
+  for (const locale of ['ru', 'en', 'uk'])
+    assert.ok(mapPlanningMessage('MAP_GRID_REQUIRED', locale));
+});

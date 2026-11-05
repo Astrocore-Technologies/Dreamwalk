@@ -6,6 +6,11 @@ import { createContext, useCallback, useContext, useEffect, useState, type React
 import type { User, Adventure } from '@dreamwalk/contracts';
 export type { User, Adventure, Hero, Asset, Settings } from '@dreamwalk/contracts';
 const errorKeys: Record<string, string> = {
+  MAP_GRID_RECOVERY_REQUIRED:
+    'Игра приостановлена: сначала нужно восстановить проверенную клеточную карту текущей сцены. Изображение и история сохранены.',
+  MAP_GRID_REQUIRED:
+    'Для начала игры нужна проверенная клеточная карта с позициями персонажей на исходном изображении. Подготовка не завершена.',
+
   STORY_MAP_COUNT_UNAVAILABLE:
     'Не удалось подсчитать карту для оценки. Генерация не запускалась. Администратору нужно проверить доступ модели к подсчёту токенов.',
   STORY_MAP_COUNT_UNRESOLVED:
@@ -28,6 +33,11 @@ const errorKeys: Record<string, string> = {
     'Не удалось уверенно определить безопасный старт на изображении карты. План не применён.',
   MAP_IMAGE_UNSAFE_SPAWN:
     'Не удалось уверенно определить безопасный старт на изображении карты. План не применён.',
+  MAP_IMAGE_PRESENCE_UNSUPPORTED:
+    'Не удалось подтвердить размещение персонажей на изображении без раскрытия скрытых сцен. План не применён.',
+  MAP_IMAGE_LOCAL_EVIDENCE_REQUIRED:
+    'Не удалось уверенно определить участок для старта на изображении. План не применён.',
+  MAP_IMAGE_LOCAL_EVIDENCE_CONFLICT: 'Наблюдения карты противоречат друг другу. План не применён.',
   MAP_IMAGE_UNSAFE_NPC:
     'Не удалось уверенно определить безопасный старт на изображении карты. План не применён.',
   MAP_IMAGE_DISCONNECTED_SPAWN:

@@ -31,6 +31,8 @@ import { GameWallet } from './game-wallet';
 import { LocationPicker } from './location-picker';
 import { useTurnText } from './turn-messages';
 import { playerControlsAvailable } from './turn-ui';
+import { isSpatialRecoveryRequired } from './spatial-recovery';
+import { useItemText } from './item-messages';
 import { UnifiedStory, type StoryRecipient } from './unified-story';
 import { NpcPublicInspection } from './npc-public-inspection';
 import { LivingNotices } from './living-notices';
@@ -262,6 +264,8 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
   const locked = !!(p && encounter?.intents[p.actorId]?.ready);
   const connected = game.connection === 'connected';
   const playerAvailable = playerControlsAvailable(p);
+  const recoveryRequired = isSpatialRecoveryRequired(p);
+  const itemText = useItemText();
   const controlsDisabled = !connected || locked || game.busy || !playerAvailable;
   const membersLoading = useRef(members.loading);
   membersLoading.current = members.loading;
@@ -445,7 +449,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           />
           <TurnControls
             projection={p}
-            connected={connected}
+            connected={connected && !recoveryRequired}
             busy={game.busy || storyBusy}
             activeName={
               members.data?.members.find((m) => m.actorId === p.turn?.activeActorId)?.username
@@ -458,6 +462,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
       {game.error && (
         <ErrorBox
           message={
+            (game.error === 'MAP_GRID_RECOVERY_REQUIRED' ? itemText('recoveryDetail') : '') ||
             turnError ||
             t(errorKeys[game.error] || 'Не удалось выполнить запрос. Попробуйте ещё раз.')
           }
@@ -510,6 +515,16 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           disabled={!connected || game.busy || storyBusy}
         />
       </div>
+      {recoveryRequired && p.map.spatialMode !== 'location_only' && (
+        <div
+          className={styles.recoveryNotice}
+          role="status"
+          data-testid="map-grid-recovery-required"
+        >
+          <strong>{itemText('recoveryTitle')}</strong>
+          <p>{itemText('recoveryDetail')}</p>
+        </div>
+      )}
       <div className={styles.playGrid} data-testid="game-play-surface">
         <div className={styles.sceneColumn}>
           <GameCanvas
@@ -593,7 +608,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
           onWorldRefresh={() => void game.refresh()}
           onBusyChange={setStoryBusy}
           disabled={controlsDisabled}
-          partyDisabled={!connected || game.busy}
+          partyDisabled={recoveryRequired || !connected || game.busy}
           worldGenerationAllowed={members.data?.ownerId === user?.id}
           worldGenerationMembersStatus={
             members.error
@@ -684,14 +699,14 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                   <div className={styles.actions}>
                     <Button
                       variant="secondary"
-                      disabled={locked || game.busy}
+                      disabled={recoveryRequired || locked || game.busy}
                       onClick={() => setSelected({ kind: 'wait' })}
                     >
                       {t('Ждать')}
                     </Button>
                     <Button
                       variant="secondary"
-                      disabled={locked || game.busy}
+                      disabled={recoveryRequired || locked || game.busy}
                       onClick={() => setSelected({ kind: 'flee' })}
                     >
                       {t('Покинуть столкновение')}
@@ -700,7 +715,10 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                       <Button
                         variant="ghost"
                         disabled={
-                          !connected || game.busy || encounter.endVotes?.includes(p.actorId)
+                          recoveryRequired ||
+                          !connected ||
+                          game.busy ||
+                          encounter.endVotes?.includes(p.actorId)
                         }
                         onClick={() => void game.command({ type: 'encounter.end' })}
                       >
@@ -712,7 +730,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                       </Button>
                     )}
                     <Button
-                      disabled={locked || !connected}
+                      disabled={recoveryRequired || locked || !connected}
                       busy={game.busy}
                       onClick={() => void ready()}
                     >
@@ -727,7 +745,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                     <h2>{t('Столкновение рядом')}</h2>
                     <p>{t('Раунд {round}', { round: near.round })}</p>
                     <Button
-                      disabled={!connected}
+                      disabled={recoveryRequired || !connected}
                       busy={game.busy}
                       onClick={() =>
                         void game.command({ type: 'encounter.join', encounterId: near.id })

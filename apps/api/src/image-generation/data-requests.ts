@@ -1,3 +1,4 @@
+import { eraseTravelMapGrounding } from '../game/travel-map-grounding-erasure';
 import type { PoolClient } from 'pg';
 import { normalizeSafeImageDiagnostic } from './error-diagnostics';
 export async function eraseImageGeneration(c: PoolClient, userId: string) {
@@ -20,6 +21,7 @@ export async function eraseImageGeneration(c: PoolClient, userId: string) {
       [userId],
     )
   ).rows.map((r) => r.id);
+  await eraseTravelMapGrounding(c, userId, campaignIds);
   const affected = (
     await c.query(
       `SELECT id,quarantine_filename,admitted_revision_id FROM image_generation_jobs

@@ -393,8 +393,8 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
         locked={directorSelection.locked}
       />
       {status && <p role="status">{t(status)}</p>}
-      {Boolean(preparation?.jobs?.[0]?.error_code?.startsWith('MAP_IMAGE_')) && (
-        <p>{mapPlanningMessage(preparation?.jobs?.[0]?.error_code, locale)}</p>
+      {mapPlanningMessage(preparation?.code ?? preparation?.jobs?.[0]?.error_code, locale) && (
+        <p>{mapPlanningMessage(preparation?.code ?? preparation?.jobs?.[0]?.error_code, locale)}</p>
       )}
       {!confirm && (
         <Button

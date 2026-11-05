@@ -2,7 +2,7 @@ import { sharesScene } from './scene-presence';
 import { hasPosition, isActorConscious, actorLifeState } from '@dreamwalk/contracts';
 import { recordNpcCognition } from './living-reasoning';
 import { type NpcCognition } from '@dreamwalk/contracts';
-import { observedVisible } from './observation-visibility';
+import { observedVisible, imageCellOpaque } from './observation-visibility';
 import { companionAction } from './companionship';
 import { npcActionContext, prepareNpcActionIntent } from './npc-actions';
 import { type NpcActionIntent } from '@dreamwalk/contracts';
@@ -147,7 +147,8 @@ export function canNpcHear(
         y < 0 ||
         x >= m.width ||
         y >= m.height ||
-        m.blocked.some((q) => q.x === x && q.y === y)
+        m.blocked.some((q) => q.x === x && q.y === y) ||
+        imageCellOpaque(state, m.id, x, y)
       )
         continue;
       if (
