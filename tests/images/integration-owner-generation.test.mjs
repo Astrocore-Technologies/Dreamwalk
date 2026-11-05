@@ -739,6 +739,98 @@ await test(
                   GENERATION_SCOPE_ID,
                 ])
               ).rows[0];
+              const stoppedAuthorization = (
+                await sql.query('SELECT * FROM live_test_sessions WHERE scope_id=$1', [
+                  GENERATION_SCOPE_ID,
+                ])
+              ).rows[0];
+              const epochIds = [scope.stop_epoch_id, stoppedAuthorization.stop_epoch_id].filter(
+                Boolean,
+              );
+              const originalEvents = (
+                await sql.query(
+                  'SELECT * FROM generation_stop_events WHERE epoch_id=ANY($1::bigint[]) ORDER BY id',
+                  [epochIds],
+                )
+              ).rows;
+              const expectedNativeStop = {
+                timeout: [
+                  'UNATTRIBUTED_IMAGE_FAILURE',
+                  'UNATTRIBUTED_IMAGE_FAILURE',
+                  'authorization',
+                  false,
+                ],
+                403: [
+                  'IMAGE_MODEL_ACCESS_REJECTION',
+                  'IMAGE_MODEL_ACCESS_REJECTION',
+                  'authorization',
+                  false,
+                ],
+                'missing-usage': ['IMAGE_RESULT_UNKNOWN', 'IMAGE_RESULT_UNKNOWN', 'request', true],
+                'crash-deadline': [
+                  'REQUEST_DEADLINE_EXCEEDED',
+                  'IMAGE_PROVIDER_DEADLINE_EXCEEDED',
+                  'request',
+                  true,
+                ],
+                'late-known-before-maintenance': [
+                  'REQUEST_DEADLINE_EXCEEDED',
+                  'IMAGE_PROVIDER_DEADLINE_EXCEEDED',
+                  'request',
+                  true,
+                ],
+              }[outcome];
+              if (expectedNativeStop) {
+                assert.equal(originalEvents.length, 2);
+                assert.equal(stoppedAuthorization.stop_code, expectedNativeStop[0]);
+                for (const event of originalEvents) {
+                  assert.deepEqual(
+                    [event.reason, event.cause_code, event.stop_class, event.recoverable],
+                    expectedNativeStop,
+                  );
+                  assert.equal(event.source_kind, 'image');
+                  assert.equal(event.source_id, queued.id);
+                  assert.equal(event.authorization_id, stoppedAuthorization.id);
+                  assert.equal(event.scope_id, scope.id);
+                  assert.equal(event.policy_revision, stoppedAuthorization.policy_revision);
+                  assert.equal(event.policy_hash, stoppedAuthorization.policy_hash);
+                  if (outcome === '403') assert.match(event.evidence_hash, /^[a-f0-9]{64}$/);
+                  else assert.equal(event.evidence_hash, null);
+                }
+              } else if (outcome === 'overrun') {
+                assert.equal(originalEvents.length, 1);
+                assert.deepEqual(
+                  [
+                    originalEvents[0].reason,
+                    originalEvents[0].cause_code,
+                    originalEvents[0].stop_class,
+                    originalEvents[0].recoverable,
+                    originalEvents[0].source_kind,
+                    originalEvents[0].source_id,
+                  ],
+                  [
+                    'COST_BOUND_EXCEEDED',
+                    'COST_BOUND_EXCEEDED',
+                    'authorization',
+                    false,
+                    'reservation',
+                    held.id,
+                  ],
+                );
+              } else if (outcome.startsWith('revoked-')) {
+                assert.ok(originalEvents.length > 0);
+                assert.ok(
+                  originalEvents.every(
+                    (e) =>
+                      e.reason === 'UNATTRIBUTED_STOP' &&
+                      e.cause_code === 'UNATTRIBUTED_STOP' &&
+                      e.stop_class === 'authorization' &&
+                      e.recoverable === false &&
+                      e.source_kind === 'unattributed' &&
+                      e.source_id === null,
+                  ),
+                );
+              } else assert.equal(originalEvents.length, 0);
               if (outcome.startsWith('revoked-')) {
                 assert.equal(row.status, 'rejected');
                 assert.equal(
@@ -796,7 +888,7 @@ await test(
                   )
                 ).rows[0];
                 assert.equal(session.state, 'stopped');
-                assert.equal(session.stop_code, 'IMAGE_RESULT_UNKNOWN');
+                assert.equal(session.stop_code, expectedNativeStop[0]);
                 if (outcome === '403') {
                   // A confirmed model-access refusal retains its full unknown-billing hold.
                   // Only a distinct, freshly consented image may use the remaining cap.
@@ -879,6 +971,27 @@ await test(
                   ).rows[0].status,
                   'settled',
                 );
+                assert.deepEqual(
+                  (
+                    await sql.query(
+                      'SELECT * FROM generation_stop_events WHERE id=ANY($1::bigint[]) ORDER BY id',
+                      [originalEvents.map((e) => e.id)],
+                    )
+                  ).rows,
+                  originalEvents,
+                  'late billing evidence must not rewrite any original cause or authorization veto',
+                );
+                const afterLate = (
+                  await sql.query(
+                    'SELECT state,stop_code,stop_epoch_id FROM live_test_sessions WHERE id=$1',
+                    [stoppedAuthorization.id],
+                  )
+                ).rows[0];
+                assert.deepEqual(afterLate, {
+                  state: 'stopped',
+                  stop_code: expectedNativeStop[0],
+                  stop_epoch_id: stoppedAuthorization.stop_epoch_id,
+                });
                 await assert.rejects(scoped.quote(owner.user.id, request));
                 await assert.rejects(
                   new GenerationAuthority(database, configured).claim(owner.user.id, {
