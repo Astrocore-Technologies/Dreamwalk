@@ -10,6 +10,18 @@ export const npcCognitionSchema = z
   })
   .strict();
 export type NpcCognition = z.infer<typeof npcCognitionSchema>;
+/** Subjective response to speech, never proof of the claims made in that speech. */
+export const npcSocialReactionSchema = z
+  .object({
+    actorId: z.string().min(1).max(100),
+    observationId: z.string().min(1).max(200),
+    affinity: z.number().int().min(-1).max(1),
+    respect: z.number().int().min(-1).max(1),
+    fear: z.number().int().min(-1).max(1),
+  })
+  .strict();
+export type NpcSocialReaction = z.infer<typeof npcSocialReactionSchema>;
+
 export type NpcCognitionState = NpcCognition & {
   /** Server-stamped reader ACL; absent means no player disclosure. */
   audienceIds?: string[];
@@ -198,7 +210,20 @@ export interface NpcRelationship {
   alertness: number;
   debt: number;
   evidenceIds: string[];
-  /** Present only for opt-in characterization; never a player HUD projection. */
+  /** Subjective social history is private and cannot grant trust or disclosure. */
+  social?: {
+    /** Speech-only axes, kept separate for audience-safe presentation. */
+    affinity: number;
+    respect: number;
+    fear: number;
+    /** Cumulative source audience; omitted only while every source is public. */
+    audienceIds?: string[];
+    lastObservedTick: number;
+    lastChangedTick: number;
+    lastRoundId?: string;
+    recentTextKeys: string[];
+  };
+  /** Authored characterization or grounded social response; never a player HUD projection. */
   character?: {
     affinity: number;
     respect: number;

@@ -29,7 +29,16 @@ export async function recallNpcEpisodes(
   const m = state.npcBrains?.[npcId]?.living;
   if (!m) return [];
   const emotionalSubjects = Object.entries(m.relationships)
-    .filter(([, r]) => Math.abs(r.trust) + r.alertness + Math.abs(r.debt) >= 2)
+    .filter(
+      ([, r]) =>
+        Math.abs(r.trust) +
+          r.alertness +
+          Math.abs(r.debt) +
+          Math.abs(r.character?.affinity ?? 0) +
+          Math.abs(r.character?.respect ?? 0) +
+          (r.character?.fear ?? 0) >=
+        2,
+    )
     .map(([id]) => id);
   const subjects = [
     ...emotionalSubjects,

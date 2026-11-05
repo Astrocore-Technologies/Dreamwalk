@@ -8,7 +8,12 @@ import { npcActionContext, prepareNpcActionIntent } from './npc-actions';
 import { type NpcActionIntent } from '@dreamwalk/contracts';
 import { npcCompanionIntentSchema, type NpcCompanionIntent } from '@dreamwalk/contracts';
 import { spatialContext } from './spatial-context';
-import { characterAppraisal, characterPerformance, updateCharacterRelationship } from './character';
+import {
+  characterAppraisal,
+  characterPerformance,
+  socialConversationTone,
+  updateCharacterRelationship,
+} from './character';
 import { isUnestablishedStoryPickup, storyPickupOwnershipContext } from './item-observations';
 import { materializeNpcItems, npcItemContext } from './world-items';
 import type { NpcItemIntent } from '@dreamwalk/contracts';
@@ -1305,6 +1310,10 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
     m = brain?.living;
   if (!npc || !isActorConscious(npc) || !m) throw new Error('TARGET_UNAVAILABLE');
   const currentPlan = currentNpcPlan(state, npcId);
+  const latestInteraction = [...m.observations]
+    .reverse()
+    .filter((o) => ['said', 'addressed', 'attempted'].includes(o.kind) && o.actorId !== npcId)
+    .sort((a, b) => b.tick - a.tick)[0];
   const query =
     [...m.observations]
       .reverse()
@@ -1343,6 +1352,12 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
         a.id.localeCompare(b.id),
     )
     .slice(0, 16);
+  // Preserve importance ordering while reserving one slot for the current exchange.
+  // The explicit ID lets downstream budget packing pin it without relying on rank.
+  if (latestInteraction && !ranked.some((o) => o.id === latestInteraction.id)) {
+    if (ranked.length === 16) ranked.pop();
+    ranked.push(latestInteraction);
+  }
   const context = {
     ...(spatialContext(state, npcId) ? { spatialContext: spatialContext(state, npcId) } : {}),
     npcId,
@@ -1363,6 +1378,7 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
       : {}),
     knowledgeRevision: m.knowledgeRevision,
     goalGeneration: m.goal.revision,
+    ...(latestInteraction ? { latestInteractionId: latestInteraction.id } : {}),
     personality: clone(m.personality),
     ...(m.personality.characterization
       ? { privateAppraisal: characterAppraisal({ ...m, observations: ranked }, undefined, npcId) }
@@ -1693,6 +1709,14 @@ export function buildNpcPublicSpeechContext(
       .sort((a, b) => (sourceOrder.get(a.id) ?? 0) - (sourceOrder.get(b.id) ?? 0))
       .map((o, index) => [o.id, index]),
   );
+  const conversationalActor =
+    recipientActorId ??
+    [...admitted]
+      .filter((o) => o.actorId !== npcId && (o.kind === 'said' || o.kind === 'addressed'))
+      .sort((a, b) => (sourceOrder.get(b.id) ?? 0) - (sourceOrder.get(a.id) ?? 0))[0]?.actorId;
+  const socialTone = admitted.some((o) => o.actorId === conversationalActor)
+    ? socialConversationTone(m, conversationalActor, audience)
+    : undefined;
   const claims = admitted.map((o) => ({
     observationId: o.id,
     kind: o.kind,
@@ -1725,6 +1749,7 @@ export function buildNpcPublicSpeechContext(
         }
       : {}),
     publicSpeechStyle: publicNpcSpeechStyle(m.personality),
+    ...(socialTone ? { socialTone } : {}),
     claims,
     ...(m.personality.characterization
       ? {
@@ -2241,7 +2266,10 @@ function npcObservationImportance(m: LivingNpcMemory, o: NpcObservation): number
   )
     score += 80;
   if (o.actorId && m.relationships[o.actorId])
-    score += Math.abs(m.relationships[o.actorId].trust) * 3 + m.relationships[o.actorId].alertness;
+    score +=
+      Math.abs(m.relationships[o.actorId].trust) * 3 +
+      m.relationships[o.actorId].alertness +
+      (m.relationships[o.actorId].evidenceIds.includes(o.id) ? 12 : 0);
   if (['item_taken', 'item_missing', 'helped'].includes(o.kind)) score += 15;
   if (m.affect?.mood === 'alarmed' && ['noise', 'item_taken', 'item_missing'].includes(o.kind))
     score += 10;
