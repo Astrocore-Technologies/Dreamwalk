@@ -1353,3 +1353,27 @@ checks remain present; map/settlement and deletion/privacy guards are preserved.
 The 47 focused launch, campaign-list, deletion UI and location-only UI checks,
 changed merge-file lint/format and whitespace checks pass. A fresh integrated
 head CI is required before the coordinated final release.
+
+## Occupied direct-exit arrival — 2026-11-05
+
+Direct exits now choose a deterministic free landing within four cardinal steps
+when the intended destination is occupied by an actor. The original landing and
+every searched footprint must still satisfy map bounds, walls, closed doors,
+active encounters and existing image-grounding admission. Only actors overlapping
+the intended landing are ignored during this bounded search; final placement
+uses normal strict collision checks. No resident is moved, no disconnected room
+is selected, and unsafe or full destinations still refuse without mutation.
+Consenting companions retain witnessed crossings and follow through their normal
+world-action budgets rather than being moved with the player.
+
+Local verification: core build and core typecheck passed; all 439 core,
+travel-grounding and idempotency checks passed, including 29 new occupied-exit
+regressions; whole-repository ESLint passed. The new tests reproduce Daro at
+courtyard 20,12, preserve him while the player and two companions arrive at
+distinct cells over normal turns, and cover large/huge footprints, bounded search,
+closed doors, walls, encounters, unknown/unsafe/disconnected imagery, stale image
+bindings, refusal rollback and serialized replay. An initial concurrent full
+workspace typecheck was killed by local memory pressure (exit 137); serial core
+build/typecheck passed afterward. API/database and browser suites were not run
+locally for this slice; exact-head CI remains required. No provider calls,
+production changes, repository publication or deployment were performed.
