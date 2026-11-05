@@ -93,6 +93,14 @@ test('Studio preview exposes the saved story builder outside the editor form', a
     studio.slice(mount, mount + 220),
     /adventureId=\{id\}[\s\S]*beforePrepare=\{autosave.flush\}[\s\S]*onApplied=\{refreshArtModeration\}/,
   );
+  assert.match(studio.slice(mount, mount + 220), /\bembedded\s*\/>/);
+  assert.match(source, /embedded = false/);
+  assert.match(
+    source,
+    /className=\{embedded \? styles.heading : `page-heading \$\{styles.heading\}`\}/,
+  );
+  assert.match(source, /embedded \? <h2>\{copyText\('title'\)\}<\/h2> : <h1>/);
+  assert.match(source, /\{!embedded && \(\s*<Link href=/);
   const preview = studio.slice(studio.indexOf('{step === 6 &&'), studio.indexOf('{step === 7 &&'));
   assert.match(preview, /isNew \?/);
   assert.match(preview, /onClick=\{\(\) => void save\(\)\}/);
@@ -120,4 +128,30 @@ test('scene encounter membership requires explicit selection of an owned story N
   );
   assert.match(studio, /value=\{scene.participantNpcIds\}/);
   assert.match(studio, /storyNpcIds=\{draft.content.npcIds\}/);
+});
+
+test('builder review composition uses only actual draft labels and retains the disabled map', async () => {
+  assert.match(source, /story-playable-builder\.module\.css/);
+  assert.match(source, /data-locale=\{locale\}/);
+  assert.match(source, /variant="secondary"\s+data-testid="builder-reprepare"/);
+  assert.match(source, /aria-current=\{index === step \? 'step' : undefined\}/);
+  assert.match(source, /state\.draft\.maps\.map/);
+  assert.match(source, /state\.draft\.npcs\.map/);
+  assert.match(source, /state\.draft\.objects\.map/);
+  assert.match(source, /item\.labelTranslations\?\.\[locale\] \|\| item\.label/);
+  assert.match(source, /<GameCanvas\s+projection=\{projection\}\s+disabled\s+reducedMotion/);
+  assert.doesNotMatch(
+    source,
+    /initialFacts|initialKnowledge|personality|promiseTemplates|<img|backgroundImage/,
+  );
+  const css = await readFile(
+    new URL(
+      '../../apps/web/components/visual-authoring/story-playable-builder.module.css',
+      import.meta.url,
+    ),
+    'utf8',
+  );
+  assert.match(css, /@media \(max-width: 600px\)/);
+  assert.match(css, /\.preview\s*\{\s*position: relative;/);
+  assert.match(css, /grid-template-columns: minmax\(0, 2fr\) minmax\(260px, 1fr\)/);
 });

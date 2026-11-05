@@ -151,6 +151,29 @@ test('inner story workspace preserves complete drafts while selecting locations 
   ).toBeVisible();
   expect(await preparePlan.evaluate((button) => button.closest('form') === null)).toBe(true);
   expect(buildWrites).toEqual([]);
+  const builder = page.getByTestId('story-playable-builder');
+  await expect(builder.locator('h1')).toHaveCount(0);
+  await expect(
+    builder.getByRole('heading', { name: 'Build gameplay from your story', level: 2, exact: true }),
+  ).toBeVisible();
+  await expect(builder.getByRole('link', { name: 'Back to editor', exact: true })).toHaveCount(0);
+  for (const width of [1536, 390]) {
+    await page.setViewportSize({ width, height: 1024 });
+    await expect(builder.locator('header').first()).toHaveCSS('padding-right', '0px');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      await Promise.all(Array.from(document.images, (image) => image.decode().catch(() => {})));
+    });
+    const name = `studio-embedded-builder-en-${width}`;
+    const path = info.outputPath(`${name}.png`);
+    await builder.screenshot({ path, animations: 'disabled' });
+    await info.attach(name, { path, contentType: 'image/png' });
+  }
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  expect(buildWrites).toEqual([]);
 
   // A hidden invalid item must remain discoverable and block the complete draft save.
   await nav.getByRole('button').nth(2).click();
