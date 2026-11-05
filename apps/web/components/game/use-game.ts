@@ -10,6 +10,7 @@ import type {
 import { gameEnvelopeSchema, type GameEnvelope } from '@dreamwalk/contracts';
 import { api, ApiError } from '@/lib/client';
 import { projectionTurnFence } from './turn-ui';
+import { isSpatialRecoveryRequired } from './spatial-recovery';
 import { useT } from '@/lib/i18n';
 import {
   canRetryEncounterBegin,
@@ -171,6 +172,21 @@ export function useGame(campaignId: string) {
     let attempts = 0;
     const connect = () => {
       if (stopped) return;
+      // A legacy save opens for reading without acquiring a gameplay lease.
+      if (isSpatialRecoveryRequired(envelope.current?.projection)) {
+        setConnection('connected');
+        if (!poll)
+          poll = setInterval(() => {
+            void refresh().then((next) => {
+              if (!stopped && next && !isSpatialRecoveryRequired(next.projection)) {
+                clearInterval(poll);
+                poll = undefined;
+                connect();
+              }
+            });
+          }, 5000);
+        return;
+      }
       const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
       const ws = new WebSocket(
         `${protocol}//${location.host}/api/v1/game/socket?campaignId=${encodeURIComponent(campaignId)}&locale=${locale}`,
@@ -238,6 +254,7 @@ export function useGame(campaignId: string) {
       );
       if (
         !value ||
+        isSpatialRecoveryRequired(value.projection) ||
         !self ||
         !alive.current ||
         activeReadScope.current.generation !== readGeneration
@@ -335,6 +352,7 @@ export function useGame(campaignId: string) {
     const value = envelope.current;
     if (
       !value ||
+      isSpatialRecoveryRequired(value.projection) ||
       value.projection.turn ||
       stopping.current ||
       socket.current?.readyState !== WebSocket.OPEN
@@ -361,6 +379,7 @@ export function useGame(campaignId: string) {
   }, [path, accept, transmitMove, readGeneration]);
   const command = useCallback(
     async (body: Omit<CommandBody, 'protocolVersion' | 'operationId'>) => {
+      if (isSpatialRecoveryRequired(envelope.current?.projection)) return false;
       if (commandInFlight.current || activeReadScope.current.generation !== readGeneration)
         return false;
       commandInFlight.current = true;

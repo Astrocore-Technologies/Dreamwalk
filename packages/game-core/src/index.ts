@@ -3,7 +3,7 @@ export { sharesScene } from './scene-presence';
 import { hasPosition } from '@dreamwalk/contracts';
 import { travelLocations, travelToLocation } from './location-travel';
 import { isActorConscious, actorLifeState } from '@dreamwalk/contracts';
-import { observedVisible } from './observation-visibility';
+import { observedVisible, imageLineOfSight } from './observation-visibility';
 import { narrativeTurnVisibleTo } from './narrative';
 import { consumeWorldItem } from './world-items';
 import { projectTurnController, applyTurnAction, applyWorldTurnAction, turnFence } from './turns';
@@ -360,8 +360,11 @@ export function visible(s: GameState, a: GameEntity, b: GameEntity): boolean {
     }
     return false;
   };
-  return occupiedCells(a).some((from) =>
-    occupiedCells(b).some((to) => distance(from, to) <= 9 && clearRay(from, to)),
+  return (
+    imageLineOfSight(s, a, b) &&
+    occupiedCells(a).some((from) =>
+      occupiedCells(b).some((to) => distance(from, to) <= 9 && clearRay(from, to)),
+    )
   );
 }
 

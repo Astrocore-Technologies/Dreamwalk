@@ -38,7 +38,12 @@ test('narrator guidance follows present evidence and player agency without chang
 test('new image-aware starts cannot reuse schematic, mismatched or low-confidence layouts', () => {
   const image = { locationId: 'tower', revisionId: randomUUID(), sha256: 'a'.repeat(64) };
   const source = { mapImages: [image] };
-  const compiled = { maps: { tower: { backgroundMode: 'schematic' } } };
+  const compiled = {
+    entities: {},
+    maps: {
+      tower: { width: 24, height: 24, spawns: [{ x: 3, y: 4 }], backgroundMode: 'schematic' },
+    },
+  };
   assert.equal(startMapGroundingCompatible(source, compiled), false);
   compiled.maps.tower.spatialGrounding = {
     imageRevisionId: image.revisionId,
@@ -60,7 +65,12 @@ test('new image-aware starts cannot reuse schematic, mismatched or low-confidenc
 });
 
 test('text-only reuse stays free, but a saved image cannot reuse an ungrounded schematic layout', () => {
-  const compiled = { maps: { tower: { backgroundMode: 'schematic', spawns: [{ x: 3, y: 4 }] } } };
+  const compiled = {
+    entities: {},
+    maps: {
+      tower: { width: 24, height: 24, backgroundMode: 'schematic', spawns: [{ x: 3, y: 4 }] },
+    },
+  };
   const before = structuredClone(compiled);
   assert.equal(
     startMapGroundingCompatible(

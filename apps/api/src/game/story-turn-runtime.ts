@@ -3,6 +3,7 @@ import {
   acceptedStoryKnownCostPolicy,
   type StoryKnownCostAcceptance,
 } from './story-known-cost-consent';
+import { requiresMapRecovery } from './map-readiness';
 import { settlePendingStorySpeech } from './pending-story-speech';
 import { isActorConscious } from '@dreamwalk/contracts';
 import { runtimeQuoteIdentity } from '../ai/runtime-map-preflight';
@@ -79,7 +80,7 @@ interface Port {
     actorId: string;
     ownerId: string;
   }>;
-  load(id: string): Promise<StoryLive>;
+  load(id: string, requireGrid?: boolean): Promise<StoryLive>;
   touch(id: string, live: StoryLive, actorId: string): Promise<void>;
   persist(
     id: string,
@@ -2332,8 +2333,8 @@ export class StoryTurnRuntime {
   async feed(req: Request, id: string): Promise<StoryTurnFeed> {
     return this.port.serial(id, async () => {
       const a = await this.port.access(req, id),
-        live = await this.port.load(id);
-      await this.reconcile(id, live.state.tick);
+        live = await this.port.load(id, false);
+      if (!requiresMapRecovery(live.state)) await this.reconcile(id, live.state.tick);
       const rows = await this.db.query(
         `SELECT f.* FROM game_story_feed f JOIN game_story_turns t ON t.id=f.turn_id WHERE f.campaign_id=$1 AND t.erased_at IS NULL AND (($3::boolean AND '*'=ANY(f.audience_ids)) OR $2=ANY(f.audience_ids)) ORDER BY f.sequence DESC,f.ordinal DESC LIMIT 300`,
         [id, a.actorId, live.state.entities[a.actorId]?.spatialMode !== 'location_only'],

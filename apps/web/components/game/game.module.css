@@ -1233,6 +1233,18 @@
 .locationScene {
   overflow: auto;
 }
+.recoveryNotice {
+  flex: 0 0 auto;
+  padding: 14px;
+  border-bottom: 1px solid var(--line);
+  color: var(--text);
+}
+.recoveryNotice p {
+  margin: 8px 0 0;
+  color: var(--muted);
+  font-size: 0.9rem;
+  line-height: 1.5;
+}
 .locationMap {
   flex: 0 0 auto;
   margin: 0;

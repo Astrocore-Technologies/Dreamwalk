@@ -1,3 +1,4 @@
+import { requiresMapRecovery } from './map-readiness';
 import { directorProfileIdSchema } from '@dreamwalk/contracts/dist/director-style';
 import { readDirectorCatalog, directorProfile, transactionQueries } from '../ai/director-style';
 import { Inject, Injectable, Optional } from '@nestjs/common';
@@ -41,6 +42,15 @@ export class PaidStartService {
       digest(await readOwnedHero(c, actor, row.hero_id ?? undefined)) !== digest(row.hero_snapshot)
     )
       fail(409, 'START_SOURCE_CHANGED', 'START_SOURCE_CHANGED');
+    const compiled = source.package.compiled ?? row.compiled;
+    if (
+      row.status === 'ready' &&
+      compiled &&
+      (requiresMapRecovery(compiled) ||
+        (source.package.plannerSource &&
+          !startMapGroundingCompatible(source.package.plannerSource, compiled)))
+    )
+      fail(409, 'MAP_GRID_REQUIRED', 'MAP_GRID_REQUIRED');
     return source;
   }
   async prepare(actor: string, input: unknown) {
@@ -94,6 +104,13 @@ export class PaidStartService {
         id = randomUUID();
       if (!source.package.compiled && source.package.kind !== 'launch-source')
         fail(409, 'NOT_PLAYABLE', 'NOT_PLAYABLE');
+      if (
+        source.package.compiled &&
+        (requiresMapRecovery(source.package.compiled) ||
+          (source.package.plannerSource &&
+            !startMapGroundingCompatible(source.package.plannerSource, source.package.compiled)))
+      )
+        fail(409, 'MAP_GRID_REQUIRED', 'MAP_GRID_REQUIRED');
       const cached = !source.package.compiled
         ? (
             await c.query(
@@ -169,14 +186,30 @@ export class PaidStartService {
   async state(actor: string, id: string) {
     return this.db.tx(async (c) => {
       const row = await this.own(c, actor, id);
-      await this.playable.sourceForStart(c, actor, row.source_version_id);
+      const source = await this.playable.sourceForStart(c, actor, row.source_version_id);
+      const compiled = source.package.compiled ?? row.compiled;
+      const recoveryRequired =
+        compiled &&
+        (requiresMapRecovery(compiled) ||
+          (source.package.plannerSource &&
+            !startMapGroundingCompatible(source.package.plannerSource, compiled)));
       const jobs = (
         await c.query(
           'SELECT j.id,j.status,j.error_code,h.status AS "sparkStatus",h.reserved_subunits AS "sparkReservedSubunits",h.captured_subunits AS "sparkCapturedSubunits" FROM live_authoring_text_jobs j LEFT JOIN spark_holds h ON h.id=j.spark_quote_id WHERE j.project_id=$1 AND j.actor_id=$2 ORDER BY j.created_at DESC LIMIT 1',
           [id, actor],
         )
       ).rows;
-      return { ...this.dto(row), jobs };
+      return {
+        ...this.dto(row),
+        ...(recoveryRequired
+          ? {
+              ...(row.status === 'started' ? {} : { status: 'failed' }),
+              code: 'MAP_GRID_REQUIRED',
+              mapRecoveryRequired: true,
+            }
+          : {}),
+        jobs,
+      };
     });
   }
   private guard(actor: string, jobId?: string) {

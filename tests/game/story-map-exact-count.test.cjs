@@ -112,7 +112,7 @@ function needCount(provider, source) {
     return error;
   }
 }
-test('story planning inherits exact runtime image support, explicit opt-out keeps schematic fallback', () => {
+test('story planning inherits exact runtime image support, explicit opt-out stops before paid image planning', () => {
   const { source, profile } = fixture();
   const provider = new BoundedAuthoringTextProvider(
     storyPlanDefinition,
@@ -132,7 +132,7 @@ test('story planning inherits exact runtime image support, explicit opt-out keep
     { ...profile, storyVision: false },
   );
   assert.equal(disabled.profile.storyVision, false);
-  assert.equal(schematicStorySource(source, disabled.profile).mapImages, undefined);
+  assert.throws(() => schematicStorySource(source, disabled.profile), /MAP_VISION_POLICY_REQUIRED/);
   const legacy = { ...profile };
   delete legacy.runtimeVision;
   const text = new BoundedAuthoringTextProvider(
@@ -142,7 +142,7 @@ test('story planning inherits exact runtime image support, explicit opt-out keep
     legacy,
   );
   assert.equal(text.profile.storyVision, undefined);
-  assert.equal(schematicStorySource(source, text.profile).mapImages, undefined);
+  assert.throws(() => schematicStorySource(source, text.profile), /MAP_VISION_POLICY_REQUIRED/);
 });
 
 test('exact image count, accepted quote and restarted dispatch use one identical body and safe spawns', async () => {

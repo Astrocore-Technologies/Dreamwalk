@@ -105,7 +105,7 @@ test('uncertain exact image creates semantic scene, no numeric entities or inven
   assert.equal(draft.npcs[0].x, undefined);
   assert.equal(draft.npcs[0].y, undefined);
   assert.equal(draft.npcs[0].sourceNpcId, npc);
-  assert.equal(startMapGroundingCompatible(source, playable), true);
+  assert.equal(startMapGroundingCompatible(source, playable), false);
   assert.equal(
     startMapGroundingCompatible(
       { ...source, mapImages: [{ ...source.mapImages[0], sha256: hash('changed') }] },
@@ -186,7 +186,7 @@ test('malformed scene IDs and extra private payload are rejected', () => {
   delete f.room.scenePresence.scenes[0].privateFacts;
   f.room.scenePresence.scenes[0].id = '__proto__';
   assert.throws(() => compileStoryPlan(f.source, f.proposal));
-  assert.equal(storyPlanDefinition.version, 'authored-story-plan-v9-authored-presence');
+  assert.equal(storyPlanDefinition.version, 'authored-story-plan-v10-local-grounding');
 });
 for (const text of [
   'Keeper is absent.',
@@ -267,7 +267,7 @@ test('unanalysed omitted map still retains exact original image without invented
   assert.equal(result.playable.maps.tower.spatialMode, 'location_only');
   assert.equal(result.playable.maps.tower.backgroundMode, undefined);
   assert.equal(result.playable.maps.tower.locationImage.revisionId, image.revisionId);
-  assert.equal(startMapGroundingCompatible(f.source, result.playable), true);
+  assert.equal(startMapGroundingCompatible(f.source, result.playable), false);
   f.source.omittedMapImages[0].sha256 = 'f'.repeat(64);
   assert.equal(startMapGroundingCompatible(f.source, result.playable), false);
 });

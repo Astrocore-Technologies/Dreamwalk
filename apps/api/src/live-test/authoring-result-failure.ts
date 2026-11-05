@@ -1,5 +1,9 @@
 /** Public failure categories only. Never return raw provider/source/database details. */
 const validationCodes = new Set([
+  'MAP_GRID_REQUIRED',
+  'MAP_IMAGE_PRESENCE_UNSUPPORTED',
+  'MAP_IMAGE_LOCAL_EVIDENCE_REQUIRED',
+  'MAP_IMAGE_LOCAL_EVIDENCE_CONFLICT',
   'STORY_MAP_INTENT_MISMATCH',
   'STORY_SOURCE_MISMATCH',
   'STORY_CONNECTION_INVALID',

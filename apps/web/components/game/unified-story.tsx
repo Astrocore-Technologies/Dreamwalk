@@ -1,4 +1,5 @@
 'use client';
+import { isSpatialRecoveryRequired } from './spatial-recovery';
 import { Send } from 'lucide-react';
 import { SparkReceiptCost } from '../visual-authoring/sparks-cost';
 import { StoryCost, RuntimeMapQuoteNotice } from './story-cost';
@@ -68,8 +69,8 @@ export function UnifiedStory({
   recipient,
   inspection,
   onClearRecipient,
-  disabled,
-  partyDisabled = disabled,
+  disabled: requestedDisabled,
+  partyDisabled: requestedPartyDisabled = requestedDisabled,
   worldGenerationAllowed = false,
   worldGenerationMembersStatus = 'ready',
   onWorldRefresh,
@@ -88,6 +89,9 @@ export function UnifiedStory({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const locationOnly = projection.map.spatialMode === 'location_only';
+  const recoveryRequired = isSpatialRecoveryRequired(projection);
+  const disabled = requestedDisabled || recoveryRequired;
+  const partyDisabled = requestedPartyDisabled || recoveryRequired;
   const turnText = useTurnText();
   const h = useStoryText(),
     { t, locale } = useT(),
