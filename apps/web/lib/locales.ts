@@ -504,6 +504,16 @@ const messages: Record<string, Record<Locale, string>> = {
     en: 'Private world',
     uk: 'Приватний світ',
   },
+  Приватно: {
+    ru: 'Приватно',
+    en: 'Private',
+    uk: 'Приватно',
+  },
+  Публично: {
+    ru: 'Публично',
+    en: 'Public',
+    uk: 'Публічно',
+  },
   'Приватно: только по приглашению': {
     ru: 'Приватно: только по приглашению',
     en: 'Private: invitation only',

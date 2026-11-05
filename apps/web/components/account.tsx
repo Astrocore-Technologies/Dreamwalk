@@ -614,17 +614,27 @@ function SettingsForm({ privacy }: { privacy: boolean }) {
                 checked={settings.profilePublic}
                 onChange={(v) => change('profilePublic', v)}
               />
-              <Field label={tr('Видимость нового контента')}>
-                <Select
-                  value={settings.defaultVisibility}
-                  onChange={(e) =>
-                    change('defaultVisibility', e.target.value as Settings['defaultVisibility'])
-                  }
-                >
-                  <option value="private">{tr('Приватно: только по приглашению')}</option>
-                  <option value="public">{tr('Публично после модерации')}</option>
-                </Select>
-              </Field>
+              <div className="account-visibility-field">
+                <Field label={tr('Видимость нового контента')}>
+                  <Select
+                    aria-describedby="account-visibility-description"
+                    value={settings.defaultVisibility}
+                    onChange={(e) =>
+                      change('defaultVisibility', e.target.value as Settings['defaultVisibility'])
+                    }
+                  >
+                    <option value="private">{tr('Приватно')}</option>
+                    <option value="public">{tr('Публично')}</option>
+                  </Select>
+                </Field>
+                <p id="account-visibility-description">
+                  {tr(
+                    settings.defaultVisibility === 'private'
+                      ? 'Приватно: только по приглашению'
+                      : 'Публично после модерации',
+                  )}
+                </p>
+              </div>
               <div className="notice">
                 {tr(
                   'Новые приключения не попадут в каталог без твоей отправки на модерацию и проверки командой.',

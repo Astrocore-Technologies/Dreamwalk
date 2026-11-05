@@ -235,6 +235,53 @@ for (const locale of ['ru', 'uk', 'en'] as const) {
             ).toBeEnabled();
           }
           if (route === '/account/privacy') {
+            const visibility = page.locator('.account-visibility-field select');
+            const description = page.locator('#account-visibility-description');
+            await expect(visibility).toHaveAttribute(
+              'aria-describedby',
+              'account-visibility-description',
+            );
+            const copy = {
+              ru: {
+                private: ['Приватно', 'Приватно: только по приглашению'],
+                public: ['Публично', 'Публично после модерации'],
+              },
+              uk: {
+                private: ['Приватно', 'Приватно: лише за запрошенням'],
+                public: ['Публічно', 'Публічно після модерації'],
+              },
+              en: {
+                private: ['Private', 'Private: invitation only'],
+                public: ['Public', 'Public after moderation'],
+              },
+            }[locale];
+            for (const mode of ['public', 'private'] as const) {
+              await visibility.selectOption(mode);
+              await expect(visibility).toHaveValue(mode);
+              await expect(visibility.locator('option:checked')).toHaveText(copy[mode][0]);
+              await expect(description).toHaveText(copy[mode][1]);
+              await expect(description).toBeVisible();
+              expect(
+                await description.evaluate((node) => node.scrollWidth <= node.clientWidth),
+              ).toBe(true);
+              // Native select text does not wrap. Assert the short option fits its
+              // content box with an extra 32px reserved for the browser's arrow.
+              expect(
+                await visibility.evaluate((node: HTMLSelectElement) => {
+                  const style = getComputedStyle(node);
+                  const canvas = document.createElement('canvas');
+                  const context = canvas.getContext('2d')!;
+                  context.font = `${style.fontWeight} ${style.fontSize} ${style.fontFamily}`;
+                  const text = node.selectedOptions[0].textContent || '';
+                  return (
+                    context.measureText(text).width + 32 <=
+                    node.clientWidth -
+                      parseFloat(style.paddingLeft) -
+                      parseFloat(style.paddingRight)
+                  );
+                }),
+              ).toBe(true);
+            }
             const art = page.locator('.account-privacy-art');
             await expect(art).toBeVisible();
             const imageBox = await art.boundingBox();
@@ -334,6 +381,15 @@ for (const locale of ['ru', 'uk', 'en'] as const) {
             expect(controlBox).not.toBeNull();
             expect(bottomNavBox).not.toBeNull();
             expect(controlBox!.y + controlBox!.height).toBeLessThanOrEqual(bottomNavBox!.y);
+            if (route === '/account/privacy') {
+              const descriptionBox = await page
+                .locator('#account-visibility-description')
+                .boundingBox();
+              expect(descriptionBox).not.toBeNull();
+              expect(descriptionBox!.y + descriptionBox!.height).toBeLessThanOrEqual(
+                bottomNavBox!.y,
+              );
+            }
             await info.attach(
               `${locale}-${route.replaceAll('/', '-')}-${width}-${theme}-field-viewport`,
               {
@@ -442,6 +498,34 @@ for (const width of [1536, 390]) {
         });
       }
       expect(fixture.settingsPatches).toHaveLength(1);
+    });
+
+    test('privacy visibility stays readable and persists without changing other settings', async ({
+      page,
+    }) => {
+      const fixture = await mockAccount(page);
+      const originalSettings = { ...fixture.user.settings };
+      await page.goto('/account/privacy');
+      const panel = page.locator('.account-privacy-panel');
+      const visibility = panel.locator('select');
+      const description = panel.locator('#account-visibility-description');
+      for (const [index, mode] of (['public', 'private'] as const).entries()) {
+        await visibility.selectOption(mode);
+        await expect(description).toHaveText(
+          mode === 'public' ? 'Public after moderation' : 'Private: invitation only',
+        );
+        await panel.locator('.form-actions button').click();
+        await expect.poll(() => fixture.settingsPatches.length).toBe(index + 1);
+        expect(fixture.settingsPatches[index]).toEqual({
+          ...originalSettings,
+          defaultVisibility: mode,
+        });
+        await page.reload();
+        await expect(visibility).toHaveValue(mode);
+        await expect(description).toHaveText(
+          mode === 'public' ? 'Public after moderation' : 'Private: invitation only',
+        );
+      }
     });
 
     test('export request, refresh and archive links use the existing endpoints', async ({
