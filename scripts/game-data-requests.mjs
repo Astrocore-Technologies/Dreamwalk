@@ -176,6 +176,13 @@ export function purgeLivingNpcReferences(state, actorId, archivedRoots = [], arc
       return keep;
     });
     for (const [subject, relation] of Object.entries(memory.relationships ?? {})) {
+      if (
+        Array.isArray(relation.social?.audienceIds) &&
+        relation.social.audienceIds.includes(actorId)
+      ) {
+        relation.social.audienceIds = relation.social.audienceIds.filter((id) => id !== actorId);
+        changed = true;
+      }
       if (subject === actorId || (relation.evidenceIds ?? []).some((id) => removed.has(id))) {
         delete memory.relationships[subject];
         changed = true;

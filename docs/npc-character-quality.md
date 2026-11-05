@@ -30,6 +30,10 @@ automatic universal mechanic, and this change does not claim a consent/romance s
 Changes require supported observed events, not unverified text sentiment. Repeated
 delivery must not award progress twice. A compliment is not proof that a promise was kept.
 
+For conversational changes, see [social continuity](npc-social-continuity.md): the
+existing decision may adjust subjective feelings from directly heard speech, without
+changing earned trust, debt, knowledge or disclosure rights.
+
 The existing episodic archive, relevant retrieval, grounded summaries and separate
 obligation registry remain in use. Summaries cite source events and cannot replace
 world canon, invent objects or upgrade rumors. Tests cover restart, conflicting

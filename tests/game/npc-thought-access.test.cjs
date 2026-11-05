@@ -160,3 +160,25 @@ test('missing legacy ACL and no-longer-visible NPC never expose stored thought',
   assert.throws(() => projectNpcInnerThought(s, 'alice', 'keeper'), /FORBIDDEN/);
   assert.throws(() => projectNpcInnerThought(s, 'another-player', 'keeper'), /FORBIDDEN/);
 });
+
+test('cumulative social feelings retain their whisper audience after source IDs leave the window', () => {
+  const s = world();
+  const context = {
+    observations: [observation('new-public', 'public')],
+    relationships: {
+      alice: {
+        trust: 0,
+        evidenceIds: ['new-public'],
+        character: { affinity: 2, respect: 1, fear: 0 },
+        social: {
+          audienceIds: ['alice', 'keeper'],
+          lastObservedTick: 50,
+          recentTextKeys: ['opaque-fingerprint'],
+        },
+      },
+    },
+  };
+  assert.deepEqual(npcThoughtAudience(s, 'keeper', 'plan', context), ['alice']);
+  const stamped = stampNpcThoughtAudience(s, 'keeper', 'plan', context);
+  assert.throws(() => projectNpcInnerThought(stamped, 'bob', 'keeper'), /FORBIDDEN/);
+});

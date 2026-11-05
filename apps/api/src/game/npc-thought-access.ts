@@ -63,6 +63,12 @@ export function npcThoughtAudience(
       for (const key of ['observations', 'archivedEpisodes', 'history'])
         if (Array.isArray(envelope[key]))
           for (const observation of envelope[key]) restrictObservation(observation);
+      // Relationship scores are cumulative. Their whisper audience must survive
+      // bounded evidence retention, not become public when an old source is trimmed.
+      for (const relation of Object.values(record(envelope.relationships) ?? {})) {
+        const social = record(record(relation)?.social);
+        if (social && 'audienceIds' in social) restrict(ids(social.audienceIds));
+      }
       const previous = record(envelope.previousCognition);
       if (previous) restrict(ids(previous.audienceIds));
       // Derived memories/relationships can carry information whose original

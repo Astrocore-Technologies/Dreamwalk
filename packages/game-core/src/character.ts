@@ -131,7 +131,22 @@ export function characterPerformance(
   // unrelated event must not leak through a changed stance in another conversation.
   const appraisal =
     relevant && characterTrigger(relevant, npcId)
-      ? characterAppraisal(memory, relevant, npcId)
+      ? characterAppraisal(
+          {
+            ...memory,
+            // Combined character axes may include private physical and social causes.
+            // Exclude them unconditionally: merely creating a private social record
+            // must not switch the public baseline. Speech gets a separate safe cue.
+            relationships: Object.fromEntries(
+              Object.entries(memory.relationships).map(([id, r]) => [
+                id,
+                { ...r, character: undefined },
+              ]),
+            ),
+          },
+          relevant,
+          npcId,
+        )
       : undefined;
   return {
     version: 1 as const,
@@ -139,6 +154,30 @@ export function characterPerformance(
     stance: appraisal?.publicStance ?? 'reserved',
     agency: 'npc_only' as const,
     claimScope: 'provided_evidence_only' as const,
+  };
+}
+
+/** Only speech-derived categorical tone; no scores, causes or private prose. */
+export function socialConversationTone(
+  memory: LivingNpcMemory,
+  actorId: string | undefined,
+  audience: string[],
+) {
+  const social = actorId ? memory.relationships[actorId]?.social : undefined;
+  if (
+    !social ||
+    !actorId ||
+    !audience.includes(actorId) ||
+    ![social.affinity, social.respect, social.fear].every(Number.isFinite) ||
+    (social.audienceIds && !audience.every((id) => social.audienceIds!.includes(id)))
+  )
+    return undefined;
+  return {
+    towardActorId: actorId,
+    warmth: social.affinity > 0 ? 'warm' : social.affinity < 0 ? 'cool' : 'neutral',
+    regard: social.respect > 0 ? 'respectful' : social.respect < 0 ? 'dismissive' : 'neutral',
+    tension: social.fear > 0 ? 'uneasy' : 'settled',
+    scope: 'subjective_conversation_only' as const,
   };
 }
 

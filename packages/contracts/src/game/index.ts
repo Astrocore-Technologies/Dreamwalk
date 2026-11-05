@@ -52,6 +52,7 @@ import { frozenArtBindingsSchema, type FrozenArtBinding } from './art';
 export * from './art';
 import {
   npcCognitionSchema,
+  npcSocialReactionSchema,
   npcPersonalitySchema,
   npcNoticeSchema,
   npcUtteranceSchema,
@@ -1129,6 +1130,7 @@ export const npcPlanProposalSchema = z
     actions: z.array(gameActionSchema).min(1).max(3),
     knowledgeRevision: z.number().int().nonnegative().optional(),
     beliefRevisions: z.array(npcBeliefRevisionSchema).max(4).optional(),
+    socialReactions: z.array(npcSocialReactionSchema).max(4).optional(),
     targetRevisions: z
       .record(gameIdSchema, z.number().int().nonnegative())
       .refine((v) => Object.keys(v).length <= 3),

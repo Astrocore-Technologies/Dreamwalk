@@ -1,5 +1,22 @@
 import { createHash } from 'node:crypto';
 import { canonical } from '../ai/context';
+/** Evidence may be relevance-ranked rather than chronological. Equal or missing
+ * clocks retain source order; safe speech uses its audience-local observationOrder. */
+function latestInteraction(records: Record<string, unknown>[]) {
+  return records
+    .filter(
+      (o) => ['said', 'addressed', 'attempted'].includes(String(o.kind)) || o.untrustedUtterance,
+    )
+    .reduce<Record<string, unknown> | undefined>((latest, record) => {
+      const order = (value: Record<string, unknown>) =>
+        typeof value.tick === 'number'
+          ? value.tick
+          : typeof value.observationOrder === 'number'
+            ? value.observationOrder
+            : -1;
+      return !latest || order(record) >= order(latest) ? record : latest;
+    }, undefined);
+}
 /** Deterministic whole-record packing. Never cuts user text, promises or evidence mid-string. */
 export function packNpcContext<T extends object>(
   input: T,
@@ -24,7 +41,8 @@ export function packNpcContext<T extends object>(
   for (const o of array('obligations'))
     for (const id of (o.evidenceIds as string[] | undefined) ?? []) required.add(id);
   const observations = array('observations');
-  const latest = observations.filter((o) => o.kind === 'said' || o.kind === 'addressed').at(-1);
+  const latest =
+    observations.find((o) => o.id === value.latestInteractionId) ?? latestInteraction(observations);
   if (latest) required.add(String(latest.id));
   for (let i = observations.length - 1; i >= 0 && size() > maxBytes; i--)
     if (!required.has(String(observations[i].id))) observations.splice(i, 1);
@@ -40,7 +58,7 @@ export function packNpcContext<T extends object>(
   const question =
     typeof value.replyToObservationId === 'string'
       ? claims.find((c) => c.observationId === value.replyToObservationId)
-      : claims.filter((c) => typeof c.untrustedUtterance === 'string').at(-1);
+      : latestInteraction(claims);
   if (question) asked.add(String(question.observationId));
   while (size() > maxBytes) {
     // Preserve selected known answers ahead of incidental dialogue, but never
@@ -98,11 +116,11 @@ export function packNpcContextWindow<T extends object>(
     const latest =
       key === 'history'
         ? list.at(-1)
-        : key === 'claims' && typeof value.replyToObservationId === 'string'
-          ? list.find((o) => o.observationId === value.replyToObservationId)
-          : list
-              .filter((o) => o.kind === 'said' || o.kind === 'addressed' || o.untrustedUtterance)
-              .at(-1);
+        : key === 'observations' && typeof value.latestInteractionId === 'string'
+          ? list.find((o) => o.id === value.latestInteractionId)
+          : key === 'claims' && typeof value.replyToObservationId === 'string'
+            ? list.find((o) => o.observationId === value.replyToObservationId)
+            : latestInteraction(list);
     if (latest) {
       pinnedRecords.add(latest);
       const id = recordId(latest);

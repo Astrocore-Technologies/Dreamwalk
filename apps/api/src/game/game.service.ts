@@ -1734,6 +1734,7 @@ export class GameService implements OnModuleDestroy {
               actions: [{ kind: 'wait' }],
               targetRevisions: {},
               beliefRevisions: undefined,
+              socialReactions: undefined,
             });
             if (!considered.error) {
               const brain = considered.state.npcBrains![job.npcId];

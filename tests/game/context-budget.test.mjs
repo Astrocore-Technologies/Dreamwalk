@@ -169,3 +169,44 @@ test('token packing pins the explicit current claim rather than an arbitrary las
   assert.equal(packed.budgetExceeded, false);
   assert.deepEqual(packed.claims, input.claims.slice(0, 2));
 });
+
+test('relevance-ranked history keeps the newest actual interaction rather than its last array entry', () => {
+  const input = {
+    observations: [
+      { id: 'newest', kind: 'said', tick: 100, text: 'The current question.' },
+      ...Array.from({ length: 20 }, (_, i) => ({
+        id: `old-${i}`,
+        kind: 'said',
+        tick: i,
+        text: 'x'.repeat(100),
+      })),
+    ],
+  };
+  for (const packed of [
+    packNpcContext(input, 400),
+    packNpcContextWindow(input, (c) => JSON.stringify(c).length < 400),
+  ]) {
+    assert.equal(packed.budgetExceeded, false);
+    assert.ok(packed.observations.some((o) => o.id === 'newest'));
+  }
+});
+
+test('explicit latest source survives equal-tick relevance reordering in both packers', () => {
+  const input = {
+    latestInteractionId: 'current-ranked-first',
+    observations: [
+      { id: 'current-ranked-first', kind: 'said', tick: 100, text: 'n'.repeat(180) },
+      { id: 'older-same-tick', kind: 'said', tick: 100, text: 'o'.repeat(180) },
+    ],
+  };
+  for (const packed of [
+    packNpcContext(input, 500),
+    packNpcContextWindow(input, (c) => JSON.stringify(c).length < 500),
+  ]) {
+    assert.equal(packed.budgetExceeded, false);
+    assert.deepEqual(
+      packed.observations.map((o) => o.id),
+      ['current-ranked-first'],
+    );
+  }
+});
