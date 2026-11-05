@@ -644,6 +644,7 @@ for (const variant of [
     const resume = page.getByRole('link', { name: variant.continue, exact: true });
     const restart = page.getByRole('button', { name: variant.restart, exact: true });
     await expect(resume).toHaveAttribute('href', `/game/${oldId}`);
+    await expect(resume).toHaveClass(/\bprimary\b/);
     await expect(restart).toBeEnabled();
     expect(writes).toEqual([]);
     await page.getByLabel(variant.save, { exact: true }).selectOption(otherId);

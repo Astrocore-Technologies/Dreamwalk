@@ -1337,3 +1337,12 @@ an already-created campaign. Added the translated selector name and retained
 picker-lock coverage with genuinely unstarted preparations. The 42 focused
 launch/hero checks, web typecheck and changed-file lint/format checks pass after
 these corrections. A fresh exact-head browser run remains required.
+
+Follow-up CI passed static/production, isolated PostgreSQL and the affected
+browser shard, including all three localized continue/restart journeys. Visual
+inspection of its RU desktop and EN/UK mobile screenshots confirmed the compact
+layout and translations, and exposed a missing primary style on Continue. It now
+uses the standard primary button style, with source and browser assertions, so
+the returning-player action is visually emphasized over Start over. The 35
+focused launch tests and changed-file lint/format pass after this one-class fix;
+exact-head CI still gates release.

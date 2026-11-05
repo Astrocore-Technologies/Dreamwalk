@@ -358,7 +358,7 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
               </Select>
             </Field>
           )}
-          <Link className="button" href={`/game/${encodeURIComponent(continueId)}`}>
+          <Link className="button primary" href={`/game/${encodeURIComponent(continueId)}`}>
             {t('Продолжить игру')}
           </Link>
         </div>
