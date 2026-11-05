@@ -41,6 +41,8 @@ const webKeys = new Set([
   'PORT',
   'API_URL',
   'WEB_ORIGIN',
+  'API_WEB_ORIGIN',
+  'WEB_ALLOWED_ORIGINS',
   'DREAMWALK_WEB_DIST_DIR',
   'NEXT_TELEMETRY_DISABLED',
 ]);

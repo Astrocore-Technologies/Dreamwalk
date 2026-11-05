@@ -35,8 +35,8 @@ On Vercel, `proxy.ts` forwards HTTP to the fixed HTTPS API origin and injects
 variables. Set `DREAMWALK_REQUIRE_INGRESS_SECRET=true` on API. Do not put it in
 NEXT_PUBLIC variables or a browser cookie. The API rejects direct public traffic
 without it; only the non-sensitive GET health endpoint is exempt. Existing
-session/role/asset ACL checks remain mandatory after this transport gate. Origin
-enforcement is temporarily paused as documented below.
+session/role/asset ACL checks remain mandatory after this transport gate. HTTP
+mutations and WebSockets also enforce the exact Origin contract documented below.
 
 Use Vercel Authentication on a protected staging preview deployment; verify both
 HTML and API routes are covered before sharing. Do not expose an unprotected
@@ -46,8 +46,9 @@ rotated. No bypass URL/automation secret is required for the human owner to test
 Hosted WebSocket routing uses the official `upgradeWebSocket` Next route API,
 not an assumed external-CDN Upgrade rewrite. The server-side relay preserves
 the browser session cookie and sends the configured canonical API trust Origin
-(when valid) plus the ingress secret to Railway. Browser Origin validation is
-temporarily paused; campaign and session checks are unchanged.
+plus the ingress secret to Railway. Browser Origin validation runs before
+forwarding; missing or invalid configuration fails closed. Campaign and session
+checks remain unchanged.
 The browser never learns a Railway session token or shared secret. The API keeps
 performing campaign/session authorization and projection revocation checks.
 The relay has a bounded lifetime below Vercel's 300s Hobby function limit;
@@ -68,7 +69,7 @@ and `NODE_ENV=production` explicitly. Local default remains loopback. The web
 Keep web/API process environments separate when they use different ports.
 
 Set private `DATABASE_URL`, canonical `WEB_ORIGIN`, and persistent `ASSET_DIR` on API.
-Before re-enabling Origin checks on hosted web, set `API_WEB_ORIGIN` to that same canonical `WEB_ORIGIN`; use the
+On hosted web, set `API_WEB_ORIGIN` to that same canonical `WEB_ORIGIN`; use the
 same value in production and previews sharing the API. Local web keeps its
 existing `WEB_ORIGIN` configuration.
 Use normal disabled generation defaults until the intended existing account,
@@ -137,61 +138,54 @@ from the first migration's execution; historical files and recorded checksums ar
 unchanged. New extension DDL is rejected in production, not silently executed.
 No operator extension command is dispatched by the deployment agent.
 
-### Temporary Origin enforcement pause
+### Exact browser origins and stable API trust
 
-The owner explicitly approved pausing browser Origin/CSRF enforcement on
-2026-11-04 until domain setup is ready. `ENFORCE_BROWSER_ORIGIN` is `false` in
-both `apps/web/lib/hosted-origin.ts` and `apps/api/src/ingress.ts`. This pauses
-the HTTP and WebSocket Origin checks on both sides; there is no expiry, timer,
-environment-triggered toggle, or automatic re-enable when a domain appears.
+The owner approved restoring HTTP and WebSocket Origin protection after the
+custom domains were connected on 2026-11-05. `ENFORCE_BROWSER_ORIGIN` is `true`
+on both the web relay and API. Login, sessions, campaign membership, private
+content ACLs, ingress-secret checks and fixed upstream destinations remain required.
 
-This removes a cross-site-request defense. It does not disable login, session
-validation, roles, campaign membership, private-content ACL, the ingress secret,
-fixed HTTPS upstream target, request limits, cookie flags, OAuth state/PKCE, or
-the separate loopback-only local test-admin guard. Missing user authorization
-still fails, even with a foreign or missing Origin. Vercel deployment protection
-is separate and is not changed by this code.
+Vercel web deployments require two server-only, non-secret configuration values:
 
-`API_WEB_ORIGIN` is optional during the pause. An invalid canonical origin is
-never copied from caller headers: the relay omits it instead. Normal deployment
-and CI gates remain required. Re-enable only after the owner's explicit approval,
-configure the stable API origin below, change both policy constants together,
-restore the strict active-path assertions, and verify HTTP and WebSocket behavior.
+- `API_WEB_ORIGIN`: the exact HTTPS `WEB_ORIGIN` configured on the API. Use the
+  same value for production and previews sharing that API. It is the stable
+  server-to-server trust origin, not the API URL or a per-preview URL.
+- `WEB_ALLOWED_ORIGINS`: a comma-separated list of exact HTTPS browser origins.
+  For the connected site these are `https://www.dreamwalk.online`,
+  `https://dreamwalk.online`, and `https://dreamwalk-rho.vercel.app`. No wildcard,
+  credentials, path, query or fragment is allowed. The entire list fails closed
+  if any entry is invalid, empty, over 16 entries, or over 4096 characters.
 
-### Strict request-origin policy retained for later re-enable
+For this deployment the API still uses `https://dreamwalk-rho.vercel.app` as
+`WEB_ORIGIN`, and Vercel must use that same `API_WEB_ORIGIN`. Adding or selecting
+a custom domain does not change this contract. `VERCEL_PROJECT_PRODUCTION_URL`
+is deliberately ignored for both backend trust and browser admission. On Vercel,
+missing or invalid explicit configuration fails closed; there is no fallback to
+`WEB_ORIGIN`, a primary platform domain, or a caller header.
 
-The retained strict helper validates the browser against the current
-public request URL before forwarding to the API. Only the stable canonical API
-web origin, Vercel's project-owned production domain, and its exact
-`VERCEL_URL` / `VERCEL_BRANCH_URL` are admitted. Forwarded-host
-headers and arbitrary `*.vercel.app` domains are not trusted. Missing, null,
-foreign, or contradictory browser origins return false. These decisions are
-tested but are not enforced by the active HTTP/WS paths during the pause.
+Only on `VERCEL_ENV=preview` are the current deployment's exact `VERCEL_URL` and
+`VERCEL_BRANCH_URL` also admitted. Arbitrary `*.vercel.app` addresses, production
+build URLs not explicitly listed, and forwarded-host headers are never trusted.
+The browser Origin must exactly match the admitted request URL origin. A supplied
+Host must match the request host, and supplied Fetch-Site must be `same-origin`.
+Missing, null, foreign, cross-site, same-site or contradictory Origins are rejected
+before HTTP/WS forwarding. The server-to-server hop then uses `API_WEB_ORIGIN`
+and the existing ingress secret, never the browser-supplied Origin.
 
-Set server-only `API_WEB_ORIGIN` on Vercel to the exact HTTPS `WEB_ORIGIN` already
-configured on the API. Use that same value for production and every preview that
-shares that API. It is not a secret, the API URL, a wildcard, or a per-preview value.
-After edge validation, HTTP and WebSocket server-to-server hops use this stable
-Origin and the existing ingress secret. Adding a project custom domain changes
-browser admission through `VERCEL_PROJECT_PRODUCTION_URL`, not the API contract.
-The stable API origin will let the existing API Origin guard be restored without
-tracking every preview or Vercel primary-domain change.
+Hosted API mutations require exact equality with the API's `WEB_ORIGIN`, including
+rejecting absent Origin. Only non-production, non-ingress local/test HTTP clients
+retain absent-Origin compatibility. API WebSockets always require exact canonical
+Origin plus ingress, session and campaign authorization.
 
-Deployments without `API_WEB_ORIGIN` retain the previous compatibility behavior:
-use `VERCEL_PROJECT_PRODUCTION_URL`, then `WEB_ORIGIN` only when the platform value
-is absent. When enforcement is restored, that fallback still requires the API canonical origin to match and is
-not safe against primary-domain drift. A malformed explicit setting fails closed,
-never falling through to another origin. Before restoring enforcement, verify
-the API's canonical origin, configure `API_WEB_ORIGIN` for each intended Vercel
-environment, and rebuild only after the exact commit passes CI. Test a body-only
-POST to a nonexistent diagnostic route on production and a preview: 404 from the
-API is expected, never an edge/backend origin 403. Send no session or auth cookies,
-and do not use a real mutation endpoint. Also verify a foreign Origin is denied.
-Do not infer full gameplay or WebSocket health from this narrow routing check.
-Vercel deployment protection and
-application authentication/authorization remain separate and unchanged.
+Configure these values before deploying the enabled checks. Verify the exact
+commit in CI and then verify HTTPS, HTTP and WS on the new domain, old domain and
+a real preview. A body-only POST to a nonexistent diagnostic route (no cookies,
+no auth data) should return API 404 for a matching Origin and 403 for foreign,
+missing or null Origin. Never use a real mutation route for this diagnostic.
+A narrow routing check does not prove gameplay or authenticated WS behavior.
+Vercel deployment protection remains separate and unchanged.
 
-Previews using the production API share real accounts, stories, and balances;
-they are not an isolated sandbox. Google OAuth callbacks remain canonical-bound.
-Before re-enabling enforcement, verify a real preview's public URL/Host/Fetch-Site behavior using
-non-mutating diagnostic endpoints and confirm untrusted origins are still denied.
+Previews using the production API share real accounts, stories and balances;
+they are not an isolated sandbox. Cookie sessions remain host-specific. Google
+OAuth callbacks, redirects and mail links still derive from API `WEB_ORIGIN`;
+restoring Origin protection does not migrate them to the new domain.
