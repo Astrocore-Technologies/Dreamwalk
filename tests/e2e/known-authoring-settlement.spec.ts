@@ -9,14 +9,11 @@ const ownerId = randomUUID(),
   holdId = randomUUID(),
   buildId = randomUUID();
 const path = `/studio/gameplay/${storyId}`;
-async function fixture(
-  page: Page,
-  locale: 'en' | 'ru' | 'uk',
-  lost: false | 'pending' | 'settled' = false,
-) {
+async function fixture(page: Page, locale: 'en' | 'ru' | 'uk', unavailable = false) {
   const posts: Record<string, unknown>[] = [];
   const writes: string[] = [];
   let settled = false;
+  let projected = false;
   const quote = () => ({
     jobId,
     holdId,
@@ -88,105 +85,84 @@ async function fixture(
               id: jobId,
               status: 'stale',
               error_code: 'MAP_IMAGE_UNCERTAIN',
-              sparkStatus: settled ? 'settled' : 'pending',
+              sparkStatus: projected ? 'settled' : 'pending',
               sparkReservedSubunits: '1000',
-              sparkCapturedSubunits: settled ? '246' : null,
+              sparkCapturedSubunits: projected ? '246' : null,
               actual_micros: '123',
             },
           ],
         },
       });
     if (endpoint === `/api/v1/generation/authoring-text/jobs/${jobId}/settlement`) {
-      if (method === 'POST') {
+      if (method !== 'GET') {
         posts.push(route.request().postDataJSON());
-        if (lost && posts.length === 1) {
-          settled = lost === 'settled';
-          return route.abort('failed');
-        }
-        settled = true;
+        return route.fulfill({ status: 409, json: { code: 'UNEXPECTED_UI_MUTATION' } });
       }
+      if (unavailable && !settled)
+        return route.fulfill({ status: 409, json: { code: 'AUTHORING_SETTLEMENT_UNAVAILABLE' } });
       return route.fulfill({ json: quote() });
     }
     return route.fulfill({ json: {} });
   });
-  return { posts, writes };
+  return {
+    posts,
+    writes,
+    settle: () => {
+      settled = true;
+    },
+    project: () => {
+      projected = true;
+    },
+  };
 }
 
 for (const locale of ['en', 'ru', 'uk'] as const) {
-  test(`authoring settlement displays exact funding and requires explicit confirmation in ${locale}`, async ({
+  test(`authoring cost recovers automatically without browser writes in ${locale}`, async ({
     page,
   }) => {
     await page.setViewportSize({ width: 375, height: 740 });
-    const { posts, writes } = await fixture(page, locale);
+    const { posts, writes, settle, project } = await fixture(page, locale);
     const text = settlementMessages[locale];
     await page.goto(path);
     const form = page.getByTestId('owner-authoring-settlement');
-    const button = form.getByRole('button', { name: text.confirm, exact: true });
-    await expect(button).toBeEnabled();
+    await expect(form.getByText(text.automatic, { exact: true })).toBeVisible();
+    await expect(form.getByRole('button')).toHaveCount(0);
+    await expect(form.getByTestId('authoring-sparks-release')).toHaveCount(0);
+    expect(posts).toHaveLength(0);
+    expect(writes).toHaveLength(0);
+    settle();
     const decimal = locale === 'en' ? '.' : ',';
-    await expect(form.getByTestId('authoring-dreams-charge')).toHaveText(`0${decimal}0100`);
+    await expect(form.getByTestId('authoring-dreams-charge')).toHaveText(`0${decimal}0100`, {
+      timeout: 10000,
+    });
     await expect(form.getByTestId('authoring-sparks-charge')).toHaveText(`0${decimal}0146`);
     await expect(form.getByTestId('authoring-provider-cost')).toHaveText('0.000123');
     await expect(form.getByTestId('authoring-sparks-release')).toHaveText(`0${decimal}0754`);
-    await expect(form.getByText(text.noNew, { exact: true })).toBeVisible();
+    project();
+    await page.reload();
+    await expect(form).toHaveCount(0);
     expect(posts).toHaveLength(0);
     expect(writes).toHaveLength(0);
-    await expect(
-      page.getByRole('button', {
-        name:
-          locale === 'en'
-            ? 'Prepare plan'
-            : locale === 'ru'
-              ? 'Подготовить план'
-              : 'Підготувати план',
-        exact: true,
-      }),
-    ).toHaveCount(0);
-    await button.focus();
-    await page.keyboard.press('Enter');
-    await expect(form).toHaveCount(0);
-    expect(posts).toHaveLength(1);
-    expect(posts[0]).toMatchObject({
-      holdId,
-      expectedActualMicros: '123',
-      expectedReservedSubunits: '1000',
-      expectedCaptureSubunits: '246',
-      consent: true,
-    });
-    expect(posts[0].operationId).toMatch(/^[0-9a-f-]{36}$/);
-    expect(writes).toEqual([`/api/v1/generation/authoring-text/jobs/${jobId}/settlement`]);
-    await expect(button).toHaveCount(0);
     expect(
       await page.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
   });
 }
-
-for (const outcome of ['pending', 'settled'] as const) {
-  test(`lost authoring settlement response survives reload with ${outcome} server state and no automatic replay`, async ({
-    page,
-  }) => {
-    const { posts } = await fixture(page, 'en', outcome);
-    const text = settlementMessages.en;
-    await page.goto(path);
-    await page.getByRole('button', { name: text.confirm, exact: true }).click();
-    await expect(page.getByRole('button', { name: text.retry, exact: true })).toBeEnabled();
-    expect(posts).toHaveLength(1);
-    const original = posts[0];
-    await page.reload();
-    if (outcome === 'settled') {
-      await expect(page.getByTestId('owner-authoring-settlement')).toHaveCount(0);
-      await expect(page.getByRole('button', { name: 'Prepare plan', exact: true })).toBeEnabled();
-      expect(posts).toHaveLength(1);
-    } else {
-      const retry = page.getByRole('button', { name: text.retry, exact: true });
-      await expect(retry).toBeEnabled();
-      expect(posts).toHaveLength(1);
-      await retry.click();
-      await expect(page.getByTestId('owner-authoring-settlement')).toHaveCount(0);
-      await expect(page.getByRole('button', { name: 'Prepare plan', exact: true })).toBeEnabled();
-      expect(posts).toHaveLength(2);
-      expect(posts[1]).toEqual(original);
-    }
-  });
-}
+test('unverified authoring cost stays honest across reload, without a manual settlement or retry', async ({
+  page,
+}) => {
+  const { posts, writes, settle, project } = await fixture(page, 'en', true);
+  await page.goto(path);
+  const form = page.getByTestId('owner-authoring-settlement');
+  await expect(form.getByText(settlementMessages.en.uncertain, { exact: true })).toBeVisible();
+  await expect(form.getByRole('button')).toHaveCount(0);
+  await page.reload();
+  await expect(form.getByText(settlementMessages.en.uncertain, { exact: true })).toBeVisible();
+  expect(posts).toHaveLength(0);
+  expect(writes).toHaveLength(0);
+  project();
+  settle();
+  await expect(form).toHaveCount(0, { timeout: 10000 });
+  expect(posts).toHaveLength(0);
+  expect(writes).toHaveLength(0);
+});

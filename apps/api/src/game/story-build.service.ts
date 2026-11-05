@@ -286,7 +286,13 @@ export class StoryBuildService {
     return this.configured().quote(owner, data, this.guard(owner));
   }
   async dispatch(owner: string, id: string, input: unknown) {
-    const b = op.extend({ quoteId: z.uuid(), consent: z.literal(true) }).parse(input),
+    const b = op
+        .extend({
+          quoteId: z.uuid(),
+          consent: z.literal(true),
+          automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
+        })
+        .parse(input),
       engine = this.configured();
     const q = (
       await this.db.query(

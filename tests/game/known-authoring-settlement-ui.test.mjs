@@ -106,7 +106,7 @@ test('authoring quote errors and disposal never submit, and storage is owner/job
   );
   assert.throws(() => authoringSettlementScope(f.input.ownerId, 'foreign-path'));
 });
-test('owner UI separates provider cost, currency capture/release and explicit confirmation in three locales', () => {
+test('owner UI observes automatic settlement without mutation or manual confirmation in three locales', () => {
   const component = readFileSync(
     'apps/web/components/visual-authoring/owner-authoring-settlement.tsx',
     'utf8',
@@ -121,14 +121,23 @@ test('owner UI separates provider cost, currency capture/release and explicit co
     'authoring-sparks-release',
   ])
     assert.ok(component.includes(key));
-  assert.match(component, /onClick=\{\(\) => void controller\.current\?\.confirm\(\)\}/);
-  assert.match(component, /void instance\.refresh\(\)/);
+  assert.doesNotMatch(component, /\.confirm\(|method: 'POST'|sessionStorage|<Button/);
+  assert.match(component, /setTimeout\(\(\) => void refresh\(\), 5000\)/);
+  assert.match(component, /q && state\.phase === 'complete'/);
   assert.match(builder, /j\.sparkStatus === 'pending'/);
   assert.match(builder, /\['held', 'pending'\]\.includes\(j\.sparkStatus \?\? ''\)/);
   assert.match(builder, /onSettled=\{\(\) => void refreshAfterSettlement\(\)\}/);
   assert.match(component, /state\.phase === 'complete' && !notified\.current/);
   assert.match(builder, /\['stale', 'failed'\]\.includes\(j\.status\)/);
   for (const locale of ['ru', 'en', 'uk'])
-    for (const key of ['title', 'hint', 'noNew', 'providerCost', 'charged', 'confirm', 'uncertain'])
+    for (const key of [
+      'title',
+      'hint',
+      'noNew',
+      'providerCost',
+      'charged',
+      'automatic',
+      'uncertain',
+    ])
       assert.ok(authoringSettlementMessages[locale][key]);
 });

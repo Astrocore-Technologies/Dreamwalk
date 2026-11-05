@@ -3,8 +3,11 @@ import { useEffect, useRef, useState } from 'react';
 import { formatSparkSubunits } from '@dreamwalk/contracts';
 import { api, useClient } from '@/lib/client';
 import { useT } from '@/lib/i18n';
-import { KnownSettlementController, type SettlementState } from '@/lib/known-npc-settlement';
-import { Button, ErrorBox } from '../ui';
+import {
+  authoringSettlementScope,
+  readKnownSettlement,
+  type SettlementState,
+} from '@/lib/known-npc-settlement';
 import { authoringSettlementMessages } from './owner-authoring-settlement-messages';
 
 export function OwnerAuthoringSettlement({
@@ -41,28 +44,25 @@ function SettlementForm({
     phase: 'loading',
     error: null,
   });
-  const controller = useRef<KnownSettlementController | null>(null);
   useEffect(() => {
-    let instance: KnownSettlementController | undefined;
-    try {
-      instance = new KnownSettlementController({
-        kind: 'authoring',
-        ownerId,
-        jobId,
-        storage: window.sessionStorage,
-        operationId: () => crypto.randomUUID(),
-        read: (path) => api(path, { cache: 'no-store' }),
-        post: (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) }),
-        changed: setState,
-      });
-      controller.current = instance;
-      void instance.refresh();
-    } catch {
-      setState({ quote: null, phase: 'error', error: 'storage' });
-    }
+    let disposed = false;
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    const refresh = async () => {
+      let complete = false;
+      try {
+        const path = authoringSettlementScope(ownerId, jobId).path;
+        const quote = readKnownSettlement(await api(path, { cache: 'no-store' }), jobId);
+        complete = quote.status !== 'pending';
+        if (!disposed) setState({ quote, phase: complete ? 'complete' : 'ready', error: null });
+      } catch {
+        if (!disposed) setState({ quote: null, phase: 'uncertain', error: 'uncertain' });
+      }
+      if (!disposed && !complete) timer = setTimeout(() => void refresh(), 5000);
+    };
+    void refresh();
     return () => {
-      instance?.dispose();
-      controller.current = null;
+      disposed = true;
+      if (timer) clearTimeout(timer);
     };
   }, [ownerId, jobId]);
   const notified = useRef(false);
@@ -73,7 +73,6 @@ function SettlementForm({
     }
   }, [state.phase, onSettled]);
   const q = state.quote;
-  const busy = state.phase === 'loading' || state.phase === 'sending';
   const exact = (amount: string) => formatSparkSubunits(amount, locale, 'exact');
   const providerCost = q
     ? `${BigInt(q.actualMicros) / 1000000n}.${(BigInt(q.actualMicros) % 1000000n).toString().padStart(6, '0')}`
@@ -83,7 +82,7 @@ function SettlementForm({
       <h3>{text.title}</h3>
       <p>{text.hint}</p>
       <p>{text.noNew}</p>
-      {q && (
+      {q && state.phase === 'complete' && (
         <dl className="stack">
           <div>
             <dt>{text.providerCost}</dt>
@@ -119,38 +118,13 @@ function SettlementForm({
           </div>
         </dl>
       )}
-      <ErrorBox message={state.error ? text[state.error] : ''} />
       <p role="status" aria-live="polite">
-        {state.phase === 'loading'
-          ? text.loading
-          : state.phase === 'sending'
-            ? text.sending
-            : state.phase === 'complete'
-              ? text.complete
-              : ''}
+        {state.phase === 'complete'
+          ? text.complete
+          : state.phase === 'uncertain'
+            ? text.uncertain
+            : text.automatic}
       </p>
-      <div className="row wrap">
-        {['ready', 'uncertain', 'sending'].includes(state.phase) && (
-          <Button
-            type="button"
-            busy={state.phase === 'sending'}
-            disabled={busy}
-            onClick={() => void controller.current?.confirm()}
-          >
-            {state.phase === 'uncertain' ? text.retry : text.confirm}
-          </Button>
-        )}
-        {state.phase !== 'complete' && (
-          <Button
-            type="button"
-            variant="secondary"
-            disabled={busy}
-            onClick={() => void controller.current?.refresh()}
-          >
-            {text.refresh}
-          </Button>
-        )}
-      </div>
     </section>
   );
 }

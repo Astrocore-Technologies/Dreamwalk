@@ -29,6 +29,7 @@ type State = {
   }[];
 };
 type Quote = {
+  automaticKnownCostPolicy?: 'known-cost-v1';
   imageInputCount?: number;
   schematicMapCount?: number;
   sparks?: { quoteId: string; reserveSubunits: string; rateVersion: string; walletCharging: true };
@@ -139,7 +140,7 @@ export function StoryPlayableBuilder({
   onApplied?: () => void;
 }) {
   const costs = useSparkCosts();
-  const { locale } = useT(),
+  const { locale, t } = useT(),
     i = locale === 'ru' ? 0 : locale === 'en' ? 1 : 2,
     copyText = (k: keyof typeof copy) => copy[k][i];
   const [state, setState] = useState<State | null>(null),
@@ -309,7 +310,13 @@ export function StoryPlayableBuilder({
           }
           // Clear consent-bearing quote before dispatch; unknown outcomes require status recovery.
           setQuote(null);
-          await mutate('/story-builds/' + id + '/dispatch', { quoteId: quote.id, consent: true });
+          await mutate('/story-builds/' + id + '/dispatch', {
+            quoteId: quote.id,
+            consent: true,
+            ...(quote.automaticKnownCostPolicy === 'known-cost-v1'
+              ? { automaticKnownCostPolicy: quote.automaticKnownCostPolicy }
+              : {}),
+          });
         } else if (kind === 'apply') {
           if (!review || fresh.status !== 'proposed' || !fresh.draft) return;
           await mutate('/story-builds/' + id + '/apply', {
@@ -406,7 +413,15 @@ export function StoryPlayableBuilder({
           {quote && (
             <div>
               {quote.sparks && <SparkQuotePrice quote={quote} />}
-              <SparkQuoteNotice quote={quote} />
+              {quote.automaticKnownCostPolicy === 'known-cost-v1' ? (
+                <small data-authoring-known-cost-policy>
+                  {t(
+                    'Подтверждённый расход спишется автоматически в пределах резерва, даже если подготовка не удалась.',
+                  )}
+                </small>
+              ) : (
+                <SparkQuoteNotice quote={quote} />
+              )}
               <MapImageNotice
                 count={quote.imageInputCount}
                 schematicCount={quote.schematicMapCount}

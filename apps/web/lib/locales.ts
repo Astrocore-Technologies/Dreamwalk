@@ -201,6 +201,12 @@ const messages: Record<string, Record<Locale, string>> = {
     en: 'The actual cost is captured after preparation; the remaining reserve is released.',
     uk: 'Після підготовки спишеться фактична вартість, решта резерву повернеться.',
   },
+  'Подтверждённый расход спишется автоматически в пределах резерва, даже если подготовка не удалась.':
+    {
+      ru: 'Подтверждённый расход спишется автоматически в пределах резерва, даже если подготовка не удалась. Остаток резерва вернётся. Неизвестный расход или превышение резерва оставят резерв удержанным без дополнительного списания. Автоматического повтора запроса не будет.',
+      en: 'Verified usage is charged automatically within the reserve, even if preparation fails. The remaining reserve is released. Unknown costs or costs above the reserve keep the reserve held without an additional charge. The request will not retry automatically.',
+      uk: 'Підтверджена витрата спишеться автоматично в межах резерву, навіть якщо підготовка не вдалася. Решта резерву повернеться. Невідомі витрати або перевищення резерву залишать резерв утриманим без додаткового списання. Автоматичного повтору запиту не буде.',
+    },
   'Подтвердить и начать': {
     ru: 'Подтвердить и начать',
     en: 'Confirm and start',

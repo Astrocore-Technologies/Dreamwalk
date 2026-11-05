@@ -23,6 +23,12 @@ test(
     const { startLocalPostgres } = await import('../../scripts/postgres-local.mjs');
     const cluster = await startLocalPostgres();
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    // pg-pool resolves end() after removing clients, before their socket close callbacks.
+    // Do not stop PostgreSQL while those connections are still closing.
+    const clientClosures = [];
+    pool.on('connect', (client) => {
+      clientClosures.push(new Promise((resolve) => client.once('end', resolve)));
+    });
     const cm = require.resolve('../../apps/api/dist/config.js');
     require.cache[cm] = {
       id: cm,
@@ -748,6 +754,7 @@ test(
     } finally {
       await game.onModuleDestroy();
       await pool.end();
+      await Promise.all(clientClosures);
       await cluster.stop();
     }
   },

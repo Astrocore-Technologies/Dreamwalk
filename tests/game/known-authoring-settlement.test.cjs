@@ -63,7 +63,12 @@ function fixture() {
     completed_at: new Date(),
     request_snapshot: snapshot,
   };
-  job.request_hash = digest({ quoteId: nativeId, operationId: job.operation_id, consent: true });
+  job.request_hash = digest({
+    quoteId: nativeId,
+    operationId: job.operation_id,
+    consent: true,
+    automaticKnownCostPolicy: 'known-cost-v1',
+  });
   const native = {
     ...structuredClone(job),
     id: nativeId,
@@ -110,6 +115,7 @@ function fixture() {
     price_snapshot: {
       tariff: structuredClone(sparkTariff(snapshot, 'openai', job.provider_version)),
       providerQuote: {
+        automaticKnownCostPolicy: 'known-cost-v1',
         quoteId: nativeId,
         providerVersion: job.provider_version,
         requestHash: native.request_hash,
@@ -370,4 +376,160 @@ test('zero known cost releases and an admitted legacy conversion is retained', (
       '3000';
   assert.equal(review(old).captureSubunits, '743');
   assert.equal(review(old).releaseSubunits, '2257');
+});
+
+const {
+  KnownAuthoringSettlement,
+} = require('../../apps/api/dist/live-test/known-authoring-settlement');
+const { SparksAccounting } = require('../../apps/api/dist/generation/sparks-accounting');
+const automaticReview = (f, previous) =>
+  knownAuthoringSettlementQuote(
+    f.job,
+    f.native,
+    f.authorization,
+    f.reservation,
+    f.hold,
+    f.quote,
+    previous,
+    f.dreams,
+    true,
+  );
+test('historical and old-client consent never authorizes automatic capture', async () => {
+  for (const policy of [undefined, 'other-policy', 'known-cost-v1']) {
+    const f = fixture();
+    f.quote.price_snapshot.providerQuote.automaticKnownCostPolicy = policy;
+    f.job.request_hash = digest({
+      quoteId: f.native.id,
+      operationId: f.job.operation_id,
+      consent: true,
+    });
+    assert.throws(() => automaticReview(f), rejected);
+    assert.equal(review(f).requiresConsent, true);
+  }
+  const { f, c, service } = serviceFixture();
+  delete f.quote.price_snapshot.providerQuote.automaticKnownCostPolicy;
+  assert.equal(await service.settleAutomatic(c, f.job.actor_id, f.job.id), undefined);
+  assert.deepEqual(f.writes, []);
+});
+test('automatic proof closes semantic failure, cancellation and a verified late receipt, never unknown usage', () => {
+  for (const status of ['failed', 'stale', 'cancelled']) {
+    const f = addDreams(fixture());
+    f.job.status = status;
+    f.hold.reason = 'unknown';
+    assert.equal(automaticReview(f).captureSubunits, '1486');
+    f.job.provider_usage = null;
+    assert.throws(() => automaticReview(f), rejected);
+  }
+  for (const mutate of [
+    (f) => (f.job.status = 'unknown'),
+    (f) => (f.job.provider_usage.costVerifiedForSparks = false),
+    (f) => (f.job.request_hash = digest('different consent')),
+    (f) => (f.reservation.operation_key = 'different job'),
+    (f) => (f.hold.reason = 'reserve_exceeded'),
+  ]) {
+    const f = fixture();
+    mutate(f);
+    assert.throws(() => automaticReview(f), rejected);
+  }
+});
+function serviceFixture() {
+  const f = fixture();
+  f.audits = [];
+  f.writes = [];
+  const c = {
+    query: async (sql, values = []) => {
+      if (sql.startsWith('SELECT session_id FROM live_authoring_text_jobs'))
+        return { rows: [{ session_id: f.job.session_id }] };
+      if (sql.startsWith('SELECT * FROM live_authoring_text_jobs')) return { rows: [f.job] };
+      if (sql.startsWith('SELECT * FROM live_authoring_text_quotes')) return { rows: [f.native] };
+      if (sql.startsWith('SELECT * FROM generation_budget_reservations'))
+        return { rows: [f.reservation] };
+      if (sql.startsWith('SELECT * FROM spark_holds')) return { rows: [f.hold] };
+      if (sql.startsWith('SELECT * FROM spark_quotes')) return { rows: [f.quote] };
+      if (sql.startsWith('SELECT details FROM audit')) return { rows: f.audits };
+      if (sql.startsWith('INSERT INTO audit')) {
+        f.audits.push({ details: JSON.parse(values[3]) });
+        f.writes.push(sql);
+        return { rows: [] };
+      }
+      if (
+        sql.includes('pg_advisory_xact_lock') ||
+        sql.startsWith('SELECT owner_id FROM spark_wallets')
+      )
+        return { rows: [] };
+      throw new Error(`Unexpected fixture query: ${sql}`);
+    },
+  };
+  const db = { tx: async (work) => work(c) };
+  const authority = { lockAuthorization: async () => f.authorization };
+  return { f, c, service: new KnownAuthoringSettlement(db, authority) };
+}
+test('automatic mutation uses original operation receipt once; restart replay is duplicate and invalid proof is no-op', async () => {
+  const { f, c, service } = serviceFixture();
+  const original = SparksAccounting.prototype.settle;
+  let captures = 0;
+  SparksAccounting.prototype.settle = async (_c, actor, holdId, settlement, reconcile) => {
+    assert.equal(actor, f.job.actor_id);
+    assert.equal(holdId, f.hold.id);
+    assert.equal(settlement.receiptId, `owner-authoring-settlement:${f.job.operation_id}`);
+    assert.equal(reconcile, true);
+    const plan = planSparkSettlement(
+      { ...f.hold, spark_rate_version: automaticReview(f, f.audits[0]).rateVersion },
+      settlement,
+      true,
+    );
+    if (!plan.duplicate) {
+      captures++;
+      f.hold = {
+        ...f.hold,
+        status: 'settled',
+        reason: null,
+        captured_subunits: '1486',
+        settlement_fingerprint: plan.fingerprint,
+      };
+    }
+    return f.hold;
+  };
+  try {
+    assert.equal(
+      (await service.settleAutomatic(c, f.job.actor_id, f.job.id)).requiresConsent,
+      false,
+    );
+    assert.equal(
+      (await service.settleAutomatic(c, f.job.actor_id, f.job.id)).requiresConsent,
+      false,
+    );
+    assert.equal(captures, 1);
+    assert.equal(f.audits.length, 1);
+    f.job.provider_usage = null;
+    assert.equal(await service.settleAutomatic(c, f.job.actor_id, f.job.id), undefined);
+    assert.equal(captures, 1);
+  } finally {
+    SparksAccounting.prototype.settle = original;
+  }
+});
+test('recovery is bounded, advances past rejected rows, resets cursor and never dispatches', async () => {
+  const service = new KnownAuthoringSettlement({}, {});
+  const ids = Array.from({ length: 25 }, () => randomUUID()).sort();
+  const cursors = [],
+    recovered = [];
+  service.db = {
+    query: async (sql, values) => {
+      assert.match(sql, /h.status='pending'/);
+      assert.match(sql, /automaticKnownCostPolicy'='known-cost-v1'/);
+      assert.match(sql, /ORDER BY j.id LIMIT 25/);
+      cursors.push(values[0]);
+      return values[0] ? [] : ids.map((id) => ({ id, actor_id: 'actor' }));
+    },
+    tx: async (work) => work({}),
+  };
+  service.settleAutomatic = async (_c, actor, id) => {
+    assert.equal(actor, 'actor');
+    recovered.push(id);
+  };
+  await service.recoverPending();
+  await service.recoverPending();
+  await service.recoverPending();
+  assert.deepEqual(cursors, [null, ids[24], null]);
+  assert.equal(recovered.length, 50);
 });
