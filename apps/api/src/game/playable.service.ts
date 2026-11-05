@@ -1,3 +1,5 @@
+import { assertPlayableGrid, requiresMapRecovery } from './map-readiness';
+import { startMapGroundingCompatible } from './story-map-mode';
 import { bindUnresolvedScenePresence } from './unresolved-scene-presence';
 import { schematicStorySource, playableMapBindings } from './story-map-mode';
 import { AuthoringTextEngine } from '../live-test/authoring-text';
@@ -342,6 +344,8 @@ export class PlayableService {
     );
     const compiled = compilePlayableDraft(authoredGameDraftSchema.parse(draft));
     if (!compiled.playable) fail(400, 'INVALID_MAP', compiled.errors.join(';'));
+    if (requiresMapRecovery(compiled.playable!))
+      fail(409, 'MAP_GRID_REQUIRED', 'MAP_GRID_REQUIRED');
     for (const map of draft.maps) {
       const description = content.locations?.find(
         (l) => l.id === map.sourceLocationId,
@@ -634,6 +638,7 @@ export class PlayableService {
     proposal: unknown,
   ) {
     const checked = compileStoryPlan(sourcePackage.plannerSource, proposal);
+    assertPlayableGrid(checked.playable);
     checked.playable.artBindings = playableMapBindings(
       sourcePackage.sourceArtBindings ?? [],
       checked.playable.maps,
@@ -905,6 +910,16 @@ export class PlayableService {
     const row = await this.sourceForStart(c, userId, versionId);
     const compiled = row.package.compiled ?? prepared;
     if (!compiled) fail(409, 'START_PREPARATION_REQUIRED', 'START_PREPARATION_REQUIRED');
+    if (
+      row.package.plannerSource &&
+      !startMapGroundingCompatible(row.package.plannerSource, compiled)
+    )
+      fail(409, 'MAP_GRID_REQUIRED', 'MAP_GRID_REQUIRED');
+    try {
+      assertPlayableGrid(compiled);
+    } catch {
+      fail(409, 'MAP_GRID_REQUIRED', 'MAP_GRID_REQUIRED');
+    }
     const state = createStateFromPlayable(compiled, [actorId], seed);
     state.narrativeSource = { versionId: row.id, checksum: row.checksum };
     if (Object.values(state.entities).some((entity) => entity.unresolvedScenePresence))

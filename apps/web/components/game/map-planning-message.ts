@@ -1,7 +1,13 @@
 /** Explain the verified failure category without guessing why the image was uncertain. */
 export function mapPlanningMessage(code: string | null | undefined, locale: 'ru' | 'en' | 'uk') {
-  if (!code?.startsWith('MAP_IMAGE_')) return null;
+  if (code !== 'MAP_GRID_REQUIRED' && !code?.startsWith('MAP_IMAGE_')) return null;
   const index = locale === 'en' ? 1 : locale === 'uk' ? 2 : 0;
+  if (code === 'MAP_GRID_REQUIRED')
+    return [
+      'Не удалось подтвердить клеточную карту с позициями персонажей. Подготовка не завершена; изображение сохранено, автоматического повтора нет.',
+      'A grid with character positions could not be verified. Preparation is incomplete; the image is preserved and there is no automatic retry.',
+      'Не вдалося підтвердити клітинну карту з позиціями персонажів. Підготовку не завершено; зображення збережено, автоматичного повтору немає.',
+    ][index];
   if (code === 'MAP_IMAGE_UNCERTAIN')
     return [
       'Точные позиции на карте пока не удалось определить уверенно. Изображение сохранено; новый запрос не запускался.',

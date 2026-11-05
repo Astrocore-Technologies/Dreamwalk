@@ -422,8 +422,8 @@ test('raster walls and closed observed doors occlude knowledge without movement 
   state.entities.hidden = hidden;
   assert.equal(
     g.visible(state, state.entities.hero, hidden),
-    true,
-    'action visibility stays unchanged',
+    false,
+    'public entities and guessed-ID contact share the grounded observation boundary',
   );
   assert.equal(
     g
@@ -600,6 +600,18 @@ test('builder analyzes effective manual art bindings, aliases old map IDs and ho
   }
 });
 
+// Historical source shape for read/compile compatibility only; new starts cannot create it.
+function legacyOmittedSource(source) {
+  const { mapImages, ...rest } = source;
+  return {
+    ...rest,
+    omittedMapImages: mapImages.map(({ locationId, revisionId, sha256 }) => ({
+      locationId,
+      revisionId,
+      sha256,
+    })),
+  };
+}
 function locationOnlyPlan(proposal) {
   const room = proposal.rooms[0];
   delete room.spatialGrounding;
@@ -620,10 +632,11 @@ function locationOnlyPlan(proposal) {
   return proposal;
 }
 
-test('missing vision policy offers location-only RP without pretending to analyze images', () => {
+test('missing vision policy fails before spending while legacy source remains readable', () => {
   const { schematicStorySource } = require('../../apps/api/dist/game/story-map-mode');
   const { source, proposal } = fixture();
-  const fallback = schematicStorySource(source, {});
+  assert.throws(() => schematicStorySource(source, {}), /MAP_VISION_POLICY_REQUIRED/);
+  const fallback = legacyOmittedSource(source);
   assert.equal(fallback.mapImages, undefined);
   assert.deepEqual(
     fallback.omittedMapImages,
@@ -658,8 +671,7 @@ test('missing vision policy offers location-only RP without pretending to analyz
   assert.equal(body.input.includes('omittedMapImages'), true);
 });
 
-test('location-only launch keeps unanalysed original artwork with no invented coordinates', () => {
-  const { schematicStorySource } = require('../../apps/api/dist/game/story-map-mode');
+test('new location-only launch refuses incomplete geometry and preserves original artwork', () => {
   const { PlayableService } = require('../../apps/api/dist/game/playable.service');
   const { source, proposal } = fixture();
   const planned = locationOnlyPlan(structuredClone(proposal));
@@ -671,12 +683,9 @@ test('location-only launch keeps unanalysed original artwork with no invented co
       portrait,
     ],
   };
-  const schematic = { ...original, plannerSource: schematicStorySource(source, {}) };
+  const schematic = { ...original, plannerSource: legacyOmittedSource(source) };
   const service = new PlayableService({}, {}, {});
-  const playable = service.compileLaunchPlan(schematic, planned);
-  assert.deepEqual(playable.artBindings, original.sourceArtBindings);
-  assert.equal(playable.maps.room.spatialMode, 'location_only');
-  assert.equal(playable.maps.room.spatialGrounding, undefined);
+  assert.throws(() => service.compileLaunchPlan(schematic, planned), /MAP_GRID_REQUIRED/);
   assert.equal(original.sourceArtBindings.length, 2);
   assert.equal(
     service.compileLaunchPlan(original, proposal).artBindings.length,
@@ -685,7 +694,7 @@ test('location-only launch keeps unanalysed original artwork with no invented co
   );
 });
 
-test('launch fallback is source-hash fenced, repeatable, private, and leaves compiled campaigns alone', async () => {
+test('missing vision cannot silently transform launch source and leaves compiled saves alone', async () => {
   const { PlayableService } = require('../../apps/api/dist/game/playable.service');
   const { visualDigest } = require('../../apps/api/dist/visual-authoring/fingerprint');
   const { source } = fixture();
@@ -711,16 +720,14 @@ test('launch fallback is source-hash fenced, repeatable, private, and leaves com
     { assertPinsAvailable: async () => pins++ },
     { provider: { profile: {} } },
   );
-  const first = await service.sourceForStart(client, 'owner', randomUUID());
-  const again = await service.sourceForStart(client, 'owner', randomUUID());
-  assert.equal(first.package.plannerSource.mapImages, undefined);
-  assert.equal(first.package.plannerSource.omittedMapImages.length, 1);
-  assert.notEqual(
-    first.checksum,
-    row.checksum,
-    'old estimates/preparations cannot be silently reused',
+  await assert.rejects(
+    () => service.sourceForStart(client, 'owner', randomUUID()),
+    /MAP_VISION_POLICY_REQUIRED/,
   );
-  assert.equal(first.checksum, again.checksum);
+  await assert.rejects(
+    () => service.sourceForStart(client, 'owner', randomUUID()),
+    /MAP_VISION_POLICY_REQUIRED/,
+  );
   assert.equal(pins, 2);
   assert.ok(row.package.plannerSource.mapImages);
   row.package.compiled = { existing: true };
@@ -731,13 +738,10 @@ test('launch fallback is source-hash fenced, repeatable, private, and leaves com
 });
 
 test('location-only author drafts and publication preserve the exact original map association', () => {
-  const {
-    schematicStorySource,
-    playableMapBindings,
-  } = require('../../apps/api/dist/game/story-map-mode');
+  const { playableMapBindings } = require('../../apps/api/dist/game/story-map-mode');
   const { source, proposal } = fixture();
   const planned = locationOnlyPlan(structuredClone(proposal));
-  const checked = compileStoryPlan(schematicStorySource(source, {}), planned);
+  const checked = compileStoryPlan(legacyOmittedSource(source), planned);
   assert.equal(checked.draft.maps[0].spatialMode, 'location_only');
   assert.equal(checked.draft.maps[0].backgroundMode, undefined);
   const binding = { slot: 'map:room:background', revisionId: source.mapImages[0].revisionId };
@@ -821,6 +825,10 @@ test('result diagnostics preserve bounded categories without leaking source or d
     'STORY_SCENE_PRESENCE_EVIDENCE_REQUIRED',
     'STORY_POSITION_REQUIRED',
     'MAP_IMAGE_UNSAFE_SPAWN',
+    'MAP_GRID_REQUIRED',
+    'MAP_IMAGE_PRESENCE_UNSUPPORTED',
+    'MAP_IMAGE_LOCAL_EVIDENCE_REQUIRED',
+    'MAP_IMAGE_LOCAL_EVIDENCE_CONFLICT',
   ])
     assert.equal(classify(new Error(code), 'apply'), code);
   assert.equal(
@@ -1146,13 +1154,12 @@ test('source manifest pins survive a filtered playable view and exact revision a
   await assert.rejects(() => assets.pinPrepared(c, 'version', prepared), /MANIFEST_CONFLICT/);
 });
 
-test('compiled location-only freeze keeps full source and playable map manifests', async () => {
+test('new compiled release refuses legacy location-only geometry without writing or pinning', async () => {
   syntheticMapServiceConfig();
   const { PlayableService } = require('../../apps/api/dist/game/playable.service');
-  const { schematicStorySource } = require('../../apps/api/dist/game/story-map-mode');
   const { source, proposal } = fixture();
   locationOnlyPlan(proposal);
-  const draft = compileStoryPlan(schematicStorySource(source, {}), proposal).draft;
+  const draft = compileStoryPlan(legacyOmittedSource(source), proposal).draft;
   const binding = { slot: 'map:room:background', revisionId: source.mapImages[0].revisionId };
   let payload;
   const c = {
@@ -1173,12 +1180,20 @@ test('compiled location-only freeze keeps full source and playable map manifests
   );
   service.validateNpcReferences = async () => {};
   service.validateLocations = () => {};
-  await service.freeze(
-    c,
-    { id: randomUUID(), owner_id: 'owner', title: source.title, data: { content: source.content } },
-    'private',
-    1,
+  await assert.rejects(
+    () =>
+      service.freeze(
+        c,
+        {
+          id: randomUUID(),
+          owner_id: 'owner',
+          title: source.title,
+          data: { content: source.content },
+        },
+        'private',
+        1,
+      ),
+    /MAP_GRID_REQUIRED/,
   );
-  assert.deepEqual(payload.sourceArtBindings, [binding]);
-  assert.deepEqual(payload.compiled.artBindings, [binding]);
+  assert.equal(payload, undefined);
 });

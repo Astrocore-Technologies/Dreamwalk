@@ -1,14 +1,10 @@
 import { test, expect } from '@playwright/test';
 import { randomUUID, createHash } from 'node:crypto';
 import sharp from 'sharp';
-import { createAuthoredDraft } from '@dreamwalk/game-core';
-import {
-  authoringRequest,
-  savePrivateFixture,
-  launchPrivateFixture,
-} from './support/private-authoring';
+import { frozenArtBindingSchema, gameEnvelopeSchema, type GameEntity } from '@dreamwalk/contracts';
+import { authoringRequest } from './support/private-authoring';
 
-test('location-only RP preserves the full image and public scene without coordinate controls', async ({
+test('legacy location-only save remains read-only with original image and history', async ({
   page,
 }, info) => {
   test.setTimeout(90_000);
@@ -29,46 +25,6 @@ test('location-only RP preserves the full image and public scene without coordin
     (await page.request.patch('/api/v1/account/settings', { data: { language: 'en' } })).ok(),
   ).toBeTruthy();
   await page.addInitScript(() => localStorage.setItem('dreamwalk-language', 'en'));
-  const story = await authoringRequest(page, '/studio/adventures', { title: `Scene ${suffix}` });
-  const draft = createAuthoredDraft('courtyard');
-  delete draft.turnRules;
-  draft.maps = [
-    {
-      ...draft.maps[0],
-      spatialMode: 'location_only',
-      blocked: [],
-      spawns: [],
-      exits: [],
-      scenePresence: {
-        version: 1,
-        entrySceneId: 'opening',
-        scenes: [
-          {
-            id: 'opening',
-            participantIds: ['keeper'],
-            evidence: { kind: 'authored_scene', reference: 'opening' },
-          },
-          {
-            id: 'elsewhere',
-            participantIds: ['hidden'],
-            evidence: { kind: 'authored_scene', reference: 'elsewhere' },
-          },
-        ],
-      },
-    },
-  ];
-  draft.objects = [];
-  const { x: _x, y: _y, patrolTarget: _patrol, ...keeper } = draft.npcs[0];
-  draft.npcs = [
-    { ...keeper, spatialMode: 'location_only', sceneId: 'opening' },
-    {
-      ...keeper,
-      id: 'hidden',
-      label: 'Hidden stranger',
-      spatialMode: 'location_only',
-      sceneId: 'elsewhere',
-    },
-  ];
   const png = await sharp({
     create: { width: 1200, height: 800, channels: 3, background: '#7895ab' },
   })
@@ -101,20 +57,98 @@ test('location-only RP preserves the full image and public scene without coordin
       },
     },
   });
-  draft.maps[0].locationImage = { revisionId: original.id, sha256: original.sha256 };
-  await savePrivateFixture(page, story.id, draft);
-  const priorArt = await authoringRequest(page, `/asset-library/stories/${story.id}/draft`);
-  await authoringRequest(
-    page,
-    `/asset-library/stories/${story.id}/draft`,
-    {
-      operationId: randomUUID(),
-      expectedRevision: priorArt.revision,
-      bindings: [{ slot: 'map:courtyard:background', revisionId: original.id }],
+  // Only the browser receives a legacy snapshot. Never downgrade a saved campaign
+  // or attempt a newly forbidden location-only launch to manufacture the fixture.
+  const campaign = await authoringRequest(page, '/game/campaigns', {
+    template: 'observatory-v1',
+    turnBased: true,
+  });
+  const id = campaign.campaignId;
+  const snapshot = await authoringRequest(page, `/game/campaigns/${id}/snapshot`);
+  const mapId = snapshot.projection.map.id;
+  snapshot.projection.map = {
+    ...snapshot.projection.map,
+    spatialMode: 'location_only',
+    spawns: [],
+    blocked: [],
+    exits: [],
+    scenePresence: {
+      version: 1,
+      entrySceneId: 'opening',
+      scenes: [
+        {
+          id: 'opening',
+          participantIds: ['keeper'],
+          evidence: { kind: 'authored_scene', reference: 'opening' },
+        },
+      ],
     },
-    'PUT',
+  };
+  delete snapshot.projection.map.composition;
+  delete snapshot.projection.map.spatialGrounding;
+  snapshot.projection.entities = snapshot.projection.entities
+    .filter((entity: GameEntity) => entity.kind === 'player' || entity.id === 'keeper')
+    .map((entity: GameEntity) => {
+      const { x: _x, y: _y, patrolTarget: _patrol, ...saved } = entity;
+      return { ...saved, spatialMode: 'location_only', sceneId: 'opening' };
+    });
+  const art = {
+    slot: `map:${mapId}:background`,
+    revisionId: original.id,
+    sha256: original.sha256,
+    mime: 'image/png',
+    width: 1200,
+    height: 800,
+    url: `/api/v1/asset-library/revisions/${original.id}/file`,
+    attribution: 'Synthetic scene fixture',
+    licenseLabel: 'Test only',
+  };
+  snapshot.projection.artBindings = [
+    frozenArtBindingSchema.parse({
+      slot: art.slot,
+      revisionId: art.revisionId,
+      sha256: art.sha256,
+      mime: art.mime,
+      width: art.width,
+      height: art.height,
+    }),
+  ];
+  gameEnvelopeSchema.parse(snapshot);
+  const savedSnapshot = JSON.stringify(snapshot);
+  const feed = await authoringRequest(page, `/game/campaigns/${id}/turns/feed`);
+  feed.entries = [
+    {
+      id: 'saved-story',
+      ordinal: 1,
+      sequence: 1,
+      tick: 1,
+      createdAt: null,
+      kind: 'npc_reply',
+      channel: 'say',
+      authorLabel: 'Keeper',
+      text: 'Saved story: we remain beside the sofa.',
+    },
+  ];
+  await page.route(`**/api/v1/game/campaigns/${id}/snapshot`, (route) =>
+    route.fulfill({ json: snapshot }),
   );
-  const id = await launchPrivateFixture(page, story.id, true);
+  await page.route(`**/api/v1/game/campaigns/${id}/turns/feed`, (route) =>
+    route.fulfill({ json: feed }),
+  );
+  await page.route(`**/api/v1/asset-library/campaigns/${id}/manifest`, (route) =>
+    route.fulfill({ json: { bindings: [art] } }),
+  );
+  const writes: string[] = [];
+  const sockets: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() !== 'GET' && new URL(request.url()).pathname.includes(`/campaigns/${id}`))
+      writes.push(request.url());
+  });
+  await page.routeWebSocket('**/api/v1/game/socket**', (socket) => {
+    sockets.push(socket.url());
+    socket.close();
+  });
+  await page.goto(`/game/${id}`);
   const scene = page.getByTestId('location-only-scene');
   const image = page.getByTestId('location-map-image');
   await expect(scene).toBeVisible();
@@ -153,48 +187,27 @@ test('location-only RP preserves the full image and public scene without coordin
     await expect(page.getByTestId('map-coordinate-readout')).toHaveCount(0);
     await expect(page.getByRole('button', { name: 'Approach', exact: true })).toHaveCount(0);
   }
-  const numericRequests: string[] = [];
-  page.on('request', (request) => {
-    if (
-      request.method() === 'POST' &&
-      /\/(move|stop|approach)$/.test(new URL(request.url()).pathname)
-    )
-      numericRequests.push(request.url());
-  });
+  await expect(page.getByTestId('map-grid-recovery-required')).toContainText('Game paused');
+  await expect(page.getByTestId('story-feed')).toContainText(
+    'Saved story: we remain beside the sofa.',
+  );
   await image.click();
   await scene.getByRole('button', { name: /^Inventory/ }).click();
   const inventory = scene.getByRole('dialog', { name: 'Inventory', exact: true });
   await expect(inventory).toBeVisible();
   await inventory.getByRole('button', { name: 'Close', exact: true }).click();
-  await scene
-    .locator('[data-scene-participant="keeper"]')
-    .getByRole('button', { name: 'Say', exact: true })
-    .click();
-  await expect(page.getByTestId('unified-story').locator('textarea')).toBeVisible();
+  await expect(
+    scene
+      .locator('[data-scene-participant="keeper"]')
+      .getByRole('button', { name: 'Say', exact: true }),
+  ).toBeDisabled();
   const composer = page.getByTestId('unified-story');
-  await composer.locator('textarea').fill('Hello, Keeper. I look around the courtyard.');
-  await composer.locator('textarea').press('ArrowLeft');
-  await composer.getByRole('button', { name: 'Send', exact: true }).click();
-  await expect(composer.locator('textarea')).toHaveValue('');
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  const ended = page.waitForResponse(
-    (response) =>
-      response.url().endsWith(`/game/campaigns/${id}/commands`) &&
-      response.request().method() === 'POST' &&
-      response.request().postDataJSON()?.type === 'turn.end',
-  );
-  await page.getByRole('button', { name: 'End turn', exact: true }).click();
-  const endedResponse = await ended;
-  expect(endedResponse.ok()).toBe(true);
-  expect((await endedResponse.json()).status).not.toBe('rejected');
-  await expect(page.getByRole('dialog')).toHaveCount(0);
-  expect(numericRequests).toEqual([]);
-  const snapshot = await authoringRequest(page, `/game/campaigns/${id}/snapshot`);
-  expect(snapshot.projection.map.spatialMode).toBe('location_only');
-  for (const entity of snapshot.projection.entities) {
-    expect(entity).not.toHaveProperty('x');
-    expect(entity).not.toHaveProperty('y');
-  }
+  await expect(composer.locator('textarea')).toBeDisabled();
+  await expect(composer.getByRole('button', { name: 'Send', exact: true })).toBeDisabled();
+  await expect(page.getByRole('button', { name: 'End turn', exact: true })).toHaveCount(0);
+  expect(writes).toEqual([]);
+  expect(sockets).toEqual([]);
+  expect(JSON.stringify(snapshot)).toBe(savedSnapshot);
   await info.attach('location-only-map', {
     body: await page.screenshot(),
     contentType: 'image/png',
@@ -204,4 +217,12 @@ test('location-only RP preserves the full image and public scene without coordin
   await expect(image).toHaveAttribute('src', originalUrl!);
   await expect(scene.locator('[data-scene-participant="hidden"]')).toHaveCount(0);
   await expect(scene.locator('canvas')).toHaveCount(0);
+  await expect(page.getByTestId('map-grid-recovery-required')).toBeVisible();
+  await expect(page.getByTestId('story-feed')).toContainText(
+    'Saved story: we remain beside the sofa.',
+  );
+  await expect(composer.locator('textarea')).toBeDisabled();
+  expect(writes).toEqual([]);
+  expect(sockets).toEqual([]);
+  expect(JSON.stringify(snapshot)).toBe(savedSnapshot);
 });

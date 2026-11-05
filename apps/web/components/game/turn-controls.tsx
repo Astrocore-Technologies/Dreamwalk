@@ -1,4 +1,5 @@
 'use client';
+import { isSpatialRecoveryRequired } from './spatial-recovery';
 import type { GameProjection } from '@dreamwalk/contracts';
 import { Button } from '../ui';
 import { useTurnText } from './turn-messages';
@@ -21,7 +22,7 @@ export function TurnControls({
 }) {
   const text = useTurnText(),
     turn = projection.turn;
-  if (!turn) return null;
+  if (!turn || isSpatialRecoveryRequired(projection)) return null;
   const canReact = turn.phase === 'reaction' && turn.reaction?.reactorId === projection.actorId;
   return (
     <section

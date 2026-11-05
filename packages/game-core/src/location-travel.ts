@@ -1,3 +1,4 @@
+import { groundedArrivalArea } from './grounded-arrival';
 import { enterScene, copyEntityPlacement } from './scene-presence';
 import {
   footprintIntersectsArea,
@@ -136,9 +137,12 @@ export function travelToLocation(state: GameState, actorId: string, mapId: strin
     next.revision++;
     return { state: next, events };
   }
+  const admission = groundedArrivalArea(state, mapId);
+  if (!admission.valid) return reject('TARGET_UNAVAILABLE');
   const points = [...map.spawns];
   for (let y = 0; y < map.height; y++) for (let x = 0; x < map.width; x++) points.push({ x, y });
   const safe = (entity: GameEntity, point: { x: number; y: number }) =>
+    admission.allows(entity, point) &&
     walkable(next, mapId, point, entity.id, true) &&
     !Object.values(next.encounters).some(
       (encounter) =>

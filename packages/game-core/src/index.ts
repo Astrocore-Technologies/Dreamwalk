@@ -1,9 +1,10 @@
+import { groundedArrivalArea } from './grounded-arrival';
 import { sharesScene, enterScene, publicSceneMap, scenePresenceErrors } from './scene-presence';
 export { sharesScene } from './scene-presence';
 import { hasPosition } from '@dreamwalk/contracts';
 import { travelLocations, travelToLocation } from './location-travel';
 import { isActorConscious, actorLifeState } from '@dreamwalk/contracts';
-import { observedVisible } from './observation-visibility';
+import { observedVisible, imageLineOfSight } from './observation-visibility';
 import { narrativeTurnVisibleTo } from './narrative';
 import { consumeWorldItem } from './world-items';
 import { projectTurnController, applyTurnAction, applyWorldTurnAction, turnFence } from './turns';
@@ -360,8 +361,11 @@ export function visible(s: GameState, a: GameEntity, b: GameEntity): boolean {
     }
     return false;
   };
-  return occupiedCells(a).some((from) =>
-    occupiedCells(b).some((to) => distance(from, to) <= 9 && clearRay(from, to)),
+  return (
+    imageLineOfSight(s, a, b) &&
+    occupiedCells(a).some((from) =>
+      occupiedCells(b).some((to) => distance(from, to) <= 9 && clearRay(from, to)),
+    )
   );
 }
 
@@ -456,7 +460,12 @@ function actionInternal(
       )
     )
       return fail(state, 'WRONG_MODE');
-    if (!walkable(state, exit.destinationMapId, exit.destination, id, true))
+    const admission = groundedArrivalArea(state, exit.destinationMapId);
+    if (!admission.valid) return fail(state, 'TARGET_UNAVAILABLE');
+    if (
+      !admission.allows(a, exit.destination) ||
+      !walkable(state, exit.destinationMapId, exit.destination, id, true)
+    )
       return fail(state, 'PATH_BLOCKED');
     const s = copy(state);
     for (const [npcId, brain] of Object.entries(s.npcBrains ?? {})) {

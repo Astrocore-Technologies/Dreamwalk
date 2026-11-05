@@ -1,4 +1,5 @@
 import { VerifiedGenerationAccessRecovery } from './generation/verified-access-recovery';
+import { travelMapPlanDefinition } from './game/travel-map-plan';
 import { resolveReplyLocale } from './game/reply-locale';
 import { CachedTranslations, PostgresTranslationCache } from './translation/service';
 import { TranslationInterceptor } from './translation/interceptor';
@@ -128,6 +129,12 @@ class Health {
     VisualAuthoringService,
     StoryBuildService,
     PaidStartService,
+    {
+      provide: 'TRAVEL_MAP_ENGINE',
+      inject: [Db, GenerationAuthority],
+      useFactory: (db: Db, live: GenerationAuthority) =>
+        createAuthoringTextEngine(db, live, travelMapPlanDefinition),
+    },
     {
       provide: 'STORY_BUILD_ENGINE',
       inject: [Db, GenerationAuthority],

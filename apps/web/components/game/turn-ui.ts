@@ -1,4 +1,5 @@
 import type { GamePoint, GameProjection } from '@dreamwalk/contracts';
+import { isSpatialRecoveryRequired } from './spatial-recovery';
 
 /** Presentation fence only. Server authorization and resource costs remain authoritative. */
 export function projectionTurnFence(projection: GameProjection | null | undefined) {
@@ -8,6 +9,7 @@ export function projectionTurnFence(projection: GameProjection | null | undefine
     : undefined;
 }
 export function playerControlsAvailable(projection: GameProjection | null | undefined) {
+  if (isSpatialRecoveryRequired(projection)) return false;
   const turn = projection?.turn;
   return !turn || (turn.phase === 'player' && turn.ownTurn && !turn.pendingResolution);
 }

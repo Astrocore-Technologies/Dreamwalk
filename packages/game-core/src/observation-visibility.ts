@@ -3,22 +3,23 @@ import { sharesScene } from './scene-presence';
 import { isActorConscious } from '@dreamwalk/contracts';
 import { occupiedCells, type GameEntity, type GameState } from '@dreamwalk/contracts';
 import { visible } from './index';
-/** Perception only. Never use image observations to authorize or block an action. */
+/** Conscious perception shares the public/contact visibility boundary. Movement stays independent. */
 export function observedVisible(state: GameState, actor: GameEntity, target: GameEntity): boolean {
   if (!hasPosition(actor) || !hasPosition(target))
     return isActorConscious(actor) && sharesScene(state, actor, target);
-  if (!isActorConscious(actor) || !visible(state, actor, target)) return false;
+  return isActorConscious(actor) && visible(state, actor, target);
+}
+
+/** Image evidence fences observation/contact, never collision or ordinary RP movement. */
+export function imageLineOfSight(state: GameState, actor: GameEntity, target: GameEntity): boolean {
+  if (!hasPosition(actor) || !hasPosition(target)) return sharesScene(state, actor, target);
   const map = state.maps[actor.mapId],
     g = map?.spatialGrounding;
   const bound = state.artBindings?.find((b) => b.slot === `map:${map.id}:background`);
-  if (!g || (bound && bound.revisionId !== g.imageRevisionId)) return true;
-  const opaque = (x: number, y: number) => {
-    const cell = g.rows[y]?.[x] ?? '?';
-    return (
-      ['#', 'X', '?'].includes(cell) ||
-      (cell === 'D' && !(g.doors ?? []).some((d) => d.x === x && d.y === y && d.open))
-    );
-  };
+  if (!g) return true;
+  if (bound && (bound.revisionId !== g.imageRevisionId || bound.sha256 !== g.imageSha256))
+    return false;
+  const opaque = (x: number, y: number) => imageCellOpaque(state, actor.mapId, x, y);
   const clear = (from: { x: number; y: number }, targetX: number, targetY: number) => {
     let x = from.x,
       y = from.y;
@@ -56,5 +57,25 @@ export function observedVisible(state: GameState, actor: GameEntity, target: Gam
       (to) =>
         Math.max(Math.abs(from.x - to.x), Math.abs(from.y - to.y)) <= 9 && clear(from, to.x, to.y),
     ),
+  );
+}
+
+/** Conservative information topology. This is not movement collision. */
+export function imageCellOpaque(state: GameState, mapId: string, x: number, y: number): boolean {
+  const g = state.maps[mapId]?.spatialGrounding;
+  if (!g) return false;
+  const bound = state.artBindings?.find((b) => b.slot === `map:${mapId}:background`);
+  if (bound && (bound.revisionId !== g.imageRevisionId || bound.sha256 !== g.imageSha256))
+    return true;
+  const cell = g.rows[y]?.[x] ?? '?';
+  if (cell === 'D') {
+    const door = Object.values(state.entities).find(
+      (e) => e.mapId === mapId && e.kind === 'door' && hasPosition(e) && e.x === x && e.y === y,
+    );
+    if (door) return !door.open;
+  }
+  return (
+    ['#', 'X', '?'].includes(cell) ||
+    (cell === 'D' && !(g.doors ?? []).some((d) => d.x === x && d.y === y && d.open))
   );
 }
