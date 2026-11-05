@@ -1,6 +1,8 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
+import { isSpatialRecoveryRequired } from '../../apps/web/components/game/spatial-recovery.ts';
+import { playerControlsAvailable } from '../../apps/web/components/game/turn-ui.ts';
 import { sceneClick } from '../../apps/web/components/game/scene-input.ts';
 import { mapCoordinateAt } from '../../apps/web/components/game/map-coordinates.ts';
 import { canvasSceneArt } from '../../apps/web/components/assets/art-visibility.ts';
@@ -40,14 +42,15 @@ test('location-only scene mounts outside the positioned renderer and retains the
   assert.match(css, /\.locationMap img\s*\{[^}]*height: auto;[^}]*object-fit: contain;/);
 });
 
-test('participants come only from public projection, separate from the image and preserve NPC/inventory actions', () => {
+test('participants come only from public projection, separate from the image and preserve read-only inspection and inventory', () => {
   const scene = source('game/location-only-scene.tsx');
   assert.match(scene, /participants = projection\.entities\.filter/);
   assert.doesNotMatch(scene, /projection\.map\.scenePresence|participantIds|knownIds/);
   assert.ok(scene.indexOf('</figure>') < scene.indexOf('participants.map'));
-  for (const marker of ['onSelectNpc(entity.id)', 'onInspectNpc(entity.id)', '<InventoryPanel'])
+  for (const marker of ['onInspectNpc(entity.id)', '<InventoryPanel', 'map-grid-recovery-required'])
     assert.ok(scene.includes(marker));
-  assert.match(scene, /disabled=\{disabled \|\| npcUnavailable\(entity\)\}/);
+  assert.match(scene, /<InventoryPanel[\s\S]*?disabled[\s\S]*?onAction=\{\(\) => undefined\}/);
+  assert.doesNotMatch(scene, /onSelectNpc\(entity.id\)/);
   assert.doesNotMatch(scene, /entity\.label \|\| entity\.id/);
 });
 
@@ -71,4 +74,32 @@ test('server-authorized location image is retained without a schematic declarati
     canvasSceneArt(projection, [], { ...approved, url: 'https://external.invalid/a.png' }),
     [],
   );
+});
+
+test('legacy saves are blocked without inventing grid coordinates or turn availability', () => {
+  const before = JSON.stringify(projection);
+  assert.equal(isSpatialRecoveryRequired(projection), true);
+  assert.equal(playerControlsAvailable(projection), false);
+  assert.equal(isSpatialRecoveryRequired(null), false);
+  assert.equal(isSpatialRecoveryRequired({ spatialRecoveryRequired: true, map: {} }), true);
+  assert.equal(playerControlsAvailable({ spatialRecoveryRequired: true, map: {} }), false);
+  assert.equal(isSpatialRecoveryRequired({ map: { spatialMode: 'grid' } }), false);
+  assert.equal(JSON.stringify(projection), before);
+  const game = source('game/use-game.ts');
+  assert.ok(
+    game.indexOf('if (isSpatialRecoveryRequired(envelope.current?.projection))') <
+      game.indexOf('new WebSocket('),
+  );
+  assert.match(game, /isSpatialRecoveryRequired\(value.projection\)/);
+  assert.match(
+    source('game/game-page.tsx'),
+    /recoveryRequired && p.map.spatialMode !== 'location_only'/,
+  );
+  assert.match(
+    source('game/game-canvas.tsx'),
+    /disabled=\{props.disabled \|\| isSpatialRecoveryRequired\(props.projection\)\}/,
+  );
+  const story = source('game/unified-story.tsx');
+  assert.match(story, /const disabled = requestedDisabled \|\| recoveryRequired/);
+  assert.match(story, /const partyDisabled = requestedPartyDisabled \|\| recoveryRequired/);
 });

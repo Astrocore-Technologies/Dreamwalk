@@ -3,6 +3,7 @@ import {
   worldKnownCostPolicyRequired,
   acceptedWorldKnownCostPolicyMatches,
 } from '../generation/known-cost-policy';
+import { travelGroundingConsentHash } from '../generation/travel-grounding-envelope';
 import { LocationTravelGeneration } from './location-travel-generation';
 import { captureWorldQuoteRoster } from '../ai/runtime-map-preflight';
 import { aggregateFunding, optionalFunding } from '../generation/currency-funding';
@@ -39,6 +40,10 @@ const consentInput = quoteInput
     consent: z.literal(true),
     estimateRiskConsent: z.literal(true).optional(),
     automaticKnownCostPolicyHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
+    travelGroundingPolicyHash: z
       .string()
       .regex(/^[a-f0-9]{64}$/)
       .optional(),
@@ -440,7 +445,11 @@ export class WorldGenerationBatch {
         )
       )
         fail(409, 'LOCATION_MEDIA_UNAVAILABLE', 'LOCATION_MEDIA_UNAVAILABLE');
-      const pricedEntries = [...entries, ...mediaEntries];
+      const pricedEntries = [
+        ...entries,
+        ...mediaEntries,
+        ...mediaEntries.map((entry) => entry.grounding),
+      ];
       const reserve = pricedEntries.reduce((n, e) => n + (e.quote.providerReserveMicros ?? 0), 0);
       const estimate = pricedEntries.reduce(
         (n, e) => n + (e.quote.estimatedTotalMicros ?? e.quote.providerReserveMicros ?? 0),
@@ -479,7 +488,12 @@ export class WorldGenerationBatch {
         ...commonQuotedSparkRate(pricedEntries.map((entry) => entry.quote)),
         ...optionalFunding(aggregateFunding(pricedEntries.map((entry) => entry.quote))),
         ...(mediaEntries.length
-          ? { generatedLocationImages: mediaEntries.length, estimateRiskConsentRequired: true }
+          ? {
+              generatedLocationImages: mediaEntries.length,
+              generatedLocationGroundingStages: mediaEntries.length,
+              travelGroundingPolicyHash: travelGroundingConsentHash(entries, mediaEntries),
+              estimateRiskConsentRequired: true,
+            }
           : {}),
         providerUpperMicros: null,
         providerReserveMicros: reserve,
@@ -581,6 +595,15 @@ export class WorldGenerationBatch {
         )
           fail(409, 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED', 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED');
       }
+      if (batch.media_entries?.some((entry: { grounding?: unknown }) => entry.grounding)) {
+        const fingerprint = travelGroundingConsentHash(batch.entries, batch.media_entries);
+        if (
+          batch.quote.travelGroundingPolicyHash !== fingerprint ||
+          input.travelGroundingPolicyHash !== fingerprint
+        )
+          fail(409, 'TRAVEL_GROUNDING_CONSENT_REQUIRED', 'TRAVEL_GROUNDING_CONSENT_REQUIRED');
+      } else if (input.travelGroundingPolicyHash)
+        fail(409, 'TRAVEL_GROUNDING_CONSENT_STALE', 'TRAVEL_GROUNDING_CONSENT_STALE');
       if (batch.accepted_at) {
         await this.consumeOrdinaryForMedia(c, batch, userId);
         const previous = await this.progress(c, campaignId);
@@ -631,7 +654,7 @@ export class WorldGenerationBatch {
       if (digest(entryIdentity(requests)) !== batch.request_hash)
         fail(409, 'GENERATION_QUOTE_STALE', 'GENERATION_QUOTE_STALE');
       const entries = batch.entries as Entry[];
-      // Every accepted native quote remains exact and unspent; there is no future-request allowance.
+      // Existing text children remain exact; future raster allowances live only in explicit media tranches.
       for (const entry of entries) {
         const q = (
           await c.query(
@@ -713,6 +736,9 @@ export class WorldGenerationBatch {
     });
   }
   async quotedWorldRequest(campaignId: string, callerRequest: QueryResultRow) {
+    // This method runs under the campaign writer. Start the independently fenced
+    // native worker without awaiting network work or holding the writer open.
+    void this.travel?.workGrounding(campaignId, callerRequest.id).catch(() => undefined);
     return this.db.tx(async (c) => {
       const candidate = (
         await c.query(
@@ -760,7 +786,9 @@ export class WorldGenerationBatch {
       }
       const failedImage = progress.mediaRows.find(
         (row) =>
-          row.id === callerRequest.id && ['rejected', 'cancelled', 'expired'].includes(row.status),
+          row.id === callerRequest.id &&
+          (['rejected', 'cancelled', 'expired'].includes(row.status) ||
+            row.grounding_status === 'failed'),
       );
       if (failedImage) {
         await this.failUnspent(campaignId, callerRequest.id, 'LOCATION_IMAGE_FAILED', c);
@@ -826,12 +854,16 @@ export class WorldGenerationBatch {
   }
   /** An unresolved prior round must not create a new charge or strand later rounds. */
   async stopUnspentForUnknown(campaignId: string) {
+    await this.travel?.reconcile(campaignId);
     const unknown = await this.db.query(
       `SELECT 1 FROM npc_ai_jobs j LEFT JOIN spark_holds h ON h.id=j.spark_hold_id
        WHERE j.campaign_id=$1 AND (j.status='reconciling' OR h.status='pending')
        UNION ALL SELECT 1 FROM live_test_text_permits WHERE campaign_id=$1 AND state='unknown'
        UNION ALL SELECT 1 FROM game_location_travel_preparations p JOIN image_generation_jobs j ON j.id=p.image_job_id
-         LEFT JOIN spark_holds h ON h.id=j.spark_quote_id WHERE p.campaign_id=$1 AND (j.status='unknown' OR h.status='pending') LIMIT 1`,
+         LEFT JOIN spark_holds h ON h.id=j.spark_quote_id WHERE p.campaign_id=$1 AND (j.status='unknown' OR h.status='pending')
+       UNION ALL SELECT 1 FROM game_travel_map_groundings g JOIN game_location_travel_preparations p ON p.id=g.preparation_id
+         LEFT JOIN live_authoring_text_jobs j ON j.id=g.job_id LEFT JOIN spark_holds h ON h.id=j.spark_quote_id
+         WHERE p.campaign_id=$1 AND ((g.status='unknown' AND NOT (g.job_id IS NULL AND g.error_code='STORY_MAP_COUNT_UNAVAILABLE' AND EXISTS (SELECT 1 FROM runtime_map_token_counts receipt WHERE receipt.id=g.count_id AND receipt.status='succeeded'))) OR j.status='unknown' OR h.status='pending') LIMIT 1`,
       [campaignId],
     );
     if (!unknown.length) return;

@@ -7,18 +7,15 @@ import type { SceneIllustration, VisibleArtBinding } from '../assets/use-campaig
 import { InventoryPanel } from './map-actions';
 import { useItemText } from './item-messages';
 import { useTurnText } from './turn-messages';
-import { npcUnavailable, publicLifeState } from './turn-ui';
+import { publicLifeState } from './turn-ui';
 import styles from './game.module.css';
 
-/** The original location image is the map. Scene presence is not a token position. */
+/** Legacy saves remain readable, but scene presence is not a playable grid. */
 export function LocationOnlyScene({
   projection,
   art = [],
   illustration = null,
-  onSelectNpc,
   onInspectNpc,
-  onAction,
-  disabled,
 }: {
   projection: GameProjection;
   art?: VisibleArtBinding[];
@@ -47,6 +44,10 @@ export function LocationOnlyScene({
       data-testid="location-only-scene"
       data-map-id={projection.map.id}
     >
+      <div className={styles.recoveryNotice} role="status" data-testid="map-grid-recovery-required">
+        <strong>{text('recoveryTitle')}</strong>
+        <p>{text('recoveryDetail')}</p>
+      </div>
       <figure className={styles.locationMap}>
         {imageUrl && failedImage !== imageUrl ? (
           <img
@@ -79,11 +80,7 @@ export function LocationOnlyScene({
                 {life !== 'conscious' && <p data-life-state={life}>{turnText(life)}</p>}
                 {entity.kind === 'npc' && (
                   <div className={styles.menuActions}>
-                    <button
-                      type="button"
-                      disabled={disabled || npcUnavailable(entity)}
-                      onClick={() => onSelectNpc(entity.id)}
-                    >
+                    <button type="button" disabled>
                       {text('say')}
                     </button>
                     {onInspectNpc && (
@@ -109,8 +106,8 @@ export function LocationOnlyScene({
         {inventoryOpen && (
           <InventoryPanel
             projection={projection}
-            disabled={disabled}
-            onAction={(action) => onAction?.(action)}
+            disabled
+            onAction={() => undefined}
             onClose={() => setInventoryOpen(false)}
           />
         )}

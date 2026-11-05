@@ -1,3 +1,5 @@
+import { requiresMapRecovery } from './map-readiness';
+import type { AuthoringTextEngine } from '../live-test/authoring-text';
 import { listCampaigns } from './campaign-list';
 import { restorePublicNpcPresentation } from './public-npc-profile';
 import { LocationTravelGeneration } from './location-travel-generation';
@@ -277,11 +279,12 @@ export class GameService implements OnModuleDestroy {
     @Inject(NpcAiService) private ai: NpcAiService,
     @Inject(AssetReuseService) private art: AssetReuseService,
     @Optional() @Inject(ImageGenerationService) images?: ImageGenerationService,
+    @Optional() @Inject('TRAVEL_MAP_ENGINE') travelMapEngine?: AuthoringTextEngine,
   ) {
     this.corrections = new NarrativeCorrections(this.db, {
       access: (req, id) => this.access(req, id),
       serial: <T>(id: string, work: () => Promise<T>) => this.serial(id, work),
-      load: (id) => this.load(id),
+      load: (id) => this.load(id, false),
       persist: (id, live, state, extra, preflight) =>
         this.persist(
           id,
@@ -294,12 +297,18 @@ export class GameService implements OnModuleDestroy {
           preflight,
         ),
     });
-    if (images) this.travelGeneration = new LocationTravelGeneration(this.db, images, this.art);
+    if (images)
+      this.travelGeneration = new LocationTravelGeneration(
+        this.db,
+        images,
+        this.art,
+        travelMapEngine,
+      );
     this.worldGeneration = new WorldGenerationBatch(this.db, this.ai, this.travelGeneration);
     this.story = new StoryTurnRuntime(this.db, this.ai, {
       serial: <T>(id: string, work: () => Promise<T>) => this.serial(id, work),
       access: (req, id) => this.access(req, id),
-      load: (id) => this.load(id),
+      load: (id, requireGrid) => this.load(id, requireGrid),
       touch: (id, live, actorId) => this.touch(id, live as Live, actorId),
       persist: (id, live, state, kind, extra, preflight, prepare) =>
         this.persist(id, live as Live, state, kind, undefined, extra, prepare, preflight),
@@ -372,9 +381,16 @@ export class GameService implements OnModuleDestroy {
       if (this.queues.get(id) === result) this.queues.delete(id);
     }
   }
-  private async load(id: string) {
+  private async load(id: string, requireGrid = true) {
+    const assertGrid = (state: GameState) => {
+      if (requireGrid && requiresMapRecovery(state))
+        fail(409, 'MAP_GRID_RECOVERY_REQUIRED', 'MAP_GRID_RECOVERY_REQUIRED');
+    };
     const cached = this.live.get(id);
-    if (cached) return cached;
+    if (cached) {
+      assertGrid(cached.state);
+      return cached;
+    }
     const rows = await this.db.query(
       `SELECT c.*,s.checksum,s.state AS snapshot_state,COALESCE(v.package->'compiled'->>'title',v.package->'source'->>'title') AS game_title,v.source_revision,v.package AS source_package,v.checksum AS source_checksum FROM game_campaigns c JOIN game_snapshots s ON s.campaign_id=c.id LEFT JOIN game_playable_versions v ON v.id=c.source_version_id WHERE c.id=$1 AND c.status='active' AND EXISTS(SELECT 1 FROM users owner WHERE owner.id=c.owner_id AND owner.deleted_at IS NULL) AND ${sourceLiveSql()}`,
       [id],
@@ -384,44 +400,49 @@ export class GameService implements OnModuleDestroy {
     if (digest(row.snapshot_state) !== row.checksum || digest(row.state) !== row.checksum)
       fail(503, 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED');
     let state = row.state as GameState;
-    if (row.source_version_id && (!state.narrativePremise || !state.narrativeSource)) {
-      if (digest(canonical(row.source_package)) !== row.source_checksum)
-        fail(503, 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED');
-      const published = (
-        await this.db.query(
-          'SELECT av.snapshot FROM game_playable_approvals ap JOIN adventure_versions av ON av.id=ap.adventure_version_id WHERE ap.playable_version_id=$1',
-          [row.source_version_id],
-        )
-      )[0]?.snapshot;
-      state.narrativeSource = { versionId: row.source_version_id, checksum: row.source_checksum };
-      state.narrativePremise ??= row.source_package.compiled?.narrativePremise ?? {
-        title: String(row.source_package.source?.title ?? row.game_title ?? ''),
-        summary: String(published?.synopsis ?? ''),
-        world: String(row.source_package.source?.content?.world ?? ''),
-        genre: String(published?.genre ?? ''),
-      };
-    }
-
-    // Only the checksum-verified pinned author source can restore public presentation.
-    // Never infer it from private memory biography or a mutable authoring record.
-    if (
-      row.source_version_id &&
-      row.source_package &&
-      digest(canonical(row.source_package)) === row.source_checksum
-    )
-      state = restorePublicNpcPresentation(state, row.source_package);
-
-    // An input from a previous process can never resume after recovery.
-    for (const entity of Object.values(state.entities))
-      if (entity.kind === 'player' || entity.kind === 'npc') {
-        entity.path = [];
-        entity.movementGeneration = (entity.movementGeneration ?? 0) + 1;
-        const brain = state.npcBrains?.[entity.id];
-        if (entity.kind === 'npc' && brain && !entity.encounterId) {
-          brain.waitingForPath = false;
-          brain.movementGeneration = entity.movementGeneration;
-        }
+    assertGrid(state);
+    const recoveryRequired = requiresMapRecovery(state);
+    // Incomplete legacy saves are inspected without resuming or rewriting any actor/history.
+    if (!recoveryRequired) {
+      if (row.source_version_id && (!state.narrativePremise || !state.narrativeSource)) {
+        if (digest(canonical(row.source_package)) !== row.source_checksum)
+          fail(503, 'RECOVERY_REQUIRED', 'RECOVERY_REQUIRED');
+        const published = (
+          await this.db.query(
+            'SELECT av.snapshot FROM game_playable_approvals ap JOIN adventure_versions av ON av.id=ap.adventure_version_id WHERE ap.playable_version_id=$1',
+            [row.source_version_id],
+          )
+        )[0]?.snapshot;
+        state.narrativeSource = { versionId: row.source_version_id, checksum: row.source_checksum };
+        state.narrativePremise ??= row.source_package.compiled?.narrativePremise ?? {
+          title: String(row.source_package.source?.title ?? row.game_title ?? ''),
+          summary: String(published?.synopsis ?? ''),
+          world: String(row.source_package.source?.content?.world ?? ''),
+          genre: String(published?.genre ?? ''),
+        };
       }
+
+      // Only the checksum-verified pinned author source can restore public presentation.
+      // Never infer it from private memory biography or a mutable authoring record.
+      if (
+        row.source_version_id &&
+        row.source_package &&
+        digest(canonical(row.source_package)) === row.source_checksum
+      )
+        state = restorePublicNpcPresentation(state, row.source_package);
+
+      // An input from a previous process can never resume after recovery.
+      for (const entity of Object.values(state.entities))
+        if (entity.kind === 'player' || entity.kind === 'npc') {
+          entity.path = [];
+          entity.movementGeneration = (entity.movementGeneration ?? 0) + 1;
+          const brain = state.npcBrains?.[entity.id];
+          if (entity.kind === 'npc' && brain && !entity.encounterId) {
+            brain.waitingForPath = false;
+            brain.movementGeneration = entity.movementGeneration;
+          }
+        }
+    }
     const pendingJobs = await this.db.query(
       "SELECT id,due_at,deadline_at FROM game_npc_jobs WHERE campaign_id=$1 AND status='queued'",
       [id],
@@ -460,7 +481,7 @@ export class GameService implements OnModuleDestroy {
       presence: new Map(),
       dbRevision: Number(row.revision),
       eventSeq: Number(row.event_seq),
-      dirty: true,
+      dirty: !recoveryRequired,
       lastCheckpoint: Date.now(),
       lastAccess: Date.now(),
       epoch: randomInt(1, 2147483647),
@@ -560,7 +581,7 @@ export class GameService implements OnModuleDestroy {
       .parse(npcId);
     return this.serial(id, async () => {
       const access = await this.access(req, id),
-        live = await this.load(id);
+        live = await this.load(id, false);
       const authored = await this.db.query(
         `SELECT 1 FROM game_campaigns c
          LEFT JOIN game_playable_versions v ON v.id=c.source_version_id
@@ -574,12 +595,15 @@ export class GameService implements OnModuleDestroy {
   worldGenerationStatus(req: Request, id: string) {
     return this.serial(id, async () => {
       const a = await this.access(req, id),
-        live = await this.load(id);
+        live = await this.load(id, false);
       const status = await this.worldGeneration.status(a.user.id, id, live.state);
       // Owner authorization above precedes private context inspection. Reading
       // this forecast must not schedule, preflight, quote, or settle a request.
       const forecast =
-        status.pending || status.unknown || !live.state.turnController
+        requiresMapRecovery(live.state) ||
+        status.pending ||
+        status.unknown ||
+        !live.state.turnController
           ? null
           : await forecastWorldRound(this.db, this.ai, id, live.state, (state, request) =>
               this.deferredSpeechContext(state, request),
@@ -622,7 +646,7 @@ export class GameService implements OnModuleDestroy {
   worldGenerationDecline(req: Request, id: string, body: unknown) {
     return this.serial(id, async () => {
       const a = await this.access(req, id),
-        live = await this.load(id);
+        live = await this.load(id, false);
       const result = await this.worldGeneration.declineLocations(a.user.id, id, live.state, body);
       this.ordinaryAdmissionChecks.delete(id);
       live.decisionsPending = true;
@@ -809,9 +833,11 @@ export class GameService implements OnModuleDestroy {
   async intents(req: Request, id: string, body?: unknown) {
     return this.serial(id, async () => {
       const a = await this.access(req, id),
-        live = await this.load(id);
-      await this.touch(id, live, a.actorId);
-      await this.reconcileIntents(id, live.state.tick);
+        live = await this.load(id, body !== undefined);
+      if (!requiresMapRecovery(live.state)) {
+        await this.touch(id, live, a.actorId);
+        await this.reconcileIntents(id, live.state.tick);
+      }
       if (body !== undefined) {
         const input = z
             .object({ operationId: z.uuid(), text: z.string().trim().min(1).max(1000) })
@@ -942,12 +968,13 @@ export class GameService implements OnModuleDestroy {
   async narrative(req: Request, id: string, body?: unknown, quote = false) {
     return this.serial(id, async () => {
       const a = await this.access(req, id),
-        live = await this.load(id);
+        live = await this.load(id, body !== undefined);
       const canonRevision = live.state.narrativeCanon?.revision ?? 0;
-      await this.db.query(
-        `UPDATE game_narrative_turns t SET status='failed',result_code='DECISION_UNAVAILABLE' FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id WHERE t.id=r.id AND t.campaign_id=$1 AND t.status='pending' AND (r.status IN ('cancelled','failed') OR j.status IN ('stale','cancelled','failed'))`,
-        [id],
-      );
+      if (!requiresMapRecovery(live.state))
+        await this.db.query(
+          `UPDATE game_narrative_turns t SET status='failed',result_code='DECISION_UNAVAILABLE' FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id WHERE t.id=r.id AND t.campaign_id=$1 AND t.status='pending' AND (r.status IN ('cancelled','failed') OR j.status IN ('stale','cancelled','failed'))`,
+          [id],
+        );
 
       if (body === undefined) {
         const rows = await this.db.query(
@@ -957,9 +984,12 @@ export class GameService implements OnModuleDestroy {
         return {
           canonRevision,
           configuration: this.ai.configuration(),
-          canSubmit: live.state.rulesetVersion === 'hybrid-v3',
-          unavailableReason:
-            live.state.rulesetVersion === 'hybrid-v3' ? null : 'NARRATIVE_RULESET_REQUIRED',
+          canSubmit: !requiresMapRecovery(live.state) && live.state.rulesetVersion === 'hybrid-v3',
+          unavailableReason: requiresMapRecovery(live.state)
+            ? 'MAP_GRID_RECOVERY_REQUIRED'
+            : live.state.rulesetVersion === 'hybrid-v3'
+              ? null
+              : 'NARRATIVE_RULESET_REQUIRED',
           turns: rows.reverse().map((r) => this.narrativeDto(r)),
         };
       }
@@ -1176,6 +1206,13 @@ export class GameService implements OnModuleDestroy {
         fail(404, 'NOT_FOUND', 'NOT_FOUND');
       if (input.kind === 'background' && input.entityId)
         fail(400, 'INVALID_ACTION', 'INVALID_ACTION');
+      const grounding = live.state.maps[input.expectedMapId]?.spatialGrounding;
+      if (
+        input.kind === 'background' &&
+        grounding &&
+        grounding.imageRevisionId !== input.revisionId
+      )
+        fail(409, 'MAP_IMAGE_SOURCE_MISMATCH', 'MAP_IMAGE_SOURCE_MISMATCH');
       const slot =
         input.kind === 'background'
           ? `map:${input.expectedMapId}:background`
@@ -2982,7 +3019,7 @@ export class GameService implements OnModuleDestroy {
       .parse(actorId);
     return this.serial(id, async () => {
       const access = await this.access(req, id),
-        live = await this.load(id);
+        live = await this.load(id, false);
       if (!projectState(live.state, access.actorId).entities.some((e) => e.id === actorId))
         fail(404, 'NOT_FOUND', 'NOT_FOUND');
       const row = (
@@ -3006,7 +3043,7 @@ export class GameService implements OnModuleDestroy {
       fail(403, 'FORBIDDEN', 'FORBIDDEN');
     return this.serial(id, async () => {
       await this.access(req, id);
-      const live = await this.load(id);
+      const live = await this.load(id, false);
       let state = structuredClone(live.state);
       if (state.turnController) {
         const removed = removeTurnParticipant(state, `player-${userId}`);
@@ -3081,6 +3118,8 @@ export class GameService implements OnModuleDestroy {
     await this.persist(id, live, state, 'campaign.paused');
   }
   private async touch(id: string, live: Live, actorId: string) {
+    if (requiresMapRecovery(live.state))
+      fail(409, 'MAP_GRID_RECOVERY_REQUIRED', 'MAP_GRID_RECOVERY_REQUIRED');
     live.presence.set(actorId, Date.now());
     live.lastAccess = Date.now();
     if (!live.paused) return;
@@ -3134,8 +3173,8 @@ export class GameService implements OnModuleDestroy {
     return this.serial(id, async () => {
       if (this.stopping) fail(503, 'UNAVAILABLE', 'UNAVAILABLE');
       const a = await this.access(req, id);
-      const live = await this.load(id);
-      if (markPresence) await this.touch(id, live, a.actorId);
+      const live = await this.load(id, false);
+      if (markPresence && !requiresMapRecovery(live.state)) await this.touch(id, live, a.actorId);
       return this.envelope(id, live, a.actorId, markPresence);
     });
   }
@@ -3163,6 +3202,7 @@ export class GameService implements OnModuleDestroy {
       projection.artBindings = projection.artBindings.filter(
         (b) => !this.unavailableArt.has(b.revisionId),
       );
+    if (requiresMapRecovery(state)) projection.spatialRecoveryRequired = true;
     const hash = digest(semanticGameProjection(projection));
     const prior = this.projections.get(key),
       revision = prior ? (prior.hash === hash ? prior.revision : prior.revision + 1) : 1;
@@ -3590,6 +3630,16 @@ export class GameService implements OnModuleDestroy {
     prepare?: (c: import('pg').PoolClient, state: GameState) => Promise<GameState>,
     preflight?: (c: import('pg').PoolClient) => Promise<void>,
   ) {
+    // Final admission fence also covers background/provider commits and travel destinations.
+    // Settings and revocation remain available on read-only legacy saves.
+    const assertGrid = () => {
+      if (
+        requiresMapRecovery(state) &&
+        !['narrative.preferences.updated', 'member.revoked'].includes(kind)
+      )
+        fail(409, 'MAP_GRID_RECOVERY_REQUIRED', 'MAP_GRID_RECOVERY_REQUIRED');
+    };
+    assertGrid();
     const seq = live.eventSeq + 1;
     const presentationOnly = kind === 'narrative.preferences.updated';
     const retentionDue =
@@ -3619,6 +3669,7 @@ export class GameService implements OnModuleDestroy {
           if (!allowed.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
         }
         if (prepare) state = await prepare(c, state);
+        assertGrid();
         // Completion is derived from committed world state and currently authorized party members.
         // It shares the same transaction as the action result, checkpoint and idempotency receipt.
         if (!presentationOnly && state.objectives?.length && !live.paused) {
@@ -4131,9 +4182,12 @@ export class GameService implements OnModuleDestroy {
   private async advance(id: string) {
     const live = this.live.get(id);
     if (!live || this.stopping) return;
+    const recoveryRequired = requiresMapRecovery(live.state);
     if (![...live.presence.values()].some((last) => Date.now() - last <= 5000)) {
-      if (!live.paused) await this.pause(id, live);
-      else if (live.dirty) await this.persist(id, live, live.state, 'campaign.paused.checkpoint');
+      if (!recoveryRequired) {
+        if (!live.paused) await this.pause(id, live);
+        else if (live.dirty) await this.persist(id, live, live.state, 'campaign.paused.checkpoint');
+      }
       // Keep the paused lease briefly so heartbeat grace can recover a stalled tab.
       if (Date.now() - live.lastAccess < 15000) return;
       this.live.delete(id);
@@ -4144,7 +4198,7 @@ export class GameService implements OnModuleDestroy {
         this.projections.delete(actor + ':' + live.state.seed);
       return;
     }
-    if (live.paused) return;
+    if (live.paused || recoveryRequired) return;
     await this.refreshArt(id, live);
     if (live.state.turnController) {
       await this.advanceTurnWorld(id, live);
@@ -4329,6 +4383,7 @@ export class GameService implements OnModuleDestroy {
       const live = this.live.get(id);
       if (
         !live ||
+        requiresMapRecovery(live.state) ||
         (leaseEpoch !== undefined && leaseEpoch !== (live.actorEpochs[actorId] ?? live.epoch))
       )
         return;

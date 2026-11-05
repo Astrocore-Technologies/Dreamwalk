@@ -1021,6 +1021,8 @@ export function applyStoryTurnProposal(
   options: {
     speechAlreadyRecorded?: boolean;
     sourceSpeechSegments?: { index: number; text: string }[];
+    /** Server-validated image placement before any arrival observation is recorded. */
+    prepareTravelPlacement?: (state: GameState) => GameState;
   } = {},
 ): StoryTurnApplied {
   const reject = (code: GameResult['error'] = 'STALE_STATE'): StoryTurnApplied => ({
@@ -1492,6 +1494,17 @@ export function applyStoryTurnProposal(
         if (outcome.error === 'OUT_OF_RANGE' || outcome.error === 'PATH_BLOCKED')
           return reject(outcome.error);
         if (!outcome.error) {
+          if (
+            proposed.kind === 'travel' &&
+            proposed.targetId === 'new_scene' &&
+            options.prepareTravelPlacement
+          ) {
+            try {
+              outcome.state = options.prepareTravelPlacement(outcome.state);
+            } catch {
+              return reject('INVALID_ACTION');
+            }
+          }
           next = recordNpcEvents(
             next,
             outcome.state,

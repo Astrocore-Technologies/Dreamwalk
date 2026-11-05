@@ -1,4 +1,5 @@
 'use client';
+import { isSpatialRecoveryRequired } from './spatial-recovery';
 import { Send } from 'lucide-react';
 import { SparkReceiptCost } from '../visual-authoring/sparks-cost';
 import { StoryCost, RuntimeMapQuoteNotice } from './story-cost';
@@ -68,8 +69,8 @@ export function UnifiedStory({
   recipient,
   inspection,
   onClearRecipient,
-  disabled,
-  partyDisabled = disabled,
+  disabled: requestedDisabled,
+  partyDisabled: requestedPartyDisabled = requestedDisabled,
   worldGenerationAllowed = false,
   worldGenerationMembersStatus = 'ready',
   onWorldRefresh,
@@ -88,6 +89,9 @@ export function UnifiedStory({
   onBusyChange?: (busy: boolean) => void;
 }) {
   const locationOnly = projection.map.spatialMode === 'location_only';
+  const recoveryRequired = isSpatialRecoveryRequired(projection);
+  const disabled = requestedDisabled || recoveryRequired;
+  const partyDisabled = requestedPartyDisabled || recoveryRequired;
   const turnText = useTurnText();
   const h = useStoryText(),
     { t, locale } = useT(),
@@ -721,13 +725,20 @@ export function UnifiedStory({
                     <p>
                       {h(
                         turn.travel!.imageStatus === 'unknown' ||
-                          turn.travel!.sparkStatus === 'pending'
+                          turn.travel!.sparkStatus === 'pending' ||
+                          turn.travel!.grounding?.status === 'unknown' ||
+                          turn.travel!.grounding?.jobStatus === 'unknown' ||
+                          turn.travel!.grounding?.sparkStatus === 'pending'
                           ? 'locationUnknown'
                           : turn.travel!.status === 'declined'
                             ? 'locationDeclined'
                             : turn.travel!.status === 'committed'
                               ? 'locationReady'
                               : turn.travel!.status === 'failed' ||
+                                  turn.travel!.grounding?.status === 'failed' ||
+                                  ['stale', 'failed', 'cancelled'].includes(
+                                    turn.travel!.grounding?.jobStatus ?? '',
+                                  ) ||
                                   ['rejected', 'expired', 'cancelled'].includes(
                                     turn.travel!.imageStatus ?? '',
                                   )
@@ -740,6 +751,14 @@ export function UnifiedStory({
                       <p>
                         {h('locationImageCost')}
                         <SparkReceiptCost receipt={{ ...turn.travel!, generationCost: null }} />
+                      </p>
+                    )}
+                    {turn.travel!.grounding?.sparkStatus && (
+                      <p data-travel-grounding-receipt={turn.travel!.grounding.status}>
+                        {h('locationGroundingCost')}
+                        <SparkReceiptCost
+                          receipt={{ ...turn.travel!.grounding, generationCost: null }}
+                        />
                       </p>
                     )}
                   </div>

@@ -10,6 +10,7 @@ import { intersectsViewport, rendererActivity } from './renderer-activity';
 import { sceneClick } from './scene-input';
 import { entityLayout, containsScenePoint } from './scene-geometry';
 import { LocationOnlyScene } from './location-only-scene';
+import { isSpatialRecoveryRequired } from './spatial-recovery';
 import type { PositionedGameEntity } from '@dreamwalk/contracts';
 import { MapActions, InventoryPanel } from './map-actions';
 import { useTurnText } from './turn-messages';
@@ -52,6 +53,7 @@ export function GameCanvas(props: GameCanvasProps) {
   return (
     <PositionedGameCanvas
       {...props}
+      disabled={props.disabled || isSpatialRecoveryRequired(props.projection)}
       projection={{
         ...props.projection,
         entities: props.projection.entities.filter(hasPosition),

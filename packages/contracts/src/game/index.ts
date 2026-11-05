@@ -460,6 +460,7 @@ export interface GameResult {
   error?: GameError;
 }
 export interface GameProjection {
+  spatialRecoveryRequired?: boolean;
   turn?: TurnProjection;
   narrative?: { revision: number; turns: NarrativePublicTurn[] };
   objectives?: ObjectiveProjection[];
@@ -744,6 +745,7 @@ export const gamePublicEncounterSchema = z
   .strict();
 export const gameProjectionSchema = z
   .object({
+    spatialRecoveryRequired: z.boolean().optional(),
     turn: turnProjectionSchema.optional(),
     narrative: z
       .object({
