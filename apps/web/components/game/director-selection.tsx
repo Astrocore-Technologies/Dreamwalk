@@ -67,6 +67,13 @@ export function useDirectorSelection(scope: string, preparationKey?: string) {
       sessionStorage.setItem(preparationKey + ':director', profileId);
       setChoice({ ...choice, pinnedId: profileId });
     },
+    releaseCompleted: () => {
+      // Called only after an authenticated read confirms this preparation has a campaign.
+      // Forget the finished local launch identity, never the campaign or financial records.
+      if (!choice || !hydrated || !preparationKey) return;
+      sessionStorage.removeItem(preparationKey + ':director');
+      setChoice({ ...choice, pinnedId: '', legacy: false });
+    },
     unlock: () => {
       if (!choice || !hydrated || !preparationKey || choice.legacy) return;
       sessionStorage.removeItem(preparationKey + ':director');

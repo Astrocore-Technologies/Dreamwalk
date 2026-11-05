@@ -346,12 +346,46 @@ test(
           assert.equal(p.reused, true);
           assert.equal(p.status, 'ready');
           const previous = await service.state(player, preparation.id);
+          const previousState = (
+            await db.query('SELECT state,revision,event_seq FROM game_campaigns WHERE id=$1', [
+              previous.campaignId,
+            ])
+          )[0];
+          const previousSnapshots = await db.query(
+            'SELECT sequence,checksum,state FROM game_snapshots WHERE campaign_id=$1 ORDER BY sequence',
+            [previous.campaignId],
+          );
           const next = await game.create(request(player), {
             playableVersionId: version,
             startPreparationId: p.id,
             turnBased: true,
           });
           assert.notEqual(next.campaignId, previous.campaignId);
+          assert.deepEqual(
+            (
+              await db.query('SELECT state,revision,event_seq FROM game_campaigns WHERE id=$1', [
+                previous.campaignId,
+              ])
+            )[0],
+            previousState,
+          );
+          assert.deepEqual(
+            await db.query(
+              'SELECT sequence,checksum,state FROM game_snapshots WHERE campaign_id=$1 ORDER BY sequence',
+              [previous.campaignId],
+            ),
+            previousSnapshots,
+          );
+          const saves = await game.list(request(player), storyId);
+          assert.equal(saves.userId, player);
+          assert.equal(saves.adventureId, storyId);
+          assert.deepEqual(
+            new Set(saves.campaigns.map((save) => save.id)),
+            new Set([previous.campaignId, next.campaignId]),
+          );
+          assert.equal(saves.campaigns[0].id, next.campaignId);
+          assert.equal((await game.list(request(other), storyId)).campaigns.length, 0);
+          assert.equal((await game.list(request(player), randomUUID())).campaigns.length, 0);
           assert.equal(calls, 1);
           assert.equal(
             (

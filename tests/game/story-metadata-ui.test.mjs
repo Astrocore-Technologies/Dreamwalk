@@ -71,7 +71,10 @@ test('story detail keeps its launch controller and authored content in a scoped 
   const css = await read('apps/web/components/story/story-detail.css');
   const publicUi = await read('apps/web/components/public.tsx');
   assert.match(publicUi, /export \{ AdventurePage \} from '.\/story\/story-detail-page'/);
-  assert.match(detail, /<AdventureLaunch adventure=\{a\} \/>/);
+  assert.match(
+    detail,
+    /<AdventureLaunch key=\{`\$\{user\?\.id\}:\$\{a\.id\}`\} adventure=\{a\} \/>/,
+  );
   assert.match(detail, /src=\{coverUrl\(a\)\}/);
   assert.match(detail, /src=\{assetUrl\(n.portraitAssetId\)\}/);
   for (const field of ['name', 'role', 'description', 'greeting'])

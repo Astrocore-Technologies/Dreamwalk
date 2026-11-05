@@ -1,3 +1,4 @@
+import { listCampaigns } from './campaign-list';
 import { restorePublicNpcPresentation } from './public-npc-profile';
 import { LocationTravelGeneration } from './location-travel-generation';
 import { previewPendingStorySpeech } from './pending-story-speech';
@@ -2681,25 +2682,9 @@ export class GameService implements OnModuleDestroy {
     live.aiPending = await this.ai.pending(id);
     if (live.aiPending) this.dispatchAi(id);
   }
-  async list(req: Request) {
+  async list(req: Request, adventureId?: unknown) {
     const u = await this.auth.require(req);
-    return {
-      campaigns: (
-        await this.db.query(
-          `SELECT c.id,c.owner_id,c.playable_version,c.status,m.status AS membership,c.source_version_id,v.source_revision,COALESCE(v.package->'compiled'->>'title',v.package->'source'->>'title') AS title FROM game_campaigns c JOIN game_members m ON m.campaign_id=c.id LEFT JOIN game_playable_versions v ON v.id=c.source_version_id WHERE m.user_id=$1 AND m.status IN ('accepted','pending') AND ${sourceAccessSql('$1')} ORDER BY c.created_at DESC LIMIT 100`,
-          [u.id],
-        )
-      ).map((r) => ({
-        id: r.id,
-        ownerId: r.owner_id,
-        playableVersion: r.playable_version,
-        status: r.status,
-        membership: r.membership,
-        title: r.title ?? null,
-        playableVersionId: r.source_version_id ?? null,
-        sourceRevision: r.source_revision ?? null,
-      })),
-    };
+    return listCampaigns(this.db, u.id, adventureId);
   }
   async members(req: Request, id: string) {
     const access = await this.access(req, id);

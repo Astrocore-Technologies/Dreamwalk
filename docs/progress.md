@@ -1304,3 +1304,52 @@ constrained. Fresh exact-head remote checks and rendered evidence still gate mer
 - Turn-based speech selection is removed without losing NPC inspection or legacy real-time compatibility. Cell-based hearing remains authoritative, stale selected-recipient metadata cannot block speech, and pure emotes reach visible observers with strict whisper privacy.
 - RP extras now derive from the complete reply-audience-authorized claims at freeze, dispatch and commit; new observation identities remain pinned. Mixed emote/speech does not add duplicate NPC reply jobs. Existing targetless coauthor continuation is preserved in the explicit combined quote.
 - Definitive Cancel/rejection/expiry retires quote identity; uncertain transport and consent retain the same immutable retry. Browser layout assertions remain intact; only the full journey budget changes from60s to90s after measured runner-wide slowdown.
+
+## Continue or start an independent save — 2026-11-05
+
+Story entry now offers Continue and Start over, with a compact selector when
+several accepted saves exist. Lookup spans playable revisions of the same story
+and retains live-owner, membership and source-access checks. Continue is a direct
+link, with no preparation or financial mutation. A confirmed finished local
+launch releases its operation/director pin; a fresh start uses a new operation
+and the unchanged preparation, cache reuse, consent and settlement path. Old
+campaigns and snapshots are retained. Failed restore reads expose status recovery
+instead of a misleading fresh-start button; unknown or pending dispatch identities
+are not retired.
+
+Verified locally: contracts/core/API build, web typecheck, 55 focused launch,
+hero, metadata, return and list tests; 15 localization and private-access source
+tests; changed-file ESLint and diff whitespace checks; all 18 isolated paid-start
+PostgreSQL checks, including old campaign/snapshot preservation, scoped save
+access and unchanged generation charge/reuse. Independent source review passed.
+Added RU/EN/UK browser cases for selection, Continue, Back, reload, repeated Start
+over and save retention, including a legacy completed director pin. Browser
+execution is blocked locally: Chromium cannot create its required socket in the
+shell sandbox, and the approved escalation fails during sandbox mount setup.
+No browser assertions ran; exact-head CI remains the browser acceptance gate.
+No production data, real providers or wallet funds changed in this slice.
+
+First exact-head CI passed production/static checks, isolated PostgreSQL and two
+browser shards; all five paid-start recovery journeys passed. The remaining
+story browser shard exposed a missing explicit accessible name on the save
+selector and two pre-existing ready-preparation fixtures that incorrectly marked
+an already-created campaign. Added the translated selector name and retained
+picker-lock coverage with genuinely unstarted preparations. The 42 focused
+launch/hero checks, web typecheck and changed-file lint/format checks pass after
+these corrections. A fresh exact-head browser run remains required.
+
+Follow-up CI passed static/production, isolated PostgreSQL and the affected
+browser shard, including all three localized continue/restart journeys. Visual
+inspection of its RU desktop and EN/UK mobile screenshots confirmed the compact
+layout and translations, and exposed a missing primary style on Continue. It now
+uses the standard primary button style, with source and browser assertions, so
+the returning-player action is visually emphasized over Start over. The 35
+focused launch tests and changed-file lint/format pass after this one-class fix;
+exact-head CI still gates release.
+
+Integrated onto the main tree after scene/map recovery (#103) and recoverable
+admin deletion (#101). All incoming test registrations and all continue/restart
+checks remain present; map/settlement and deletion/privacy guards are preserved.
+The 47 focused launch, campaign-list, deletion UI and location-only UI checks,
+changed merge-file lint/format and whitespace checks pass. A fresh integrated
+head CI is required before the coordinated final release.
