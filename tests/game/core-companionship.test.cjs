@@ -94,6 +94,131 @@ test('following runs only after end-turn, uses normal movement budget and stops 
   assert.deepEqual(g.companionAction(s, 'keeper'), { kind: 'wait' });
 });
 
+test('ongoing agreement replaces an old approach and gives each planner the current voluntary follow step', () => {
+  const initial = fixture();
+  initial.npcBrains.keeper.plan = [{ kind: 'move_to', target: { x: 9, y: 6 } }];
+  initial.npcBrains.keeper.cursor = 0;
+  initial.entities.keeper.path = [{ x: 7, y: 4 }];
+  const accepted = story(initial).state;
+  assert.deepEqual(accepted.npcBrains.keeper.plan, []);
+  assert.deepEqual(accepted.entities.keeper.path, []);
+  assert.deepEqual(g.buildNpcDecisionContext(accepted, 'keeper').companionship, {
+    actorId: 'alice',
+    nextAction: { kind: 'wait' },
+  });
+  const moved = g.applyTurnMove(accepted, 'alice', { x: 3, y: 6 }, g.turnFence(accepted));
+  assert.equal(moved.error, undefined);
+  let s = world(moved.state);
+  const decision = g.buildNpcDecisionContext(s, 'keeper');
+  assert.deepEqual(decision.companionship.nextAction, g.companionAction(s, 'keeper'));
+  assert.equal(decision.companionship.nextAction.kind, 'move_to');
+  assert.notDeepEqual(decision.companionship.nextAction.target, { x: 9, y: 6 });
+  const plan = {
+    ...g.createMockNpcPlan(s, 'keeper'),
+    actions: [decision.companionship.nextAction],
+    targetRevisions: {},
+  };
+  const admitted = g.acceptNpcPlan(s, 'keeper', plan);
+  assert.equal(admitted.error, undefined);
+  const executed = g.stepWorldNpcPlan(admitted.state, 'keeper');
+  assert.equal(executed.error, undefined);
+  s = executed.state;
+  assert.ok(g.footprintDistance(s.entities.keeper, s.entities.alice) <= 1);
+  assert.equal(s.npcBrains.keeper.living.companionship.actorId, 'alice');
+  assert.equal(s.turnController.worldNpcActions.keeper, 1);
+});
+
+test('an established companion may deliberately pause a round and later revoke the agreement', () => {
+  let s = story(fixture()).state;
+  s = g.applyTurnMove(s, 'alice', { x: 3, y: 6 }, g.turnFence(s)).state;
+  s = world(s);
+  assert.equal(g.buildNpcDecisionContext(s, 'keeper').companionship.nextAction.kind, 'move_to');
+  const before = { x: s.entities.keeper.x, y: s.entities.keeper.y };
+  const deliberatePause = g.acceptNpcPlan(s, 'keeper', {
+    ...g.createMockNpcPlan(s, 'keeper'),
+    actions: [{ kind: 'wait' }],
+    targetRevisions: {},
+  });
+  assert.equal(deliberatePause.error, undefined);
+  const paused = g.stepWorldNpcPlan(deliberatePause.state, 'keeper');
+  assert.equal(paused.error, undefined);
+  assert.deepEqual(
+    { x: paused.state.entities.keeper.x, y: paused.state.entities.keeper.y },
+    before,
+  );
+  assert.equal(paused.state.npcBrains.keeper.living.companionship.actorId, 'alice');
+  const stopped = story(story(fixture()).state, 'Do you still want to come?', 'stop');
+  assert.equal(stopped.error, undefined);
+  assert.equal(g.buildNpcDecisionContext(stopped.state, 'keeper').companionship, null);
+  assert.equal(g.companionAction(stopped.state, 'keeper'), undefined);
+});
+
+test('a deliberate same-map pause preserves an agreed observed crossing in the next round', () => {
+  let s = story(fixture()).state;
+  Object.assign(s.entities.alice, { x: 13, y: 5 });
+  Object.assign(s.entities.keeper, { x: 12, y: 5 });
+  s.entities.door.open = true;
+  s = world(s);
+  const paused = g.acceptNpcPlan(s, 'keeper', {
+    ...g.createMockNpcPlan(s, 'keeper'),
+    actions: [{ kind: 'wait' }],
+    targetRevisions: {},
+  });
+  assert.equal(paused.error, undefined);
+  const acted = g.stepWorldNpcPlan(paused.state, 'keeper');
+  assert.equal(acted.error, undefined);
+  const finished = g.finishWorldPhase(acted.state, g.turnFence(acted.state));
+  assert.equal(finished.error, undefined);
+  s = finished.state;
+  const crossed = g.applyTurnAction(
+    s,
+    'alice',
+    { kind: 'transition', targetId: 'roof-exit' },
+    g.turnFence(s),
+  );
+  assert.equal(crossed.error, undefined);
+  s = world(crossed.state);
+  assert.equal(s.npcBrains.keeper.living.companionship.actorId, 'alice');
+  assert.deepEqual(g.worldTurnCompanionContinuation(s, 'keeper'), {
+    kind: 'transition',
+    targetId: 'roof-exit',
+  });
+  Object.assign(s.entities.alice, { x: 4, y: 3 });
+  const admitted = g.admitWorldTurnActors(s, ['keeper'], g.turnFence(s));
+  assert.equal(admitted.error, undefined);
+  s = execute(admitted.state);
+  assert.equal(s.entities.keeper.mapId, s.entities.alice.mapId);
+  assert.equal(s.turnController.worldNpcActions.keeper, 1);
+});
+
+test('speech sees only an established agreement heard and recognized by its full current audience', () => {
+  const s = story(fixture()).state;
+  const agreement = s.npcBrains.keeper.living.companionship;
+  const publicContext = (state, audience, recipient = 'alice') =>
+    g.buildNpcPublicSpeechContext(
+      state,
+      'keeper',
+      audience,
+      [agreement.sourceObservationId],
+      [],
+      undefined,
+      'en',
+      recipient,
+    );
+  assert.deepEqual(publicContext(s, ['alice', 'keeper']).companionship, { actorId: 'alice' });
+  s.entities.bob = { ...s.entities.alice, id: 'bob', x: 4, y: 4 };
+  const newAudience = ['alice', 'keeper', 'bob'];
+  assert.equal(publicContext(s, newAudience).companionship, undefined);
+  assert.equal(publicContext(s, ['bob', 'keeper'], 'bob').companionship, undefined);
+  const withoutAgreement = structuredClone(s);
+  delete withoutAgreement.npcBrains.keeper.living.companionship;
+  assert.deepEqual(publicContext(s, newAudience), publicContext(withoutAgreement, newAudience));
+  // Neither the old route, evidence identity nor private current plan goes to speech.
+  const safe = publicContext(s, ['alice', 'keeper']);
+  assert.deepEqual(Object.keys(safe.companionship), ['actorId']);
+  assert.equal(safe.currentPlan, undefined);
+});
+
 test('blocked paths wait and recover; stale planned destination revalidates all actor collisions', () => {
   let s = world(story(fixture()).state);
   Object.assign(s.entities.alice, { x: 3, y: 4 });

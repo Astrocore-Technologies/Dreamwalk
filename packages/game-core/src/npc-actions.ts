@@ -12,6 +12,7 @@ import { findPath, walkable } from './index';
 import { observedVisible } from './observation-visibility';
 import { applyWorldTurnAction, turnFence } from './turns';
 import { npcActionAllowed } from './living-policy';
+import type { NpcCommunicationDelivery } from './living';
 
 /** Public reply context is the intersection of the NPC's and listeners' perception. */
 export function npcActionContext(state: GameState, npcId: string, audienceIds: string[]) {
@@ -144,15 +145,21 @@ function withNpcActionOutcome(
 }
 
 /** One ordinary action per world phase. Long paths continue, with fresh collision checks. */
-export function stepWorldNpcPlan(state: GameState, npcId: string): GameResult {
-  if (!isActorConscious(state.entities[npcId]) || !hasPosition(state.entities[npcId]))
-    return { state, events: [] };
+export function stepWorldNpcPlan(
+  state: GameState,
+  npcId: string,
+  communication?: NpcCommunicationDelivery,
+  options: { requireCommunicationDelivery?: boolean } = {},
+): GameResult & { communicationDeliveryRequired?: true } {
+  if (!isActorConscious(state.entities[npcId])) return { state, events: [] };
   if (state.turnController?.phase !== 'world') return { state, events: [], error: 'WRONG_MODE' };
   const original = state.npcBrains?.[npcId],
     entity = state.entities[npcId];
   if (!original || entity?.kind !== 'npc')
     return { state, events: [], error: 'TARGET_UNAVAILABLE' };
   if (original.cursor >= original.plan.length) return { state, events: [] };
+  if (!hasPosition(entity) && original.plan[original.cursor]?.kind !== 'communicate')
+    return { state, events: [] };
   if (
     entity.encounterId ||
     (original.planMapId && original.planMapId !== entity.mapId) ||
@@ -178,11 +185,12 @@ export function stepWorldNpcPlan(state: GameState, npcId: string): GameResult {
   for (let skipped = 0; skipped < 3; skipped++) {
     const brain = next.npcBrains?.[npcId],
       npc = next.entities[npcId];
-    if (!brain || !npc || !hasPosition(npc) || brain.cursor >= brain.plan.length)
-      return { state: next, events: [] };
+    if (!brain || !npc || brain.cursor >= brain.plan.length) return { state: next, events: [] };
     const planned = brain.plan[brain.cursor];
+    if (!hasPosition(npc) && planned.kind !== 'communicate') return { state: next, events: [] };
     let action = planned;
     if (planned.kind === 'move_to') {
+      if (!hasPosition(npc)) return { state: next, events: [], error: 'WRONG_MODE' };
       const path = findPath(next, npc.mapId, npc, planned.target!, npcId, true);
       if (!path)
         return withNpcActionOutcome(
@@ -201,7 +209,11 @@ export function stepWorldNpcPlan(state: GameState, npcId: string): GameResult {
       const limit = next.turnController?.ruleset.movement ?? 1;
       action = { kind: 'move_to', target: path[Math.min(limit, path.length) - 1] };
     }
-    const result = applyWorldTurnAction(next, npcId, action, turnFence(next)!);
+    // Resolve harmless no-op movement before enforcing the release delivery boundary.
+    // Peeking only at the original cursor would let a later communicate use fixture text.
+    if (action.kind === 'communicate' && options.requireCommunicationDelivery && !communication)
+      return { state: next, events: [], communicationDeliveryRequired: true };
+    const result = applyWorldTurnAction(next, npcId, action, turnFence(next)!, communication);
     if (result.error) {
       if (result.error === 'PATH_BLOCKED' || result.error === 'ROUND_LOCKED')
         return withNpcActionOutcome(result, npcId, planned.kind, 'blocked', result.error);

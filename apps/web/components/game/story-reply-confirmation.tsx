@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import type { StoryTurnQuoteResponse } from '@dreamwalk/contracts';
+import { formatSparkSubunits, type StoryTurnQuoteResponse } from '@dreamwalk/contracts';
 import { api, ApiError, errorMessage } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { Button, ErrorBox } from '../ui';
@@ -17,6 +17,7 @@ export function StoryReplyConfirmation({
   disabled,
   onChanged,
   onDecline,
+  declineSpeech = false,
   endpoint,
   worldBatch = false,
 }: {
@@ -26,11 +27,12 @@ export function StoryReplyConfirmation({
   disabled: boolean;
   onChanged: () => Promise<void>;
   onDecline?: () => Promise<void>;
+  declineSpeech?: boolean;
   endpoint?: string;
   worldBatch?: boolean;
 }) {
   const h = useStoryText();
-  const { t } = useT();
+  const { t, locale } = useT();
   const [prepared, setPreparedState] = useState<{
     result: Pick<StoryTurnQuoteResponse, 'quote'>;
     operationId: string;
@@ -114,7 +116,12 @@ export function StoryReplyConfirmation({
         method: 'POST',
         body: JSON.stringify({
           operationId,
-          ...(worldBatch ? { automaticKnownCostPolicy: 'known-cost-v1' } : {}),
+          ...(worldBatch
+            ? {
+                automaticKnownCostPolicy: 'known-cost-v1',
+                autonomousSpeechPolicy: 'bounded-npc-speech-v1',
+              }
+            : {}),
         }),
       });
       if (stamp !== epoch.current || currentScope.current !== scope) return;
@@ -188,6 +195,9 @@ export function StoryReplyConfirmation({
             ? { automaticKnownCostPolicyHash: quote.automaticKnownCostPolicyHash }
             : {}),
           ...(quote.estimateRiskConsentRequired ? { estimateRiskConsent: true } : {}),
+          ...(quote.autonomousSpeechPolicyHash
+            ? { autonomousSpeechPolicyHash: quote.autonomousSpeechPolicyHash }
+            : {}),
           ...(quote.travelGroundingPolicyHash
             ? { travelGroundingPolicyHash: quote.travelGroundingPolicyHash }
             : {}),
@@ -270,6 +280,26 @@ export function StoryReplyConfirmation({
       ) : prepared?.result.quote ? (
         <>
           <StoryCost quote={prepared.result.quote} />
+          {!!prepared.result.quote.optionalAutonomousSpeechRequests && (
+            <>
+              <p>
+                {h('worldOptionalSpeech', {
+                  count: prepared.result.quote.optionalAutonomousSpeechRequests,
+                })}
+              </p>
+              {prepared.result.quote.optionalAutonomousSpeechSparkSubunits && (
+                <p>
+                  {h('worldOptionalSpeechIncluded', {
+                    count: prepared.result.quote.optionalAutonomousSpeechRequests,
+                    amount: formatSparkSubunits(
+                      prepared.result.quote.optionalAutonomousSpeechSparkSubunits,
+                      locale,
+                    ),
+                  })}
+                </p>
+              )}
+            </>
+          )}
           {!!prepared.result.quote.generatedLocationImages && (
             <p>
               {t(
@@ -319,7 +349,7 @@ export function StoryReplyConfirmation({
           disabled={busy || disabled}
           onClick={() => void decline()}
         >
-          {h(declineUnknown ? 'retrySame' : 'declineLocation')}
+          {h(declineUnknown ? 'retrySame' : declineSpeech ? 'declineSpeech' : 'declineLocation')}
         </Button>
       )}
     </div>

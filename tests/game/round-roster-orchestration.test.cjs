@@ -1441,3 +1441,557 @@ test('pending public words wait for ordered travel before admitting actual heare
   );
   assert.equal(result.applied.entries.filter((entry) => entry.kind === 'npc_reply').length, 1);
 });
+
+function releaseCommunicationFixture(targetId = 'npc-1', channel = 'say') {
+  let state = world(2);
+  const npc = state.entities.keeper;
+  Object.assign(state.entities.alice, { mapId: npc.mapId, x: npc.x, y: npc.y + 1 });
+  Object.assign(state.entities['npc-1'], { mapId: npc.mapId, x: npc.x + 1, y: npc.y });
+  const heard = g.applyNpcSpeech(
+    state,
+    'alice',
+    'keeper',
+    {
+      channel: 'say',
+      text: 'Расскажи о городе.',
+    },
+    { suppressReply: true },
+  );
+  assert.equal(heard.error, undefined);
+  state = heard.state;
+  const observation = state.npcBrains.keeper.living.observations.find(
+    (item) =>
+      item.actorId === 'alice' && item.kind === 'said' && item.text === 'Расскажи о городе.',
+  );
+  assert.ok(observation);
+  const action = { kind: 'communicate', targetId, channel, observationIds: [observation.id] };
+  const accepted = g.acceptNpcPlan(state, 'keeper', {
+    ...g.createMockNpcPlan(state, 'keeper'),
+    actions: [action],
+    targetRevisions: { [targetId]: state.entities[targetId].revision },
+  });
+  assert.equal(accepted.error, undefined);
+  state = accepted.state;
+  const game = Object.create(GameService.prototype),
+    replies = [],
+    requests = [];
+  const parentId = 'ac1b17e0-86cb-4c89-a4f3-9223f4c96072';
+  game.ai = { releaseGeneration: () => true, contextBudgetBytes: () => 64000 };
+  game.db = {
+    query: async (sql) => {
+      if (sql.startsWith('SELECT r.status,r.result_code')) return requests;
+      if (sql.startsWith('SELECT context,proposal FROM npc_ai_jobs')) return replies;
+      if (sql.startsWith('SELECT r.id FROM game_npc_decision_requests r JOIN npc_ai_jobs'))
+        return [{ id: parentId }];
+      if (sql.startsWith('SELECT COALESCE((SELECT r.context')) return [{ reply_locale: 'ru' }];
+      throw new Error(sql);
+    },
+  };
+  return { game, state, action, replies, requests, parentId };
+}
+function commitReleaseFixtureReply(fixture, recipientId, channel = 'say') {
+  const { game, state, action } = fixture;
+  const context = game.speechContext(
+    state,
+    'keeper',
+    recipientId,
+    channel,
+    action.observationIds,
+    undefined,
+    undefined,
+    undefined,
+    'ru',
+  );
+  const proposal = { text: 'По вечерам здесь собираются путешественники.' };
+  const spoken = g.commitNpcPublicUtterance(state, 'keeper', {
+    ...proposal,
+    channel,
+    recipientId,
+    observationIds: action.observationIds,
+    contextHash: context.speechHash,
+    replyLocale: 'ru',
+  });
+  assert.equal(spoken.error, undefined);
+  fixture.state = spoken.state;
+  fixture.replies.push({ context, proposal });
+}
+
+test('release world communication queues exact speech consent without fixture speech or reported knowledge', async () => {
+  const f = releaseCommunicationFixture();
+  commitReleaseFixtureReply(f, 'alice');
+  const before = structuredClone(f.state);
+  const pending = await f.game.prepareWorldPlanCommunication('campaign', f.state, 'keeper');
+  assert.equal(pending.pending, true);
+  assert.equal(pending.request.purpose, 'speech');
+  assert.equal(pending.request.context.recipientId, 'npc-1');
+  assert.equal(pending.request.context.replyLocale, 'ru');
+  assert.equal(pending.request.context.worldPlanCommunication.sourceRequestId, f.parentId);
+  assert.equal(pending.request.context.worldPrepared, true);
+  assert.equal(pending.request.context.generationPolicy, 'world-batch-v1');
+  assert.equal(pending.request.context.mockProposal, undefined);
+  assert.equal(pending.request.context.runtimeMapImage, undefined);
+  assert.deepEqual(pending.state.npcUtterances, before.npcUtterances);
+  assert.deepEqual(pending.state.npcBrains['npc-1'].living, before.npcBrains['npc-1'].living);
+  assert.equal(pending.state.npcBrains.keeper.cursor, before.npcBrains.keeper.cursor);
+  assert.equal(pending.state.npcBrains.keeper.living.lastActionOutcome.status, 'blocked');
+  const replay = await f.game.prepareWorldPlanCommunication(
+    'campaign',
+    JSON.parse(JSON.stringify(before)),
+    'keeper',
+  );
+  assert.equal(
+    replay.request.id,
+    pending.request.id,
+    'restore preserves the exact request identity',
+  );
+  f.requests.push({ status: 'queued' });
+  const waiting = await f.game.prepareWorldPlanCommunication('campaign', pending.state, 'keeper');
+  assert.equal(waiting.pending, true);
+  assert.equal(waiting.request, undefined, 'no second request while waiting for consent');
+});
+
+test('release communication dedupes only the exact committed same-round speech intent', async () => {
+  const exact = releaseCommunicationFixture('alice');
+  commitReleaseFixtureReply(exact, 'alice');
+  const before = exact.state.npcUtterances.length;
+  const delivered = await exact.game.prepareWorldPlanCommunication(
+    'campaign',
+    exact.state,
+    'keeper',
+  );
+  assert.equal(delivered.request, undefined);
+  assert.equal(delivered.pending, undefined);
+  assert.equal(delivered.state.npcUtterances.length, before);
+  assert.equal(delivered.state.npcBrains.keeper.cursor, 1);
+  assert.equal(delivered.state.npcBrains.keeper.living.lastActionOutcome.status, 'completed');
+  assert.equal(delivered.state.turnController.worldNpcActions.keeper, 1);
+  const otherChannel = releaseCommunicationFixture('alice', 'whisper');
+  commitReleaseFixtureReply(otherChannel, 'alice', 'say');
+  const different = await otherChannel.game.prepareWorldPlanCommunication(
+    'campaign',
+    otherChannel.state,
+    'keeper',
+  );
+  assert.ok(different.request, 'public reply does not satisfy a whisper intent');
+});
+
+test('admitted real NPC-to-NPC speech commits once with action budget and report provenance', async () => {
+  const f = releaseCommunicationFixture();
+  const prepared = await f.game.prepareWorldPlanCommunication('campaign', f.state, 'keeper');
+  const request = prepared.request;
+  const before = prepared.state.npcUtterances.length;
+  const job = {
+    id: request.id,
+    npcId: request.npcId,
+    purpose: 'speech',
+    context: request.context,
+    contextHash: request.context.contextHash,
+    proposal: { text: 'Борис, путешественник спрашивает о городе.' },
+  };
+  const result = await f.game.evaluateDecision('campaign', prepared.state, job);
+  assert.equal(result.accepted, true);
+  assert.equal(result.next.npcUtterances.length, before + 1);
+  assert.equal(result.next.npcUtterances.at(-1).text, job.proposal.text);
+  assert.equal(result.next.npcBrains.keeper.cursor, 1);
+  assert.equal(result.next.turnController.worldNpcActions.keeper, 1);
+  assert.equal(result.next.npcBrains.keeper.living.lastActionOutcome.status, 'completed');
+  assert.ok(
+    result.next.npcBrains['npc-1'].living.observations.some(
+      (item) =>
+        item.channel === 'report' &&
+        item.sourceNpcId === 'keeper' &&
+        item.confidence === 'reported',
+    ),
+  );
+  const replay = await f.game.evaluateDecision(
+    'campaign',
+    JSON.parse(JSON.stringify(result.next)),
+    job,
+  );
+  assert.equal(replay.accepted, false);
+  assert.deepEqual(replay.next, JSON.parse(JSON.stringify(result.next)));
+});
+
+test('stale and declined real communication never substitutes fixture text or propagates a report', async () => {
+  const f = releaseCommunicationFixture();
+  const prepared = await f.game.prepareWorldPlanCommunication('campaign', f.state, 'keeper');
+  const before = structuredClone(prepared.state);
+  prepared.state.entities['npc-1'].x += 8;
+  const request = prepared.request;
+  const stale = await f.game.evaluateDecision('campaign', prepared.state, {
+    id: request.id,
+    npcId: 'keeper',
+    purpose: 'speech',
+    context: request.context,
+    contextHash: request.context.contextHash,
+    proposal: { text: 'Это настоящая реплика.' },
+  });
+  assert.equal(stale.accepted, false);
+  assert.deepEqual(stale.next.npcUtterances, before.npcUtterances);
+  f.requests.push({ status: 'cancelled', result_code: 'USER_DECLINED' });
+  const declined = await f.game.prepareWorldPlanCommunication('campaign', before, 'keeper');
+  assert.equal(declined.pending, undefined);
+  assert.equal(declined.request, undefined);
+  assert.deepEqual(declined.state.npcUtterances, before.npcUtterances);
+  assert.deepEqual(declined.state.npcBrains.keeper.plan, []);
+  assert.equal(declined.state.npcBrains.keeper.living.lastActionOutcome.code, 'USER_DECLINED');
+});
+
+for (const noOpMoves of [0, 1, 2])
+  test(`release world completion intercepts communication after ${noOpMoves} no-op moves without fixture speech`, async () => {
+    const f = releaseCommunicationFixture();
+    commitReleaseFixtureReply(f, 'alice');
+    const keeper = f.state.entities.keeper;
+    f.state.npcBrains.keeper.plan.unshift(
+      ...Array.from({ length: noOpMoves }, () => ({
+        kind: 'move_to',
+        target: { x: keeper.x, y: keeper.y },
+      })),
+    );
+    const originalQuery = f.game.db.query;
+    let queued = null;
+    const kinds = [];
+    f.game.db.query = async (sql, values) => {
+      if (sql.startsWith('UPDATE game_npc_decision_requests r SET')) return [];
+      if (sql.startsWith('SELECT 1 FROM game_npc_decision_requests r LEFT JOIN'))
+        return queued ? [{}] : [];
+      if (sql.startsWith('SELECT roster FROM game_world_round_rosters'))
+        return [{ roster: [{ npcId: 'keeper', consideration: 'plan' }] }];
+      return originalQuery(sql, values);
+    };
+    f.game.reconcileWorldOrphans = async () => {};
+    f.game.scheduleAutonomousRequests = async () => {};
+    f.game.processDecisionRequests = async () => {};
+    f.game.persist = async (id, live, state, kind, operation, extra) => {
+      kinds.push(kind);
+      if (extra)
+        await extra({
+          query: async (sql, values) => {
+            if (sql.startsWith('INSERT INTO game_npc_decision_requests'))
+              queued = { id: values[0], npcId: values[2], context: JSON.parse(values[7]) };
+            return { rows: [], rowCount: 1 };
+          },
+        });
+      live.state = state;
+    };
+    const live = { state: f.state };
+    const utterances = structuredClone(f.state.npcUtterances);
+    await f.game.advanceTurnWorld('campaign', live);
+    assert.ok(queued);
+    assert.equal(queued.context.worldPlanCommunication.cursor, noOpMoves);
+    assert.equal(live.state.turnController.phase, 'world');
+    assert.deepEqual(live.state.npcUtterances, utterances);
+    assert.deepEqual(kinds, ['npc.communication.requested']);
+    live.state = JSON.parse(JSON.stringify(live.state));
+    await f.game.advanceTurnWorld('campaign', live);
+    assert.deepEqual(kinds, ['npc.communication.requested']);
+    assert.deepEqual(live.state.npcUtterances, JSON.parse(JSON.stringify(utterances)));
+    const generated = await f.game.evaluateDecision('campaign', live.state, {
+      id: queued.id,
+      npcId: queued.npcId,
+      purpose: 'speech',
+      context: queued.context,
+      contextHash: queued.context.contextHash,
+      proposal: { text: 'Борис, расскажи гостю о городе.' },
+    });
+    assert.equal(generated.accepted, true);
+    assert.equal(generated.next.npcBrains.keeper.cursor, noOpMoves + 1);
+    live.state = generated.next;
+    queued = null;
+    await f.game.advanceTurnWorld('campaign', live);
+    assert.equal(live.state.turnController.phase, 'player');
+    assert.equal(live.state.npcUtterances.length, utterances.length + 1);
+    assert.equal(live.state.npcUtterances.at(-1).text, 'Борис, расскажи гостю о городе.');
+    assert.equal(kinds.at(-1), 'turn.world.completed');
+  });
+
+test('real communication rejects extra executable speech intents instead of claiming unsupported actions', async () => {
+  const f = releaseCommunicationFixture();
+  const prepared = await f.game.prepareWorldPlanCommunication('campaign', f.state, 'keeper');
+  const request = prepared.request;
+  const result = await f.game.evaluateDecision('campaign', prepared.state, {
+    id: request.id,
+    npcId: 'keeper',
+    purpose: 'speech',
+    context: request.context,
+    contextHash: request.context.contextHash,
+    proposal: { text: 'Сейчас подойду.', actionIntent: { actions: [{ kind: 'wait' }] } },
+  });
+  assert.equal(result.accepted, false);
+  assert.deepEqual(result.next, prepared.state);
+});
+
+test('real communication remains available in an admitted location-only scene without invented coordinates', async () => {
+  const f = releaseCommunicationFixture();
+  const map = f.state.maps[f.state.entities.keeper.mapId];
+  map.spatialMode = 'location_only';
+  map.scenePresence = {
+    entrySceneId: 'room',
+    scenes: [{ id: 'room', label: 'Room', participantIds: [] }],
+  };
+  for (const entity of Object.values(f.state.entities).filter(
+    (entity) => entity.mapId === map.id,
+  )) {
+    entity.spatialMode = 'location_only';
+    entity.sceneId = 'room';
+    delete entity.x;
+    delete entity.y;
+    if (!entity.ownerId) map.scenePresence.scenes[0].participantIds.push(entity.id);
+  }
+  const prepared = await f.game.prepareWorldPlanCommunication('campaign', f.state, 'keeper');
+  assert.ok(prepared.request);
+  const request = prepared.request;
+  const result = await f.game.evaluateDecision('campaign', prepared.state, {
+    id: request.id,
+    npcId: 'keeper',
+    purpose: 'speech',
+    context: request.context,
+    contextHash: request.context.contextHash,
+    proposal: { text: 'Давай расскажем гостю об этом месте.' },
+  });
+  assert.equal(result.accepted, true);
+  assert.equal(result.next.npcUtterances.at(-1).text, 'Давай расскажем гостю об этом месте.');
+  assert.equal(result.next.entities.keeper.x, undefined);
+  assert.equal(result.next.npcBrains.keeper.cursor, 1);
+});
+
+test('first autonomous speech dispatch adopts only the exact bound request payer', async () => {
+  for (const mismatch of [false, true]) {
+    const f = releaseCommunicationFixture();
+    const prepared = await f.game.prepareWorldPlanCommunication('campaign', f.state, 'keeper');
+    const request = prepared.request;
+    const ownerId = 'f5d00f79-1fdd-4ca2-9c06-8da53cdbebbe';
+    const row = {
+      id: request.id,
+      npc_id: request.npcId,
+      purpose: request.purpose,
+      status: 'queued',
+      cause_key: request.causeKey,
+      context: request.context,
+      requester_user_id: null,
+    };
+    const queued = [],
+      failures = [];
+    f.game.reconcileIntents = async () => {};
+    f.game.story = {
+      reconcileTerminalTravel: async () => {},
+      requireLegacyReplyConsent: async () => false,
+      quotedReply: async () => null,
+    };
+    f.game.worldGeneration = {
+      quotedWorldRequest: async () => ({
+        quote: { id: '939bc12c-0f48-4c47-bb1d-a53f4dd765ea' },
+        batchId: '05d5f7a3-009c-48ce-8897-e8f2b8716a8f',
+        request: {
+          ...request,
+          requesterUserId: ownerId,
+          ...(mismatch ? { causeKey: 'different-request' } : {}),
+        },
+      }),
+      failUnspent: async (...args) => failures.push(args),
+    };
+    f.game.ai = {
+      ...f.game.ai,
+      contextWindow: () => false,
+      manualLive: () => true,
+      configuration: () => ({ enabled: true, provider: 'release', creditPrice: 0 }),
+      queue: async (input) => {
+        queued.push(input);
+        assert.equal(input.requesterUserId, ownerId);
+        assert.equal(input.scope.requesterUserId, ownerId);
+        assert.equal(input.scope.origin, 'user');
+        return { id: 'bc528724-fe3d-4af7-95d4-6003e7751994' };
+      },
+    };
+    f.game.db.query = async (sql) =>
+      sql.startsWith('SELECT * FROM game_npc_decision_requests') ? [structuredClone(row)] : [];
+    f.game.dispatchAi = () => {};
+    await f.game.processDecisionRequests('campaign', { state: prepared.state });
+    assert.equal(queued.length, mismatch ? 0 : 1);
+    assert.equal(failures.length, mismatch ? 1 : 0);
+    if (mismatch) assert.equal(failures[0][2], 'WORLD_ADMISSION_FAILED');
+    assert.equal(row.requester_user_id, null, 'the pre-bind row remains a stale read');
+  }
+});
+
+test('autonomous paid speech has durable private-safe history beyond 128 later utterances and reload', async () => {
+  const f = releaseCommunicationFixture('npc-1', 'whisper');
+  const { StoryTurnRuntime } = require('../../apps/api/dist/game/story-turn-runtime');
+  const runtime = Object.create(StoryTurnRuntime.prototype);
+  const prepared = await f.game.prepareWorldPlanCommunication('campaign', f.state, 'keeper');
+  const request = prepared.request;
+  const job = {
+    id: '679f39af-5b2d-4e9c-8a4e-c0c1844c50f6',
+    npcId: 'keeper',
+    purpose: 'speech',
+    context: request.context,
+    contextHash: request.context.contextHash,
+    proposal: { text: 'PRIVATE_DURABLE_AUTONOMOUS_LINE' },
+  };
+  const delivered = await f.game.evaluateDecision('campaign', prepared.state, job);
+  assert.equal(delivered.accepted, true);
+  const utterance = delivered.next.npcUtterances.at(-1);
+  assert.ok(utterance.audienceIds.includes('alice'));
+  // Frozen emission-time recognition must win over the later currently-visible identity.
+  utterance.speakerKnownToIds = utterance.speakerKnownToIds.filter((actor) => actor !== 'alice');
+  const stored = [];
+  let erased = false,
+    nativeReads = 0;
+  const client = {
+    query: async (sql, values) => {
+      if (sql.startsWith('SELECT r.id FROM npc_ai_jobs')) {
+        nativeReads++;
+        assert.match(sql, /j.status='committed'/);
+        assert.match(sql, /j.context_hash<>'erased'/);
+        assert.equal(values[0], job.id);
+        return { rows: erased ? [] : [{ id: request.id }], rowCount: erased ? 0 : 1 };
+      }
+      assert.match(sql, /INSERT INTO game_story_feed/);
+      assert.match(sql, /ON CONFLICT DO NOTHING/);
+      assert.equal(values[7], job.id);
+      assert.equal(values[8], request.id);
+      if (!stored.some((row) => row.npc_job_id === values[7] || row.entry.sourceId === values[9]))
+        stored.push({
+          id: values[0],
+          turn_id: null,
+          campaign_id: values[1],
+          sequence: values[2],
+          ordinal: 0,
+          tick: values[3],
+          channel: values[4],
+          audience_ids: [...values[5]],
+          entry: JSON.parse(values[6]),
+          npc_job_id: values[7],
+          npc_request_id: values[8],
+          created_at: new Date(),
+        });
+      return { rows: [], rowCount: 1 };
+    },
+  };
+  await runtime.writeAutonomousReply(client, 'campaign', prepared.state, delivered.next, job, 42);
+  await runtime.writeAutonomousReply(client, 'campaign', prepared.state, delivered.next, job, 42);
+  assert.equal(stored.length, 1, 'same accepted job cannot duplicate its feed line');
+  const reads = nativeReads;
+  await runtime.writeAutonomousReply(client, 'campaign', delivered.next, delivered.next, job, 43);
+  assert.equal(
+    nativeReads,
+    reads,
+    'already delivered intent does not create another native operation',
+  );
+  assert.equal(stored[0].turn_id, null, 'never invents a player-authored turn');
+  assert.equal(stored[0].channel, 'whisper');
+  assert.deepEqual(stored[0].audience_ids, utterance.audienceIds);
+  assert.deepEqual(stored[0].entry.speakerKnownToIds, utterance.speakerKnownToIds);
+  let later = delivered.next;
+  for (let index = 0; index < 130; index++) {
+    const context = f.game.speechContext(
+      later,
+      'keeper',
+      'alice',
+      'say',
+      [],
+      undefined,
+      undefined,
+      undefined,
+      'ru',
+    );
+    const next = g.commitNpcPublicUtterance(later, 'keeper', {
+      text: `Later public line ${index}`,
+      recipientId: 'alice',
+      channel: 'say',
+      observationIds: [],
+      contextHash: context.speechHash,
+      replyLocale: 'ru',
+    });
+    assert.equal(next.error, undefined);
+    later = next.state;
+  }
+  assert.equal(later.npcUtterances.length, 128);
+  assert.ok(!later.npcUtterances.some((entry) => entry.id === utterance.id));
+  const restored = JSON.parse(JSON.stringify(later));
+  restored.entities.outsider = { ...restored.entities.alice, id: 'outsider' };
+  runtime.reconcile = async () => {};
+  runtime.db = {
+    query: async (sql, values) => {
+      if (sql.startsWith('SELECT f.*')) {
+        assert.match(sql, /LEFT JOIN npc_ai_jobs/);
+        assert.match(sql, /j.context_hash<>'erased'/);
+        assert.match(sql, /\$2=ANY\(f.audience_ids\)/);
+        return erased
+          ? []
+          : stored
+              .filter((row) => row.audience_ids.includes(values[1]))
+              .map((row) => structuredClone(row));
+      }
+      return [];
+    },
+  };
+  for (const viewer of ['alice', 'outsider']) {
+    runtime.port = {
+      serial: async (_id, run) => run(),
+      access: async () => ({ actorId: viewer, user: { id: viewer } }),
+      load: async () => ({ state: restored }),
+    };
+    const feed = await runtime.feed({}, 'campaign');
+    const entry = feed.entries.find((item) => item.text === job.proposal.text);
+    if (viewer === 'outsider') {
+      assert.equal(entry, undefined);
+      continue;
+    }
+    assert.ok(entry);
+    assert.equal(entry.sequence, 42);
+    assert.equal(entry.channel, 'whisper');
+    assert.equal(entry.kind, 'npc_reply');
+    for (const key of [
+      'turnId',
+      'authorId',
+      'authorLabel',
+      'speakerKnownToIds',
+      'sourceId',
+      'npc_job_id',
+      'npc_request_id',
+    ])
+      assert.equal(key in entry, false, key);
+    assert.equal(feed.entries.filter((item) => item.text === job.proposal.text).length, 1);
+  }
+  erased = true;
+  await assert.rejects(
+    runtime.writeAutonomousReply(client, 'campaign', prepared.state, delivered.next, job, 42),
+    /STALE_STATE/,
+  );
+  assert.equal(stored.length, 1);
+  runtime.port.access = async () => ({ actorId: 'alice', user: { id: 'alice' } });
+  assert.ok(
+    !(await runtime.feed({}, 'campaign')).entries.some((entry) => entry.text === job.proposal.text),
+  );
+});
+
+test('accepted autonomous jobs pin a durable delivery identity rather than merging identical quoted words', async () => {
+  const f = releaseCommunicationFixture('alice', 'say');
+  const prepared = await f.game.prepareWorldPlanCommunication('campaign', f.state, 'keeper');
+  const job = {
+    id: '679f39af-5b2d-4e9c-8a4e-c0c1844c50f6',
+    npcId: 'keeper',
+    purpose: 'speech',
+    context: prepared.request.context,
+    contextHash: prepared.request.context.contextHash,
+    proposal: { text: 'The same permitted words.' },
+  };
+  const first = await f.game.evaluateDecision('campaign', prepared.state, job);
+  assert.equal(first.accepted, true);
+  const old = first.next.npcUtterances.at(-1);
+  // This unit exercises delivery after separate native admission, not permission to
+  // issue another request. Hold the exact quoted public context fixed and retain an
+  // earlier line, as is possible when a later plan selects the same permitted facts.
+  const retained = structuredClone(prepared.state);
+  retained.npcUtterances = structuredClone(first.next.npcUtterances);
+  const later = await f.game.evaluateDecision('campaign', retained, {
+    ...job,
+    id: '80808762-8dfa-452f-8c51-3ea43f238890',
+  });
+  assert.equal(later.accepted, true);
+  assert.equal(later.next.npcUtterances.length, retained.npcUtterances.length + 1);
+  assert.notEqual(later.next.npcUtterances.at(-1).id, old.id);
+  assert.equal(later.next.npcUtterances.at(-1).text, old.text);
+  assert.ok(!JSON.stringify(g.projectState(later.next, 'alice')).includes(job.id));
+});

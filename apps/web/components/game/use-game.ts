@@ -48,6 +48,7 @@ export type CommandBody = {
     | 'turn.end'
     | 'turn.reaction';
   ordinaryGeneration?: boolean;
+  ordinarySpeechPolicy?: 'bounded-npc-speech-v1';
   promiseId?: string;
   decision?: 'accept' | 'decline' | 'defend';
   turnFence?: { roundId: string; phaseEpoch: number; rulesetVersion: 1 };

@@ -160,7 +160,25 @@ export interface StoryAttackOutcome {
     | 'NARRATIVE_HARM'
     | 'NARRATIVE_BLOCKED';
 }
+export interface AutonomousSpeechSkip {
+  id: string;
+  createdAt: string;
+  reason: 'allowance_exhausted' | 'allowance_unavailable' | 'legacy_uncovered';
+}
+export interface AutonomousSpeechReceipt {
+  id: string;
+  createdAt: string;
+  status: 'held' | 'unknown' | 'settled' | 'released';
+  outcome: 'delivered' | 'silent' | 'failed' | 'pending';
+  reservedSubunits: string;
+  capturedSubunits: string | null;
+  funding: CurrencyFunding;
+}
 export interface StoryQuote {
+  autonomousSpeechPolicy?: 'bounded-npc-speech-v1';
+  autonomousSpeechPolicyHash?: string;
+  optionalAutonomousSpeechRequests?: number;
+  optionalAutonomousSpeechSparkSubunits?: string;
   automaticKnownCostPolicy?: 'known-cost-v1';
   automaticKnownCostPolicyHash?: string;
   /** Current-map vision is part of this same quote, never an extra generation. */

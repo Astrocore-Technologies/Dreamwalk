@@ -1,3 +1,4 @@
+import { readAutonomousSpeechBoundEntry } from './autonomous-speech-envelope';
 import {
   acceptedWorldKnownCostPolicyMatches,
   worldKnownCostPolicyRequired,
@@ -75,15 +76,21 @@ export async function verifyAcceptedWorldBatch(
     await c.query('SELECT * FROM npc_ai_quotes WHERE id=$1 FOR UPDATE', [proof.nativeQuoteId])
   ).rows[0];
   const campaign = (
-    await c.query('SELECT state,status,owner_id FROM game_campaigns WHERE id=$1 FOR SHARE', [
-      proof.campaignId,
-    ])
+    await c.query(
+      'SELECT state,status,owner_id,source_version_id FROM game_campaigns WHERE id=$1 FOR SHARE',
+      [proof.campaignId],
+    )
   ).rows[0];
   const entries = Array.isArray(batch?.entries) ? batch.entries : [];
   const matches = entries.filter(
     (entry: { requestId: string; quote: { id: string } }) =>
       entry.requestId === proof.runtimeRequestId && entry.quote?.id === proof.nativeQuoteId,
   );
+  const child =
+    matches.length === 0 && batch && request && native
+      ? await readAutonomousSpeechBoundEntry(c, batch, request, native)
+      : undefined;
+  if (child) matches.push(child);
   const entry = matches[0];
   const acceptedAt = batch?.accepted_at ? new Date(batch.accepted_at).getTime() : NaN;
   if (
@@ -118,6 +125,7 @@ export async function verifyAcceptedWorldBatch(
     !campaign ||
     campaign.status !== 'active' ||
     campaign.owner_id !== ownerId ||
+    (child && campaign.source_version_id !== child.sourceVersionId) ||
     campaign.state?.turnController?.phase !== 'world' ||
     !matchesTurnFence(campaign.state, batch.turn_fence)
   )
@@ -147,6 +155,9 @@ export async function verifyAcceptedWorldBatch(
     if (
       !spark ||
       native.spark_quote_id !== sparkQuoteId ||
+      (child &&
+        (String(spark.reserve_subunits) !== String(child.quote.sparkReservedSubunits) ||
+          spark.price_snapshot?.tariff?.sparkRateVersion !== child.quote.sparkRateVersion)) ||
       spark.source_kind !== 'npc' ||
       spark.source_id !== native.id ||
       spark.operation_id !== native.id ||

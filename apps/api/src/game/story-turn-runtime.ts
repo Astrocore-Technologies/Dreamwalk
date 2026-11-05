@@ -1953,6 +1953,70 @@ export class StoryTurnRuntime {
       [turnId, id],
     );
   }
+  /** Persist a native NPC delivery without fabricating a player turn or exposing its private plan. */
+  async writeAutonomousReply(
+    c: PoolClient,
+    id: string,
+    before: GameState,
+    next: GameState,
+    job: Pick<ReadyDecision, 'id' | 'npcId' | 'context'>,
+    sequence: number,
+  ) {
+    if (!job.context.worldPlanCommunication) return;
+    const channel = job.context.channel;
+    if (channel !== 'say' && channel !== 'whisper') fail(409, 'STALE_STATE', 'STALE_STATE');
+    const source = next.npcUtterances?.find(
+      (entry) =>
+        entry.speakerId === job.npcId &&
+        !!entry.text &&
+        !before.npcUtterances?.some((old) => old.id === entry.id) &&
+        digest([...(entry.sourceObservationIds ?? [])].sort()) ===
+          digest([...((job.context.observationIds as string[]) ?? [])].sort()),
+    );
+    // Silence and an already delivered intent have no new public feed line.
+    if (!source) return;
+    const native = (
+      await c.query(
+        `SELECT r.id FROM npc_ai_jobs j JOIN game_npc_decision_requests r
+       ON r.job_id=j.id AND r.campaign_id=j.campaign_id
+       WHERE j.id=$1 AND j.campaign_id=$2 AND j.npc_id=$3 AND j.purpose='speech'
+       AND j.status='committed' AND j.context_hash<>'erased' AND j.result_code IS DISTINCT FROM 'DATA_ERASED'
+       AND j.context->'worldPlanCommunication'=$4::jsonb
+       AND r.context->'worldPlanCommunication'=$4::jsonb FOR SHARE OF j,r`,
+        [job.id, id, job.npcId, JSON.stringify(job.context.worldPlanCommunication)],
+      )
+    ).rows[0];
+    if (!native) fail(409, 'STALE_STATE', 'STALE_STATE');
+    const entry = {
+      ordinal: 0,
+      tick: source.tick,
+      kind: 'npc_reply',
+      channel,
+      authorId: source.speakerId,
+      authorLabel: next.entities[job.npcId]?.label,
+      text: source.text,
+      sourceId: source.id,
+      speakerKnownToIds: [...(source.speakerKnownToIds ?? [])],
+    };
+    await c.query(
+      `INSERT INTO game_story_feed(id,turn_id,campaign_id,sequence,ordinal,tick,channel,audience_ids,entry,npc_job_id,npc_request_id)
+       SELECT $1,NULL,$2,$3,0,$4,$5,$6,$7,$8,$9
+       WHERE NOT EXISTS(SELECT 1 FROM game_story_feed WHERE campaign_id=$2 AND entry->>'sourceId'=$10)
+       ON CONFLICT DO NOTHING`,
+      [
+        randomUUID(),
+        id,
+        sequence,
+        source.tick,
+        channel,
+        source.audienceIds,
+        JSON.stringify(entry),
+        job.id,
+        native.id,
+        source.id,
+      ],
+    );
+  }
   private async writeFeed(
     c: PoolClient,
     id: string,
@@ -2374,14 +2438,19 @@ export class StoryTurnRuntime {
         live = await this.port.load(id, false);
       if (!requiresMapRecovery(live.state)) await this.reconcile(id, live.state.tick);
       const rows = await this.db.query(
-        `SELECT f.* FROM game_story_feed f JOIN game_story_turns t ON t.id=f.turn_id WHERE f.campaign_id=$1 AND t.erased_at IS NULL AND (($3::boolean AND '*'=ANY(f.audience_ids)) OR $2=ANY(f.audience_ids)) ORDER BY f.sequence DESC,f.ordinal DESC LIMIT 300`,
+        `SELECT f.* FROM game_story_feed f LEFT JOIN game_story_turns t ON t.id=f.turn_id
+         LEFT JOIN npc_ai_jobs j ON j.id=f.npc_job_id AND j.campaign_id=f.campaign_id
+         WHERE f.campaign_id=$1 AND ((f.turn_id IS NOT NULL AND t.id IS NOT NULL AND t.erased_at IS NULL)
+           OR (f.npc_job_id IS NOT NULL AND j.status='committed' AND j.context_hash<>'erased' AND j.result_code IS DISTINCT FROM 'DATA_ERASED'))
+         AND (($3::boolean AND '*'=ANY(f.audience_ids)) OR $2=ANY(f.audience_ids))
+         ORDER BY f.sequence DESC,f.ordinal DESC LIMIT 300`,
         [id, a.actorId, live.state.entities[a.actorId]?.spatialMode !== 'location_only'],
       );
       const sources = new Set<string>(rows.map((r) => r.entry.sourceId).filter(Boolean));
       const entries: StoryFeedEntry[] = rows.reverse().map((r) => ({
         ...r.entry,
         id: r.id,
-        turnId: r.turn_id,
+        ...(r.turn_id ? { turnId: r.turn_id } : {}),
         sequence: Number(r.sequence),
         ordinal: r.ordinal,
         tick: Number(r.tick),

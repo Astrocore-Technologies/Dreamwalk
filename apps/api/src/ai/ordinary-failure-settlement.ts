@@ -1,3 +1,7 @@
+import {
+  autonomousSpeechBoundEntry,
+  type AutonomousSpeechEvidence,
+} from '../generation/autonomous-speech-envelope';
 import type { QueryResultRow } from 'pg';
 import { digest } from './context';
 import { knownNpcSettlementQuote } from '../game/known-npc-settlement';
@@ -12,6 +16,7 @@ export function ordinaryFailureSettlement(
   request: QueryResultRow | undefined,
   hold: QueryResultRow | undefined,
   quote: QueryResultRow | undefined,
+  speechEvidence?: AutonomousSpeechEvidence,
 ): SparkSettlement | undefined {
   if (!batch || !request || !hold || !quote) return;
   const acceptedAt = batch.accepted_at ? new Date(batch.accepted_at).getTime() : NaN;
@@ -20,6 +25,16 @@ export function ordinaryFailureSettlement(
     (entry: { requestId?: string; quote?: { id?: string } }) =>
       entry.requestId === request.id && entry.quote?.id === job.quote_id,
   );
+  if (matches.length === 0 && speechEvidence) {
+    const child = autonomousSpeechBoundEntry(
+      batch,
+      speechEvidence.binding,
+      request,
+      speechEvidence.native,
+      speechEvidence.source,
+    );
+    if (child) matches.push(child);
+  }
   if (
     batch.quote?.ordinaryTurnConsentVersion !== 'end-turn-v1' ||
     (batch.quote?.generatedLocationImages ?? 0) !== 0 ||
