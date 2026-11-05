@@ -287,16 +287,20 @@ export function StoryReplyConfirmation({
                   count: prepared.result.quote.optionalAutonomousSpeechRequests,
                 })}
               </p>
+              <p>{h('worldOptionalSpeechConditions')}</p>
               {prepared.result.quote.optionalAutonomousSpeechSparkSubunits && (
-                <p>
-                  {h('worldOptionalSpeechIncluded', {
-                    count: prepared.result.quote.optionalAutonomousSpeechRequests,
-                    amount: formatSparkSubunits(
-                      prepared.result.quote.optionalAutonomousSpeechSparkSubunits,
-                      locale,
-                    ),
-                  })}
-                </p>
+                <details>
+                  <summary>{h('worldSpeechAllowanceDetails')}</summary>
+                  <p>
+                    {h('worldOptionalSpeechIncluded', {
+                      count: prepared.result.quote.optionalAutonomousSpeechRequests,
+                      amount: formatSparkSubunits(
+                        prepared.result.quote.optionalAutonomousSpeechSparkSubunits,
+                        locale,
+                      ),
+                    })}
+                  </p>
+                </details>
               )}
             </>
           )}

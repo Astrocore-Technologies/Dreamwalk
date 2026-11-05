@@ -13,6 +13,8 @@ export interface WorldRoundForecast {
   requestCount: number;
   optionalAutonomousSpeechRequests: number;
   optionalAutonomousSpeechSparkSubunits: string | null;
+  optionalAutonomousSpeechAllowanceSubunits: string | null;
+  optionalAutonomousSpeechUnestimatedRequests: number;
   baseEstimatedSparkSubunits: string | null;
   includesMapAnalysis: false;
   finalQuoteRequired: true;
@@ -26,10 +28,11 @@ export interface WorldRoundForecast {
 export async function forecastWorldRound(
   db: Pick<Db, 'query'>,
   ai: Pick<NpcAiEngine, 'localRequestForecast'> &
-    Partial<Pick<NpcAiEngine, 'localAutonomousSpeechForecast'>>,
+    Partial<Pick<NpcAiEngine, 'localAutonomousSpeechForecast' | 'localAutonomousSpeechAllowance'>>,
   campaignId: string,
   state: GameState,
   prepareSpeech?: (state: GameState, request: NpcDecisionRequest) => DecisionContext,
+  prepareOptionalSpeech?: (state: GameState, npcId: string) => DecisionContext[],
 ): Promise<WorldRoundForecast | null> {
   const turn = state.turnController;
   if (!turn) return null;
@@ -52,7 +55,7 @@ export async function forecastWorldRound(
     ],
   );
   let contextUnavailable = false;
-  const requests: { purpose: AiPurpose; context: DecisionContext }[] = [];
+  const requests: { npcId: string; purpose: AiPurpose; context: DecisionContext }[] = [];
   for (const row of rows) {
     if (
       row.status !== 'queued' ||
@@ -117,7 +120,7 @@ export async function forecastWorldRound(
     } catch {
       contextUnavailable = true;
     }
-    requests.push({ purpose: row.purpose, context });
+    requests.push({ npcId: row.npc_id, purpose: row.purpose, context });
   }
   const maps = new Set(turn.actorOrder.map((actorId) => state.entities[actorId]?.mapId));
   for (const [npcId, brain] of Object.entries(state.npcBrains ?? {})) {
@@ -136,6 +139,7 @@ export async function forecastWorldRound(
       continue;
     try {
       requests.push({
+        npcId,
         purpose: 'plan',
         context: { ...buildNpcDecisionContext(state, npcId), turnFence: turnFence(state) },
       });
@@ -143,9 +147,14 @@ export async function forecastWorldRound(
       contextUnavailable = true;
     }
   }
-  const optionalAutonomousSpeechRequests = requests.filter(
-    (request) => request.purpose === 'plan',
-  ).length;
+  const optionalNpcIds = [
+    ...new Set(
+      requests.filter((request) => request.purpose === 'plan').map((request) => request.npcId),
+    ),
+  ];
+  const optionalAutonomousSpeechRequests = ai.localAutonomousSpeechForecast
+    ? optionalNpcIds.length
+    : 0;
   let amount = 0;
   let unavailableReason: WorldRoundForecast['unavailableReason'] = contextUnavailable
     ? 'context_unavailable'
@@ -160,33 +169,60 @@ export async function forecastWorldRound(
     if (!Number.isSafeInteger(amount)) unavailableReason = 'pricing_unavailable';
   }
   const baseAmount = amount;
-  let optionalAmount = 0;
-  if (optionalAutonomousSpeechRequests && ai.localAutonomousSpeechForecast) {
-    const optional = ai.localAutonomousSpeechForecast();
-    if (
-      optional === null ||
-      !Number.isSafeInteger(optional) ||
-      optional < 0 ||
-      !Number.isSafeInteger(amount + optional * optionalAutonomousSpeechRequests)
-    )
-      unavailableReason = 'pricing_unavailable';
-    else {
-      optionalAmount = optional * optionalAutonomousSpeechRequests;
-      amount += optionalAmount;
+  const baseUnavailable = unavailableReason;
+  let optionalAmount = 0,
+    optionalUnestimated = 0;
+  if (ai.localAutonomousSpeechForecast) {
+    for (const npcId of optionalNpcIds) {
+      try {
+        const contexts = prepareOptionalSpeech?.(state, npcId) ?? [];
+        const estimates = contexts.map((context) => ai.localAutonomousSpeechForecast!(context));
+        if (
+          !estimates.length ||
+          estimates.some((value) => value === null || !Number.isSafeInteger(value) || value < 0)
+        ) {
+          optionalUnestimated++;
+          continue;
+        }
+        // Current say/whisper examples, not a universal bound on a future plan.
+        const current = Math.max(...(estimates as number[]));
+        if (!Number.isSafeInteger(optionalAmount + current)) {
+          optionalUnestimated++;
+          continue;
+        }
+        optionalAmount += current;
+      } catch {
+        optionalUnestimated++;
+      }
     }
   }
+  if (optionalUnestimated) unavailableReason ??= 'context_unavailable';
+  amount += optionalAmount;
+  if (!Number.isSafeInteger(amount)) unavailableReason = 'pricing_unavailable';
+  const allowance = ai.localAutonomousSpeechAllowance?.();
+  const allowanceAmount =
+    allowance != null &&
+    Number.isSafeInteger(allowance) &&
+    allowance >= 0 &&
+    Number.isSafeInteger(allowance * optionalAutonomousSpeechRequests)
+      ? allowance * optionalAutonomousSpeechRequests
+      : null;
+
   return {
     basis: 'local_round_forecast',
     estimatedTotalMicros: unavailableReason ? null : amount,
     estimatedSparkSubunits: unavailableReason
       ? null
       : providerMicrosToSparkSubunits(String(amount)),
-    baseEstimatedSparkSubunits: unavailableReason
+    baseEstimatedSparkSubunits: baseUnavailable
       ? null
       : providerMicrosToSparkSubunits(String(baseAmount)),
-    optionalAutonomousSpeechSparkSubunits: unavailableReason
+    optionalAutonomousSpeechSparkSubunits: optionalUnestimated
       ? null
       : providerMicrosToSparkSubunits(String(optionalAmount)),
+    optionalAutonomousSpeechAllowanceSubunits:
+      allowanceAmount === null ? null : providerMicrosToSparkSubunits(String(allowanceAmount)),
+    optionalAutonomousSpeechUnestimatedRequests: optionalUnestimated,
     requestCount:
       requests.length + (ai.localAutonomousSpeechForecast ? optionalAutonomousSpeechRequests : 0),
     optionalAutonomousSpeechRequests: ai.localAutonomousSpeechForecast

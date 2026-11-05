@@ -105,6 +105,17 @@ export async function readAutonomousSpeechSkips(
     AND NOT EXISTS(SELECT 1 FROM live_test_text_permits p WHERE p.request_id=r.id)
     AND NOT EXISTS(SELECT 1 FROM generation_budget_reservations pending WHERE pending.operation_key='manual-text:'||r.id::text)
     AND NOT EXISTS(SELECT 1 FROM spark_holds h WHERE h.source_id=r.id::text)
+    AND NOT EXISTS(SELECT 1 FROM (
+      SELECT child.native_quote_id FROM game_autonomous_speech_bindings child WHERE child.request_id=r.id
+      UNION ALL
+      SELECT (entry->'quote'->>'id')::uuid FROM game_world_generation_batches accepted
+        CROSS JOIN LATERAL jsonb_array_elements(accepted.entries) entry
+        WHERE accepted.campaign_id=r.campaign_id AND entry->>'requestId'=r.id::text
+    ) linked WHERE EXISTS(SELECT 1 FROM spark_holds h
+        WHERE h.source_kind='npc' AND h.source_id=linked.native_quote_id::text)
+      OR EXISTS(SELECT 1 FROM spark_quotes q
+        JOIN generation_budget_reservations liability ON liability.spark_quote_id=q.id
+        WHERE q.source_kind='npc' AND q.source_id=linked.native_quote_id::text))
     AND ((r.requester_user_id=$2 AND r.result_code IN ('AUTONOMOUS_SPEECH_LEGACY_UNCOVERED','AUTONOMOUS_SPEECH_ALLOWANCE_UNAVAILABLE')) OR EXISTS(SELECT 1 FROM game_world_generation_batches b WHERE b.campaign_id=r.campaign_id
       AND b.owner_id=$2 AND b.accepted_at IS NOT NULL AND b.quote->>'autonomousSpeechPolicy'='bounded-npc-speech-v1'
       AND b.autonomous_speech_entries @> jsonb_build_array(jsonb_build_object('envelope',jsonb_build_object('sourceRequestId',r.context->'worldPlanCommunication'->>'sourceRequestId')))))
@@ -118,8 +129,10 @@ export async function readAutonomousSpeechSkips(
     reason:
       row.result_code === 'AUTONOMOUS_SPEECH_ALLOWANCE_EXHAUSTED'
         ? 'allowance_exhausted'
-        : row.result_code === 'AUTONOMOUS_SPEECH_LEGACY_UNCOVERED'
-          ? 'legacy_uncovered'
-          : 'allowance_unavailable',
+        : row.result_code === 'AUTONOMOUS_SPEECH_INSUFFICIENT_FUNDS'
+          ? 'insufficient_funds'
+          : row.result_code === 'AUTONOMOUS_SPEECH_LEGACY_UNCOVERED'
+            ? 'legacy_uncovered'
+            : 'allowance_unavailable',
   }));
 }

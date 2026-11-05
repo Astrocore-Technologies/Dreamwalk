@@ -3,7 +3,7 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
 import { createRequire } from 'node:module';
-import { db, startApi, stopApi, client } from './support-runtime.mjs';
+import { db, startApi, stopApi, client, until } from './support-runtime.mjs';
 import { purgeNpcAiData } from '../../scripts/npc-ai-data-requests.mjs';
 import { requestEstimateOwnerProfile } from '../images/owner-config-fixture.mjs';
 const require = createRequire(import.meta.url);
@@ -20,8 +20,16 @@ const { KnownNpcSettlement } = require('../../apps/api/dist/game/known-npc-settl
 const { NpcAiEngine } = require('../../apps/api/dist/ai/npc-ai.service');
 const { ProviderFailure } = require('../../apps/api/dist/ai/types');
 const { estimateTextRequest } = require('../../apps/api/dist/generation/estimates');
-const { canonical } = require('../../apps/api/dist/ai/context');
+const { canonical, digest } = require('../../apps/api/dist/ai/context');
 const { WorldGenerationBatch } = require('../../apps/api/dist/game/world-generation-batch');
+const {
+  readAutonomousSpeechSkips,
+} = require('../../apps/api/dist/game/autonomous-speech-receipts');
+const { SparksAccounting } = require('../../apps/api/dist/generation/sparks-accounting');
+const {
+  mandatoryWorldBatchFunding,
+  pendingWorldBatchFunding,
+} = require('../../apps/api/dist/generation/world-batch-funding');
 const core = require('../../packages/game-core/dist');
 const database = new Db();
 await test(
@@ -34,7 +42,7 @@ await test(
       const owner = await client().registerLegacyFixture();
       const source = await owner.request('/adventures/old-observatory?view=published');
       const ids = [];
-      for (let i = 0; i < 12; i++)
+      for (let i = 0; i < 20; i++)
         ids.push(
           (
             await owner.request('/game/campaigns', {
@@ -129,7 +137,13 @@ await test(
             [id],
           )
         ).rows;
-      async function plannedRound(id, bounded, explicit = false, doubleSpeech = false) {
+      async function plannedRound(
+        id,
+        bounded,
+        explicit = false,
+        doubleSpeech = false,
+        options = {},
+      ) {
         await game.snapshot(req, id);
         const live = game.live.get(id);
         live.paused = false;
@@ -183,13 +197,22 @@ await test(
             autonomousSpeechPolicy: 'bounded-npc-speech-v1',
             automaticKnownCostPolicy: 'known-cost-v1',
           });
-          await batch.consent(owner.user.id, id, live.state, {
+          const consentBody = {
             operationId,
             quoteId: quoted.quote.id,
             consent: true,
             autonomousSpeechPolicyHash: quoted.quote.autonomousSpeechPolicyHash,
             automaticKnownCostPolicyHash: quoted.quote.automaticKnownCostPolicyHash,
-          });
+          };
+          const quotedBatch = (
+            await db.query('SELECT * FROM game_world_generation_batches WHERE id=$1', [
+              quoted.quote.id,
+            ])
+          ).rows[0];
+          if (options.beforeConsent) await options.beforeConsent(quotedBatch);
+          const accept = () => batch.consent(owner.user.id, id, live.state, consentBody);
+          if (options.stopAfterQuote) return { live, quotedBatch, accept };
+          await accept();
         } else await game.admitOrdinaryRound(id);
         const accepted = (
           await db.query(
@@ -201,6 +224,10 @@ await test(
         assert.equal(accepted.autonomous_speech_entries.length, bounded ? 1 : 0);
         assert.equal(accepted.entries.length, 1);
         assert.equal(accepted.entries[0].purpose, 'plan');
+        if (options.stopAfterAdmission) return { live, accepted };
+        return finishPlan(id, live, accepted, doubleSpeech);
+      }
+      async function finishPlan(id, live, accepted, doubleSpeech = false) {
         await game.processDecisionRequests(id, live);
         const plan = (await requests(id)).find((row) => row.purpose === 'plan');
         assert.ok(plan.job_id);
@@ -644,6 +671,48 @@ await test(
             consent: true,
             automaticKnownCostPolicyHash: quoted.quote.automaticKnownCostPolicyHash,
           });
+          const exact = await batch.quotedWorldRequest(id, f.speech);
+          const native = (
+            await db.query('SELECT * FROM npc_ai_quotes WHERE id=$1', [exact.quote.id])
+          ).rows[0];
+          await database.tx((c) =>
+            new SparksAccounting().reserve(c, owner.user.id, native.spark_quote_id),
+          );
+          await batch.failUnspent(id, f.speech.id, 'AUTONOMOUS_SPEECH_ALLOWANCE_UNAVAILABLE');
+          assert.equal((await requests(id)).find((row) => row.id === f.speech.id).status, 'queued');
+          const pruned = await db.connect();
+          try {
+            await pruned.query('BEGIN');
+            await pruned.query('DELETE FROM npc_ai_quotes WHERE id=$1', [native.id]);
+            await batch.failUnspent(
+              id,
+              f.speech.id,
+              'AUTONOMOUS_SPEECH_ALLOWANCE_UNAVAILABLE',
+              pruned,
+            );
+            assert.equal(
+              (
+                await pruned.query('SELECT status FROM game_npc_decision_requests WHERE id=$1', [
+                  f.speech.id,
+                ])
+              ).rows[0].status,
+              'queued',
+              'pruned native quote does not erase its retained liability',
+            );
+            // Even a historical malformed failed request must never show a no-charge skip.
+            await pruned.query(
+              "UPDATE game_npc_decision_requests SET status='failed',result_code='AUTONOMOUS_SPEECH_ALLOWANCE_UNAVAILABLE' WHERE id=$1",
+              [f.speech.id],
+            );
+            assert.deepEqual(await readAutonomousSpeechSkips(pruned, id, owner.user.id), []);
+          } finally {
+            await pruned.query('ROLLBACK');
+            pruned.release();
+          }
+          assert.deepEqual(
+            (await batch.status(owner.user.id, id, f.live.state)).speechSkips ?? [],
+            [],
+          );
           await game.processDecisionRequests(id, f.live);
           const child = (await requests(id)).find((row) => row.purpose === 'speech');
           assert.ok(child.job_id);
@@ -887,6 +956,353 @@ await test(
           );
         },
       );
+      const setBalance = async (amount) =>
+        db.query('UPDATE spark_wallets SET balance_subunits=$2 WHERE owner_id=$1', [
+          owner.user.id,
+          String(amount),
+        ]);
+      const finances = async () => ({
+        wallet: (
+          await db.query(
+            'SELECT balance_subunits,held_subunits FROM spark_wallets WHERE owner_id=$1',
+            [owner.user.id],
+          )
+        ).rows[0],
+        ledger: (
+          await db.query('SELECT count(*)::int AS n FROM spark_ledger WHERE owner_id=$1', [
+            owner.user.id,
+          ])
+        ).rows[0].n,
+        holds: (
+          await db.query('SELECT count(*)::int AS n FROM spark_holds WHERE owner_id=$1', [
+            owner.user.id,
+          ])
+        ).rows[0].n,
+      });
+      await t.test(
+        'unfunded future allowance permits mandatory admission, then insufficient exact speech visibly skips without charge',
+        async () => {
+          const id = ids[12],
+            startCalls = calls;
+          try {
+            const f = await plannedRound(id, true, true, false, {
+              beforeConsent: async (quoted) => {
+                const mandatory = mandatoryWorldBatchFunding(quoted).total;
+                assert.ok(BigInt(quoted.quote.sparkReservedSubunits) > mandatory);
+                await setBalance(mandatory);
+              },
+            });
+            const original = JSON.stringify([
+              f.accepted.entries,
+              f.accepted.autonomous_speech_entries,
+              f.accepted.quote,
+            ]);
+            // Zero available funds models a definitive balance change after mandatory settlement.
+            await setBalance(0);
+            const before = await finances();
+            for (let i = 0; i < 2; i++) await game.processDecisionRequests(id, f.live);
+            const skipped = (await requests(id)).find((row) => row.id === f.speech.id);
+            assert.equal(skipped.status, 'failed');
+            assert.equal(skipped.result_code, 'AUTONOMOUS_SPEECH_INSUFFICIENT_FUNDS');
+            assert.equal(skipped.job_id, null);
+            assert.deepEqual(await finances(), before);
+            await game.advanceTurnWorld(id, f.live);
+            assert.equal(f.live.state.turnController.phase, 'player');
+            assert.equal(calls, startCalls + 1);
+            const status = await batch.status(owner.user.id, id, f.live.state);
+            assert.equal(status.communicationConsentRequired, undefined);
+            assert.equal(status.speechSkips[0].reason, 'insufficient_funds');
+            assert.deepEqual(status.speechReceipts ?? [], []);
+            const saved = (
+              await db.query('SELECT * FROM game_world_generation_batches WHERE id=$1', [
+                f.accepted.id,
+              ])
+            ).rows[0];
+            assert.equal(
+              JSON.stringify([saved.entries, saved.autonomous_speech_entries, saved.quote]),
+              original,
+            );
+          } finally {
+            await setBalance(10000000);
+          }
+        },
+      );
+      await t.test(
+        'optional native reservation preserves another campaign mandatory funds atomically and replay never charges skipped child',
+        async () => {
+          const id = ids[13],
+            otherId = ids[14];
+          try {
+            const f = await plannedRound(id, true);
+            const other = await plannedRound(otherId, true, true, false, {
+              stopAfterAdmission: true,
+            });
+            const child = await batch.quotedWorldRequest(id, f.speech);
+            assert.ok(child);
+            const protectedTotal = await database.tx(async (c) => {
+              await c.query('SELECT owner_id FROM spark_wallets WHERE owner_id=$1 FOR UPDATE', [
+                owner.user.id,
+              ]);
+              return (await pendingWorldBatchFunding(c, owner.user.id)).total;
+            });
+            assert.equal(protectedTotal, mandatoryWorldBatchFunding(other.accepted).total);
+            const childAmount = BigInt(child.quote.sparkReservedSubunits);
+            // Synthetic historical Sparks-only obligation, entirely rolled back.
+            const mixed = await db.connect();
+            try {
+              await mixed.query('BEGIN');
+              await mixed.query('SELECT owner_id FROM spark_wallets WHERE owner_id=$1 FOR UPDATE', [
+                owner.user.id,
+              ]);
+              const mandatoryNative = (
+                await mixed.query('SELECT * FROM npc_ai_quotes WHERE id=$1', [
+                  other.accepted.entries[0].quote.id,
+                ])
+              ).rows[0];
+              const legacySparkId = randomUUID();
+              await mixed.query(
+                `INSERT INTO spark_quotes(id,owner_id,operation_id,request_hash,source_kind,source_id,price_snapshot,reserve_subunits,expires_at)
+                SELECT $1,owner_id,$2,request_hash,source_kind,source_id,price_snapshot-'fundingPolicy',reserve_subunits,expires_at FROM spark_quotes WHERE id=$3`,
+                [legacySparkId, randomUUID(), mandatoryNative.spark_quote_id],
+              );
+              await mixed.query('UPDATE npc_ai_quotes SET spark_quote_id=$2 WHERE id=$1', [
+                mandatoryNative.id,
+                legacySparkId,
+              ]);
+              await mixed.query(
+                'INSERT INTO dream_wallets(owner_id,enabled,balance_subunits) VALUES($1,true,$2) ON CONFLICT(owner_id) DO UPDATE SET enabled=true,balance_subunits=$2',
+                [owner.user.id, String(childAmount + protectedTotal)],
+              );
+              await mixed.query('UPDATE spark_wallets SET balance_subunits=$2 WHERE owner_id=$1', [
+                owner.user.id,
+                String(protectedTotal - 1n),
+              ]);
+              assert.deepEqual(await pendingWorldBatchFunding(mixed, owner.user.id), {
+                total: protectedTotal,
+                sparksOnly: protectedTotal,
+              });
+              const native = (
+                await mixed.query('SELECT * FROM npc_ai_quotes WHERE id=$1', [child.quote.id])
+              ).rows[0];
+              await assert.rejects(
+                new SparksAccounting().reserve(mixed, owner.user.id, native.spark_quote_id, {
+                  batchId: f.accepted.id,
+                  nativeQuoteId: native.id,
+                  runtimeRequestId: f.speech.id,
+                  contextDigest: digest(f.speech.context),
+                  campaignId: id,
+                  providerId: native.provider_id,
+                  providerVersion: native.provider_version,
+                  policyVersion: native.policy_version,
+                }),
+                /AUTONOMOUS_SPEECH_INSUFFICIENT_FUNDS/,
+              );
+              assert.equal(
+                (
+                  await mixed.query('SELECT count(*)::int AS n FROM spark_holds WHERE id=$1', [
+                    native.spark_quote_id,
+                  ])
+                ).rows[0].n,
+                0,
+              );
+            } finally {
+              await mixed.query('ROLLBACK');
+              mixed.release();
+            }
+            await setBalance(childAmount + protectedTotal - 1n);
+            const before = await finances(),
+              beforeCalls = calls;
+            await game.processDecisionRequests(id, f.live);
+            const skipped = (await requests(id)).find((row) => row.id === f.speech.id);
+            assert.equal(skipped.result_code, 'AUTONOMOUS_SPEECH_INSUFFICIENT_FUNDS');
+            assert.equal(skipped.status, 'failed');
+            assert.deepEqual(await finances(), before);
+            assert.equal(calls, beforeCalls);
+            await new WorldGenerationBatch(database, ai).quotedWorldRequest(id, f.speech);
+            await game.processDecisionRequests(id, f.live);
+            assert.deepEqual(await finances(), before);
+            await game.advanceTurnWorld(id, f.live);
+            assert.equal(f.live.state.turnController.phase, 'player');
+            await game.processDecisionRequests(otherId, other.live);
+            const plan = (await requests(otherId)).find((row) => row.purpose === 'plan');
+            assert.ok(plan.job_id, 'mandatory work still reserves its original exact amount');
+            await ai.run(plan.job_id, async () => true);
+            await game.processAi(otherId, other.live);
+            await game.advanceTurnWorld(otherId, other.live);
+            await setBalance(0);
+            await game.processDecisionRequests(otherId, other.live);
+            await game.advanceTurnWorld(otherId, other.live);
+            assert.equal(other.live.state.turnController.phase, 'player');
+          } finally {
+            await setBalance(10000000);
+          }
+        },
+      );
+      await t.test(
+        'concurrent campaign acceptance cannot overpromise the same mandatory wallet balance; accepted replay is idempotent',
+        async () => {
+          try {
+            const pair = await Promise.all(
+              [ids[15], ids[16]].map((id) =>
+                plannedRound(id, true, true, false, { stopAfterQuote: true }),
+              ),
+            );
+            const amounts = pair.map((f) => mandatoryWorldBatchFunding(f.quotedBatch).total);
+            await setBalance(amounts[0] + amounts[1] - 1n);
+            const before = await finances();
+            const outcomes = await Promise.allSettled(pair.map((f) => f.accept()));
+            assert.equal(outcomes.filter((o) => o.status === 'fulfilled').length, 1);
+            assert.equal(
+              outcomes.find((o) => o.status === 'rejected').reason.message,
+              'INSUFFICIENT_SPARKS',
+            );
+            const index = outcomes.findIndex((o) => o.status === 'fulfilled');
+            await pair[index].accept();
+            assert.deepEqual(await finances(), before, 'consent never creates money holds');
+            for (const entry of pair[index].quotedBatch.entries)
+              await batch.failUnspent(ids[15 + index], entry.requestId, 'SYNTHETIC_NOT_DISPATCHED');
+            await game.advanceTurnWorld(ids[15 + index], pair[index].live);
+            assert.equal(pair[index].live.state.turnController.phase, 'player');
+          } finally {
+            await setBalance(10000000);
+          }
+        },
+      );
+      await t.test(
+        'concurrent exact optional children share one wallet without overspend and committed child captures the same actual receipt',
+        async () => {
+          try {
+            const pair = [];
+            for (const id of [ids[17], ids[18]]) pair.push(await plannedRound(id, true));
+            const children = await Promise.all(
+              pair.map((f, i) => batch.quotedWorldRequest(ids[17 + i], f.speech)),
+            );
+            const amounts = children.map((child) => BigInt(child.quote.sparkReservedSubunits));
+            await setBalance(amounts[0] > amounts[1] ? amounts[0] : amounts[1]);
+            const native = await Promise.all(
+              children.map(
+                async (child) =>
+                  (await db.query('SELECT * FROM npc_ai_quotes WHERE id=$1', [child.quote.id]))
+                    .rows[0],
+              ),
+            );
+            const accounting = new SparksAccounting();
+            const admitted = await Promise.allSettled(
+              pair.map((f, i) =>
+                database.tx((c) =>
+                  accounting.reserve(c, owner.user.id, native[i].spark_quote_id, {
+                    batchId: f.accepted.id,
+                    nativeQuoteId: native[i].id,
+                    runtimeRequestId: f.speech.id,
+                    contextDigest: digest(f.speech.context),
+                    campaignId: ids[17 + i],
+                    providerId: native[i].provider_id,
+                    providerVersion: native[i].provider_version,
+                    policyVersion: native[i].policy_version,
+                  }),
+                ),
+              ),
+            );
+            assert.equal(admitted.filter((result) => result.status === 'fulfilled').length, 1);
+            assert.equal(
+              admitted.find((result) => result.status === 'rejected').reason.message,
+              'INSUFFICIENT_SPARKS',
+            );
+            const winner = admitted.findIndex((result) => result.status === 'fulfilled'),
+              loser = 1 - winner;
+            await game.processDecisionRequests(ids[17 + loser], pair[loser].live);
+            await game.processDecisionRequests(ids[17 + winner], pair[winner].live);
+            const rows = await Promise.all(
+              pair.map(async (f, i) =>
+                (await requests(ids[17 + i])).find((r) => r.id === f.speech.id),
+              ),
+            );
+            assert.equal(rows.filter((r) => r.job_id).length, 1);
+            assert.equal(
+              rows.filter((r) => r.result_code === 'AUTONOMOUS_SPEECH_INSUFFICIENT_FUNDS').length,
+              1,
+            );
+            const index = rows.findIndex((r) => r.job_id),
+              child = rows[index],
+              id = ids[17 + index],
+              f = pair[index];
+            const before = await finances();
+            await game.processDecisionRequests(id, f.live);
+            assert.deepEqual(await finances(), before);
+            await ai.run(child.job_id, async () => true);
+            await game.processAi(id, f.live);
+            const receipt = (await batch.status(owner.user.id, id, f.live.state)).speechReceipts[0];
+            assert.equal(receipt.capturedSubunits, '60');
+            assert.equal(receipt.status, 'settled');
+            assert.equal(receipt.outcome, 'delivered');
+            for (let i = 0; i < pair.length; i++) {
+              await game.advanceTurnWorld(ids[17 + i], pair[i].live);
+              assert.equal(pair[i].live.state.turnController.phase, 'player');
+            }
+          } finally {
+            await setBalance(10000000);
+          }
+        },
+      );
+      await t.test(
+        'racing native quote-linked hold is never erased or represented as an unspent skip',
+        async () => {
+          const id = ids[19],
+            f = await plannedRound(id, true);
+          const child = await batch.quotedWorldRequest(id, f.speech);
+          const native = (
+            await db.query('SELECT * FROM npc_ai_quotes WHERE id=$1', [child.quote.id])
+          ).rows[0];
+          const accounting = new SparksAccounting();
+          const enqueue = await db.connect();
+          try {
+            await enqueue.query('BEGIN');
+            await enqueue.query(
+              'SELECT id FROM game_npc_decision_requests WHERE id=$1 FOR UPDATE',
+              [f.speech.id],
+            );
+            await accounting.reserve(enqueue, owner.user.id, native.spark_quote_id);
+            const skip = batch.failUnspent(id, f.speech.id, 'AUTONOMOUS_SPEECH_INSUFFICIENT_FUNDS');
+            await until(
+              async () =>
+                (
+                  await db.query(
+                    "SELECT 1 FROM pg_stat_activity WHERE wait_event_type='Lock' AND query LIKE 'SELECT id FROM game_npc_decision_requests WHERE campaign_id=%'",
+                  )
+                ).rowCount,
+              Boolean,
+            );
+            await enqueue.query('COMMIT');
+            await skip;
+          } finally {
+            await enqueue.query('ROLLBACK');
+            enqueue.release();
+          }
+          const before = await finances();
+          await batch.failUnspent(id, f.speech.id, 'AUTONOMOUS_SPEECH_INSUFFICIENT_FUNDS');
+          const current = (await requests(id)).find((row) => row.id === f.speech.id);
+          assert.equal(current.status, 'queued');
+          assert.equal(current.result_code, null);
+          assert.deepEqual(await finances(), before);
+          assert.deepEqual(
+            (await batch.status(owner.user.id, id, f.live.state)).speechSkips ?? [],
+            [],
+          );
+          // Complete the already reserved exact child through native idempotent admission.
+          await game.processDecisionRequests(id, f.live);
+          const scheduled = (await requests(id)).find((row) => row.id === f.speech.id);
+          assert.ok(scheduled.job_id);
+          await ai.run(scheduled.job_id, async () => true);
+          await game.processAi(id, f.live);
+          await game.advanceTurnWorld(id, f.live);
+          assert.equal(f.live.state.turnController.phase, 'player');
+          assert.equal(
+            (await batch.status(owner.user.id, id, f.live.state)).speechReceipts[0]
+              .capturedSubunits,
+            '60',
+          );
+        },
+      );
       await t.test(
         'uncertain child cost blocks further admission and never retries speech after recovery',
         async () => {
@@ -902,6 +1318,31 @@ await test(
             .rows[0];
           assert.equal(job.status, 'reconciling');
           for (let n = 0; n < 3; n++) await game.advanceTurnWorld(id, f.live);
+          assert.equal(
+            f.live.state.turnController.phase,
+            'player',
+            'uncertain billing does not strand the round',
+          );
+          const liability = (
+            await db.query(
+              'SELECT h.* FROM spark_holds h JOIN npc_ai_jobs j ON j.spark_hold_id=h.id WHERE j.id=$1',
+              [child.job_id],
+            )
+          ).rows[0];
+          assert.equal(liability.status, 'pending');
+          assert.equal(liability.captured_subunits, null);
+          const beforeRecovery = await finances();
+          await new KnownNpcSettlement(database, auth, authority).recoverPending();
+          await batch.failUnspent(id, child.id, 'AUTONOMOUS_SPEECH_INSUFFICIENT_FUNDS');
+          assert.deepEqual(await finances(), beforeRecovery);
+          assert.deepEqual(
+            (await db.query('SELECT * FROM spark_holds WHERE id=$1', [liability.id])).rows[0],
+            liability,
+          );
+          assert.deepEqual(
+            (await batch.status(owner.user.id, id, f.live.state)).speechSkips ?? [],
+            [],
+          );
           assert.equal(calls, startCalls + 2);
           assert.deepEqual(f.live.state.npcUtterances ?? [], f.before);
           const status = await batch.status(owner.user.id, id, f.live.state);

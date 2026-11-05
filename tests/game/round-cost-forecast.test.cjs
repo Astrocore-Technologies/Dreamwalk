@@ -271,6 +271,15 @@ test('local provider forecast uses configured request pricing, never cap, reserv
   assert.ok(amount > 0);
   assert.notEqual(amount, prepared.snapshot.reserveMicros);
   assert.notEqual(amount, 9999999);
+  const roomy = new NpcAiEngine(
+    db,
+    provider({ contextBudgetTokens: 256000, maxInputBytes: 4194304 }),
+  );
+  assert.equal(
+    roomy.localAutonomousSpeechAllowance(),
+    81297,
+    'Permission ceiling includes configured percentage and fixed margins',
+  );
   assert.equal(ai.localRequestForecast('plan', { ...context, text: 'x'.repeat(100000) }), null);
 });
 
@@ -318,6 +327,17 @@ test('status authorizes before forecasting and pending or unknown outcomes suppr
           consentReads++;
           return [];
         }
+        if (sql.startsWith('SELECT s.enabled AS sparks_enabled')) {
+          assert.deepEqual(values, ['owner']);
+          return [
+            {
+              sparks_enabled: true,
+              sparks_balance: '443767',
+              sparks_held: '83052',
+              dreams_enabled: false,
+            },
+          ];
+        }
         throw new Error('Do not estimate a blocked round');
       },
     };
@@ -325,6 +345,11 @@ test('status authorizes before forecasting and pending or unknown outcomes suppr
     assert.equal(result.forecast, null);
     assert.equal(result.unknown, status.unknown);
     assert.equal(result.ordinary, null);
+    assert.deepEqual(result.availableFunding, {
+      sparksSubunits: '360715',
+      dreamsSubunits: '0',
+      totalSubunits: '360715',
+    });
     assert.equal(consentReads, 1, 'Only the authorized read-only admission status is loaded');
   }
   const game = Object.create(GameService.prototype);
@@ -342,4 +367,189 @@ test('status authorizes before forecasting and pending or unknown outcomes suppr
     },
   };
   await assert.rejects(game.worldGenerationStatus({}, 'campaign'), /FORBIDDEN/);
+});
+
+test('optional forecasts price current audience-safe contexts and keep full-window permission separate', async () => {
+  const {
+    autonomousSpeechForecastContexts,
+  } = require('../../apps/api/dist/game/autonomous-speech-forecast');
+  const state = world();
+  state.maps[state.entities.keeper.mapId].blocked = [];
+  Object.assign(state.entities.alice, { x: 5, y: 5 });
+  Object.assign(state.entities.keeper, { x: 6, y: 5 });
+  state.npcBrains.keeper.living.observations.push({
+    ...structuredClone(state.npcBrains.keeper.living.observations[0]),
+    id: 'forecast-secret',
+    kind: 'authored_fact',
+    text: 'PRIVATE_FORECAST_TOKEN',
+    disclosure: 'private',
+    revealCondition: 'never',
+    audienceIds: ['keeper'],
+  });
+  const before = JSON.stringify(state);
+  const configured = provider({
+    contextBudgetTokens: 256000,
+    maxInputBytes: 4194304,
+    inputMicrosPerMillion: 100000,
+    outputMicrosPerMillion: 500000,
+    cachePricing: {
+      cachedInputMicrosPerMillion: 10000,
+      cacheWrite30mMicrosPerMillion: 125000,
+      cacheWrite12hMicrosPerMillion: 250000,
+    },
+    estimation: {
+      kind: 'operator_heuristic',
+      textTokensPerKiBUtf8: 1024,
+      textProtocolTokens: 4096,
+      marginBps: 0,
+      fixedMarginMicros: 0,
+    },
+  });
+  const ai = new NpcAiEngine(
+    {
+      query() {
+        throw Error('No quote, count or generation');
+      },
+    },
+    configured,
+  );
+  assert.equal(ai.localAutonomousSpeechAllowance(), 64512);
+  const contexts = autonomousSpeechForecastContexts(state, 'keeper', 4194304, 'ru');
+  assert.ok(contexts.length > 0);
+  for (const context of contexts) {
+    assert.equal(context.replyLocale, 'ru');
+    assert.doesNotMatch(JSON.stringify(context), /PRIVATE_FORECAST_TOKEN|forecast-secret/);
+    assert.ok(context.worldPlanCommunication);
+    const actualBody = configured.prepareTextRequest('speech', context).snapshot;
+    assert.equal(ai.localAutonomousSpeechForecast(context), actualBody.estimatedTotalMicros);
+    assert.ok(actualBody.estimatedTotalMicros < 64512);
+  }
+  const result = await forecastWorldRound(
+    readOnlyDb(),
+    ai,
+    'campaign',
+    state,
+    undefined,
+    (current, npcId) => autonomousSpeechForecastContexts(current, npcId, 4194304, 'ru'),
+  );
+  assert.equal(result.optionalAutonomousSpeechUnestimatedRequests, 0);
+  assert.ok(
+    BigInt(result.optionalAutonomousSpeechSparkSubunits) <
+      BigInt(result.optionalAutonomousSpeechAllowanceSubunits),
+  );
+  assert.equal(JSON.stringify(state), before, 'No speculative move, plan or state mutation');
+  assert.doesNotMatch(
+    JSON.stringify(result),
+    /keeper|alice|claims|contextHash|observationIds|recipientId/,
+  );
+  const small = ai.localAutonomousSpeechForecast(contexts[0]);
+  const long = ai.localAutonomousSpeechForecast({
+    ...contexts[0],
+    roleplayExample: 'Слова и память. '.repeat(1000),
+  });
+  assert.ok(long > small, 'Real Unicode content changes the forecast, no constant per-NPC reserve');
+});
+
+test('missing optional context keeps known mandatory estimate visible and never substitutes zero', async () => {
+  const result = await forecastWorldRound(
+    readOnlyDb(),
+    {
+      localRequestForecast: () => 25,
+      localAutonomousSpeechForecast: () => {
+        throw Error('No current example');
+      },
+      localAutonomousSpeechAllowance: () => 64512,
+    },
+    'campaign',
+    world(),
+    undefined,
+    () => [],
+  );
+  assert.equal(result.baseEstimatedSparkSubunits, '50');
+  assert.equal(result.optionalAutonomousSpeechSparkSubunits, null);
+  assert.equal(result.optionalAutonomousSpeechUnestimatedRequests, 1);
+  assert.equal(result.estimatedSparkSubunits, null);
+});
+
+test('available round funding is owner-bound, excludes held liability and never writes', async () => {
+  const {
+    readRoundFundingAvailability,
+  } = require('../../apps/api/dist/game/round-funding-availability');
+  const db = (row) => ({
+    query: async (sql, values) => {
+      assert.match(sql, /^SELECT /);
+      assert.doesNotMatch(sql, /FOR UPDATE|INSERT|DELETE|UPDATE /);
+      assert.deepEqual(values, ['owner']);
+      return row ? [row] : [];
+    },
+  });
+  assert.deepEqual(
+    await readRoundFundingAvailability(
+      db({
+        sparks_enabled: true,
+        sparks_balance: '443767',
+        sparks_held: '83052',
+        dreams_enabled: true,
+        dreams_balance: '2000',
+        dreams_held: '1500',
+      }),
+      'owner',
+    ),
+    {
+      sparksSubunits: '360715',
+      dreamsSubunits: '500',
+      totalSubunits: '361215',
+    },
+  );
+  assert.equal(await readRoundFundingAvailability(db(null), 'owner'), null);
+  assert.equal(
+    await readRoundFundingAvailability(
+      db({ sparks_enabled: false, dreams_enabled: true, dreams_balance: '9000', dreams_held: '0' }),
+      'owner',
+    ),
+    null,
+  );
+  assert.equal(
+    await readRoundFundingAvailability(
+      db({ sparks_enabled: true, sparks_balance: '10', sparks_held: '11' }),
+      'owner',
+    ),
+    null,
+  );
+});
+
+test('three NPC current-context estimates do not multiply the full configured-window price', async () => {
+  const state = world();
+  for (const id of ['second', 'third']) {
+    state.entities[id] = { ...structuredClone(state.entities.keeper), id };
+    state.npcBrains[id] = structuredClone(state.npcBrains.keeper);
+  }
+  const seen = [];
+  const result = await forecastWorldRound(
+    readOnlyDb(),
+    {
+      localRequestForecast: () => 10,
+      localAutonomousSpeechAllowance: () => 64512,
+      localAutonomousSpeechForecast: (context) => {
+        seen.push(context.npcId);
+        return context.currentCost;
+      },
+    },
+    'campaign',
+    state,
+    undefined,
+    (_state, npcId) => [
+      {
+        contextHash: `current-${npcId}`,
+        npcId,
+        currentCost: { keeper: 1000, second: 1100, third: 1200 }[npcId],
+      },
+    ],
+  );
+  assert.deepEqual(seen.sort(), ['keeper', 'second', 'third']);
+  assert.equal(result.optionalAutonomousSpeechRequests, 3);
+  assert.equal(result.optionalAutonomousSpeechAllowanceSubunits, '387072');
+  assert.equal(result.optionalAutonomousSpeechSparkSubunits, '6600');
+  assert.equal(result.baseEstimatedSparkSubunits, '60');
+  assert.equal(result.estimatedSparkSubunits, '6660');
 });

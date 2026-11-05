@@ -377,7 +377,7 @@ test('bound proof never promotes a different exact native quote or incomplete bi
   );
 });
 
-test('round preview includes separately labeled optional capacity without a quote or paid count', async () => {
+test('round preview includes separately labeled optional capacity from current contexts without a quote or paid count', async () => {
   const core = require('../../packages/game-core/dist');
   const { forecastWorldRound } = require('../../apps/api/dist/game/round-cost-forecast');
   const draft = core.createCompleteObservatoryDraft();
@@ -388,15 +388,23 @@ test('round preview includes separately labeled optional capacity without a quot
     { query: async () => [] },
     {
       localRequestForecast: () => 10,
-      localAutonomousSpeechForecast: () => 30,
+      localAutonomousSpeechForecast: (context) => context.currentEstimate,
+      localAutonomousSpeechAllowance: () => 64512,
     },
     'synthetic-campaign',
     state,
+    undefined,
+    () => [{ contextHash: 'current', currentEstimate: 30 }],
   );
   assert.equal(result.optionalAutonomousSpeechRequests, 1);
   assert.equal(result.baseEstimatedSparkSubunits, providerMicrosToSparkSubunits('10'));
   assert.equal(result.optionalAutonomousSpeechSparkSubunits, providerMicrosToSparkSubunits('30'));
   assert.equal(result.estimatedTotalMicros, 40);
+  assert.equal(
+    result.optionalAutonomousSpeechAllowanceSubunits,
+    providerMicrosToSparkSubunits('64512'),
+  );
+  assert.equal(result.optionalAutonomousSpeechUnestimatedRequests, 0);
   assert.equal(result.requestCount, 2);
   assert.equal(JSON.stringify(state), before);
   const unavailable = await forecastWorldRound(
@@ -407,6 +415,8 @@ test('round preview includes separately labeled optional capacity without a quot
     },
     'synthetic-campaign',
     state,
+    undefined,
+    () => [{ contextHash: 'current', currentEstimate: 30 }],
   );
   assert.equal(
     unavailable.estimatedSparkSubunits,
@@ -599,6 +609,7 @@ test('exhausted one-child allowance skips another distinct action without anothe
         queries.push([sql, args]);
         if (sql.startsWith('SELECT * FROM game_autonomous_speech_bindings'))
           return { rows: [f.binding] };
+        if (sql.startsWith('SELECT id FROM game_npc_decision_requests')) return { rows: [] };
         assert.match(sql, /SET status='failed',result_code=\$3/);
         assert.deepEqual(args, [f.campaignId, request.id, 'AUTONOMOUS_SPEECH_ALLOWANCE_EXHAUSTED']);
         return { rows: [], rowCount: 1 };
@@ -609,7 +620,7 @@ test('exhausted one-child allowance skips another distinct action without anothe
     { turnController: { roundId: 'round-a', phaseEpoch: 2, ruleset: { version: 1 } } },
   );
   assert.equal(result, undefined);
-  assert.equal(queries.length, 2);
+  assert.equal(queries.length, 3);
 });
 
 for (const kind of [
@@ -647,6 +658,7 @@ for (const kind of [
           if (sql.startsWith('SELECT * FROM game_autonomous_speech_bindings')) return { rows: [] };
           if (sql.startsWith('SELECT source_version_id')) return { rows: [f.campaign] };
           if (sql.includes('j.proposal AS source_proposal')) return { rows: [f.source] };
+          if (sql.startsWith('SELECT id FROM game_npc_decision_requests')) return { rows: [] };
           assert.match(sql, /SET status='failed',result_code=\$3/);
           assert.deepEqual(args, [
             f.campaignId,
@@ -752,6 +764,8 @@ for (const kind of ['legacy', 'pruned_parent', 'accepted_exact', 'stale_exact'])
             skip = args[2];
             return { rows: [], rowCount: 1 };
           }
+          if (sql.startsWith('SELECT id FROM game_npc_decision_requests'))
+            return { rows: [{ id: f.request.id }] };
           assert.match(sql, /SET requester_user_id=\$3/);
           return { rows: [], rowCount: 1 };
         },
@@ -768,3 +782,23 @@ for (const kind of ['legacy', 'pruned_parent', 'accepted_exact', 'stale_exact'])
           : 'AUTONOMOUS_SPEECH_ALLOWANCE_UNAVAILABLE',
     );
   });
+
+test('mandatory funding excludes future speech permission without changing immutable consent prices', () => {
+  const {
+    mandatoryWorldBatchFunding,
+  } = require('../../apps/api/dist/generation/world-batch-funding');
+  const quote = (amount, dreams = true) => ({
+    sparkReservedSubunits: amount,
+    ...(dreams ? { funding: { policyVersion: 'dreams-first-v1' } } : {}),
+  });
+  const batch = {
+    entries: [{ quote: quote('100') }, { quote: quote('20', false) }],
+    media_entries: [{ quote: quote('300'), grounding: { quote: quote('400') } }],
+    autonomous_speech_entries: [{ quote: quote('900000') }],
+    quote: { sparkReservedSubunits: '900820' },
+  };
+  const original = JSON.stringify(batch);
+  assert.deepEqual(mandatoryWorldBatchFunding(batch), { total: 820n, sparksOnly: 20n });
+  assert.equal(JSON.stringify(batch), original);
+  assert.throws(() => mandatoryWorldBatchFunding({ entries: [{ quote: {} }] }));
+});

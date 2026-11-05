@@ -163,7 +163,8 @@ export interface StoryAttackOutcome {
 export interface AutonomousSpeechSkip {
   id: string;
   createdAt: string;
-  reason: 'allowance_exhausted' | 'allowance_unavailable' | 'legacy_uncovered';
+  reason:
+    'allowance_exhausted' | 'allowance_unavailable' | 'legacy_uncovered' | 'insufficient_funds';
 }
 export interface AutonomousSpeechReceipt {
   id: string;
@@ -190,6 +191,8 @@ export interface StoryQuote {
   chargeUnit?: 'sparks' | 'credits';
   funding?: CurrencyFunding;
   sparkReservedSubunits?: string | null;
+  /** Mandatory text/media tranches only; optional speech is funded before its actual dispatch. */
+  requiredSparkSubunits?: string;
   sparkQuoteId?: string | null;
   sparkRateVersion?: string;
   id: string;
