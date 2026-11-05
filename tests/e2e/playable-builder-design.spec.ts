@@ -114,6 +114,27 @@ async function capture(page: Page, info: TestInfo, name: string) {
   await page.getByTestId('story-playable-builder').getByRole('group').scrollIntoViewIfNeeded();
   await expect(page.locator('[data-rendered-players="1"]')).toHaveCount(1);
   await page.evaluate(() => window.scrollTo(0, 0));
+  const preview = page.getByTestId('builder-map-preview');
+  const coordinate = preview.getByTestId('map-coordinate-readout');
+  const stop = coordinate.locator('..').getByRole('button');
+  await expect(stop).toBeDisabled();
+  for (const control of [coordinate, stop]) {
+    await expect(control).toBeVisible();
+    await expect
+      .poll(async () => {
+        const outer = await preview.boundingBox();
+        const inner = await control.boundingBox();
+        return (
+          !!outer &&
+          !!inner &&
+          inner.x >= outer.x &&
+          inner.y >= outer.y &&
+          inner.x + inner.width <= outer.x + outer.width &&
+          inner.y + inner.height <= outer.y + outer.height
+        );
+      })
+      .toBe(true);
+  }
   expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(true);
   await page.screenshot({ path: info.outputPath(`${name}.png`), fullPage: true });
 }

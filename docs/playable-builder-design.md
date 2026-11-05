@@ -50,7 +50,7 @@ all 12 builder and 42 workshop event-handler ASTs are unchanged. Every current-m
 source-contract assertion is retained alongside the presentation checks.
 
 The nine builder source-contract tests, changed JavaScript/TypeScript lint and all
-13 changed files' repository-configured formatting pass locally. TypeScript syntax
+changed files' repository-configured formatting pass locally. TypeScript syntax
 parsing finds no errors in the two components. These bounded checks do not establish
 full type/build, PostgreSQL or browser success. Current-head CI, Vercel and fresh
 rendered evidence are still required; no paid call or manual deployment was made.
@@ -61,3 +61,26 @@ or the shared shell's desktop heading reserve. An explicit presentation-only emb
 mode keeps an h2 and a local header, while the standalone route retains its h1 and
 Back link. Source coverage preserves autosave flush/apply callbacks; the existing
 Studio browser journey now checks both 1536px and 390px and captures each header.
+
+## First consolidated CI and rendered review
+
+CI467 on `d1dcb310` passed static/build/types, PostgreSQL and browser shards 1 and 2
+(114 and 85 tests). Shard 3 completed 88 of 90 cases, including all nine builder
+cases and the embedded Studio journey, before its 20-minute job limit cancelled it.
+The aggregate correctly failed; the final two existing visual-authoring cases were
+not established as passing. No Vercel preview was started.
+
+The measured area-speech locale matrix took 255 seconds against a 150-second
+scheduling weight and shared a runner with chat and cooperation. Raise only that
+weight to 280 seconds and require area-speech/chat matrices to be on different
+runners. All three shards, file coverage, single-worker isolation, timeouts, retries
+and the all-success aggregate remain unchanged. The measured work is redistributed,
+not removed or rerun under a looser ceiling.
+
+Independent review of all twelve workshop screenshots found no new blocker. Nine
+builder originals and two embedded originals confirmed the heading fix but exposed
+the game's absolute coordinate/Stop overlay outside the new map preview. Establish
+the positioning context on the builder preview only; do not change shared gameplay
+CSS or canvas behavior. Every captured map now requires the coordinate readout and
+disabled Stop button to be fully inside the preview, covering 390/800/1280/1536px.
+Fresh exact-head CI and screenshots are required after these two corrections.

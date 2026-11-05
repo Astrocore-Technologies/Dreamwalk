@@ -152,5 +152,6 @@ test('builder review composition uses only actual draft labels and retains the d
     'utf8',
   );
   assert.match(css, /@media \(max-width: 600px\)/);
+  assert.match(css, /\.preview\s*\{\s*position: relative;/);
   assert.match(css, /grid-template-columns: minmax\(0, 2fr\) minmax\(260px, 1fr\)/);
 });

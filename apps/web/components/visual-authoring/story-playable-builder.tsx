@@ -558,7 +558,11 @@ export function StoryPlayableBuilder({
           ))}
           {projection && state.draft && (
             <div className={styles.workspace}>
-              <section className={styles.preview} aria-label={copyText('preview')}>
+              <section
+                className={styles.preview}
+                aria-label={copyText('preview')}
+                data-testid="builder-map-preview"
+              >
                 <div className={styles.previewHeading}>
                   <span>{copyText('preview')}</span>
                   <h2>{mapLabel(projection.map.id)}</h2>

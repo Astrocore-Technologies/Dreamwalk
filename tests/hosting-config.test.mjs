@@ -61,6 +61,11 @@ test('browser partitions preserve every test file exactly once and balance long 
     groups.findIndex((group) => group.files.includes('game-adventure-completion.spec.ts')),
     groups.findIndex((group) => group.files.includes('game-director.spec.ts')),
   );
+  assert.notEqual(
+    groups.findIndex((group) => group.files.includes('game-area-speech.spec.ts')),
+    groups.findIndex((group) => group.files.includes('game-chat-layout.spec.ts')),
+    'measured area-speech and chat locale matrices must not overload one runner',
+  );
   assert.equal(groups.length, 3);
   assert.ok(
     Math.max(...groups.map((g) => g.seconds)) - Math.min(...groups.map((g) => g.seconds)) <= 60,
