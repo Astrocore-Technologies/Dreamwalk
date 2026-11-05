@@ -436,14 +436,56 @@ await test('owner generation export and erasure preserve financial liabilities w
           assert.deepEqual(row, before);
           continue;
         }
-        const { state, stop_code, owner_handle, ...financial } = row;
+        const { state, stop_code, owner_handle, stop_epoch_id, ...financial } = row;
         const {
           state: _oldState,
           stop_code: _oldStop,
           owner_handle: _oldHandle,
+          stop_epoch_id: oldEpochId,
           ...beforeFinancial
         } = before;
         assert.deepEqual(financial, beforeFinancial);
+        assert.ok(stop_epoch_id);
+        if (oldEpochId !== null) assert.equal(stop_epoch_id, oldEpochId);
+        const [epoch] = await rows('SELECT * FROM generation_stop_epochs WHERE id=$1', [
+          stop_epoch_id,
+        ]);
+        assert.equal(epoch.target_kind, 'authorization');
+        assert.equal(epoch.target_id, row.id);
+        assert.deepEqual(
+          await rows(
+            'SELECT id FROM generation_access_recoveries WHERE authorization_epoch_id=$1',
+            [stop_epoch_id],
+          ),
+          [],
+        );
+        assert.equal(epoch.baseline_unknown, before.state === 'stopped');
+        const events = await rows(
+          'SELECT * FROM generation_stop_events WHERE epoch_id=$1 ORDER BY id',
+          [stop_epoch_id],
+        );
+        assert.ok(events.length > 0);
+        for (const event of events) {
+          const { id, epoch_id, created_at, ...payload } = event;
+          assert.ok(id && created_at);
+          assert.equal(epoch_id, stop_epoch_id);
+          // Uninstrumented erasure is intentionally a permanent authorization veto.
+          // No erased/foreign handle, private source, or pricing hash is copied into it.
+          assert.deepEqual(payload, {
+            reason: 'UNATTRIBUTED_STOP',
+            cause_code: 'UNATTRIBUTED_STOP',
+            evidence_hash: null,
+            stop_class: 'authorization',
+            source_kind: 'unattributed',
+            source_id: null,
+            authorization_id: null,
+            scope_id: null,
+            policy_revision: null,
+            policy_hash: null,
+            config_hash: null,
+            recoverable: false,
+          });
+        }
         assert.equal(state, 'stopped');
         assert.equal(stop_code, 'DATA_ERASED');
         assert.equal(
@@ -457,6 +499,11 @@ await test('owner generation export and erasure preserve financial liabilities w
       }
       const own = await exportManualLiveData(c, ownerId);
       assert.ok(!JSON.stringify(own).includes(ownerHandle));
+      assert.ok(!JSON.stringify(own).includes(otherHandle));
+      assert.ok(own.sessions.every((session) => !Object.hasOwn(session, 'stop_epoch_id')));
+      const otherExport = await exportManualLiveData(c, otherId);
+      assert.ok(!JSON.stringify(otherExport).includes(ownerHandle));
+      assert.ok(otherExport.sessions.every((session) => !Object.hasOwn(session, 'stop_epoch_id')));
       assert.equal(own.sessions.find((s) => s.mode === 'owner').owner_handle, 'erased');
       assert.equal(
         (await exportManualLiveData(c, otherId)).sessions.find(

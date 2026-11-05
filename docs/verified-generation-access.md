@@ -17,8 +17,13 @@ Every assignment to blocked/state/stop code, including true-to-true, appends a d
 event. Unannotated assignments are authorization-level vetoes. Direct pointer assignments
 cannot replace an existing epoch. Epochs and events are append-only. A separate unique
 recovery receipt binds the exact scope and authorization epochs and financial fingerprint.
-The only existing explicit model-rejection clear path rejects new durable epochs rather
-than silently erase their later vetoes. Old null-epoch explicit recovery is unchanged.
+The existing explicit model-rejection clear path accepts new durable epochs only when
+every event proves the exact dedicated, hash-bound native model rejection under the
+unchanged authority. Its owner review/apply confirmation remains mandatory. Generic
+HTTP, historical, mixed and unrelated veto epochs remain blocked; old null-epoch
+explicit recovery is unchanged. The separate retained-hold exception permits only a
+distinct explicitly consented image within the remaining cap, without clearing either
+gate or releasing any hold. See the compatibility section below.
 
 Each event records exact native source ID, authorization, scope, policy revision/hash,
 configuration hash, original cause, canonical reason and request/authorization class.
@@ -104,3 +109,29 @@ Only synthetic providers and disposable local PostgreSQL are used. No production
 provider transport, paid requests, deployment or user data changes are part of this work.
 Exact-head test results are recorded in the handoff; this document does not assert that
 an unrun full platform/web/browser suite passed.
+
+### Explicit model-rejection compatibility
+
+A native 403 `model_not_found` or `model_access_denied` can record
+`IMAGE_MODEL_ACCESS_REJECTION`, an **authorization-class, nonrecoverable** stop.
+It is never part of automatic access recovery. Migration 064 stores a nullable
+`evidence_hash`, with no historical backfill. The hash binds safe normalized
+provider diagnostics and request ID to the actor, job, reservation, dispatch and
+request hash. Generic HTTP events cannot be reinterpreted from a mutable job.
+
+The existing owner review/apply route retains explicit external billing and
+model-access-restored attestations. New-epoch recovery requires clean baselines,
+complete bounded scope and authorization histories containing only the exact
+job's hash-bound rejection, unchanged current policy/caps and valid source/owner
+access. Its review fingerprint and immutable receipt bind the epoch/event IDs
+and evidence hash. An unrelated stop, even if its visible stop code is reset,
+remains a veto. The legacy null/null-epoch route is unchanged.
+
+The existing retained-hold image-only exception uses the same complete-history
+proof for every retained rejected job. It keeps the full reservation, scope and
+authorization blocks, and requires a distinct quote and explicit consent for a
+new request within the original remaining cap. It does not reopen text access,
+release funds, retry a rejected job, or expand consent. Authentication, security,
+erasure, cancellation, request deadlines and generic HTTP failures do not qualify
+for this model-rejection exception. Source/attempt rows are protected with bounded
+NOWAIT reads during new-epoch admission; contention fails closed.

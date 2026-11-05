@@ -6,6 +6,7 @@ export type GenerationStopSource = {
   sourceId: string;
   reason: string;
   causeCode?: string;
+  evidenceHash?: string;
   stopClass?: 'request' | 'authorization';
   providerId?: string;
   scopeId?: string;

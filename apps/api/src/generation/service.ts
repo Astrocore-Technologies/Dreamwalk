@@ -841,7 +841,7 @@ export class GenerationAuthority implements OnModuleInit, OnModuleDestroy {
         `SELECT 1 FROM generation_budget_reservations r JOIN generation_budget_scopes b ON b.id=r.scope_id
        WHERE ((r.scope_id<>$1 OR $2::boolean) AND r.status='held' AND r.upper_micros>0) OR (r.status='settled' AND r.actual_micros IS NULL)
        UNION ALL SELECT 1 FROM generation_budget_scopes b WHERE blocked AND NOT($3::boolean AND id=$1) AND (approved OR id=$1 OR EXISTS(SELECT 1 FROM generation_budget_reservations r WHERE r.scope_id=b.id AND (r.upper_micros>0 OR r.actual_micros>0)))
-       UNION ALL SELECT 1 FROM live_test_sessions WHERE scope_id=$1 AND state='stopped' AND COALESCE(stop_code,'')<>'OWNER_GENERATION_MODE_ACTIVE' AND NOT($3::boolean AND mode='owner' AND stop_code='IMAGE_RESULT_UNKNOWN')
+       UNION ALL SELECT 1 FROM live_test_sessions WHERE scope_id=$1 AND state='stopped' AND COALESCE(stop_code,'')<>'OWNER_GENERATION_MODE_ACTIVE' AND NOT($3::boolean AND mode='owner' AND stop_code IN ('IMAGE_RESULT_UNKNOWN','IMAGE_MODEL_ACCESS_REJECTION'))
        LIMIT 1`,
         [GENERATION_SCOPE_ID, firstClaim, imageOnlyAdmission],
       )

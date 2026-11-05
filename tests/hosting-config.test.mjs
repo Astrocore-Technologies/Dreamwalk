@@ -135,3 +135,18 @@ test('Vercel Git deployments stay disabled for both preview and production', () 
   const config = JSON.parse(readFileSync('apps/web/vercel.json', 'utf8'));
   assert.equal(config.git?.deploymentEnabled, false);
 });
+
+test('filtered web launcher preserves the explicit non-secret origin contract', () => {
+  assert.deepEqual(
+    webEnvironment({
+      API_WEB_ORIGIN: 'https://dreamwalk-rho.vercel.app',
+      WEB_ALLOWED_ORIGINS: 'https://www.dreamwalk.online,https://dreamwalk-rho.vercel.app',
+      DATABASE_URL: 'postgres://not-for-web',
+      OPENAI_API_KEY: 'synthetic-not-for-web',
+    }),
+    {
+      API_WEB_ORIGIN: 'https://dreamwalk-rho.vercel.app',
+      WEB_ALLOWED_ORIGINS: 'https://www.dreamwalk.online,https://dreamwalk-rho.vercel.app',
+    },
+  );
+});

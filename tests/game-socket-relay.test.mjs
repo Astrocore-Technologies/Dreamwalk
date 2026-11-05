@@ -14,6 +14,8 @@ const env = {
   VERCEL: '1',
   API_URL: 'https://api.example.test',
   WEB_ORIGIN: 'https://web.example.test',
+  API_WEB_ORIGIN: 'https://web.example.test',
+  WEB_ALLOWED_ORIGINS: 'https://web.example.test',
   DREAMWALK_INGRESS_SECRET: 'a'.repeat(40),
 };
 const campaign = '12345678-1234-1234-1234-123456789012';
@@ -28,7 +30,7 @@ const request = (headers = {}) =>
       },
     },
   );
-test('relay target and headers stay fixed while the owner-approved origin pause preserves session and secret checks', () => {
+test('relay target and headers stay fixed while exact origin, session and secret checks are enforced', () => {
   const target = socketRelayTarget(
     request({ authorization: 'ignored', 'x-dreamwalk-ingress': 'spoof' }),
     env,
@@ -36,9 +38,10 @@ test('relay target and headers stay fixed while the owner-approved origin pause 
   assert.equal(target.url, `wss://api.example.test/api/v1/game/socket?campaignId=${campaign}`);
   assert.deepEqual(Object.keys(target.headers).sort(), ['cookie', 'origin', 'x-dreamwalk-ingress']);
   assert.equal(target.headers['x-dreamwalk-ingress'], env.DREAMWALK_INGRESS_SECRET);
-  assert.equal(
-    socketRelayTarget(request({ origin: 'https://attacker.test' }), env).headers.origin,
-    env.WEB_ORIGIN,
+  assert.equal(target.headers.origin, env.API_WEB_ORIGIN);
+  assert.throws(
+    () => socketRelayTarget(request({ origin: 'https://attacker.test' }), env),
+    /RELAY_ORIGIN/,
   );
   assert.throws(() => socketRelayTarget(request({ cookie: '' }), env));
   assert.throws(() => socketRelayTarget(request(), { ...env, DREAMWALK_INGRESS_SECRET: '' }));

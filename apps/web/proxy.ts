@@ -40,8 +40,8 @@ export function proxy(request: NextRequest) {
         { code: 'FORBIDDEN', message: 'Invalid request origin.', retryable: false },
         { status: 403, headers: { 'Cache-Control': 'private, no-store' } },
       );
-    // Keep the configured backend origin when available, never derive it from
-    // caller headers. Origin enforcement is temporarily paused by owner request.
+    // Browser admission and the stable backend hop are separate trust decisions.
+    // Never derive the backend origin from caller headers or the primary domain.
     if (canonical) headers.set('origin', canonical);
     else headers.delete('origin');
   }

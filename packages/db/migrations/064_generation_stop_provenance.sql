@@ -11,6 +11,7 @@ CREATE TABLE generation_stop_events (
  epoch_id bigint NOT NULL REFERENCES generation_stop_epochs(id),
  reason text NOT NULL,
  cause_code text NOT NULL,
+ evidence_hash text CHECK(evidence_hash ~ '^[a-f0-9]{64}$'),
  stop_class text NOT NULL CHECK(stop_class IN ('request','authorization')),
  source_kind text NOT NULL,
  source_id text,
@@ -77,11 +78,12 @@ BEGIN
  END IF;
  IF kind='provider' AND target=context->>'providerId' THEN matches := true; END IF;
  IF kind='scope' AND target=context->>'scopeId' THEN matches := true; END IF;
- INSERT INTO generation_stop_events(epoch_id,reason,cause_code,stop_class,source_kind,source_id,authorization_id,
+ INSERT INTO generation_stop_events(epoch_id,reason,cause_code,evidence_hash,stop_class,source_kind,source_id,authorization_id,
    scope_id,policy_revision,policy_hash,config_hash,recoverable)
  VALUES(NEW.stop_epoch_id,
    CASE WHEN matches THEN COALESCE(context->>'reason','UNATTRIBUTED_STOP') ELSE 'UNATTRIBUTED_STOP' END,
    CASE WHEN matches THEN COALESCE(context->>'causeCode',context->>'reason','UNATTRIBUTED_STOP') ELSE 'UNATTRIBUTED_STOP' END,
+   CASE WHEN matches THEN context->>'evidenceHash' END,
    CASE WHEN matches AND COALESCE(context->>'stopClass'='request',false) THEN 'request' ELSE 'authorization' END,
    CASE WHEN matches THEN COALESCE(context->>'sourceKind','unattributed') ELSE 'unattributed' END,
    CASE WHEN matches THEN context->>'sourceId' END,

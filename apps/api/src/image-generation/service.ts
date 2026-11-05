@@ -1,3 +1,4 @@
+import { MODEL_REJECTION_STOP, modelRejectionEvidenceHash } from './model-rejection-provenance';
 import { nativeRequestStop, stopGenerationAuthorization } from '../generation/stop-provenance';
 import {
   verifyAcceptedTravelBatch,
@@ -1261,7 +1262,12 @@ export class ImageGenerationEngine {
     );
   }
   /** Each cause is retained separately; a late receipt cannot erase a prior veto. */
-  private async stopOwnerUnknown(c: PoolClient, job: Job, reason = 'IMAGE_RESULT_UNKNOWN') {
+  private async stopOwnerUnknown(
+    c: PoolClient,
+    job: Job,
+    reason = 'IMAGE_RESULT_UNKNOWN',
+    evidenceHash?: string,
+  ) {
     if (job.mode !== 'external') return;
     if (job.cancel_requested && reason === 'IMAGE_RESULT_UNKNOWN')
       reason = 'PROVIDER_CANCELLED_IN_FLIGHT';
@@ -1281,6 +1287,7 @@ export class ImageGenerationEngine {
         sourceKind: 'image',
         sourceId: job.id,
         ...nativeRequestStop(reason),
+        evidenceHash,
       });
   }
   async maintenance() {
@@ -1449,27 +1456,34 @@ export class ImageGenerationEngine {
       await this.db.tx(async (c) => {
         await this.lockBudget(c, claimed.job);
         const current = (
-          await c.query(
-            'SELECT status,error_code FROM image_generation_jobs WHERE id=$1 FOR UPDATE',
-            [claimed.job.id],
-          )
+          await c.query('SELECT * FROM image_generation_jobs WHERE id=$1 FOR UPDATE', [
+            claimed.job.id,
+          ])
         ).rows[0];
         // Erasure/revocation may have completed while the provider was in flight.
         // Never reattach diagnostics or identifiers to erased personal data.
         if (!current || current.status !== 'dispatched' || current.error_code === 'ERASED') return;
+        const rejectionHash = modelRejectionEvidenceHash(current, claimed.dispatchId, diagnostic);
+        const reason = current.cancel_requested
+          ? 'PROVIDER_CANCELLED_IN_FLIGHT'
+          : current.dispatch_deadline && current.dispatch_deadline.getTime() <= Date.now()
+            ? 'IMAGE_PROVIDER_DEADLINE_EXCEEDED'
+            : rejectionHash
+              ? MODEL_REJECTION_STOP
+              : diagnostic
+                ? 'IMAGE_PROVIDER_ACCESS_OR_HTTP_FAILURE'
+                : error instanceof Error &&
+                    (error.message === 'PROVIDER_RESULT_UNKNOWN' ||
+                      (error.name === 'TypeError' && error.message === 'fetch failed'))
+                  ? 'IMAGE_RESULT_UNKNOWN'
+                  : 'UNATTRIBUTED_IMAGE_FAILURE';
         await this.stopOwnerUnknown(
           c,
           claimed.job,
-          diagnostic
-            ? 'IMAGE_PROVIDER_ACCESS_OR_HTTP_FAILURE'
-            : claimed.job.dispatch_deadline && claimed.job.dispatch_deadline.getTime() <= Date.now()
-              ? 'IMAGE_PROVIDER_DEADLINE_EXCEEDED'
-              : error instanceof Error &&
-                  (error.message === 'PROVIDER_RESULT_UNKNOWN' ||
-                    (error.name === 'TypeError' && error.message === 'fetch failed'))
-                ? 'IMAGE_RESULT_UNKNOWN'
-                : 'UNATTRIBUTED_IMAGE_FAILURE',
+          reason,
+          reason === MODEL_REJECTION_STOP ? rejectionHash : undefined,
         );
+
         await c.query(
           "UPDATE image_generation_jobs SET status='unknown',error_code='DISPATCH_UNCERTAIN',safe_diagnostic=$2,provider_request_id=COALESCE($3,provider_request_id),updated_at=now() WHERE id=$1",
           [claimed.job.id, diagnostic ?? null, diagnostic?.requestId ?? null],

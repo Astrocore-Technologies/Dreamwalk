@@ -156,7 +156,7 @@ test(
       );
 
       await t.test(
-        'known receipt after persisted deadline stops permanently even before maintenance',
+        'known receipt after persisted deadline remains stopped until separately verified recovery',
         async () => {
           late = true;
           const project = await create(stories[1]);
@@ -172,7 +172,25 @@ test(
           assert.equal((await visuals.get(owner, project.id)).plan, null);
           const stopped = await new GenerationAuthority(database, config).status(owner);
           assert.equal(stopped.state, 'stopped');
-          assert.equal(stopped.stopCode, 'PROVIDER_DEADLINE_EXCEEDED');
+          assert.equal(stopped.stopCode, 'REQUEST_DEADLINE_EXCEEDED');
+          const stopEvents = (
+            await db.query(
+              `SELECT e.reason,e.cause_code,e.stop_class,e.source_kind,e.source_id
+               FROM generation_stop_events e JOIN live_test_sessions a ON a.stop_epoch_id=e.epoch_id
+               WHERE a.id=$1`,
+              [authorizationId],
+            )
+          ).rows;
+          assert.ok(
+            stopEvents.some(
+              (e) =>
+                e.reason === 'REQUEST_DEADLINE_EXCEEDED' &&
+                e.cause_code === 'PROVIDER_DEADLINE_EXCEEDED' &&
+                e.stop_class === 'request' &&
+                e.source_kind === 'authoring' &&
+                e.source_id === job.id,
+            ),
+          );
           assert.equal(stopped.usedMicros, 1400);
           assert.equal(stopped.heldMicros, 0);
           await planner.dispatch(owner, project.id, dispatch);

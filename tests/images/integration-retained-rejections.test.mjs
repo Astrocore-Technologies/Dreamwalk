@@ -26,6 +26,11 @@ await test('a distinct consented image can use remaining budget while confirmed 
     sql = await db.connect();
     const { Db } = require('../../apps/api/dist/db.js');
     database = new Db();
+    // Synthetic funding isolates the provider-cap guard from the independent wallet guard.
+    // Existing pending holds remain encumbered and are never settled by this fixture.
+    await sql.query('UPDATE spark_wallets SET balance_subunits=1000000 WHERE owner_id=$1', [
+      owner.user.id,
+    ]);
     const configured = readOwnerGenerationConfig(
       ownerEnvironment(
         {
@@ -134,6 +139,62 @@ await test('a distinct consented image can use remaining budget while confirmed 
           ).rows[0].status,
           'held',
         );
+        assert.equal(calls, 1);
+      },
+    );
+    await t.test(
+      'unrelated authorization veto cannot be hidden by resetting the mutable stop code',
+      async () => {
+        const {
+          retainedModelRejectionAdmission,
+        } = require('../../apps/api/dist/image-generation/retained-rejections.js');
+        for (const cause of ['ADMIN_STOP', 'DATA_ERASED', 'PROVIDER_HTTP_403']) {
+          await sql.query('BEGIN');
+          try {
+            await sql.query("UPDATE live_test_sessions SET stop_code=$1 WHERE mode='owner'", [
+              cause,
+            ]);
+            await sql.query(
+              "UPDATE live_test_sessions SET stop_code='IMAGE_MODEL_ACCESS_REJECTION' WHERE mode='owner'",
+            );
+            const authorization = (
+              await sql.query("SELECT * FROM live_test_sessions WHERE mode='owner'")
+            ).rows[0];
+            const scope = (
+              await sql.query('SELECT * FROM generation_budget_scopes WHERE id=$1', [
+                authorization.scope_id,
+              ])
+            ).rows[0];
+            assert.equal(
+              (await retainedModelRejectionAdmission(sql, authorization, scope)).eligible,
+              false,
+            );
+            assert.equal(scope.blocked, true);
+          } finally {
+            await sql.query('ROLLBACK');
+          }
+        }
+        await sql.query('BEGIN');
+        try {
+          await sql.query(
+            "UPDATE adventures SET deleted_at=now(),status='archived',deletion_id=gen_random_uuid() WHERE id=$1",
+            [story.id],
+          );
+          const authorization = (
+            await sql.query("SELECT * FROM live_test_sessions WHERE mode='owner'")
+          ).rows[0];
+          const scope = (
+            await sql.query('SELECT * FROM generation_budget_scopes WHERE id=$1', [
+              authorization.scope_id,
+            ])
+          ).rows[0];
+          assert.equal(
+            (await retainedModelRejectionAdmission(sql, authorization, scope)).eligible,
+            false,
+          );
+        } finally {
+          await sql.query('ROLLBACK');
+        }
         assert.equal(calls, 1);
       },
     );
