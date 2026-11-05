@@ -1471,6 +1471,7 @@ function AdventureEditor({ id }: { id: string }) {
           adventureId={id}
           beforePrepare={autosave.flush}
           onApplied={refreshArtModeration}
+          embedded
         />
       )}
       {coverGenerationOpen && (

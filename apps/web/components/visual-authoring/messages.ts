@@ -34,6 +34,16 @@ const rows = {
   playerHero: ['Герой игрока', 'Player hero', 'Герой гравця'],
   authorNpc: ['NPC автора', 'Author NPC', 'NPC автора'],
   title: ['Мастерская образов', 'Visual workshop', 'Майстерня образів'],
+  previewEmpty: [
+    'Здесь появится ваш замысел',
+    'Your concept will appear here',
+    'Тут з’явиться ваш задум',
+  ],
+  previewEmptyHint: [
+    'Заполните задание. Образ или план появится после подготовки проекта; платная генерация требует отдельного подтверждения.',
+    'Complete the brief to prepare a project. Its concept or plan will appear here; paid generation requires separate confirmation.',
+    'Заповніть завдання, щоб підготувати проєкт. Його образ або план з’явиться тут; платна генерація потребує окремого підтвердження.',
+  ],
   intro: [
     'Локация и герой — от замысла до прогулки.',
     'A location and hero, from brief to first walk.',

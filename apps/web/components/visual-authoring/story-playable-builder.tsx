@@ -2,6 +2,9 @@
 import { MapImageNotice } from '../game/map-image-notice';
 import { mapPlanningMessage } from '../game/map-planning-message';
 import { OwnerAuthoringSettlement } from './owner-authoring-settlement';
+import Link from 'next/link';
+import { ArrowLeft, Box, Check, MapPin, Sparkles, UsersRound } from 'lucide-react';
+import styles from './story-playable-builder.module.css';
 import { useEffect, useRef, useState } from 'react';
 import { formatSparkSubunits, type AuthoredGameDraft } from '@dreamwalk/contracts';
 import { providerSparkSubunits } from './spark-equivalent';
@@ -46,6 +49,19 @@ const copy = {
     'Build gameplay from your story',
     'Підготувати гру з історії',
   ],
+  stages: ['Этапы подготовки мира', 'World preparation stages', 'Етапи підготовки світу'],
+  preparation: ['Подготовка', 'Preparation', 'Підготовка'],
+  evaluation: ['Оценка', 'Estimate', 'Оцінка'],
+  generation: ['Генерация', 'Generation', 'Генерація'],
+  verification: ['Проверка', 'Review', 'Перевірка'],
+  application: ['Применить', 'Apply', 'Застосувати'],
+  back: ['Назад к редактору', 'Back to editor', 'Назад до редактора'],
+  locations: ['Локации', 'Locations', 'Локації'],
+  characters: ['Персонажи', 'Characters', 'Персонажі'],
+  objects: ['Объекты', 'Objects', 'Об’єкти'],
+  empty: ['Нет в этом плане', 'None in this plan', 'Немає в цьому плані'],
+  preview: ['Предпросмотр стартовой карты', 'Starting map preview', 'Перегляд початкової карти'],
+  summary: ['Состав подготовленного мира', 'Prepared world contents', 'Склад підготовленого світу'],
   prepare: ['Подготовить план', 'Prepare plan', 'Підготувати план'],
   quote: ['Узнать стоимость AI-плана', 'Quote AI plan', 'Дізнатися вартість AI-плану'],
   dispatch: [
@@ -134,10 +150,12 @@ export function StoryPlayableBuilder({
   adventureId,
   beforePrepare,
   onApplied,
+  embedded = false,
 }: {
   adventureId: string;
   beforePrepare?: () => Promise<unknown>;
   onApplied?: () => void;
+  embedded?: boolean;
 }) {
   const costs = useSparkCosts();
   const { locale, t } = useT(),
@@ -376,10 +394,59 @@ export function StoryPlayableBuilder({
   const projection = compiled?.playable
     ? projectState(createStateFromPlayable(compiled.playable, ['story-preview']), 'story-preview')
     : null;
+  const step = !state?.sourceCurrent
+    ? 0
+    : state.status === 'applied'
+      ? 4
+      : state.status === 'proposed'
+        ? 3
+        : state.jobs.length > 0 || ['dispatched', 'generated'].includes(state.status)
+          ? 2
+          : state.status === 'prepared'
+            ? 1
+            : 0;
+  const stages = [
+    'preparation',
+    'evaluation',
+    'generation',
+    'verification',
+    'application',
+  ] as const;
+  const label = (item: {
+    label: string;
+    labelTranslations?: Partial<Record<typeof locale, string>>;
+  }) => item.labelTranslations?.[locale] || item.label;
+  const mapLabel = (id: string) => {
+    const map = state?.draft?.maps.find((item) => item.id === id);
+    return map ? label(map) : '';
+  };
   return (
-    <section>
-      <h2>{copyText('title')}</h2>
-      <p>{copyText('intro')}</p>
+    <section className={styles.builder} data-testid="story-playable-builder" data-locale={locale}>
+      <header className={embedded ? styles.heading : `page-heading ${styles.heading}`}>
+        <div>
+          {embedded ? <h2>{copyText('title')}</h2> : <h1>{copyText('title')}</h1>}
+          {!embedded && (
+            <Link href={`/studio/adventures/${adventureId}`} className={styles.back}>
+              <ArrowLeft size={18} aria-hidden="true" /> {copyText('back')}
+            </Link>
+          )}
+        </div>
+      </header>
+      <ol className={styles.steps} aria-label={copyText('stages')}>
+        {stages.map((stage, index) => (
+          <li
+            key={stage}
+            aria-current={index === step ? 'step' : undefined}
+            data-stage-state={index < step ? 'complete' : index === step ? 'current' : 'upcoming'}
+          >
+            <span className={styles.stepNumber} aria-hidden="true">
+              {index < step ? <Check size={18} /> : index + 1}
+            </span>
+            <span>{copyText(stage)}</span>
+          </li>
+        ))}
+      </ol>
+      <p className={styles.intro}>{copyText('intro')}</p>
       {!loaded && <p role="status">{busy ? copyText('loading') : copyText('unavailable')}</p>}
       {!state ? (
         <>
@@ -394,24 +461,35 @@ export function StoryPlayableBuilder({
         </>
       ) : (
         <>
-          <Button busy={busy} variant="secondary" onClick={() => void act('refresh')}>
-            {copyText('refresh')}
-          </Button>
-          <p role="status">{statusText(state.status)}</p>
-          {!state.sourceCurrent && <p role="alert">{copyText('stale')}</p>}
-          {!unresolved &&
-            (state.status !== 'prepared' || state.jobs.length > 0 || !state.sourceCurrent) && (
-              <Button busy={busy} onClick={() => void act('prepare')}>
-                {copyText('prepare')}
+          <div className={styles.statusBand}>
+            <p role="status">
+              <Sparkles size={24} aria-hidden="true" /> {statusText(state.status)}
+            </p>
+            <div className={styles.statusActions}>
+              <Button busy={busy} variant="secondary" onClick={() => void act('refresh')}>
+                {copyText('refresh')}
               </Button>
-            )}
+              {!unresolved &&
+                (state.status !== 'prepared' || state.jobs.length > 0 || !state.sourceCurrent) && (
+                  <Button
+                    busy={busy}
+                    variant="secondary"
+                    data-testid="builder-reprepare"
+                    onClick={() => void act('prepare')}
+                  >
+                    {copyText('prepare')}
+                  </Button>
+                )}
+            </div>
+          </div>
+          {!state.sourceCurrent && <p role="alert">{copyText('stale')}</p>}
           {state.sourceCurrent && state.status === 'prepared' && !state.jobs.length && (
             <Button busy={busy} onClick={() => void act('quote')}>
               {copyText('quote')}
             </Button>
           )}
           {quote && (
-            <div>
+            <div className={styles.quote}>
               {quote.sparks && <SparkQuotePrice quote={quote} />}
               {quote.automaticKnownCostPolicy === 'known-cost-v1' ? (
                 <small data-authoring-known-cost-policy>
@@ -453,7 +531,7 @@ export function StoryPlayableBuilder({
           )}
           {state.jobs.map((j) => (
             <div key={j.id}>
-              <p role="status">
+              <p role="status" className={styles.jobStatus}>
                 {j.error_code === 'STORY_MAP_INTENT_MISMATCH'
                   ? copyText('mapIntentMismatch')
                   : (mapPlanningMessage(j.error_code, locale) ?? statusText(j.status))}
@@ -478,19 +556,97 @@ export function StoryPlayableBuilder({
               )}
             </div>
           ))}
-          {projection && (
-            <GameCanvas
-              projection={projection}
-              disabled
-              reducedMotion
-              onMove={() => {}}
-              onSelectNpc={() => {}}
-              onStop={() => {}}
-            />
+          {projection && state.draft && (
+            <div className={styles.workspace}>
+              <section
+                className={styles.preview}
+                aria-label={copyText('preview')}
+                data-testid="builder-map-preview"
+              >
+                <div className={styles.previewHeading}>
+                  <span>{copyText('preview')}</span>
+                  <h2>{mapLabel(projection.map.id)}</h2>
+                </div>
+                <GameCanvas
+                  projection={projection}
+                  disabled
+                  reducedMotion
+                  onMove={() => {}}
+                  onSelectNpc={() => {}}
+                  onStop={() => {}}
+                />
+              </section>
+              <aside className={styles.contents} aria-label={copyText('summary')}>
+                <section>
+                  <h2>
+                    <MapPin size={22} aria-hidden="true" /> {copyText('locations')}
+                  </h2>
+                  <ul>
+                    {state.draft.maps.map((map) => (
+                      <li key={map.id}>
+                        <span className={styles.itemIcon} aria-hidden="true">
+                          <MapPin size={22} />
+                        </span>
+                        <div>
+                          <strong>{label(map)}</strong>
+                          <small>
+                            {map.width} × {map.height}
+                          </small>
+                        </div>
+                      </li>
+                    ))}
+                  </ul>
+                </section>
+                <section>
+                  <h2>
+                    <UsersRound size={22} aria-hidden="true" /> {copyText('characters')}
+                  </h2>
+                  {state.draft.npcs.length === 0 ? (
+                    <p>{copyText('empty')}</p>
+                  ) : (
+                    <ul>
+                      {state.draft.npcs.map((npc) => (
+                        <li key={npc.id}>
+                          <span className={styles.itemIcon} aria-hidden="true">
+                            <UsersRound size={22} />
+                          </span>
+                          <div>
+                            <strong>{label(npc)}</strong>
+                            <small>{npc.publicProfile?.role || mapLabel(npc.mapId)}</small>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+                <section>
+                  <h2>
+                    <Box size={22} aria-hidden="true" /> {copyText('objects')}
+                  </h2>
+                  {state.draft.objects.length === 0 ? (
+                    <p>{copyText('empty')}</p>
+                  ) : (
+                    <ul>
+                      {state.draft.objects.map((object) => (
+                        <li key={object.id}>
+                          <span className={styles.itemIcon} aria-hidden="true">
+                            <Box size={22} />
+                          </span>
+                          <div>
+                            <strong>{label(object)}</strong>
+                            <small>{object.publicProfile?.role || mapLabel(object.mapId)}</small>
+                          </div>
+                        </li>
+                      ))}
+                    </ul>
+                  )}
+                </section>
+              </aside>
+            </div>
           )}
           {state.status === 'proposed' && (
-            <>
-              <label>
+            <div className={styles.reviewActions}>
+              <label className={styles.review}>
                 <input
                   type="checkbox"
                   checked={review}
@@ -506,7 +662,7 @@ export function StoryPlayableBuilder({
               >
                 {copyText('apply')}
               </Button>
-            </>
+            </div>
           )}
         </>
       )}

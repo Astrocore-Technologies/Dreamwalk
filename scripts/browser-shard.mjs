@@ -3,9 +3,9 @@ import { readdirSync } from 'node:fs';
 import { spawn } from 'node:child_process';
 import { pathToFileURL } from 'node:url';
 
-// Conservative scheduling weights from CI 41633194416, 41731720347 and 41805081188,
+// Conservative scheduling weights from CI 41633194416, 41731720347, 41805081188 and 42028914406,
 // not timeouts. Include complete locale matrices, not just one test in each file.
-// The latter completed 107 tests on shard 2 before its job was cancelled at 20 minutes.
+// CI41731720347 completed 107 tests on shard 2 before cancellation at 20 minutes.
 // Round slow-file observations up and keep prior larger estimates to leave retry headroom.
 const seconds = {
   'game-adventure-completion.spec.ts': 280,
@@ -16,7 +16,9 @@ const seconds = {
   'game-turns.spec.ts': 65,
   'game-living.spec.ts': 65,
   'game-chat-layout.spec.ts': 200,
-  'game-area-speech.spec.ts': 150,
+  // CI467 observed 255s for the whole locale matrix; 150s colocated it with chat
+  // and cooperation, exhausting the 20-minute job despite 88 passing cases.
+  'game-area-speech.spec.ts': 280,
   'game-map-coordinates.spec.ts': 30,
   'generation-policy-revisions.spec.ts': 120,
   'owner-generation.spec.ts': 55,
