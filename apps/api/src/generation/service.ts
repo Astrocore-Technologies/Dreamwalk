@@ -46,7 +46,7 @@ import {
   type ImagePolicy,
   type GenerationRequest,
 } from '../image-generation/contracts';
-import { sourceAccessSql } from '../game/playable.service';
+import { sourceAccessSql } from '../game/source-access';
 import { LIVE_TEXT, type LiveTestConfig } from '../live-test/config';
 import {
   ownerPricingIsCurrent,
