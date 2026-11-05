@@ -1,3 +1,4 @@
+import type { ImageKnownCostSettlement } from '../assets/image-cost-policy';
 import type { ImageFraming } from '@dreamwalk/contracts';
 import type { ArtRevision } from '../assets/types';
 import type { LiveTestStatus } from '../live-test/types';
@@ -38,6 +39,7 @@ export type ImageConfiguration = {
   };
 };
 export type GenerationQuote = {
+  automaticKnownCostSettlement?: ImageKnownCostSettlement;
   framingVersion?: 1;
   imageFraming?: ImageFraming | null;
   sparks?: { quoteId: string; reserveSubunits: string; rateVersion: string; walletCharging: true };

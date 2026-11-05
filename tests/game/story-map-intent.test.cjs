@@ -1,6 +1,7 @@
 /** No provider calls: contracts, actual compiler/source preparation and exact transport body. */
 const test = require('node:test'),
   assert = require('node:assert/strict');
+const { randomUUID } = require('node:crypto');
 const {
   mapIntentSchema,
   mapMatchesIntent,
@@ -192,16 +193,23 @@ test('authoring recovery exposes only exact stable shape error; keeps stale/pend
     const engine = Object.create(AuthoringTextEngine.prototype),
       statements = [];
     const row = {
-      id: 'fixture',
-      actor_id: 'owner',
+      id: randomUUID(),
+      actor_id: randomUUID(),
       status: 'generated',
-      session_id: 'session',
-      reservation_id: 'reservation',
+      session_id: randomUUID(),
+      reservation_id: randomUUID(),
       actual_micros: 13,
     };
     const c = {
       query: async (sql, args = []) => {
         statements.push([sql, args]);
+        if (sql.startsWith('SELECT session_id FROM live_authoring_text_jobs'))
+          return { rows: [{ session_id: row.session_id }], rowCount: 1 };
+        if (sql.startsWith('SELECT * FROM live_authoring_text_jobs'))
+          return { rows: [row], rowCount: 1 };
+        if (sql.startsWith('UPDATE live_authoring_text_jobs')) row.status = 'stale';
+        if (sql.startsWith('SELECT status FROM live_authoring_text_jobs'))
+          return { rows: [{ status: row.status }], rowCount: 1 };
         return { rows: [], rowCount: 0 };
       },
     };
@@ -211,14 +219,14 @@ test('authoring recovery exposes only exact stable shape error; keeps stale/pend
       throw Error(message);
     };
     await engine.resumeGenerated(
-      'owner',
-      'fixture',
+      row.actor_id,
+      row.id,
       async () => {},
       async () => {},
     );
     const update = statements.find(([sql]) => sql.startsWith('UPDATE live_authoring_text_jobs'));
     assert.ok(update);
-    assert.deepEqual(update[1], ['fixture', expected]);
+    assert.deepEqual(update[1], [row.id, expected]);
     assert.match(update[0], /status='stale',proposal=NULL,result=NULL/);
     assert.doesNotMatch(update[0], /actual_micros\s*=/);
     assert.equal(row.actual_micros, 13);
@@ -228,4 +236,40 @@ test('authoring recovery exposes only exact stable shape error; keeps stale/pend
       ),
     );
   }
+});
+
+test('authoring recovery does not overwrite a result completed by a concurrent worker', async () => {
+  const { AuthoringTextEngine } = require('../../apps/api/dist/live-test/authoring-text');
+  const engine = Object.create(AuthoringTextEngine.prototype);
+  const statements = [];
+  const row = {
+    id: 'fixture',
+    actor_id: 'owner',
+    status: 'generated',
+    session_id: 'session',
+    reservation_id: 'reservation',
+    actual_micros: 13,
+  };
+  const c = {
+    query: async (sql, args = []) => {
+      statements.push([sql, args]);
+      if (sql.startsWith('SELECT status FROM live_authoring_text_jobs'))
+        return { rows: [{ status: 'committed' }], rowCount: 1 };
+      throw new Error('No mutation is allowed after the concurrent commit');
+    },
+  };
+  engine.db = { query: async () => [row], tx: (work) => work(c) };
+  engine.live = { lockAuthorization: async () => {} };
+  engine.lockSource = async () => {
+    throw Error('STORY_MAP_INTENT_MISMATCH');
+  };
+  await engine.resumeGenerated(
+    'owner',
+    'fixture',
+    async () => {},
+    async () => {},
+  );
+  assert.equal(statements.length, 1);
+  assert.match(statements[0][0], /^SELECT status FROM live_authoring_text_jobs.*FOR UPDATE/);
+  assert.equal(row.actual_micros, 13);
 });

@@ -150,11 +150,40 @@ test('NPC planning includes complete instructions/schema/protocol/output and doe
   assert.equal(smallerCapacity.snapshot.reserveMicros, prepared.snapshot.reserveMicros);
   assert.ok(prepared.snapshot.reserveMicros < 264036 / 4);
   const story = provider.prepareTextRequest('story_turn', { ...context, mode: 'director' });
-  assert.ok(story.snapshot.reserveMicros > prepared.snapshot.reserveMicros);
+  assert.equal(
+    story.body,
+    buildOpenAiNpcRequestBody(c, 'story_turn', { ...context, mode: 'director' }),
+  );
   const longer = provider.prepareTextRequest('speech', {
     ...context,
     message: '"\\🪐'.repeat(1000),
   });
+  // Prompt lengths can change independently by purpose. Price every complete serialized
+  // envelope instead of assuming the director prompt is always longer than speech.
+  for (const quoted of [prepared, story, longer]) {
+    const bytes = Buffer.byteLength(quoted.body, 'utf8');
+    const bodyTokens = Math.ceil((bytes * c.estimation.textTokensPerKiBUtf8) / 1024);
+    const inputTokens = bodyTokens + c.estimation.textProtocolTokens;
+    const inputMicros = Math.ceil((inputTokens * c.inputMicrosPerMillion) / 1_000_000);
+    const outputMicros = Math.ceil((c.maxOutputTokens * c.outputMicrosPerMillion) / 1_000_000);
+    const totalMicros = inputMicros + outputMicros;
+    const marginMicros = Math.ceil((totalMicros * c.estimation.marginBps) / 10_000);
+    for (const [field, expected] of Object.entries({
+      serializedBytes: bytes,
+      bodyInputTokensEstimate: bodyTokens,
+      protocolTokenAllowance: c.estimation.textProtocolTokens,
+      estimatedInputTokens: inputTokens,
+      maxOutputTokens: c.maxOutputTokens,
+      inputMicros,
+      outputMicros,
+      estimatedTotalMicros: totalMicros,
+      percentageMarginMicros: marginMicros,
+      fixedMarginMicros: c.estimation.fixedMarginMicros,
+      reserveMicros: totalMicros + marginMicros + c.estimation.fixedMarginMicros,
+    })) {
+      assert.equal(quoted.snapshot[field], expected, field);
+    }
+  }
   assert.ok(longer.snapshot.reserveMicros > prepared.snapshot.reserveMicros);
 });
 test('context packing follows low-ratio operator estimates and larger margins reduce packing', () => {
@@ -677,7 +706,11 @@ test('actual deferred-request processor preserves previously quoted history duri
   const written = [];
   let reviewed;
   const fake = {
-    story: { quotedReply: async () => null, requireLegacyReplyConsent: async () => false },
+    story: {
+      reconcileTerminalTravel: async () => {},
+      quotedReply: async () => null,
+      requireLegacyReplyConsent: async () => false,
+    },
     db: {
       query: async (sql, args = []) => {
         if (sql.startsWith('SELECT * FROM game_npc_decision_requests')) return [row];
@@ -716,7 +749,23 @@ test('actual deferred-request processor preserves previously quoted history duri
   };
   const state = {
     tick: 1,
-    turnController: { phase: 'world' },
+    turnController: {
+      ...fence,
+      phase: 'world',
+      deferredSpeech: [
+        {
+          id: frozen.deferredSpeechId,
+          actorId: 'player',
+          recipientId: 'keeper',
+          utteranceId: 'synthetic-utterance',
+          channel: 'say',
+          audienceIds: ['keeper', 'player'],
+          sequence: 0,
+          roundId: fence.roundId,
+          phaseEpoch: fence.phaseEpoch,
+        },
+      ],
+    },
     entities: { keeper: { kind: 'npc' } },
     npcBrains: { keeper: {} },
   };
@@ -750,7 +799,11 @@ test('actual deferred-request processor prepares the history window before askin
   const written = [];
   let reviewed, failed;
   const fake = {
-    story: { quotedReply: async () => null, requireLegacyReplyConsent: async () => false },
+    story: {
+      reconcileTerminalTravel: async () => {},
+      quotedReply: async () => null,
+      requireLegacyReplyConsent: async () => false,
+    },
     db: {
       query: async (sql, args = []) => {
         if (sql.startsWith('SELECT * FROM game_npc_decision_requests')) return [row];
@@ -797,7 +850,23 @@ test('actual deferred-request processor prepares the history window before askin
   };
   const state = {
     tick: 1,
-    turnController: { phase: 'world' },
+    turnController: {
+      ...fence,
+      phase: 'world',
+      deferredSpeech: [
+        {
+          id: original.deferredSpeechId,
+          actorId: 'player',
+          recipientId: 'keeper',
+          utteranceId: 'synthetic-utterance',
+          channel: 'say',
+          audienceIds: ['keeper', 'player'],
+          sequence: 0,
+          roundId: fence.roundId,
+          phaseEpoch: fence.phaseEpoch,
+        },
+      ],
+    },
     entities: { keeper: { kind: 'npc' } },
     npcBrains: {
       keeper: { living: { relationships: {}, goal: {}, obligations: [], observations: [] } },

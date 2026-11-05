@@ -27,6 +27,10 @@ test(
     const { startLocalPostgres } = await import('../../scripts/postgres-local.mjs');
     const cluster = await startLocalPostgres();
     const pool = new Pool({ connectionString: process.env.DATABASE_URL });
+    const connectionEnds = [];
+    pool.on('connect', (client) => {
+      connectionEnds.push(new Promise((resolve) => client.once('end', resolve)));
+    });
     const assetDir = await mkdtemp(join(tmpdir(), 'dreamwalk-release-fixture-'));
     const configModule = require.resolve('../../apps/api/dist/config.js');
     require.cache[configModule] = {
@@ -588,6 +592,8 @@ test(
       );
     } finally {
       await pool.end();
+      // Wait for sockets to close before stopping the disposable database.
+      await Promise.all(connectionEnds);
       await cluster.stop();
       await rm(assetDir, { recursive: true, force: true });
     }

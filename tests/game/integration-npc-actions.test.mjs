@@ -184,11 +184,30 @@ await test(
       assert.equal(
         (
           await db.query(
-            "SELECT count(*)::int n FROM game_npc_decision_requests WHERE campaign_id=$1 AND status IN ('queued','scheduled')",
+            `SELECT count(*)::int n FROM game_npc_decision_requests r LEFT JOIN npc_ai_jobs j ON j.id=r.job_id
+             WHERE r.campaign_id=$1 AND (r.status='queued' OR (r.status='scheduled' AND
+               (j.id IS NULL OR j.status IN ('queued','reserved','running','result_received','validated','reconciling'))))`,
             [id],
           )
         ).rows[0].n,
         0,
+      );
+      // Every round now deliberates even for an accepted commitment. A scheduled
+      // request is historical once its linked native job is committed, not pending.
+      const decisions = (
+        await db.query(
+          `SELECT r.npc_id,j.status FROM game_npc_decision_requests r JOIN npc_ai_jobs j ON j.id=r.job_id
+           WHERE r.campaign_id=$1 AND r.purpose='plan' AND r.context ? 'worldRoundDecision' ORDER BY r.npc_id`,
+          [id],
+        )
+      ).rows;
+      assert.deepEqual(
+        decisions,
+        [
+          { npc_id: 'guard', status: 'committed' },
+          { npc_id: 'keeper', status: 'committed' },
+        ],
+        'both commitments receive exactly one successful model decision',
       );
       await stopApi();
       await startApi();

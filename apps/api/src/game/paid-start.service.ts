@@ -10,6 +10,7 @@ import { readOwnedHero } from './hero-selection';
 import { AuthoringTextEngine, type AuthoringTextBinding } from '../live-test/authoring-text';
 import { visualDigest as digest } from '../visual-authoring/fingerprint';
 import { fail } from '../errors';
+import { startMapGroundingCompatible } from './story-map-mode';
 const operation = z.object({ operationId: z.uuid() }).strict();
 @Injectable()
 export class PaidStartService {
@@ -96,10 +97,12 @@ export class PaidStartService {
       const cached = !source.package.compiled
         ? (
             await c.query(
-              "SELECT id,compiled FROM game_start_preparations WHERE actor_id=$1 AND source_version_id=$2 AND source_checksum=$3 AND hero_id IS NOT DISTINCT FROM $4::uuid AND hero_snapshot=$5::jsonb AND status IN ('ready','started') AND compiled IS NOT NULL ORDER BY created_at LIMIT 1",
+              "SELECT id,compiled FROM game_start_preparations WHERE actor_id=$1 AND source_version_id=$2 AND source_checksum=$3 AND hero_id IS NOT DISTINCT FROM $4::uuid AND hero_snapshot=$5::jsonb AND status IN ('ready','started') AND compiled IS NOT NULL ORDER BY created_at DESC LIMIT 20",
               [actor, source.id, source.checksum, body.heroId ?? null, JSON.stringify(hero)],
             )
-          ).rows[0]
+          ).rows.find((row) =>
+            startMapGroundingCompatible(source.package.plannerSource, row.compiled),
+          )
         : null;
       const reused = Boolean(source.package.compiled || cached);
       const count = (
@@ -215,7 +218,13 @@ export class PaidStartService {
     return this.configured().quote(actor, binding, this.guard(actor));
   }
   async dispatch(actor: string, id: string, input: unknown) {
-    const body = operation.extend({ quoteId: z.uuid(), consent: z.literal(true) }).parse(input),
+    const body = operation
+        .extend({
+          quoteId: z.uuid(),
+          consent: z.literal(true),
+          automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
+        })
+        .parse(input),
       engine = this.configured();
     const quote = (
       await this.db.query(

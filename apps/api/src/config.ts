@@ -49,6 +49,8 @@ export function readConfig(env = process.env) {
     throw new Error('Unsafe development flags in production.');
   if (c.NODE_ENV === 'production' && !c.WEB_ORIGIN.startsWith('https://'))
     throw new Error('Production requires HTTPS.');
+  if (new URL(c.WEB_ORIGIN).origin !== c.WEB_ORIGIN || c.WEB_ORIGIN.includes('*'))
+    throw new Error('WEB_ORIGIN must be an exact origin without credentials, path or wildcard.');
   if (c.DREAMWALK_REQUIRE_INGRESS_SECRET && !c.DREAMWALK_INGRESS_SECRET)
     throw new Error('Ingress secret required.');
   if (c.SMTP_HOST && !c.SMTP_FROM) throw new Error('SMTP_FROM is required with SMTP_HOST.');

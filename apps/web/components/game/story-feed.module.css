@@ -298,8 +298,10 @@
 .history {
   position: relative;
   display: flex;
-  flex: 1 1 auto;
-  min-height: 0;
+  /* Feed length must not participate in composer shrink distribution. */
+  flex: 1 1 0;
+  /* A 48px inspection action plus its focus ring and scroll padding must fit. */
+  min-height: 72px;
   overflow: hidden;
 }
 :global(.game-shell) .history .feed {
@@ -311,9 +313,15 @@
 :global(.game-shell) .composer {
   display: flex;
   flex-direction: column;
-  flex: 0 0 auto;
+  flex: 0 1 auto;
+  min-height: 0;
   max-height: none;
   overflow: visible;
+}
+/* Preserve the input and instructions; only confirmation/status content yields
+   space to the minimum keyboard-accessible history viewport on short screens. */
+:global(.game-shell) .composer > :not(.composerFeedback) {
+  flex-shrink: 0;
 }
 :global(.game-shell) .composer textarea {
   height: 70px;
@@ -323,6 +331,7 @@
 }
 .composerFeedback {
   display: grid;
+  flex: 0 1 auto;
   gap: 8px;
   min-height: 0;
   max-height: min(240px, 25dvh);
@@ -355,4 +364,37 @@
     height: 100%;
     min-height: 0;
   }
+}
+
+/* Keep the mounted history geometry and reading anchor while inspecting a public NPC. */
+.history[data-inspecting='true'] > .feed,
+.history[data-inspecting='true'] > .newEvents {
+  visibility: hidden;
+}
+.inspectionLayer {
+  position: absolute;
+  inset: 0;
+  /* Portrait sizing follows the actual history slot, including composer confirmations. */
+  container-type: size;
+  overflow-y: auto;
+  /* Native keyboard focus must reveal the action's 6px focus ring, not just its box. */
+  scroll-padding-block: 8px;
+  overscroll-behavior: contain;
+  scrollbar-gutter: stable;
+  background: var(--surface);
+}
+
+.liveCost {
+  display: grid;
+  gap: 6px;
+  padding-top: 8px;
+  border-top: 1px solid var(--line);
+  font-size: 12px;
+}
+.liveCost p {
+  margin: 0;
+}
+.liveCost > small {
+  color: var(--muted);
+  font-size: 10px;
 }

@@ -34,7 +34,7 @@ await test(
         outsider = await client().register();
       const { campaignId: id } = await a.request('/game/campaigns', { template: 'observatory-v1' });
       await t.test(
-        'campaign membership and WebSocket Origin/session authorization are enforced',
+        'WebSocket origin, session and campaign membership are independently enforced',
         async () => {
           await outsider.request(path(id, 'snapshot'), undefined, 'GET', 403);
           assert.equal((await outsider.request('/game/campaigns')).campaigns.length, 0);
@@ -47,11 +47,15 @@ await test(
           await a.request(path(id, 'invitations'), { username: b.handle });
           await b.request(path(id, 'snapshot'), undefined, 'GET', 403);
           await b.request(path(id, 'accept'), {});
-          assert.equal(await rejectedSocket(outsider, id), 403);
           assert.equal(await rejectedSocket(a, id, 'https://untrusted.invalid'), 403);
+          assert.equal(await rejectedSocket(outsider, id), 403);
+          assert.equal(await rejectedSocket(outsider, id, 'https://untrusted.invalid'), 403);
           assert.equal(await rejectedSocket(client(), id), 403);
+          assert.equal(await rejectedSocket(client(), id, 'https://untrusted.invalid'), 403);
         },
       );
+      // A trusted Origin does not bypass session or membership checks. Exercise
+      // the admitted projection/input path and later live authorization revocation.
       const first = await connect(a, id),
         second = await connect(b, id);
       await t.test(

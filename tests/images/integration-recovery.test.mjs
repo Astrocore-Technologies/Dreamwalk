@@ -15,7 +15,10 @@ const {
 const { GenerationAuthority } = require('../../apps/api/dist/generation/service.js');
 const { readOwnerGenerationConfig } = require('../../apps/api/dist/generation/config.js');
 const { createOwnerImageRuntime } = require('../../apps/api/dist/image-generation/config.js');
-const { isRecoverableModelRejection } = require('../../apps/api/dist/image-generation/recovery.js');
+const {
+  isRecoverableModelRejection,
+  recoverModelRejectionTx,
+} = require('../../apps/api/dist/image-generation/recovery.js');
 await test('explicit model rejection recovery keeps one financial scope and requires external billing evidence', async (t) => {
   let sql, database;
   try {
@@ -155,21 +158,99 @@ await test('explicit model rejection recovery keeps one financial scope and requ
         failureCode('STALE_STATE'),
       );
 
-      await sql.query(
-        "UPDATE live_test_sessions SET stop_code='PROVIDER_HTTP_403' WHERE mode='owner'",
-      );
+      // Rollback-isolated conflict fixture: never erase a committed immutable veto
+      // merely to reuse its grant for the independent happy-path confirmation.
+      for (const cause of [
+        'PROVIDER_HTTP_403',
+        'DATA_ERASED',
+        'ADMIN_STOP',
+        'AUTHORIZATION_EXPIRED',
+      ]) {
+        await sql.query('BEGIN');
+        try {
+          await sql.query("UPDATE live_test_sessions SET stop_code=$1 WHERE mode='owner'", [cause]);
+          await sql.query(
+            "UPDATE live_test_sessions SET stop_code='IMAGE_MODEL_ACCESS_REJECTION' WHERE mode='owner'",
+          );
+          await assert.rejects(
+            recoverModelRejectionTx(sql, owner.user.id, job.id, reviewBody, runtime.policy),
+            failureCode('IMAGE_RECOVERY_DURABLE_STOP_REQUIRES_REVIEW'),
+          );
+          assert.equal(
+            (
+              await sql.query(
+                'SELECT count(*)::int n FROM image_generation_recoveries WHERE job_id=$1',
+                [job.id],
+              )
+            ).rows[0].n,
+            0,
+          );
+        } finally {
+          await sql.query('ROLLBACK');
+        }
+      }
       await assert.rejects(
-        engine.recoverModelRejection(owner.user.id, job.id, reviewBody),
-        failureCode('IMAGE_RECOVERY_STOP_MISMATCH'),
+        recoverModelRejectionTx(sql, owner.user.id, job.id, reviewBody, {
+          ...runtime.policy,
+          externalExpiresAt: '2000-01-01T00:00:00.000Z',
+        }),
+        failureCode('IMAGE_RECOVERY_DURABLE_STOP_REQUIRES_REVIEW'),
       );
-      await sql.query(
-        "UPDATE live_test_sessions SET stop_code='IMAGE_RESULT_UNKNOWN' WHERE mode='owner'",
-      );
+      for (const mutation of [
+        "UPDATE adventures SET deleted_at=now(),status='archived',deletion_id=gen_random_uuid() WHERE id=(SELECT adventure_id FROM image_generation_jobs WHERE id=$1)",
+        "UPDATE image_generation_jobs SET safe_diagnostic=jsonb_set(safe_diagnostic,'{providerCode}','\"model_access_denied\"') WHERE id=$1",
+        'UPDATE image_generation_jobs SET cancel_requested=true WHERE id=$1',
+      ]) {
+        await sql.query('BEGIN');
+        try {
+          await sql.query(mutation, mutation.includes('$1') ? [job.id] : []);
+          await assert.rejects(
+            recoverModelRejectionTx(sql, owner.user.id, job.id, reviewBody, runtime.policy),
+            failureCode('IMAGE_RECOVERY_DURABLE_STOP_REQUIRES_REVIEW'),
+          );
+        } finally {
+          await sql.query('ROLLBACK');
+        }
+      }
     });
     await t.test(
       'apply settles only confirmed cost, preserves original error, and duplicate/restarted calls settle once',
       async () => {
         const apply = { ...reviewBody, mode: 'apply', expectedFingerprint: review.fingerprint };
+        await sql.query(
+          `CREATE FUNCTION reject_recovery_fixture_audit() RETURNS trigger LANGUAGE plpgsql AS $$ BEGIN IF NEW.action='image_rejection_recovered' THEN RAISE EXCEPTION 'INJECTED_RECOVERY_AUDIT_FAILURE'; END IF; RETURN NEW; END $$`,
+        );
+        await sql.query(
+          'CREATE TRIGGER reject_recovery_fixture_audit BEFORE INSERT ON audit FOR EACH ROW EXECUTE FUNCTION reject_recovery_fixture_audit()',
+        );
+        try {
+          await assert.rejects(
+            engine.recoverModelRejection(owner.user.id, job.id, apply),
+            /INJECTED_RECOVERY_AUDIT_FAILURE/,
+          );
+          assert.equal(
+            (
+              await sql.query(
+                'SELECT count(*)::int n FROM image_generation_recoveries WHERE job_id=$1',
+                [job.id],
+              )
+            ).rows[0].n,
+            0,
+          );
+          assert.equal(
+            (
+              await sql.query('SELECT status FROM generation_budget_reservations WHERE id=$1', [
+                held.id,
+              ])
+            ).rows[0].status,
+            'held',
+          );
+          assert.equal((await engine.get(owner.user.id, job.id)).status, 'unknown');
+        } finally {
+          await sql.query('DROP TRIGGER reject_recovery_fixture_audit ON audit');
+          await sql.query('DROP FUNCTION reject_recovery_fixture_audit()');
+        }
+
         for (const result of await Promise.all([
           engine.recoverModelRejection(owner.user.id, job.id, apply),
           engine.recoverModelRejection(owner.user.id, job.id, apply),

@@ -4,7 +4,7 @@ import { SparkReceiptCost } from '../visual-authoring/sparks-cost';
 import { StoryCost, RuntimeMapQuoteNotice } from './story-cost';
 import { StoryReplyConfirmation } from './story-reply-confirmation';
 import { WorldGenerationConfirmation } from './world-generation-confirmation';
-import { useCallback, useEffect, useId, useRef, useState } from 'react';
+import { useCallback, useEffect, useId, useRef, useState, type ReactNode } from 'react';
 import type {
   GameProjection,
   StoryActionPreview,
@@ -25,6 +25,7 @@ import {
   storyTargetValid,
   storyDraftKey,
   storyRecipientLabel,
+  storyRecipientForProjection,
 } from './story-turn-guards';
 import { useStoryText, type StoryMessageKey } from './story-messages';
 import { projectionTurnFence } from './turn-ui';
@@ -39,6 +40,8 @@ type Prepared = {
 };
 const clarificationKeys: Record<string, StoryMessageKey> = {
   AMBIGUOUS: 'ambiguous',
+  LOCATION_GENERATION_REQUIRES_TURNS: 'locationRequiresTurns',
+  LOCATION_TRAVEL_SEPARATE_POST: 'locationSeparatePost',
   UNSUPPORTED: 'unsupported',
   WALK_FIRST: 'walkFirst',
   CLEAR_TARGET_TO_CONTINUE_STORY: 'clearTarget',
@@ -55,6 +58,7 @@ const actionLabels = {
   pick_up: 'Подобрать',
   give: 'Передать',
   transition: 'Перейти',
+  travel: 'Перейти',
   approach: 'Перейти',
   wait: 'Ждать',
 } as const;
@@ -62,6 +66,7 @@ export function UnifiedStory({
   campaignId,
   projection,
   recipient,
+  inspection,
   onClearRecipient,
   disabled,
   partyDisabled = disabled,
@@ -73,6 +78,7 @@ export function UnifiedStory({
   campaignId: string;
   projection: GameProjection;
   recipient: StoryRecipient;
+  inspection?: ReactNode;
   onClearRecipient: () => void;
   disabled: boolean;
   partyDisabled?: boolean;
@@ -81,9 +87,8 @@ export function UnifiedStory({
   onWorldRefresh: () => void;
   onBusyChange?: (busy: boolean) => void;
 }) {
+  const locationOnly = projection.map.spatialMode === 'location_only';
   const turnText = useTurnText();
-  const turnCopy = useRef(turnText);
-  turnCopy.current = turnText;
   const h = useStoryText(),
     { t, locale } = useT(),
     hintId = useId();
@@ -113,7 +118,8 @@ export function UnifiedStory({
   const copy = useRef(h);
   copy.current = h;
   const confirmOperations = useRef(new Map<string, string>());
-  const targetNpcId = recipient?.id;
+  const activeRecipient = storyRecipientForProjection(projection, recipient);
+  const targetNpcId = activeRecipient?.id;
   const targetVisible = storyTargetVisible(projection, targetNpcId);
   const targetValid = storyTargetValid(projection, channel, targetNpcId);
   const turnFence = projectionTurnFence(projection);
@@ -152,13 +158,14 @@ export function UnifiedStory({
           submitted.current = null;
           if (receipt.status === 'committed') {
             if (currentDraft.current === sent.key) setText('');
-            if (receipt.code === 'NPC_REPLY_DEFERRED') setNotice(turnCopy.current('deferred'));
             callback.current();
           } else
             setNotice(
               copy.current(
-                clarificationKeys[receipt.code || ''] ||
-                  (receipt.status === 'stale' ? 'changed' : 'failed'),
+                sent.input.turnFence && clarificationKeys[receipt.code || '']
+                  ? 'postingRejected'
+                  : clarificationKeys[receipt.code || ''] ||
+                      (receipt.status === 'stale' ? 'changed' : 'failed'),
               ),
             );
         }
@@ -279,14 +286,45 @@ export function UnifiedStory({
         return;
       }
       if (result.status === 'clarification') {
-        setNotice(h(clarificationKeys[result.code || ''] || 'ambiguous'));
+        if (projection.turn)
+          setError(
+            h(
+              result.code === 'LOCATION_TRAVEL_SEPARATE_POST'
+                ? 'locationSeparatePost'
+                : 'postingRejected',
+            ),
+          );
+        else setNotice(h(clarificationKeys[result.code || ''] || 'ambiguous'));
         return;
       }
       if (!result.quote || !result.turnId) {
         setError(h('failed'));
         return;
       }
-      setPrepared({ input, result, mapId: projection.map.id, key });
+      const captured = { input, result, mapId: projection.map.id, key };
+      const media = result.quote as typeof result.quote & {
+        generatedLocationImages?: number;
+        estimateRiskConsentRequired?: boolean;
+      };
+      if (
+        (projection.turn || result.travel) &&
+        !((media.generatedLocationImages ?? 0) > 0 || media.estimateRiskConsentRequired)
+      ) {
+        // Send records a free local post. Paid world work belongs to End turn,
+        // never a quote response or a polling effect.
+        if (
+          result.quote.provider !== 'local-turn-resolver' ||
+          result.quote.external ||
+          result.quote.credits !== 0 ||
+          result.quote.requiresConsent !== false ||
+          result.quote.chargeUnit === 'sparks' ||
+          (result.quote.sparkReservedSubunits != null && result.quote.sparkReservedSubunits !== '0')
+        ) {
+          setError(h('postingRejected'));
+          return;
+        }
+        await submit(false, captured);
+      } else setPrepared(captured);
     } catch (err) {
       if (current === epoch.current) setError(errorMessage(err));
     } finally {
@@ -294,17 +332,17 @@ export function UnifiedStory({
       if (current === epoch.current) setBusy(false);
     }
   }
-  async function submit(recover = false) {
-    const sent = recover ? submitted.current : prepared,
+  async function submit(recover = false, immediate?: Prepared) {
+    const sent = recover ? submitted.current : (immediate ?? prepared),
       quote = sent?.result.quote;
     if (
       !sent ||
       !quote ||
       !sent.result.turnId ||
-      actionLock.current ||
+      (actionLock.current && !immediate) ||
       disabled ||
       (!recover &&
-        (sent !== preparedCurrent.current ||
+        ((!immediate && sent !== preparedCurrent.current) ||
           !available ||
           !targetValid ||
           pending ||
@@ -339,6 +377,9 @@ export function UnifiedStory({
           turnId: sent.result.turnId,
           quoteId: quote.id,
           consent: true,
+          ...(!immediate && quote.external && quote.automaticKnownCostPolicy === 'known-cost-v1'
+            ? { automaticKnownCostPolicy: quote.automaticKnownCostPolicy }
+            : {}),
           ...(sent.result.confirmationHash
             ? { confirmedActionHash: sent.result.confirmationHash }
             : {}),
@@ -453,17 +494,18 @@ export function UnifiedStory({
       </div>
       <div className={styles.body}>
         <div className={styles.story}>
-          <div className={styles.history}>
+          <div className={styles.history} data-inspecting={!!inspection}>
             <div
               className={styles.feed}
               role="log"
               aria-label={h('title')}
               aria-live="polite"
               aria-relevant="additions"
+              aria-hidden={!!inspection}
               data-testid="story-feed"
               ref={feedElement}
               onScroll={onFeedScroll}
-              tabIndex={0}
+              tabIndex={inspection ? -1 : 0}
             >
               <div ref={feedContent}>
                 {!feed?.entries.length && <p className={styles.status}>{h('empty')}</p>}
@@ -505,6 +547,7 @@ export function UnifiedStory({
                 {h('newEvents')}
               </button>
             )}
+            {inspection && <div className={styles.inspectionLayer}>{inspection}</div>}
           </div>
           <form
             className={styles.composer}
@@ -515,12 +558,24 @@ export function UnifiedStory({
             }}
           >
             <div className={styles.recipient}>
-              <span>
-                {recipient
-                  ? `${h('target')}: ${storyRecipientLabel(projection, recipient)}`
-                  : h('scene')}
+              <span data-testid="story-audience">
+                {activeRecipient
+                  ? `${h('target')}: ${storyRecipientLabel(projection, activeRecipient)}`
+                  : h(
+                      channel === 'whisper'
+                        ? locationOnly
+                          ? 'sceneWhisper'
+                          : projection.turn
+                            ? 'nearbyWhisper'
+                            : 'legacyWhisper'
+                        : locationOnly
+                          ? 'sceneSpeech'
+                          : projection.turn
+                            ? 'nearbySpeech'
+                            : 'scene',
+                    )}
               </span>
-              {recipient && (
+              {activeRecipient && (
                 <button
                   type="button"
                   aria-label={h('clear')}
@@ -547,9 +602,15 @@ export function UnifiedStory({
                 {h('missingTarget')}
               </p>
             )}
-            {channel === 'whisper' && !recipient && (
+            {channel === 'whisper' && !activeRecipient && (
               <p className={styles.status} role="status">
-                {h('chooseWhisper')}
+                {h(
+                  locationOnly
+                    ? 'sceneWhisperHint'
+                    : projection.turn
+                      ? 'areaWhisper'
+                      : 'legacyChooseWhisper',
+                )}
               </p>
             )}
             <div className={styles.composerInput}>
@@ -581,10 +642,23 @@ export function UnifiedStory({
               )}
             </div>
             <p id={hintId} className={styles.hint}>
-              {h('hint')}
+              {h('hint')}{' '}
+              <span data-testid={projection.turn ? 'area-speech-hint' : 'legacy-speech-hint'}>
+                {h(
+                  locationOnly
+                    ? channel === 'whisper'
+                      ? activeRecipient
+                        ? 'sceneTargetWhisperHint'
+                        : 'sceneWhisperHint'
+                      : 'sceneSpeechHint'
+                    : projection.turn
+                      ? 'areaSpeech'
+                      : 'legacySpeech',
+                )}
+              </span>
             </p>
             <div className={styles.composerFeedback}>
-              <RuntimeMapQuoteNotice />
+              {!projection.turn && <RuntimeMapQuoteNotice />}
               <ErrorBox message={error} />
               {notice && (
                 <p className={styles.status} role="status">
@@ -592,9 +666,10 @@ export function UnifiedStory({
                 </p>
               )}
               {feed && !available && <p className={styles.status}>{h('unavailable')}</p>}
-              {projection.turn?.phase === 'world' && (
+              {projection.turn && (
                 <WorldGenerationConfirmation
                   campaignId={campaignId}
+                  phase={projection.turn.phase}
                   access={
                     worldGenerationAllowed
                       ? 'owner'
@@ -611,7 +686,7 @@ export function UnifiedStory({
                 />
               )}
               {feed?.turns
-                .filter((turn) => turn.generationNeedsConfirmation)
+                .filter((turn) => !projection.turn && turn.generationNeedsConfirmation)
                 .map((turn) => (
                   <StoryReplyConfirmation
                     key={turn.id}
@@ -635,9 +710,43 @@ export function UnifiedStory({
                   </Button>
                 </p>
               )}
+              {feed?.turns
+                .filter((turn) => turn.travel)
+                .map((turn) => (
+                  <div
+                    key={`travel-${turn.id}`}
+                    className={styles.quote}
+                    data-location-generation={turn.travel!.status}
+                  >
+                    <p>
+                      {h(
+                        turn.travel!.imageStatus === 'unknown' ||
+                          turn.travel!.sparkStatus === 'pending'
+                          ? 'locationUnknown'
+                          : turn.travel!.status === 'declined'
+                            ? 'locationDeclined'
+                            : turn.travel!.status === 'committed'
+                              ? 'locationReady'
+                              : turn.travel!.status === 'failed' ||
+                                  ['rejected', 'expired', 'cancelled'].includes(
+                                    turn.travel!.imageStatus ?? '',
+                                  )
+                                ? 'locationFailed'
+                                : 'locationPreparing',
+                        { name: turn.travel!.destinationName },
+                      )}
+                    </p>
+                    {turn.travel!.sparkStatus && (
+                      <p>
+                        {h('locationImageCost')}
+                        <SparkReceiptCost receipt={{ ...turn.travel!, generationCost: null }} />
+                      </p>
+                    )}
+                  </div>
+                ))}
               {pendingTurns.map((turn) => (
                 <div key={turn.id} className={styles.quote} data-story-pending={turn.status}>
-                  {turn.status === 'awaiting_confirmation' ? (
+                  {turn.status === 'awaiting_confirmation' && !projection.turn ? (
                     <>
                       <p>{h('actionHint')}</p>
                       {actionsPreview(turn.actions || [])}
@@ -663,7 +772,15 @@ export function UnifiedStory({
                       </div>
                     </>
                   ) : (
-                    <p role="status">{h(turn.jobStatus === 'unknown' ? 'unknown' : 'pending')}</p>
+                    <p role="status">
+                      {h(
+                        turn.status === 'awaiting_confirmation'
+                          ? 'postingRejected'
+                          : turn.jobStatus === 'unknown'
+                            ? 'unknown'
+                            : 'pending',
+                      )}
+                    </p>
                   )}
                 </div>
               ))}

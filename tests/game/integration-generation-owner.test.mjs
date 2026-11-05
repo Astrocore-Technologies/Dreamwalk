@@ -904,7 +904,7 @@ await test(
         );
 
       await t.test(
-        'overdue dispatched text stays permanently stopped when a known late receipt settles before maintenance',
+        'overdue dispatched text retains its original stop until separately verified recovery',
         async () =>
           fixture(async (f) => {
             await f.claim();
@@ -964,9 +964,24 @@ await test(
             ).rows[0];
             assert.deepEqual(persisted, {
               state: 'stopped',
-              stop_code: 'PROVIDER_DEADLINE_EXCEEDED',
+              stop_code: 'REQUEST_DEADLINE_EXCEEDED',
               blocked: true,
             });
+            const stopEvents = (
+              await db.query(
+                `SELECT e.reason,e.cause_code,e.stop_class FROM generation_stop_events e
+                 JOIN live_test_sessions a ON a.stop_epoch_id=e.epoch_id WHERE a.id=$1`,
+                [f.authorizationId()],
+              )
+            ).rows;
+            assert.ok(
+              stopEvents.some(
+                (e) =>
+                  e.reason === 'REQUEST_DEADLINE_EXCEEDED' &&
+                  e.cause_code === 'PROVIDER_DEADLINE_EXCEEDED' &&
+                  e.stop_class === 'request',
+              ),
+            );
             const receipt = (
               await db.query(
                 'SELECT state,reservation_id FROM live_test_text_permits WHERE id=$1',
@@ -995,7 +1010,7 @@ await test(
             const status = await restart.status(f.owner);
             assert.equal(status.authorizationId, f.authorizationId());
             assert.equal(status.state, 'stopped');
-            assert.equal(status.stopCode, 'PROVIDER_DEADLINE_EXCEEDED');
+            assert.equal(status.stopCode, 'REQUEST_DEADLINE_EXCEEDED');
             assert.equal(status.usedMicros, 5000);
             assert.equal(status.heldMicros, 0);
             await assert.rejects(

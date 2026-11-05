@@ -10,6 +10,11 @@ const rows = {
     'By requesting an estimate, you confirm rights to the description and selected references. Requesting an estimate does not start generation.',
     'Запитуючи оцінку, ви підтверджуєте права на опис і вибрані референси. Запит оцінки не запускає генерацію.',
   ],
+  automaticKnownCostNotice: [
+    'Подтверждая этот запрос, вы разрешаете автоматическое списание подтверждённых расходов провайдера в пределах показанного резерва, даже если изображение не удалось применить. Остаток резерва будет освобождён. Если расход неизвестен или выше резерва, резерв останется удержан без дополнительного списания. Автоматического повтора генерации не будет.',
+    'Confirming this request authorizes automatic settlement of verified provider costs within the displayed reserve, even if the image cannot be applied. The remaining reserve will be released. If the cost is unknown or exceeds the reserve, the reserve stays held without an additional charge. Generation will not retry automatically.',
+    'Підтверджуючи цей запит, ви дозволяєте автоматичне списання підтверджених витрат провайдера в межах показаного резерву, навіть якщо зображення не вдалося застосувати. Залишок резерву буде звільнено. Якщо витрати невідомі або перевищують резерв, резерв залишиться утриманим без додаткового списання. Автоматичного повтору генерації не буде.',
+  ],
   confirmNotice: [
     'Будет зарезервирована показанная сумма: сначала Грёзы, затем Искры. Подтверждение запускает один запрос; автоматического повтора не будет.',
     'The displayed amount will be held: Dreams first, then Sparks. Confirmation starts one request, with no automatic retry.',

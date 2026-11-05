@@ -27,11 +27,14 @@ export interface QueueDecision {
   requesterUserId?: string;
   quoteId?: string;
   consent?: boolean;
+  automaticKnownCostPolicy?: 'known-cost-v1';
   requestKey?: string;
   sponsorId?: string;
   runtimeRequestId?: string;
   /** Server-side immutable deferred quote binding, rechecked under the request row lock. */
   expectedRuntimeContextDigest?: string;
+  /** Server-only finite batch consent, verified from locked DB records, never a client flag. */
+  acceptedWorldBatchId?: string;
 }
 export type AiJobStatus =
   | 'queued'
@@ -69,6 +72,15 @@ export interface ProviderResult {
   proposal: unknown;
   requestId: string;
   failureCode?: string;
+  /** Bounded adapter stage only. Never provider text, Zod messages, paths or private context. */
+  failureStage?:
+    | 'output_envelope'
+    | 'json'
+    | 'response_schema'
+    | 'plan_actions'
+    | 'plan_context'
+    | 'plan_beliefs'
+    | 'plan_proposal';
   usage: {
     inputTokens: number;
     outputTokens: number;

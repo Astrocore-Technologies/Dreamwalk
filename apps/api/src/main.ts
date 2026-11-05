@@ -1,3 +1,4 @@
+import { VerifiedGenerationAccessRecovery } from './generation/verified-access-recovery';
 import { resolveReplyLocale } from './game/reply-locale';
 import { CachedTranslations, PostgresTranslationCache } from './translation/service';
 import { TranslationInterceptor } from './translation/interceptor';
@@ -18,6 +19,7 @@ import { SpatialPlannerService } from './visual-authoring/spatial-planner';
 import { spatialPlanDefinition } from './visual-authoring/spatial-plan';
 import { createAuthoringTextEngine } from './live-test/authoring-text';
 import { LiveTestController } from './live-test/controller';
+import { KnownAuthoringSettlement } from './live-test/known-authoring-settlement';
 import { LiveTestService } from './live-test/service';
 import { GenerationAuthority } from './generation/service';
 import { readGenerationConfig } from './generation/config';
@@ -43,12 +45,13 @@ import { InvitationsController } from './invitations';
 import { DataRequestsController } from './data-requests';
 import { Errors, fail } from './errors';
 import { config } from './config';
-import { ingressAllowed } from './ingress';
+import { ingressAllowed, requestOriginAllowed, ENFORCE_BROWSER_ORIGIN } from './ingress';
 import { PlayableService } from './game/playable.service';
 import { PlayableController } from './game/playable.controller';
 import { GameService } from './game/game.service';
 import { NpcAiService } from './ai/npc-ai.service';
 import { GameController } from './game/game.controller';
+import { KnownNpcSettlement } from './game/known-npc-settlement';
 import { attachGameSockets } from './game/game.socket';
 const releaseReadiness = new ReleaseDeploymentReadiness(process.env.GENERATION_MODE === 'release');
 @Controller('api/v1')
@@ -145,6 +148,9 @@ class Health {
     ImageGenerationService,
     NpcAiService,
     GameService,
+    KnownNpcSettlement,
+    KnownAuthoringSettlement,
+    VerifiedGenerationAccessRecovery,
     PlayableService,
   ],
 })
@@ -196,7 +202,14 @@ async function bootstrap() {
     const mutation = !['GET', 'HEAD', 'OPTIONS'].includes(req.method);
     if (mutation) {
       const origin = req.headers.origin;
-      if (origin && origin !== config.WEB_ORIGIN) {
+      if (
+        ENFORCE_BROWSER_ORIGIN &&
+        !requestOriginAllowed(
+          origin,
+          config.WEB_ORIGIN,
+          config.NODE_ENV === 'production' || config.DREAMWALK_REQUIRE_INGRESS_SECRET,
+        )
+      ) {
         res
           .status(403)
           .json({ code: 'FORBIDDEN', message: 'Недопустимый источник запроса.', retryable: false });

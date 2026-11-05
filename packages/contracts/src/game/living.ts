@@ -1,4 +1,26 @@
 import { z } from 'zod';
+/** Authored fictional roleplay state, never a model reasoning trace or mechanical fact. */
+export const npcCognitionSchema = z
+  .object({
+    motive: z.string().trim().min(1).max(240),
+    belief: z.string().trim().min(1).max(240),
+    intent: z.string().trim().min(1).max(240),
+    innerThought: z.string().trim().min(1).max(1400),
+    reconsiderAfterRounds: z.number().int().min(1).max(3).default(1),
+  })
+  .strict();
+export type NpcCognition = z.infer<typeof npcCognitionSchema>;
+export type NpcCognitionState = NpcCognition & {
+  /** Server-stamped reader ACL; absent means no player disclosure. */
+  audienceIds?: string[];
+  /** Private authored inputs require current source-author access as well as the actor ACL. */
+  requiresSourceAuthor?: boolean;
+  tick: number;
+  knowledgeRevision: number;
+  roundId?: string;
+  roundNumber?: number;
+  sourceObservationId?: string;
+};
 /** Opt-in authored behavior version. Free prose stays in private decision context. */
 export const npcCharacterizationSchema = z
   .object({
@@ -106,6 +128,11 @@ export const npcPersonalitySchema = z
   .strict();
 export type NpcPersonality = z.infer<typeof npcPersonalitySchema>;
 export type NpcObservationKind =
+  | 'died'
+  | 'lost_consciousness'
+  | 'regained_consciousness'
+  | 'revived'
+  | 'life_state_seen'
   | 'harmed'
   | 'pushed'
   | 'item_placed'
@@ -129,6 +156,7 @@ export interface NpcObservation {
   eventId: string;
   rootId: string;
   kind: NpcObservationKind;
+  lifeState?: import('./lifecycle').ActorLifeState;
   tick: number;
   mapId: string;
   point?: { x: number; y: number };
@@ -140,6 +168,8 @@ export interface NpcObservation {
   addressedNpcId?: string;
   /** Server-created durable story turn provenance; never accepted from speech input. */
   speechIdentity?: { turnId: string; segmentIndex: number };
+  /** Server-stamped first pickup of an admitted mundane story prop. This is not legal ownership. */
+  itemOwnershipContext?: 'unestablished';
   depth: number;
   disclosure: 'public' | 'participants' | 'private';
   audienceIds: string[];
@@ -207,6 +237,17 @@ export interface NpcMemorySummary {
   claims: { observationId: string; kind: NpcObservationKind }[];
 }
 export interface LivingNpcMemory {
+  /** Server-private first mechanical opportunity for an already admitted commitment. */
+  continuationOpportunity?: { key: string; roundId: string };
+  /** Server-private authored RP. Exposed only by a separately authorized reader. */
+  cognition?: NpcCognitionState;
+  lastActionOutcome?: {
+    actionKind: string;
+    status: 'completed' | 'progressed' | 'blocked';
+    code?: string;
+    tick: number;
+    roundId?: string;
+  };
   /** Server-only, evidence-backed mechanics; never project private NPC memory. */
   companionship?: {
     actorId: string;

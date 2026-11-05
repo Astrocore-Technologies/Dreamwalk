@@ -336,7 +336,29 @@ await test(
       await click(3.5, 3.5);
       const npcMenu = page.getByRole('dialog', { name: 'Actions', exact: true });
       await npcMenu.getByText('Host', { exact: true }).waitFor();
-      await npcMenu.getByRole('button', { name: 'Say', exact: true }).click();
+      assert.equal(await npcMenu.getByRole('button', { name: 'Say', exact: true }).count(), 0);
+      await npcMenu.getByRole('button', { name: 'Inspect', exact: true }).click();
+      const inspection = page.getByTestId('npc-public-inspection');
+      await inspection.getByRole('heading', { name: 'Host', exact: true }).waitFor();
+      const closeInspection = inspection.getByRole('button', {
+        name: 'Close inspection',
+        exact: true,
+      });
+      await until(
+        () => closeInspection.evaluate((el) => document.activeElement === el),
+        Boolean,
+        5000,
+      );
+      await inspection.getByTestId('npc-inspection-talk').click();
+      const composer = page.getByTestId('unified-story');
+      assert.ok(await composer.locator('textarea').evaluate((el) => document.activeElement === el));
+      assert.equal(await composer.getByTestId('story-audience').innerText(), 'Speech nearby');
+      assert.equal(
+        await composer.getByRole('button', { name: 'Address the director', exact: true }).count(),
+        0,
+      );
+      await closeInspection.click();
+      await inspection.waitFor({ state: 'hidden' });
       await click(4.27, 2.77);
       await page
         .getByRole('dialog', { name: 'Actions', exact: true })

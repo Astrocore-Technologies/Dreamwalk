@@ -45,6 +45,7 @@ export function SparksEquivalentNotice() {
 }
 
 export type SparkQuotedCharge = {
+  automaticKnownCostPolicy?: 'known-cost-v1';
   funding?: WalletFunding;
   sparks?: { quoteId: string; reserveSubunits: string; rateVersion: string; walletCharging: true };
   chargeUnit?: 'sparks' | 'credits';
@@ -93,7 +94,8 @@ export function SparkQuotePrice({ quote }: { quote: SparkQuotedCharge }) {
 }
 export function SparkQuoteNotice({ quote }: { quote: SparkQuotedCharge }) {
   const { locale } = useT();
-  if (quote.funding) return <FundingNotice />;
+  if (quote.funding)
+    return <FundingNotice automaticKnownCostPolicy={quote.automaticKnownCostPolicy} />;
   if (quote.sparks?.walletCharging || quote.chargeUnit === 'sparks')
     return (
       <small data-sparks-wallet-charge>

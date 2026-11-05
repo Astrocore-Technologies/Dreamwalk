@@ -4,15 +4,21 @@ import type {
   NpcObservation,
   NpcRelationship,
 } from '@dreamwalk/contracts';
+import { isUnestablishedStoryPickup } from './item-observations';
 
 type Trigger = NpcCharacterization['reactions'][number]['trigger'];
 type Response = NpcCharacterization['reactions'][number]['response'];
 type Stance = NpcCharacterization['reactions'][number]['publicStance'];
 
 export function characterTrigger(observation: NpcObservation, npcId?: string): Trigger | undefined {
-  if (['harmed', 'pushed'].includes(observation.kind)) return 'threat';
+  if (['harmed', 'pushed', 'died', 'lost_consciousness'].includes(observation.kind))
+    return 'threat';
   if (observation.kind === 'helped') return 'help';
-  if (observation.kind === 'item_taken' && observation.confidence === 'witnessed')
+  if (
+    observation.kind === 'item_taken' &&
+    observation.confidence === 'witnessed' &&
+    !isUnestablishedStoryPickup(observation)
+  )
     return 'betrayal';
   if (
     observation.kind === 'addressed' ||
@@ -105,10 +111,28 @@ export function characterPerformance(
 ) {
   const profile = memory.personality.characterization;
   if (!profile) return undefined;
-  const relevant = observations.find((o) => characterTrigger(o, npcId));
+  // Select the latest admitted interaction, not the first old trigger in a
+  // relevance-packed claim list. New unclassified speech/gestures must not keep
+  // replaying an earlier warning. Self-quotes and passive perception are not a
+  // new social stimulus. Ties use retained source order, never opaque ID sorting.
+  const sourceOrder = new Map(memory.observations.map((o, index) => [o.id, index]));
+  const relevant = [...observations]
+    .filter(
+      (o) =>
+        (o.kind === 'said' && o.actorId !== npcId) ||
+        o.kind === 'attempted' ||
+        o.kind === 'item_taken' ||
+        !!characterTrigger(o, npcId),
+    )
+    .sort(
+      (a, b) => b.tick - a.tick || (sourceOrder.get(b.id) ?? -1) - (sourceOrder.get(a.id) ?? -1),
+    )[0];
   // Only the admitted speech evidence may select a dynamic performance. A private
   // unrelated event must not leak through a changed stance in another conversation.
-  const appraisal = relevant ? characterAppraisal(memory, relevant, npcId) : undefined;
+  const appraisal =
+    relevant && characterTrigger(relevant, npcId)
+      ? characterAppraisal(memory, relevant, npcId)
+      : undefined;
   return {
     version: 1 as const,
     ...profile.publicVoice,
@@ -133,6 +157,7 @@ export function characterRelationshipStage(r: NpcRelationship) {
 export function updateCharacterRelationship(memory: LivingNpcMemory, o: NpcObservation) {
   if (
     !memory.personality.characterization ||
+    isUnestablishedStoryPickup(o) ||
     !o.actorId ||
     o.channel !== 'direct' ||
     o.confidence !== 'witnessed' ||

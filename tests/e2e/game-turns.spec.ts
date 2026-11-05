@@ -38,17 +38,27 @@ async function clickCell(page: Page, x: number, y: number, button: 'left' | 'rig
     position: { x: offsetX + (x + 0.5) * 48 * scale, y: offsetY + (y + 0.5) * 48 * scale },
   });
 }
-async function say(page: Page, npcId: string, text: string) {
-  await mapAction(page, new URL(page.url()).pathname.split('/').at(-1)!, npcId, 'Сказать');
+async function say(page: Page, text: string) {
   const composer = page.getByTestId('unified-story');
   await composer.getByLabel('Твой ход', { exact: true }).fill(text);
+  const submitted = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'POST' && /\/turns$/.test(new URL(response.url()).pathname),
+  );
   await composer.getByRole('button', { name: 'Отправить', exact: true }).click();
-  await expect(composer.getByTestId('story-quote')).toBeVisible();
-  await composer.getByRole('button', { name: 'Подтвердить ход', exact: true }).click();
+  const response = await submitted;
+  expect(response.ok()).toBeTruthy();
+  expect(response.request().postDataJSON().targetNpcId).toBeUndefined();
+  await expect(composer.getByTestId('story-quote')).toHaveCount(0);
+  await expect(composer.getByRole('button', { name: 'Подтвердить ход', exact: true })).toHaveCount(
+    0,
+  );
+  const receipt = await response.json();
   await expect(composer.getByLabel('Твой ход', { exact: true })).toHaveValue('');
+  return receipt.id as string;
 }
 
-test('sequential turns retain two addressed posts, freeze NPCs, and reply only after all player turns', async ({
+test('sequential turns retain two area posts, freeze NPCs, and reply only after all player turns', async ({
   browser,
 }) => {
   test.setTimeout(180000);
@@ -197,13 +207,22 @@ test('sequential turns retain two addressed posts, freeze NPCs, and reply only a
     await mapAction(owner, id, 'mira', 'Осмотреть');
     await expect(owner.getByTestId('npc-public-inspection')).toContainText('patient alchemist');
     await expect(owner.getByText('TURN_PRIVATE_NPC_SECRET', { exact: true })).toHaveCount(0);
-    await say(owner, 'mira', 'Мира, что ты заметила в комнате?');
-    await say(owner, 'borin', 'Борин, а ты что думаешь?');
+    const spokenTurns = [
+      await say(owner, 'Мира, что ты заметила в комнате?'),
+      await say(owner, 'Борин, а ты что думаешь?'),
+    ];
     await expect(
       owner.getByTestId('story-feed').locator('[data-story-kind="npc_reply"]'),
     ).toHaveCount(0);
     const before = await snapshot(owner, id);
     expect(before.turn?.pendingNpcReplies).toHaveLength(2);
+    // Both posts reach every nearby listener without selecting a recipient.
+    expect(
+      before.turn?.pendingNpcReplies.map((entry) => [entry.npcId, entry.count]).sort(),
+    ).toEqual([
+      ['borin', 2],
+      ['mira', 2],
+    ]);
     await owner.reload();
     await expect(owner.getByText('Подключено', { exact: true })).toBeVisible();
     const restored = await snapshot(owner, id);
@@ -225,7 +244,31 @@ test('sequential turns retain two addressed posts, freeze NPCs, and reply only a
     await guest.getByRole('button', { name: 'Завершить ход', exact: true }).click();
     await expect(
       owner.getByTestId('story-feed').locator('[data-story-kind="npc_reply"]'),
-    ).toHaveCount(2, { timeout: 30000 });
+    ).toHaveCount(4, { timeout: 30000 });
+    const replies = async () => {
+      const feed = await request(owner, `/game/campaigns/${id}/turns/feed`);
+      return (
+        feed.entries as { id: string; kind: string; turnId?: string; authorId?: string }[]
+      ).filter((entry) => entry.kind === 'npc_reply' && spokenTurns.includes(entry.turnId || ''));
+    };
+    const delivered = await replies();
+    expect(new Set(delivered.map((entry) => entry.id)).size).toBe(4);
+    for (const turnId of spokenTurns)
+      expect(
+        delivered
+          .filter((entry) => entry.turnId === turnId)
+          .map((entry) => entry.authorId)
+          .sort(),
+      ).toEqual(['borin', 'mira']);
+    // Restoring the campaign must not replay a reply or lose either bystander's response.
+    await owner.reload();
+    await expect(owner.getByText('Подключено', { exact: true })).toBeVisible();
+    await expect(
+      owner.getByTestId('story-feed').locator('[data-story-kind="npc_reply"]'),
+    ).toHaveCount(4);
+    expect((await replies()).map((entry) => entry.id).sort()).toEqual(
+      delivered.map((entry) => entry.id).sort(),
+    );
     await expect(
       owner
         .getByRole('region', { name: 'Ход приключения', exact: true })

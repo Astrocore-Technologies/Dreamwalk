@@ -1,9 +1,15 @@
+import {
+  acceptedWorldKnownCostPolicyMatches,
+  worldKnownCostPolicyRequired,
+} from './known-cost-policy';
+import { verifyAcceptedTravelBatch, type AcceptedTravelBatchProof } from './travel-consent';
 /** Inert accounting primitives. Caller owns a transaction; no provider, credit or activation side effects.
  * No funding or paid-wallet activation path is provided. Existing demo wallets are unrelated.
  */
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
+import { matchesTurnFence } from '@dreamwalk/game-core';
 import { DreamsAccounting } from './dreams-accounting';
 const dreamsAccounting = new DreamsAccounting();
 export const DREAMS_FIRST_POLICY = 'dreams-first-v1';
@@ -33,6 +39,130 @@ const digest = (v: unknown) =>
     .digest('hex');
 function reject(code: string): never {
   throw new Error(code);
+}
+
+/** Server-only identifiers, not a trust flag. Both admission and accounting verify
+ * the durable, finite consent independently against locked authoritative rows. */
+export interface AcceptedWorldBatchProof {
+  automaticKnownCostPolicy?: 'known-cost-v1';
+  batchId: string;
+  nativeQuoteId: string;
+  runtimeRequestId: string;
+  contextDigest: string;
+  campaignId: string;
+  providerId: string;
+  providerVersion: string;
+  policyVersion: string;
+}
+export async function verifyAcceptedWorldBatch(
+  c: PoolClient,
+  ownerId: string,
+  proof: AcceptedWorldBatchProof,
+  sparkQuoteId?: string,
+): Promise<void> {
+  z.uuid().parse(proof.batchId);
+  const batch = (
+    await c.query('SELECT * FROM game_world_generation_batches WHERE id=$1 FOR UPDATE', [
+      proof.batchId,
+    ])
+  ).rows[0];
+  const request = (
+    await c.query('SELECT * FROM game_npc_decision_requests WHERE id=$1 FOR UPDATE', [
+      proof.runtimeRequestId,
+    ])
+  ).rows[0];
+  const native = (
+    await c.query('SELECT * FROM npc_ai_quotes WHERE id=$1 FOR UPDATE', [proof.nativeQuoteId])
+  ).rows[0];
+  const campaign = (
+    await c.query('SELECT state,status,owner_id FROM game_campaigns WHERE id=$1 FOR SHARE', [
+      proof.campaignId,
+    ])
+  ).rows[0];
+  const entries = Array.isArray(batch?.entries) ? batch.entries : [];
+  const matches = entries.filter(
+    (entry: { requestId: string; quote: { id: string } }) =>
+      entry.requestId === proof.runtimeRequestId && entry.quote?.id === proof.nativeQuoteId,
+  );
+  const entry = matches[0];
+  const acceptedAt = batch?.accepted_at ? new Date(batch.accepted_at).getTime() : NaN;
+  if (
+    !batch ||
+    ((proof.automaticKnownCostPolicy === 'known-cost-v1' || worldKnownCostPolicyRequired(batch)) &&
+      !acceptedWorldKnownCostPolicyMatches(batch)) ||
+    batch.state !== 'accepted' ||
+    !Number.isFinite(acceptedAt) ||
+    !(acceptedAt < new Date(batch.expires_at).getTime()) ||
+    batch.owner_id !== ownerId ||
+    batch.campaign_id !== proof.campaignId ||
+    matches.length !== 1 ||
+    !request ||
+    request.status !== 'queued' ||
+    request.job_id ||
+    request.campaign_id !== proof.campaignId ||
+    request.requester_user_id !== ownerId ||
+    request.npc_id !== entry.npcId ||
+    request.purpose !== entry.purpose ||
+    entry.contextDigest !== proof.contextDigest ||
+    digest(request.context) !== proof.contextDigest ||
+    !native ||
+    native.user_id !== ownerId ||
+    native.campaign_id !== proof.campaignId ||
+    native.npc_id !== request.npc_id ||
+    native.purpose !== request.purpose ||
+    native.context_hash !== request.context.contextHash ||
+    native.provider_id !== proof.providerId ||
+    native.provider_version !== proof.providerVersion ||
+    native.policy_version !== proof.policyVersion ||
+    !(acceptedAt < new Date(native.expires_at).getTime()) ||
+    !campaign ||
+    campaign.status !== 'active' ||
+    campaign.owner_id !== ownerId ||
+    campaign.state?.turnController?.phase !== 'world' ||
+    !matchesTurnFence(campaign.state, batch.turn_fence)
+  )
+    reject('WORLD_BATCH_CONSENT_STALE');
+  if (
+    (await c.query('SELECT 1 FROM npc_ai_jobs WHERE quote_id=$1', [proof.nativeQuoteId])).rowCount
+  )
+    reject('QUOTE_CONSUMED');
+  if (
+    (
+      await c.query(
+        `SELECT 1 FROM npc_ai_jobs j LEFT JOIN spark_holds h ON h.id=j.spark_hold_id
+      WHERE j.campaign_id=$1 AND (j.status='reconciling' OR h.status='pending')
+      UNION ALL SELECT 1 FROM live_test_text_permits WHERE campaign_id=$1 AND state='unknown' LIMIT 1`,
+        [proof.campaignId],
+      )
+    ).rowCount
+  )
+    reject('LIVE_OUTCOME_UNRESOLVED');
+  if (sparkQuoteId) {
+    const spark = (
+      await c.query('SELECT * FROM spark_quotes WHERE id=$1 AND owner_id=$2', [
+        sparkQuoteId,
+        ownerId,
+      ])
+    ).rows[0];
+    if (
+      !spark ||
+      native.spark_quote_id !== sparkQuoteId ||
+      spark.source_kind !== 'npc' ||
+      spark.source_id !== native.id ||
+      spark.operation_id !== native.id ||
+      !(acceptedAt < new Date(spark.expires_at).getTime()) ||
+      digest(spark.price_snapshot?.providerQuote) !==
+        digest({
+          ...native.request_snapshot,
+          policyVersion: native.policy_version,
+          contextHash: native.context_hash,
+          ...(spark.price_snapshot?.providerQuote?.automaticKnownCostPolicy === 'known-cost-v1'
+            ? { automaticKnownCostPolicy: 'known-cost-v1' }
+            : {}),
+        })
+    )
+      reject('WORLD_BATCH_CONSENT_STALE');
+  }
 }
 
 export interface SparkQuoteInput {
@@ -227,9 +357,19 @@ export class SparksAccounting {
       )
     ).rows[0];
   }
-  async reserve(c: PoolClient, ownerId: string, quoteId: string) {
+  async reserve(
+    c: PoolClient,
+    ownerId: string,
+    quoteId: string,
+    worldBatch?: AcceptedWorldBatchProof | AcceptedTravelBatchProof,
+  ) {
     z.uuid().parse(ownerId);
     z.uuid().parse(quoteId);
+    if (worldBatch) {
+      if ('preparationId' in worldBatch)
+        await verifyAcceptedTravelBatch(c, ownerId, worldBatch, quoteId);
+      else await verifyAcceptedWorldBatch(c, ownerId, worldBatch, quoteId);
+    }
     const wallet = (
       await c.query('SELECT * FROM spark_wallets WHERE owner_id=$1 FOR UPDATE', [ownerId])
     ).rows[0];
@@ -246,7 +386,8 @@ export class SparksAccounting {
     if (prior) return prior;
     if (!wallet?.enabled) reject('SPARK_WALLET_DISABLED');
     sparkQuoteRateVersion(quote.price_snapshot);
-    if (new Date(quote.expires_at).getTime() <= Date.now()) reject('SPARK_QUOTE_EXPIRED');
+    if (!worldBatch && new Date(quote.expires_at).getTime() <= Date.now())
+      reject('SPARK_QUOTE_EXPIRED');
     const reserve = parseSparkInteger(String(quote.reserve_subunits));
     const dreamWallet =
       quote.price_snapshot?.fundingPolicy === DREAMS_FIRST_POLICY
@@ -277,7 +418,10 @@ export class SparksAccounting {
         sourceKind: quote.source_kind,
         sourceId: quote.source_id,
         reserveSubunits: dreamReserve.toString(),
-        expiresAt: new Date(quote.expires_at).toISOString(),
+        // Internal funding split only; the original accepted price and quote stay immutable.
+        expiresAt: worldBatch
+          ? new Date(Date.now() + 60000).toISOString()
+          : new Date(quote.expires_at).toISOString(),
         policyVersion: DREAMS_FIRST_POLICY,
         providerQuote: { sparkQuoteId: quoteId, priceSnapshot: quote.price_snapshot },
       });

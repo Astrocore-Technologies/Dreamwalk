@@ -453,6 +453,7 @@ test(
               return {
                 ...result,
                 actualMicros: 13,
+                ...(imageMode === 'omitted' ? {} : { costVerifiedForSparks: true }),
                 ...(imageMode === 'invalid' ? { bytes: Buffer.from('invalid image') } : {}),
                 ...(imageMode === 'unpriced' ? { costVerifiedForSparks: false } : {}),
               };
@@ -567,6 +568,48 @@ test(
               )
             ).rows[0].spark_cost_verified,
             false,
+          );
+          imageMode = 'omitted';
+          const omittedQuote = await imageQuote();
+          const omitted = await imageEnqueue(omittedQuote);
+          const originalReserve = (
+            await pool.query(
+              'SELECT r.id,r.scope_id,r.actor_id,r.operation_key,r.upper_micros,r.spark_quote_id FROM generation_budget_reservations r JOIN image_generation_jobs j ON j.reservation_id=r.id WHERE j.id=$1',
+              [omitted.id],
+            )
+          ).rows[0];
+          await images.workOnce();
+          const omittedResult = await images.get(owner, omitted.id);
+          assert.equal(omittedResult.status, 'admitted');
+          assert.equal(omittedResult.sparkStatus, 'pending');
+          assert.equal(omittedResult.sparkCapturedSubunits, null);
+          assert.equal(omittedResult.sparkReservedSubunits, omittedQuote.sparks.reserveSubunits);
+          assert.equal(
+            (
+              await pool.query(
+                'SELECT spark_cost_verified FROM image_generation_jobs WHERE id=$1',
+                [omitted.id],
+              )
+            ).rows[0].spark_cost_verified,
+            false,
+          );
+          assert.deepEqual(
+            (
+              await pool.query(
+                'SELECT r.id,r.scope_id,r.actor_id,r.operation_key,r.upper_micros,r.spark_quote_id FROM generation_budget_reservations r JOIN image_generation_jobs j ON j.reservation_id=r.id WHERE j.id=$1',
+                [omitted.id],
+              )
+            ).rows[0],
+            originalReserve,
+          );
+          assert.equal(
+            (
+              await pool.query(
+                "SELECT count(*)::int n FROM spark_ledger WHERE hold_id=$1 AND kind='capture'",
+                [originalReserve.spark_quote_id],
+              )
+            ).rows[0].n,
+            0,
           );
           imageMode = 'unknown';
           const unknown = await imageEnqueue(await imageQuote());

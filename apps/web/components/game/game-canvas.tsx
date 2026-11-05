@@ -1,5 +1,5 @@
 'use client';
-import { BATTLEMAP_CELLS, BATTLEMAP_TILE } from '@dreamwalk/contracts';
+import { BATTLEMAP_CELLS, BATTLEMAP_TILE, hasPosition } from '@dreamwalk/contracts';
 import {
   drawNpcSilhouette,
   npcSilhouetteKey,
@@ -9,11 +9,15 @@ import {
 import { intersectsViewport, rendererActivity } from './renderer-activity';
 import { sceneClick } from './scene-input';
 import { entityLayout, containsScenePoint } from './scene-geometry';
+import { LocationOnlyScene } from './location-only-scene';
+import type { PositionedGameEntity } from '@dreamwalk/contracts';
 import { MapActions, InventoryPanel } from './map-actions';
+import { useTurnText } from './turn-messages';
 import { useItemText } from './item-messages';
-import { committedPathSample, spriteFeedback } from './turn-ui';
+import { committedPathSample, spriteFeedback, npcUnavailable, publicLifeState } from './turn-ui';
 import { useEffect, useRef, useState } from 'react';
 import { mapCamera, mapRasterBounds, MIN_MAP_ZOOM, MAX_MAP_ZOOM } from './map-camera';
+import { mapCoordinateAt, mapCoordinateTicks } from './map-coordinates';
 import { useObjectiveText } from './campaign-objectives';
 import { drawBundledScene, drawJournal } from './bundled-scene';
 import { TextureBudget, textureDimensions } from '../assets/texture-budget';
@@ -26,21 +30,7 @@ import { resolveGameAtlas } from '@/lib/game-assets';
 import { useT } from '@/lib/i18n';
 import styles from './game.module.css';
 
-/** Rendering only: never advances a logical position or applies a game action. */
-export function GameCanvas({
-  projection,
-  art = [],
-  illustration = null,
-  onMove,
-  onSelectNpc,
-  onInspectNpc,
-  onAction,
-  onApproach,
-  onStop,
-  disabled,
-  reducedMotion,
-  planning = false,
-}: {
+type GameCanvasProps = {
   projection: GameProjection;
   art?: VisibleArtBinding[];
   illustration?: SceneIllustration | null;
@@ -53,15 +43,51 @@ export function GameCanvas({
   disabled: boolean;
   reducedMotion: boolean;
   planning?: boolean;
+};
+
+/** Location-only maps never mount the coordinate renderer or its input handlers. */
+export function GameCanvas(props: GameCanvasProps) {
+  if (props.projection.map.spatialMode === 'location_only')
+    return <LocationOnlyScene key={props.projection.map.id} {...props} />;
+  return (
+    <PositionedGameCanvas
+      {...props}
+      projection={{
+        ...props.projection,
+        entities: props.projection.entities.filter(hasPosition),
+      }}
+    />
+  );
+}
+
+/** Rendering only: never advances a logical position or applies a game action. */
+function PositionedGameCanvas({
+  projection,
+  art = [],
+  illustration = null,
+  onMove,
+  onSelectNpc,
+  onInspectNpc,
+  onAction,
+  onApproach,
+  onStop,
+  disabled,
+  reducedMotion,
+  planning = false,
+}: Omit<GameCanvasProps, 'projection'> & {
+  projection: Omit<GameProjection, 'entities'> & { entities: PositionedGameEntity[] };
 }) {
   const { t } = useT();
   const itemText = useItemText();
+  const turnText = useTurnText();
   const [inventoryOpen, setInventoryOpen] = useState(false);
   const [menu, setMenu] = useState<{ ids: string[]; x: number; y: number; mapId: string } | null>(
     null,
   );
   const objectiveText = useObjectiveText();
   const host = useRef<HTMLDivElement>(null);
+  const coordinateRulers = useRef<HTMLDivElement>(null);
+  const [pointedCell, setPointedCell] = useState<(GamePoint & { mapId: string }) | null>(null);
   const latest = useRef({
     projection,
     art,
@@ -133,6 +159,11 @@ export function GameCanvas({
       }
       element.appendChild(app.canvas);
       app.canvas.setAttribute('aria-hidden', 'true');
+      const clearPointedCell = (event: { pointerType?: string }) => {
+        // Touch pointers leave on release; retain the tapped cell for inspection.
+        if (event.pointerType !== 'touch') setPointedCell(null);
+      };
+      app.canvas.addEventListener('pointerleave', clearPointedCell);
       // ResizePlugin's resizeTo renders unconditionally, even with a stopped
       // ticker. Own resizing here so offscreen/hidden canvases do no frame work.
       let synchronizeFrame = () => {};
@@ -189,6 +220,7 @@ export function GameCanvas({
         intersection?.disconnect();
         document.removeEventListener('visibilitychange', visibility);
         observer.disconnect();
+        app.canvas.removeEventListener('pointerleave', clearPointedCell);
         activity.dispose();
         app.destroy(true, { children: true });
       };
@@ -529,10 +561,32 @@ export function GameCanvas({
         return sprite;
       };
       world.eventMode = 'static';
+      const pointToCell = (point: GamePoint) => {
+        const map = latest.current.projection.map;
+        const cell = mapCoordinateAt(point, map, tile);
+        setPointedCell((previous) =>
+          cell
+            ? previous?.mapId === map.id && previous.x === cell.x && previous.y === cell.y
+              ? previous
+              : { ...cell, mapId: map.id }
+            : null,
+        );
+      };
+      world.on('pointermove', (event) => {
+        // Pixi observes document-wide movement, including HTML controls above
+        // the canvas. Do not describe a covered cell as the hovered target.
+        if (event.nativeEvent.target !== app.canvas) {
+          clearPointedCell(event);
+          return;
+        }
+        pointToCell(world.toLocal(event.global));
+      });
+      world.on('pointerleave', clearPointedCell);
       world.on('pointertap', (event) => {
         if (event.button !== 0) return;
         const state = latest.current;
         const local = world.toLocal(event.global);
+        pointToCell(local);
         const hits = targetsAt(local);
         if (
           hits.some(
@@ -561,6 +615,7 @@ export function GameCanvas({
         else if (interaction?.kind === 'move') state.onMove(interaction.target);
       });
       let resuming = false;
+      let coordinateKey = '';
       const render = () => {
         const { projection: p, reducedMotion } = latest.current;
         const reduced = reducedMotion || resuming;
@@ -655,6 +710,11 @@ export function GameCanvas({
               );
             const boundTexture = binding && artTextures.get(binding.url);
             record.animated = !!(entity.characterAnimation && boundTexture);
+            record.sprite.tint = npcUnavailable(entity)
+              ? publicLifeState(entity) === 'dead'
+                ? 0x888888
+                : 0xb7a5cd
+              : 0xffffff;
             if (record.animated && boundTexture) {
               if (record.animationBase !== boundTexture) {
                 record.animatedTexture?.destroy(false);
@@ -712,6 +772,11 @@ export function GameCanvas({
                 dy: entity.feedback.dy,
               };
             }
+            if (npcUnavailable(entity)) {
+              record.trace = undefined;
+              record.feedback = undefined;
+              record.walkingUntil = 0;
+            }
             if (
               record.x !== entity.x * tile ||
               record.y !== entity.y * tile ||
@@ -756,7 +821,10 @@ export function GameCanvas({
               .stroke({ color: 0xe0bd79, width: 2, alpha: 0.8 });
           }
         }
-        for (const record of sprites.values()) {
+        const entitiesById = new Map(p.entities.map((entity) => [entity.id, entity]));
+        for (const [entityId, record] of sprites) {
+          const entity = entitiesById.get(entityId);
+          const inactive = !!entity && npcUnavailable(entity);
           if (resuming) {
             record.trace = undefined;
             record.feedback = undefined;
@@ -796,11 +864,12 @@ export function GameCanvas({
           record.sprite.rotation = feedback.rotation;
           record.sprite.zIndex = y + tile + (record.offsetX ? 2 : 0);
           if (record.animated && record.animatedTexture && record.animationBase) {
-            const col = reduced
-              ? 0
-              : now < record.walkingUntil
-                ? 2 + (Math.floor(now / 125) % 4)
-                : Math.floor(now / 700) % 2;
+            const col =
+              reduced || inactive
+                ? 0
+                : now < record.walkingUntil
+                  ? 2 + (Math.floor(now / 125) % 4)
+                  : Math.floor(now / 700) % 2;
             const index = record.direction * 6 + col;
             if (index !== record.animationFrame) {
               record.animationFrame = index;
@@ -826,6 +895,30 @@ export function GameCanvas({
         });
         world.scale.set(camera.scale);
         world.position.set(camera.x, camera.y);
+        const nextCoordinateKey = `${p.map.id}:${p.map.width}:${p.map.height}:${camera.x.toFixed(3)}:${camera.y.toFixed(3)}:${camera.scale.toFixed(5)}:${app.screen.width}:${app.screen.height}`;
+        const rulers = coordinateRulers.current;
+        if (rulers && nextCoordinateKey !== coordinateKey) {
+          coordinateKey = nextCoordinateKey;
+          for (const axis of ['x', 'y'] as const) {
+            const ticks = new Map(
+              mapCoordinateTicks(
+                axis === 'x' ? p.map.width : p.map.height,
+                camera[axis],
+                tile * camera.scale,
+                axis === 'x' ? app.screen.width : app.screen.height,
+              ).map((tick) => [tick.value, tick]),
+            );
+            for (const label of rulers.querySelectorAll<HTMLElement>(`[data-coordinate-${axis}]`)) {
+              const tick = ticks.get(
+                Number(label.dataset[axis === 'x' ? 'coordinateX' : 'coordinateY']),
+              );
+              label.hidden = !tick;
+              if (!tick) continue;
+              label.style[axis === 'x' ? 'left' : 'top'] = `${tick.position}px`;
+              label.dataset.labeled = String(tick.label);
+            }
+          }
+        }
         for (const [key, value] of Object.entries({
           cameraX: camera.x,
           cameraY: camera.y,
@@ -885,6 +978,10 @@ export function GameCanvas({
   const explicitStop = () => {
     if (!latest.current.disabled && !planning) onStop();
   };
+  const coordinateCell =
+    pointedCell?.mapId === projection.map.id
+      ? pointedCell
+      : projection.entities.find((entity) => entity.id === projection.actorId);
   return (
     <section className={styles.mapSection}>
       <div
@@ -900,6 +997,40 @@ export function GameCanvas({
         }}
       >
         <div ref={host} className={styles.canvas} />
+        <div className={styles.lifecycleBadges} aria-live="polite">
+          {projection.entities.filter(npcUnavailable).map((entity) => {
+            const state = publicLifeState(entity);
+            return (
+              state !== 'conscious' && (
+                <button
+                  type="button"
+                  key={entity.id}
+                  data-life-state={state}
+                  onClick={() => onInspectNpc?.(entity.id)}
+                >
+                  {entity.label || entity.id}: {turnText(state)}
+                </button>
+              )
+            );
+          })}
+        </div>
+        <div ref={coordinateRulers} className={styles.mapCoordinates} aria-hidden="true">
+          <div className={styles.mapCoordinateX}>
+            {Array.from({ length: projection.map.width }, (_, x) => (
+              <span key={x} data-coordinate-x={x} hidden>
+                <span>{x}</span>
+              </span>
+            ))}
+          </div>
+          <div className={styles.mapCoordinateY}>
+            {Array.from({ length: projection.map.height }, (_, y) => (
+              <span key={y} data-coordinate-y={y} hidden>
+                <span>{y}</span>
+              </span>
+            ))}
+          </div>
+          <span className={styles.mapCoordinateOrigin}>x/y</span>
+        </div>
         <button
           className={styles.inventoryToggle}
           type="button"
@@ -993,6 +1124,15 @@ export function GameCanvas({
       <div className={styles.controls}>
         <p id="game-controls-help">{itemText('help')} </p>
         <div className={styles.dpad}>
+          <span
+            className={styles.mapCoordinateReadout}
+            data-testid="map-coordinate-readout"
+            data-map-id={projection.map.id}
+            data-x={coordinateCell?.x}
+            data-y={coordinateCell?.y}
+          >
+            x → · y ↓{coordinateCell ? ` · (${coordinateCell.x}, ${coordinateCell.y})` : ''}
+          </span>
           <button
             type="button"
             disabled={disabled}

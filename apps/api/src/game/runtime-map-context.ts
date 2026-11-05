@@ -1,15 +1,44 @@
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
+import { z } from 'zod';
 import type { GameState } from '@dreamwalk/contracts';
 import { runtimeMapView } from '@dreamwalk/game-core';
 import { config } from '../config';
 import { digest } from '../ai/context';
-import { readRuntimeMapImage, runtimeMapImageSchema } from '../ai/runtime-vision';
+import {
+  readRuntimeMapImage,
+  runtimeMapImageSchema,
+  type RuntimeMapImage,
+} from '../ai/runtime-vision';
 import type { AiPurpose } from '../ai/types';
 import { sourceAccessSql, sourceLiveSql } from './source-access';
 import { renderRuntimeMapRaster } from './runtime-map-raster';
 
+const locationMapContextSchema = z
+  .object({
+    spatialMode: z.literal('location_only'),
+    mapId: z.string().min(1).max(100),
+    sceneId: z.string().min(1).max(100),
+    actorId: z.string().min(1).max(100),
+    revisionId: z.uuid(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+
 type Query = (sql: string, values: unknown[]) => Promise<Record<string, unknown>[]>;
+function terrainStatus(
+  state: GameState,
+  mapId: string,
+  image: Pick<RuntimeMapImage, 'revisionId' | 'sha256'>,
+) {
+  const map = state.maps[mapId],
+    grounding = map?.spatialGrounding;
+  return map?.backgroundMode !== 'schematic' &&
+    grounding?.imageRevisionId === image.revisionId &&
+    grounding.imageSha256 === image.sha256
+    ? ('analyzed' as const)
+    : ('illustration_only' as const);
+}
 /** Select only an immutable background the current scene can display. Never reads author drafts,
  * generation prompts, reference images, entity portraits, or another location's assets. */
 async function currentRaster(query: Query, campaignId: string, state: GameState, actorId: string) {
@@ -90,6 +119,32 @@ export async function extendRuntimeMap<T extends object>(
 ): Promise<T> {
   if (!['plan', 'speech', 'story_turn', 'narrative', 'intent'].includes(purpose)) return context;
   const value = context as Record<string, unknown>;
+  const actor = state.entities[actorId];
+  const map = actor && state.maps[actor.mapId];
+  if (map?.spatialMode === 'location_only') {
+    const row = await currentRaster(
+      (sql, values) => db.query(sql, values),
+      campaignId,
+      state,
+      actorId,
+    );
+    if (!row) return context;
+    if (row.revisionId !== map.locationImage?.revisionId || row.sha256 !== map.locationImage?.sha256)
+      throw new Error('MAP_IMAGE_SOURCE_CHANGED');
+    // No crop can be proven without geometry. Keep the original map in the UI,
+    // but never promote the complete image to an NPC's personal visual evidence.
+    return {
+      ...context,
+      locationMapContext: locationMapContextSchema.parse({
+        spatialMode: 'location_only',
+        mapId: map.id,
+        sceneId: actor.sceneId,
+        actorId,
+        revisionId: row.revisionId,
+        sha256: row.sha256,
+      }),
+    };
+  }
   const view = runtimeMapView(state, observers(state, actorId, value, purpose, npcId));
   const row = await currentRaster(
     (sql, values) => db.query(sql, values),
@@ -102,15 +157,45 @@ export async function extendRuntimeMap<T extends object>(
   if (typeof filename !== 'string' || basename(filename) !== filename)
     throw new Error('MAP_IMAGE_UNAVAILABLE');
   const bytes = await readFile(resolve(config.ASSET_DIR, filename));
-  const runtimeMapImage = runtimeMapImageSchema.parse(
-    await renderRuntimeMapRaster(
-      bytes,
-      { revisionId: String(row.revisionId), sha256: String(row.sha256) },
-      view,
-    ),
+  const raster = await renderRuntimeMapRaster(
+    bytes,
+    { revisionId: String(row.revisionId), sha256: String(row.sha256) },
+    view,
   );
+  const runtimeMapImage = runtimeMapImageSchema.parse({
+    ...raster,
+    terrainStatus: terrainStatus(state, view.mapId, raster),
+  });
   return { ...context, runtimeMapImage };
 }
+async function locationMapStillCurrent(
+  query: Query,
+  campaignId: string,
+  state: GameState,
+  context: unknown,
+) {
+  const raw = (context as { locationMapContext?: unknown } | null)?.locationMapContext;
+  if (raw === undefined) return true;
+  try {
+    const value = locationMapContextSchema.parse(raw),
+      actor = state.entities[value.actorId],
+      map = state.maps[value.mapId];
+    if (
+      map?.spatialMode !== 'location_only' ||
+      actor?.spatialMode !== 'location_only' ||
+      actor.mapId !== map.id ||
+      actor.sceneId !== value.sceneId ||
+      map.locationImage?.revisionId !== value.revisionId ||
+      map.locationImage.sha256 !== value.sha256
+    )
+      return false;
+    const row = await currentRaster(query, campaignId, state, actor.id);
+    return row?.revisionId === value.revisionId && row.sha256 === value.sha256;
+  } catch {
+    return false;
+  }
+}
+
 /** Recheck public positions, observer view, exact current-map pin and revocation before any dispatch.
  * Raster bytes stay frozen in the existing quote; a different image never triggers a hidden reprice. */
 export async function runtimeMapStillCurrent(
@@ -120,9 +205,14 @@ export async function runtimeMapStillCurrent(
   context: unknown,
 ) {
   const image = readRuntimeMapImage(context);
-  if (!image) return true;
+  if (!image) return locationMapStillCurrent(query, campaignId, state, context);
   try {
     if (digest(runtimeMapView(state, image.view.observerIds)) !== digest(image.view)) return false;
+    if (
+      image.terrainStatus &&
+      image.terrainStatus !== terrainStatus(state, image.view.mapId, image)
+    )
+      return false;
     const actorId =
       image.view.observerIds.find((id) => state.entities[id]?.kind === 'player') ??
       image.view.observerIds[0];
@@ -142,7 +232,7 @@ export async function runtimeMapSourceStillCurrent(
   context: unknown,
 ) {
   const image = readRuntimeMapImage(context);
-  if (!image) return true;
+  if (!image) return locationMapStillCurrent(query, campaignId, state, context);
   try {
     const actorId =
       image.view.observerIds.find((id) => state.entities[id]?.kind === 'player') ??

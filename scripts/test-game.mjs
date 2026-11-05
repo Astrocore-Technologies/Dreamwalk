@@ -79,6 +79,16 @@ try {
     'integration-generation-owner.test.mjs',
     'integration-generation-policy-revisions.test.mjs',
     'integration-generation-text-preflight.test.mjs',
+    // Recovery proves one historical release bill under its own synthetic tariff.
+    // Do not inherit another suite's active deployment or unresolved provider liability.
+    'integration-known-npc-settlement.test.mjs',
+    'integration-known-authoring-settlement.test.mjs',
+    'integration-automatic-settlement.test.mjs',
+    'integration-verified-access-recovery.test.mjs',
+    'integration-location-only.test.mjs',
+    // Travel deliberately retains an unknown native image liability under a synthetic tariff.
+    'integration-location-travel.test.mjs',
+    'integration-private-story-routing.test.mjs',
   ];
   if (!process.env.GAME_TEST_FILE)
     for (const ownerFile of isolatedOwnerFiles) {

@@ -121,8 +121,19 @@ test('legacy realtime composer keeps audience, order and scene input coherent', 
           kind: n.getAttribute('data-story-kind'),
         })),
       );
-    const mixed = entries.filter((e) => e.turn === entries.find((e) => e.kind === 'attempt')?.turn);
-    expect(mixed.map((e) => e.kind)).toEqual(['attempt', 'outcome', 'speech', 'npc_reply']);
+    const mixedTurnId = JSON.parse(submissions[0]).turnId;
+    expect(typeof mixedTurnId).toBe('string');
+    const mixed = entries.filter((entry) => entry.turn === mixedTurnId);
+    expect(mixed.map((entry) => entry.kind)).toEqual([
+      'attempt',
+      'outcome',
+      'speech',
+      'npc_reply',
+      'narration',
+    ]);
+    await expect(
+      guest.getByTestId('story-feed').locator(`[data-story-turn="${mixedTurnId}"]`),
+    ).toHaveCount(0);
     const literalSpeech = story.locator(
       `[data-story-turn="${mixed[0].turn}"][data-story-kind="speech"] p`,
     );
@@ -130,7 +141,20 @@ test('legacy realtime composer keeps audience, order and scene input coherent', 
     await expect(literalSpeech.locator('em')).toHaveCount(0);
     await Promise.all([owner.reload(), guest.reload()]);
     await expect(story.getByTestId('story-feed')).toContainText('PRIVATE_MIXED_TURN_826');
+    await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
     await expect(guest.getByTestId('story-feed')).not.toContainText('PRIVATE_MIXED_TURN_826');
+    // Private narrator entries retain the same participant scope after reconnect,
+    // even if their wording does not repeat the player's canary.
+    await expect(
+      guest.getByTestId('story-feed').locator(`[data-story-turn="${mixedTurnId}"]`),
+    ).toHaveCount(0);
+    const guestFeedResponse = await guest.request.get(`/api/v1/game/campaigns/${id}/turns/feed`);
+    expect(guestFeedResponse.ok()).toBeTruthy();
+    const guestFeed = await guestFeedResponse.json();
+    expect(
+      guestFeed.entries.some((entry: { turnId: string }) => entry.turnId === mixedTurnId),
+    ).toBe(false);
+    expect(guestFeed.turns.some((turn: { id: string }) => turn.id === mixedTurnId)).toBe(false);
     const restored = await story
       .getByTestId('story-feed')
       .locator('[data-story-entry]')

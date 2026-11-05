@@ -164,7 +164,8 @@ await test('platform persistence, ownership, moderation and accounting', async (
         await fresh.request('DELETE', `/account/sessions/${old.id}`);
         await player.request('GET', '/library', undefined, 401);
         await player.request('POST', '/auth/login', { email: member.email, password }, 201);
-        const csrf = await fetch(`${base}/account/settings`, {
+        // A valid session must not authorize a foreign-Origin mutation.
+        const foreignOrigin = await fetch(`${base}/account/settings`, {
           method: 'PATCH',
           headers: {
             cookie: player.getCookie(),
@@ -173,7 +174,14 @@ await test('platform persistence, ownership, moderation and accounting', async (
           },
           body: JSON.stringify({ theme: 'dark' }),
         });
-        assert.equal(csrf.status, 403);
+        assert.equal(foreignOrigin.status, 403);
+        assert.equal((await player.request('GET', '/auth/me')).user.settings.theme, 'light');
+        const unauthenticated = await fetch(`${base}/account/settings`, {
+          method: 'PATCH',
+          headers: { origin: 'https://attacker.invalid', 'content-type': 'application/json' },
+          body: JSON.stringify({ theme: 'light' }),
+        });
+        assert.equal(unauthenticated.status, 403);
       },
     );
     let hero, npc, adventure;

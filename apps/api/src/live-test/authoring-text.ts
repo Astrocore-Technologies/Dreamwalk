@@ -1,6 +1,9 @@
+import { KnownAuthoringSettlement } from './known-authoring-settlement';
 import { authoringResultFailureCode } from './authoring-result-failure';
 import { quoteFunding, heldFunding } from '../generation/currency-funding';
 import { readStoryImages } from '../ai/story-vision';
+import { StoryMapCountRequired } from './story-map-count';
+import { resolveStoryMapCount } from './story-map-count-receipt';
 import { providerMicrosToSparkSubunits } from '@dreamwalk/contracts';
 import {
   quoteSparks,
@@ -150,7 +153,12 @@ export class AuthoringTextEngine {
     };
   }
   private async quoteDto(c: PoolClient, row: QueryResultRow) {
+    const policy = row.spark_quote_id
+      ? (await c.query('SELECT price_snapshot FROM spark_quotes WHERE id=$1', [row.spark_quote_id]))
+          .rows[0]?.price_snapshot?.providerQuote?.automaticKnownCostPolicy
+      : undefined;
     return {
+      ...(policy === 'known-cost-v1' ? { automaticKnownCostPolicy: policy } : {}),
       id: row.id,
       ...(await sparkQuoteView(c, row.spark_quote_id)),
       policyRevision: row.generation_policy_revision ?? null,
@@ -180,7 +188,7 @@ export class AuthoringTextEngine {
     snapshot: TextReserveSnapshot | null | undefined,
     reserve?: number,
   ) {
-    const current = this.provider.prepareTextRequest?.(context)?.snapshot;
+    const current = this.provider.prepareTextRequest?.(context, snapshot)?.snapshot;
     if (snapshot) {
       if (
         !current ||
@@ -232,9 +240,49 @@ export class AuthoringTextEngine {
     try {
       snapshot = this.provider.prepareTextRequest?.(context)?.snapshot ?? null;
     } catch (error) {
-      if (error instanceof Error && error.message === 'MAP_VISION_POLICY_REQUIRED')
-        fail(409, 'MAP_VISION_POLICY_REQUIRED', 'MAP_VISION_POLICY_REQUIRED');
-      throw error;
+      if (error instanceof StoryMapCountRequired && this.definition.purpose === 'story_plan') {
+        const prior = (
+          await this.db.query(
+            'SELECT context_hash,provider_version,request_snapshot FROM live_authoring_text_quotes WHERE actor_id=$1 AND operation_id=$2',
+            [ownerId, input.operationId],
+          )
+        )[0];
+        if (prior) {
+          if (
+            prior.context_hash !== digest(context) ||
+            prior.provider_version !== this.provider.version
+          )
+            fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+          snapshot =
+            this.provider.prepareTextRequest?.(context, prior.request_snapshot)?.snapshot ?? null;
+        } else {
+          await resolveStoryMapCount(this.db, ownerId, error, async (c) => {
+            await this.lockSource(c, ownerId);
+            const sessionId =
+              this.live.mode === 'release'
+                ? await this.live.resolveAuthorizationId(c, ownerId, candidateBinding.sessionId)
+                : candidateBinding.sessionId;
+            const binding = bindingSchema.parse({ ...candidateBinding, sessionId });
+            if (
+              !(
+                await c.query('SELECT id FROM users WHERE id=$1 AND deleted_at IS NULL FOR SHARE', [
+                  ownerId,
+                ])
+              ).rowCount
+            )
+              fail(403, 'FORBIDDEN', 'FORBIDDEN');
+            await assertBoundedTextSource(c, binding.sessionId, binding.projectId);
+            await this.live.authorizeText(c, ownerId, binding.sessionId);
+            await this.activePolicy(c, binding.sessionId);
+            await validateFence(c, binding);
+          });
+          snapshot = this.provider.prepareTextRequest?.(context)?.snapshot ?? null;
+        }
+      } else {
+        if (error instanceof Error && error.message === 'MAP_VISION_POLICY_REQUIRED')
+          fail(409, 'MAP_VISION_POLICY_REQUIRED', 'MAP_VISION_POLICY_REQUIRED');
+        throw error;
+      }
     }
     return this.db.tx(async (c) => {
       await this.lockSource(c, ownerId);
@@ -307,6 +355,7 @@ export class AuthoringTextEngine {
             this.provider.version,
           ),
           providerQuote: {
+            ...(this.live.mode === 'release' ? { automaticKnownCostPolicy: 'known-cost-v1' } : {}),
             quoteId: id,
             providerVersion: this.provider.version,
             requestHash,
@@ -326,12 +375,22 @@ export class AuthoringTextEngine {
   }
   async enqueue(
     ownerId: string,
-    input: { quoteId: string; operationId: string; consent: true },
+    input: {
+      quoteId: string;
+      operationId: string;
+      consent: true;
+      automaticKnownCostPolicy?: 'known-cost-v1';
+    },
     validateFence: AuthoringTextFence,
   ) {
     await this.live.requireOwner(ownerId);
     const value = z
-      .object({ quoteId: z.uuid(), operationId: z.uuid(), consent: z.literal(true) })
+      .object({
+        quoteId: z.uuid(),
+        operationId: z.uuid(),
+        consent: z.literal(true),
+        automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
+      })
       .strict()
       .parse(input);
     const requestHash = digest(value);
@@ -354,6 +413,18 @@ export class AuthoringTextEngine {
         ])
       ).rows[0];
       if (!quote) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+      if (value.automaticKnownCostPolicy) {
+        const policyQuote = (
+          await c.query('SELECT price_snapshot FROM spark_quotes WHERE id=$1', [
+            quote.spark_quote_id,
+          ])
+        ).rows[0];
+        if (
+          policyQuote?.price_snapshot?.providerQuote?.automaticKnownCostPolicy !==
+          value.automaticKnownCostPolicy
+        )
+          fail(409, 'AUTHORING_COST_POLICY_CHANGED', 'AUTHORING_COST_POLICY_CHANGED');
+      }
       const binding = this.binding(quote);
       await this.lockSource(c, ownerId);
       // A concurrent identical request may have committed while this transaction waited for the owner lock.
@@ -560,6 +631,7 @@ export class AuthoringTextEngine {
         "UPDATE live_authoring_text_jobs SET cancel_requested=true,status=CASE WHEN status='dispatched' THEN status ELSE 'cancelled' END,actual_micros=CASE WHEN status='queued' THEN 0 ELSE actual_micros END,error_code='AUTHORING_CANCELLED',updated_at=now() WHERE id=$1",
         [id],
       );
+      await new KnownAuthoringSettlement(this.db, this.live).settleAutomatic(c, ownerId, id);
     });
     return this.get(ownerId, id);
   }
@@ -637,6 +709,9 @@ export class AuthoringTextEngine {
     }
     if (!claimed) {
       await this.resumeGenerated(ownerId, id, validateFence, commit);
+      await this.db.tx((c) =>
+        new KnownAuthoringSettlement(this.db, this.live).settleAutomatic(c, ownerId, id),
+      );
       return this.get(ownerId, id);
     }
     const currentClaim = claimed;
@@ -766,6 +841,8 @@ export class AuthoringTextEngine {
           erased ? 'DATA_ERASED' : (errorCode ?? (late ? 'AUTHORING_LATE_RESULT' : null)),
         ],
       );
+      if (status !== 'generated')
+        await new KnownAuthoringSettlement(this.db, this.live).settleAutomatic(c, row.actor_id, id);
       return status === 'generated';
     });
     if (!generated) return;
@@ -856,7 +933,10 @@ export class AuthoringTextEngine {
       const errorCode = authoringResultFailureCode(error, resultPhase);
       await this.db.tx(async (c) => {
         await this.live.lockAuthorization(c, current.session_id);
-        await c.query('SELECT id FROM live_authoring_text_jobs WHERE id=$1 FOR UPDATE', [id]);
+        const locked = (
+          await c.query('SELECT status FROM live_authoring_text_jobs WHERE id=$1 FOR UPDATE', [id])
+        ).rows[0];
+        if (locked?.status !== 'generated') return;
         await settleReservationSparks(c, current.reservation_id, {
           outcome: 'failure_policy_pending',
           receiptId: `authoring:${id}`,
@@ -865,6 +945,7 @@ export class AuthoringTextEngine {
           "UPDATE live_authoring_text_jobs SET status='stale',proposal=NULL,result=NULL,error_code=$2,updated_at=now() WHERE id=$1 AND status='generated'",
           [id, errorCode],
         );
+        await new KnownAuthoringSettlement(this.db, this.live).settleAutomatic(c, ownerId, id);
       });
     }
   }

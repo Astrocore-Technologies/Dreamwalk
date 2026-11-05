@@ -1,3 +1,6 @@
+import { hasPosition } from '@dreamwalk/contracts';
+import { sharesScene, entityPlacement, copyEntityPlacement } from './scene-presence';
+import { isActorConscious } from '@dreamwalk/contracts';
 import {
   footprintDistance,
   npcItemIntentsSchema,
@@ -9,6 +12,7 @@ import {
   type NpcItemIntent,
 } from '@dreamwalk/contracts';
 import { npcActionAllowed } from './living-policy';
+import { worldTurnActorGate } from './turns';
 import { visible, walkable } from './index';
 const fail = (state: GameState, error: GameResult['error']): GameResult => ({
   state,
@@ -56,7 +60,7 @@ function surface(
 /** Only the NPC's approved private stock is an item-creation capability. */
 export function npcItemContext(s: GameState, npcId: string) {
   const npc = s.entities[npcId];
-  if (npc?.kind !== 'npc') return {};
+  if (npc?.kind !== 'npc' || !isActorConscious(npc)) return {};
   if (s.npcBrains?.[npcId]?.living?.personality.taboos.includes('give_valuables'))
     return {
       itemProvisioning: {
@@ -73,19 +77,20 @@ export function npcItemContext(s: GameState, npcId: string) {
       return definition ? [{ ...definition, quantity: x.quantity }] : [];
     });
   const placements: { x: number; y: number; surfaceId?: string }[] = [];
-  for (let y = npc.y - 1; y <= npc.y + 1; y++)
-    for (let x = npc.x - 1; x <= npc.x + 1; x++) {
-      const layer = s.maps[npc.mapId]?.composition?.layers.find(
-        (l) =>
-          ['table', 'counter', 'shelf'].includes(l.visual) &&
-          x >= l.x &&
-          y >= l.y &&
-          x < l.x + l.width &&
-          y < l.y + l.height,
-      );
-      const p = { x, y, ...(layer ? { surfaceId: layer.id } : {}) };
-      if (surface(s, npc, p)) placements.push(p);
-    }
+  if (hasPosition(npc))
+    for (let y = npc.y - 1; y <= npc.y + 1; y++)
+      for (let x = npc.x - 1; x <= npc.x + 1; x++) {
+        const layer = s.maps[npc.mapId]?.composition?.layers.find(
+          (l) =>
+            ['table', 'counter', 'shelf'].includes(l.visual) &&
+            x >= l.x &&
+            y >= l.y &&
+            x < l.x + l.width &&
+            y < l.y + l.height,
+        );
+        const p = { x, y, ...(layer ? { surfaceId: layer.id } : {}) };
+        if (surface(s, npc, p)) placements.push(p);
+      }
   return {
     itemProvisioning: {
       stock,
@@ -114,11 +119,8 @@ export function materializeNpcItems(
     npc = state.entities[npcId];
   if (!turn || turn.phase !== 'world' || turn.pendingResolution || npc?.kind !== 'npc')
     return fail(state, 'WRONG_MODE');
-  if (
-    turn.worldActions + 1 > turn.ruleset.maxWorldActions ||
-    (turn.worldNpcActions[npcId] ?? 0) + 1 > turn.ruleset.maxNpcActions
-  )
-    return fail(state, 'ROUND_LOCKED');
+  const gate = worldTurnActorGate(state, npcId);
+  if (gate) return fail(state, gate);
   if (state.npcBrains?.[npcId]?.living?.personality.taboos.includes('give_valuables'))
     return fail(state, 'FORBIDDEN');
   const s = structuredClone(state),
@@ -133,7 +135,7 @@ export function materializeNpcItems(
         recipient.id !== recipientId ||
         !['player', 'npc'].includes(recipient.kind) ||
         recipient.mapId !== actor.mapId ||
-        distance(actor, recipient) > 1 ||
+        (!sharesScene(s, actor, recipient) && distance(actor, recipient) > 1) ||
         (recipient.inventory?.length ?? 0) >= rules(s).inventoryCapacity)
     )
       return fail(state, 'FORBIDDEN');
@@ -156,8 +158,7 @@ export function materializeNpcItems(
         label: definition.label,
         publicProfile: { role: 'object', description: definition.description, appearance: '' },
         mapId: actor.mapId,
-        x: actor.x,
-        y: actor.y,
+        ...entityPlacement(actor),
         revision: 0,
         item: {
           definitionId: definition.id,
@@ -196,9 +197,7 @@ export function materializeNpcItems(
       item.ownerId = recipient!.id;
       delete item.item.surfaceId;
       delete item.item.surfaceSlot;
-      item.mapId = recipient!.mapId;
-      item.x = recipient!.x;
-      item.y = recipient!.y;
+      copyEntityPlacement(item, recipient!);
       (recipient!.inventory ??= []).push(item.id);
       recipient!.revision++;
     } else {
@@ -206,6 +205,7 @@ export function materializeNpcItems(
         NpcItemIntent,
         { kind: 'place_stock' | 'place_existing' }
       >;
+      if (!hasPosition(actor) || !hasPosition(item)) return fail(state, 'WRONG_MODE');
       delete item.ownerId;
       item.mapId = actor.mapId;
       item.x = placement.x;
@@ -250,6 +250,7 @@ export function consumeWorldItem(state: GameState, actorId: string, itemId: stri
     item = state.entities[itemId];
   if (
     !actor ||
+    !isActorConscious(actor) ||
     !['player', 'npc'].includes(actor.kind) ||
     item?.kind !== 'item' ||
     !item.item?.edible

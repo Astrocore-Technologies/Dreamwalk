@@ -1,6 +1,6 @@
 /** Server-owned image provider configuration. No dotenv/files, URLs, or credential values in DTOs. */
 import { type OwnerGenerationConfig, type ReleaseGenerationConfig } from '../generation/config';
-import { imagePricingProfileSnapshot } from '../generation/estimates';
+import { estimateImageRequest, imagePricingProfileSnapshot } from '../generation/estimates';
 import { LIVE_TEXT } from '../live-test/config';
 import { createHash } from 'node:crypto';
 import { z } from 'zod';
@@ -399,6 +399,8 @@ export function createOwnerImageRuntime(
   });
   const provider = new ModeImageProvider(new OwnerOpenAiImageProvider(config, dependencies));
   const pricingProfile = imagePricingProfileSnapshot(p);
+  // Capabilities describe newly quoted v2 jobs, not the immutable legacy hold policy.
+  const currentBaseline = estimateImageRequest('', 0, p, provider.id, true);
   return {
     provider,
     policy,
@@ -444,7 +446,7 @@ export function createOwnerImageRuntime(
       costStatus: 'approved_estimate',
       costBasis: 'approved_estimate',
       estimatedTotalMicros: p.estimatedTotalMicros,
-      reserveMicros: p.reserveMicros,
+      reserveMicros: currentBaseline.reserveMicros,
       riskApprovalActive: true,
       estimateDispatchReleased: false,
       providerEnforcesQuotedCap: false,

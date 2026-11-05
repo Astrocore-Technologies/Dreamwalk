@@ -9,7 +9,7 @@ export function TurnRulesetEditor({
   disabled = false,
 }: {
   value?: TurnRules;
-  onChange: (value: TurnRules | undefined) => void;
+  onChange: (value: TurnRules) => void;
   disabled?: boolean;
 }) {
   const text = useTurnText(),
@@ -26,35 +26,26 @@ export function TurnRulesetEditor({
   return (
     <fieldset disabled={disabled} className="stack">
       <legend>{text('rules')}</legend>
-      <label>
-        <input
-          type="checkbox"
-          checked={!!value}
-          onChange={(e) => onChange(e.target.checked ? rules : undefined)}
-        />{' '}
-        {text('enableRules')}
-      </label>
+      <p>{text('enableRules')}</p>
       <p className="muted">{text('rulesHint')}</p>
-      {value && (
-        <div className={styles.coordinates}>
-          {fields.map(([key, label, min, max]) => (
-            <Field key={key} label={text(label)}>
-              <Input
-                type="number"
-                value={rules[key]}
-                min={min}
-                max={max}
-                step={1}
-                onChange={(e) => {
-                  const number = Number(e.target.value);
-                  if (Number.isInteger(number) && number >= min && number <= max)
-                    onChange({ ...rules, [key]: number });
-                }}
-              />
-            </Field>
-          ))}
-        </div>
-      )}
+      <div className={styles.coordinates}>
+        {fields.map(([key, label, min, max]) => (
+          <Field key={key} label={text(label)}>
+            <Input
+              type="number"
+              value={rules[key]}
+              min={min}
+              max={max}
+              step={1}
+              onChange={(e) => {
+                const number = Number(e.target.value);
+                if (Number.isInteger(number) && number >= min && number <= max)
+                  onChange({ ...rules, [key]: number });
+              }}
+            />
+          </Field>
+        ))}
+      </div>
     </fieldset>
   );
 }

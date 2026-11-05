@@ -175,6 +175,7 @@ export const visualGenerationQuoteSchema = visualMutationSchema
   .extend({
     role: visualGenerationRoleSchema,
     declineReuse: z.boolean().default(false),
+    automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
     liveTestSessionId: z.uuid().optional(),
   })
   .strict();
@@ -184,6 +185,10 @@ export const visualGenerationDispatchSchema = visualMutationSchema
     quoteId: z.uuid(),
     consent: z.literal(true),
     estimateRiskConsent: z.literal(true).optional(),
+    automaticKnownCostPolicyHash: z
+      .string()
+      .regex(/^[a-f0-9]{64}$/)
+      .optional(),
   })
   .strict();
 export const visualGenerationReuseSchema = visualMutationSchema

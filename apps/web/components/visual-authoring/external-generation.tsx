@@ -323,6 +323,7 @@ function FullExternalGeneration({
                         expectedRevision: project.revision,
                         role,
                         declineReuse: true,
+                        automaticKnownCostPolicy: 'known-cost-v1',
                         liveTestSessionId:
                           session?.mode === 'release'
                             ? undefined
@@ -383,6 +384,12 @@ function FullExternalGeneration({
                         role,
                         quoteId: quote.id,
                         consent: true,
+                        ...(quote.automaticKnownCostSettlement
+                          ? {
+                              automaticKnownCostPolicyHash:
+                                quote.automaticKnownCostSettlement.fingerprint,
+                            }
+                          : {}),
                         ...(estimatedQuote ? { estimateRiskConsent: true } : {}),
                       },
                       role,

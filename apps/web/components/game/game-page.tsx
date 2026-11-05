@@ -1,4 +1,5 @@
 'use client';
+import { npcUnavailable, publicLifeState } from './turn-ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { createPortal } from 'react-dom';
@@ -6,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, Compass, Moon, Radio, UsersRound } from 'lucide-react';
 import {
   adjacentFootprintAnchors,
+  hasPosition,
   footprintInside,
   occupiedCells,
   footprintOverlaps,
@@ -25,9 +27,12 @@ import { localizedProjection } from './localized-projection';
 import { NarrativePreferences } from './narrative-preferences';
 import { GameCanvas } from './game-canvas';
 import { TurnControls } from './turn-controls';
+import { GameWallet } from './game-wallet';
+import { LocationPicker } from './location-picker';
 import { useTurnText } from './turn-messages';
 import { playerControlsAvailable } from './turn-ui';
 import { UnifiedStory, type StoryRecipient } from './unified-story';
+import { NpcPublicInspection } from './npc-public-inspection';
 import { LivingNotices } from './living-notices';
 import { useGame, type CampaignSummary } from './use-game';
 import styles from './game.module.css';
@@ -54,6 +59,7 @@ const actionKeys: Partial<Record<GameAction['kind'], string>> = {
   open: 'Открыть дверь',
   close: 'Закрыть дверь',
   transition: 'Перейти',
+  travel: 'Перейти',
   defend: 'Ждать',
   flee: 'Покинуть столкновение',
 };
@@ -295,6 +301,9 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
   }
   function act(action: GameAction) {
     if (!playerAvailable) return;
+    const target = p?.entities.find((entity) => entity.id === action.targetId);
+    if (target && npcUnavailable(target) && (action.kind === 'hit' || action.kind === 'push'))
+      return;
     if (encounter) {
       setSelected(action);
       return;
@@ -302,10 +311,11 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
     void game.command({ type: 'action', action });
   }
   function approach(entity: GamePoint) {
-    if (!p || !own || !playerAvailable) return;
+    if (!p || !own || !hasPosition(own) || !playerAvailable) return;
     const blocked = new Set(p.map.blocked.map((point) => `${point.x},${point.y}`));
     for (const door of p.entities)
-      if (door.kind === 'door' && !door.open) blocked.add(`${door.x},${door.y}`);
+      if (door.kind === 'door' && !door.open && hasPosition(door))
+        blocked.add(`${door.x},${door.y}`);
     const points = adjacentFootprintAnchors(own, entity)
       .filter((point) => {
         const placed = { ...own, ...point };
@@ -316,6 +326,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             (other) =>
               other.id !== own.id &&
               (other.kind === 'npc' || other.kind === 'player') &&
+              hasPosition(other) &&
               footprintOverlaps(placed, other),
           )
         );
@@ -419,6 +430,19 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
               )}
             </span>
           </div>
+          {user && (
+            <GameWallet
+              ownerId={user.id}
+              scope={`${campaignId}:${p.turn?.roundId ?? ''}:${p.turn?.phase ?? ''}`}
+            />
+          )}
+          <LocationPicker
+            projection={p}
+            disabled={controlsDisabled || storyBusy || !!encounter}
+            onTravel={(mapId) =>
+              game.command({ type: 'action', action: { kind: 'travel', targetId: mapId } })
+            }
+          />
           <TurnControls
             projection={p}
             connected={connected}
@@ -426,7 +450,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             activeName={
               members.data?.members.find((m) => m.actorId === p.turn?.activeActorId)?.username
             }
-            onEnd={() => void game.command({ type: 'turn.end' })}
+            onEnd={() => void game.command({ type: 'turn.end', ordinaryGeneration: true })}
             onReaction={(decision) => void game.command({ type: 'turn.reaction', decision })}
           />
         </div>
@@ -463,7 +487,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                 {t('Игровая версия {version}', { version: game.campaign.sourceRevision })}
               </small>
             )}
-            {own && (
+            {own && hasPosition(own) && (
               <p
                 className={styles.position}
                 data-testid="game-position"
@@ -499,7 +523,15 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             onAction={act}
             onApproach={approach}
             onSelectNpc={(npcId) => {
+              if (p.turn && p.map.spatialMode !== 'location_only') {
+                setInspectedNpcId(npcId);
+                return;
+              }
               const npc = p.entities.find((entity) => entity.id === npcId && entity.kind === 'npc');
+              if (npc && npcUnavailable(npc)) {
+                setInspectedNpcId(npc.id);
+                return;
+              }
               if (npc) setRecipient({ id: npc.id, label: npc.label || t('NPC') });
             }}
             onMove={(target) => {
@@ -508,48 +540,55 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             }}
             reducedMotion={!!user?.settings.reducedMotion}
           />
-          {inspectedNpc && (
-            <section
-              className={styles.inspection}
-              aria-live="polite"
-              data-testid="npc-public-inspection"
-            >
-              <header>
-                <h2>{inspectedNpc.label || t('NPC')}</h2>
-                <Button
-                  type="button"
-                  variant="ghost"
-                  aria-label={turnText('close')}
-                  onClick={() => setInspectedNpcId(null)}
-                >
-                  ×
-                </Button>
-              </header>
-              {inspectedPortraitUrl && (
-                <img
-                  className={styles.artPortrait}
-                  src={inspectedPortraitUrl}
-                  alt={inspectedNpc.label || t('NPC')}
-                />
-              )}
-              <p>
-                {inspectedNpc.publicProfile?.description ||
-                  inspectedNpc.supportingNpc?.description ||
-                  turnText('noDescription')}
-              </p>
-              <p>
-                {inspectedNpc.publicProfile?.appearance ||
-                  inspectedNpc.supportingNpc?.appearance ||
-                  ''}
-              </p>
-            </section>
-          )}
         </div>
         <UnifiedStory
           key={campaignId}
           campaignId={campaignId}
           projection={p}
           recipient={recipient}
+          inspection={
+            inspectedNpc ? (
+              <NpcPublicInspection
+                key={`${campaignId}:${inspectedNpc.id}:${user?.id}`}
+                campaignId={campaignId}
+                canReadThoughts={
+                  connected &&
+                  !members.error &&
+                  !!members.data?.members.some(
+                    (member) => member.userId === user?.id && member.status === 'accepted',
+                  )
+                }
+                npcId={inspectedNpc.id}
+                name={inspectedNpc.label || t('NPC')}
+                role={inspectedNpc.publicProfile?.role || inspectedNpc.supportingNpc?.roleLabel}
+                description={
+                  inspectedNpc.publicProfile?.description ||
+                  inspectedNpc.supportingNpc?.description ||
+                  turnText('noDescription')
+                }
+                appearance={
+                  inspectedNpc.publicProfile?.appearance || inspectedNpc.supportingNpc?.appearance
+                }
+                portraitUrl={inspectedPortraitUrl}
+                lifeState={publicLifeState(inspectedNpc)}
+                disabled={controlsDisabled || storyBusy || npcUnavailable(inspectedNpc)}
+                onClose={() => setInspectedNpcId(null)}
+                onTalk={() => {
+                  const npc = p.entities.find(
+                    (entity) => entity.kind === 'npc' && entity.id === inspectedNpcId,
+                  );
+                  if (npc && npcUnavailable(npc)) return;
+                  if (
+                    (!p.turn || p.map.spatialMode === 'location_only') &&
+                    npc &&
+                    !controlsDisabled &&
+                    !storyBusy
+                  )
+                    setRecipient({ id: npc.id, label: npc.label || t('NPC') });
+                }}
+              />
+            ) : null
+          }
           onClearRecipient={() => setRecipient(null)}
           onWorldRefresh={() => void game.refresh()}
           onBusyChange={setStoryBusy}

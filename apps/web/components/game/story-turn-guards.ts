@@ -1,9 +1,19 @@
+import { npcUnavailable } from './turn-ui';
 import type { GameProjection } from '@dreamwalk/contracts';
-/** Missing private recipients never silently become public narration. */
+/** Grid speech uses ranged listeners; scene-only play preserves an explicit addressee. */
+export function storyRecipientForProjection(
+  projection: Pick<GameProjection, 'turn'> & Partial<Pick<GameProjection, 'map'>>,
+  recipient: { id: string; label: string } | null,
+) {
+  return projection.turn && projection.map?.spatialMode !== 'location_only' ? null : recipient;
+}
+/** A stale selected recipient fails closed; area whispers require turn-based play. */
 export function storyTargetVisible(projection: GameProjection, targetNpcId?: string) {
   return (
     !targetNpcId ||
-    projection.entities.some((entity) => entity.kind === 'npc' && entity.id === targetNpcId)
+    projection.entities.some(
+      (entity) => entity.kind === 'npc' && entity.id === targetNpcId && !npcUnavailable(entity),
+    )
   );
 }
 export function storyTargetValid(
@@ -11,7 +21,11 @@ export function storyTargetValid(
   channel: 'say' | 'whisper',
   targetNpcId?: string,
 ) {
-  return storyTargetVisible(projection, targetNpcId) && (channel !== 'whisper' || !!targetNpcId);
+  return (
+    (channel === 'say' || channel === 'whisper') &&
+    storyTargetVisible(projection, targetNpcId) &&
+    (channel !== 'whisper' || !!targetNpcId || !!projection.turn)
+  );
 }
 /** Selection keeps identity; its display name follows the current localized projection. */
 export function storyRecipientLabel(

@@ -235,6 +235,7 @@ export function LocationImageInline(p: Props) {
         method: 'POST',
         body: JSON.stringify({
           ...preparation.request,
+          automaticKnownCostPolicy: 'known-cost-v1',
           generationAuthorizationId:
             status?.mode === 'release'
               ? undefined
@@ -297,6 +298,9 @@ export function LocationImageInline(p: Props) {
           quoteId: quote.quote.id,
           operationId: operation.current.id,
           consent: true,
+          ...(quote.quote.automaticKnownCostSettlement
+            ? { automaticKnownCostPolicyHash: quote.quote.automaticKnownCostSettlement.fingerprint }
+            : {}),
           ...(estimate ? { estimateRiskConsent: true } : {}),
         }),
       });

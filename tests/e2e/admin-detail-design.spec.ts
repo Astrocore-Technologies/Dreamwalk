@@ -164,7 +164,14 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
       await expect(page.locator('tbody tr').nth(1).locator('img')).toHaveCount(0);
       await expect(page.locator('tbody tr').nth(2).locator('img')).toHaveCount(0);
       await capture(page, info, `admin-content-${locale}-${width}-dark`);
-      await page.locator('tbody tr').first().getByRole('button').click();
+      await page
+        .locator('tbody tr')
+        .first()
+        .getByRole('button', {
+          name: { ru: 'Рассмотреть', en: 'Review', uk: 'Розглянути' }[locale],
+          exact: true,
+        })
+        .click();
       const dialog = page.getByRole('dialog');
       await expect(dialog).toBeVisible();
       await expect(dialog.locator('form select')).toHaveValue('approve');
@@ -181,17 +188,54 @@ for (const locale of ['ru', 'en', 'uk'] as const) {
       await expect(dialog.locator('button[type="submit"]')).toBeEnabled();
       await dialog.locator('button[type="button"]').last().click();
       await expect(dialog).toHaveCount(0);
-      await expect(page.locator('tbody tr').first().getByRole('button')).toBeFocused();
-      await page.locator('tbody tr').first().getByRole('button').click();
+      await expect(
+        page
+          .locator('tbody tr')
+          .first()
+          .getByRole('button', {
+            name: { ru: 'Рассмотреть', en: 'Review', uk: 'Розглянути' }[locale],
+            exact: true,
+          }),
+      ).toBeFocused();
+      await page
+        .locator('tbody tr')
+        .first()
+        .getByRole('button', {
+          name: { ru: 'Рассмотреть', en: 'Review', uk: 'Розглянути' }[locale],
+          exact: true,
+        })
+        .click();
       await expect(page.getByRole('dialog').getByRole('checkbox')).not.toBeChecked();
       await page.keyboard.press('Escape');
-      await expect(page.locator('tbody tr').first().getByRole('button')).toBeFocused();
-      await page.locator('tbody tr').nth(1).getByRole('button').click();
+      await expect(
+        page
+          .locator('tbody tr')
+          .first()
+          .getByRole('button', {
+            name: { ru: 'Рассмотреть', en: 'Review', uk: 'Розглянути' }[locale],
+            exact: true,
+          }),
+      ).toBeFocused();
+      await page
+        .locator('tbody tr')
+        .nth(1)
+        .getByRole('button', {
+          name: { ru: 'Рассмотреть', en: 'Review', uk: 'Розглянути' }[locale],
+          exact: true,
+        })
+        .click();
       await expect(dialog.locator('select')).toHaveValue('quarantine');
       await expect(dialog.locator('option[value="approve"]')).toHaveJSProperty('disabled', true);
       await expect(dialog.getByRole('checkbox')).toHaveCount(0);
       await page.keyboard.press('Escape');
-      await page.locator('tbody tr').nth(2).getByRole('button').click();
+      await page
+        .locator('tbody tr')
+        .nth(2)
+        .getByRole('button', {
+          name: { ru: 'Рассмотреть', en: 'Review', uk: 'Розглянути' }[locale],
+          exact: true,
+        })
+        .click();
       await expect(dialog.locator('select')).toHaveValue('reject');
       await page.keyboard.press('Escape');
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
@@ -209,7 +253,11 @@ test('review retains stale-version guard and remains readable in light mode', as
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.goto('/admin/adventures');
   await expect(page.locator('html')).toHaveAttribute('data-theme', 'light');
-  await page.locator('tbody tr').first().getByRole('button').click();
+  await page
+    .locator('tbody tr')
+    .first()
+    .getByRole('button', { name: 'Review', exact: true })
+    .click();
   const dialog = page.getByRole('dialog');
   await dialog.getByRole('checkbox').check();
   await dialog.locator('textarea').fill('Synthetic review only.');
@@ -341,7 +389,10 @@ test('compiled map, NPC and pinned art controls stay independent of decision sub
   });
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.goto('/admin/adventures');
-  const opener = page.locator('tbody tr').first().getByRole('button');
+  const opener = page
+    .locator('tbody tr')
+    .first()
+    .getByRole('button', { name: 'Review', exact: true });
   await opener.click();
   const dialog = page.getByRole('dialog');
   const save = dialog.locator('button[type="submit"]');

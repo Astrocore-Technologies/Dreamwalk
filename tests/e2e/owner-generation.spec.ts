@@ -411,10 +411,7 @@ async function openLocation(page: Page, f: Awaited<ReturnType<typeof fixture>>) 
     .click();
   return page.getByTestId('location-image-dialog');
 }
-async function explicitlyOpenLibrary(
-  page: Page,
-  f: Awaited<ReturnType<typeof fixture>>,
-) {
+async function explicitlyOpenLibrary(page: Page, f: Awaited<ReturnType<typeof fixture>>) {
   const dialog = page.getByTestId('location-image-dialog');
   // Preparing images no longer opens the reference catalog implicitly.
   const before = f.calls.libraryReads;
@@ -540,7 +537,7 @@ test('synthetic owner image has one explicit cost confirmation, then separate fr
   const bind = selection.getByRole('button', { name: 'Save image for location', exact: true });
   await expect(bind).toBeEnabled();
   expect(f.calls.bind).toBe(0);
-  await selection.getByLabel('Image attachment', { exact: true }).selectOption('room');
+  await selection.getByLabel('Playable layout link', { exact: true }).selectOption('room');
   await bind.click();
   await expect(dialog.getByRole('heading', { name: 'Saved image', exact: true })).toBeVisible();
   await page.reload();
@@ -921,7 +918,9 @@ test('one image confirmation cancels cleanly, invalidates edited quotes and prev
   let confirmation = generation.locator('[data-image-confirmation]');
   await expect(confirmation).toBeVisible();
   await expect(confirmation.locator('input[type="checkbox"]')).toHaveCount(0);
-  await expect(confirmation).toContainText('The wallet charge will not exceed the displayed amount');
+  await expect(confirmation).toContainText(
+    'The wallet charge will not exceed the displayed amount',
+  );
   expect(f.calls.dispatch).toBe(0);
   await confirmation.evaluate((element) => {
     const buttons = element.querySelectorAll('button');

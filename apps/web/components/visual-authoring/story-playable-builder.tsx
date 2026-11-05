@@ -1,5 +1,7 @@
 'use client';
 import { MapImageNotice } from '../game/map-image-notice';
+import { mapPlanningMessage } from '../game/map-planning-message';
+import { OwnerAuthoringSettlement } from './owner-authoring-settlement';
 import Link from 'next/link';
 import { ArrowLeft, Box, Check, MapPin, Sparkles, UsersRound } from 'lucide-react';
 import styles from './story-playable-builder.module.css';
@@ -30,6 +32,7 @@ type State = {
   }[];
 };
 type Quote = {
+  automaticKnownCostPolicy?: 'known-cost-v1';
   imageInputCount?: number;
   schematicMapCount?: number;
   sparks?: { quoteId: string; reserveSubunits: string; rateVersion: string; walletCharging: true };
@@ -147,10 +150,12 @@ export function StoryPlayableBuilder({
   adventureId,
   beforePrepare,
   onApplied,
+  embedded = false,
 }: {
   adventureId: string;
   beforePrepare?: () => Promise<unknown>;
   onApplied?: () => void;
+  embedded?: boolean;
 }) {
   const costs = useSparkCosts();
   const { locale, t } = useT(),
@@ -224,8 +229,21 @@ export function StoryPlayableBuilder({
     return errorMessage(e);
   }
   const unresolved = state?.jobs.some(
-    (j) => !['committed', 'failed', 'rejected', 'stale', 'cancelled'].includes(j.status),
+    (j) =>
+      !['committed', 'failed', 'rejected', 'stale', 'cancelled'].includes(j.status) ||
+      ['held', 'pending'].includes(j.sparkStatus ?? ''),
   );
+  async function refreshAfterSettlement() {
+    const id = current.current?.id;
+    if (!id) return;
+    const token = epoch.current;
+    try {
+      const next = await api<State>('/story-builds/' + id, { cache: 'no-store' });
+      if (token === epoch.current && current.current?.id === id) receive(next);
+    } catch (e) {
+      if (token === epoch.current) setError(localizedError(e));
+    }
+  }
   async function act(kind: 'prepare' | 'quote' | 'dispatch' | 'apply' | 'refresh') {
     if (lock.current) return;
     if (kind === 'prepare' && (!loaded || unresolved)) return;
@@ -310,7 +328,13 @@ export function StoryPlayableBuilder({
           }
           // Clear consent-bearing quote before dispatch; unknown outcomes require status recovery.
           setQuote(null);
-          await mutate('/story-builds/' + id + '/dispatch', { quoteId: quote.id, consent: true });
+          await mutate('/story-builds/' + id + '/dispatch', {
+            quoteId: quote.id,
+            consent: true,
+            ...(quote.automaticKnownCostPolicy === 'known-cost-v1'
+              ? { automaticKnownCostPolicy: quote.automaticKnownCostPolicy }
+              : {}),
+          });
         } else if (kind === 'apply') {
           if (!review || fresh.status !== 'proposed' || !fresh.draft) return;
           await mutate('/story-builds/' + id + '/apply', {
@@ -398,12 +422,14 @@ export function StoryPlayableBuilder({
   };
   return (
     <section className={styles.builder} data-testid="story-playable-builder" data-locale={locale}>
-      <header className={`page-heading ${styles.heading}`}>
+      <header className={embedded ? styles.heading : `page-heading ${styles.heading}`}>
         <div>
-          <h1>{copyText('title')}</h1>
-          <Link href={`/studio/adventures/${adventureId}`} className={styles.back}>
-            <ArrowLeft size={18} aria-hidden="true" /> {copyText('back')}
-          </Link>
+          {embedded ? <h2>{copyText('title')}</h2> : <h1>{copyText('title')}</h1>}
+          {!embedded && (
+            <Link href={`/studio/adventures/${adventureId}`} className={styles.back}>
+              <ArrowLeft size={18} aria-hidden="true" /> {copyText('back')}
+            </Link>
+          )}
         </div>
       </header>
       <ol className={styles.steps} aria-label={copyText('stages')}>
@@ -465,7 +491,15 @@ export function StoryPlayableBuilder({
           {quote && (
             <div className={styles.quote}>
               {quote.sparks && <SparkQuotePrice quote={quote} />}
-              <SparkQuoteNotice quote={quote} />
+              {quote.automaticKnownCostPolicy === 'known-cost-v1' ? (
+                <small data-authoring-known-cost-policy>
+                  {t(
+                    'Подтверждённый расход спишется автоматически в пределах резерва, даже если подготовка не удалась.',
+                  )}
+                </small>
+              ) : (
+                <SparkQuoteNotice quote={quote} />
+              )}
               <MapImageNotice
                 count={quote.imageInputCount}
                 schematicCount={quote.schematicMapCount}
@@ -496,27 +530,31 @@ export function StoryPlayableBuilder({
             </div>
           )}
           {state.jobs.map((j) => (
-            <p role="status" className={styles.jobStatus} key={j.id}>
-              {j.error_code === 'STORY_MAP_INTENT_MISMATCH'
-                ? copyText('mapIntentMismatch')
-                : j.error_code?.startsWith('MAP_IMAGE_')
-                  ? t(
-                      'Не удалось уверенно определить безопасный старт на изображении карты. План не применён.',
-                    )
-                  : statusText(j.status)}
-              {j.sparkStatus && (
-                <>
-                  {' '}
-                  · <SparkReceiptCost receipt={{ ...j, generationCost: null }} />
-                </>
+            <div key={j.id}>
+              <p role="status" className={styles.jobStatus}>
+                {j.error_code === 'STORY_MAP_INTENT_MISMATCH'
+                  ? copyText('mapIntentMismatch')
+                  : (mapPlanningMessage(j.error_code, locale) ?? statusText(j.status))}
+                {j.sparkStatus && (
+                  <>
+                    {' '}
+                    · <SparkReceiptCost receipt={{ ...j, generationCost: null }} />
+                  </>
+                )}
+                {!j.sparkStatus && j.actual_micros !== undefined && j.actual_micros !== null && (
+                  <>
+                    {' '}
+                    · {costs.s('actual')}: {costs.amount(Number(j.actual_micros))}
+                  </>
+                )}
+              </p>
+              {j.sparkStatus === 'pending' && ['stale', 'failed'].includes(j.status) && (
+                <OwnerAuthoringSettlement
+                  jobId={j.id}
+                  onSettled={() => void refreshAfterSettlement()}
+                />
               )}
-              {!j.sparkStatus && j.actual_micros !== undefined && j.actual_micros !== null && (
-                <>
-                  {' '}
-                  · {costs.s('actual')}: {costs.amount(Number(j.actual_micros))}
-                </>
-              )}
-            </p>
+            </div>
           ))}
           {projection && state.draft && (
             <div className={styles.workspace}>

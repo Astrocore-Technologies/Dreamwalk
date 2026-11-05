@@ -188,8 +188,8 @@ await test(
           'public audience',
           (s) => {
             s.entities[guestActor].mapId = 'courtyard';
-            s.entities[guestActor].x = 6;
-            s.entities[guestActor].y = 2;
+            s.entities[guestActor].x = 2;
+            s.entities[guestActor].y = 1;
             s.entities[guestActor].revision++;
           },
         ],
@@ -206,7 +206,8 @@ await test(
           const id = fixtures[i + 1],
             live = await prepare(id);
           if (changes[i][0] === 'public audience') {
-            live.state.maps.courtyard.blocked.push({ x: 5, y: 2 });
+            // Occluded from sight, but reachable acoustically within normal speech range 3.
+            live.state.maps.courtyard.blocked.push({ x: 3, y: 1 });
             live.state.entities[guestActor].mapId = 'garden';
             live.state.entities[guestActor].x = 2;
             live.state.entities[guestActor].y = 2;
@@ -240,6 +241,8 @@ await test(
         async () => {
           const id = fixtures[5],
             live = await prepare(id);
+          // The bystander can hear the NPC's public reply, not the player's whisper.
+          Object.assign(live.state.entities[guestActor], { x: 4, y: 4 });
           const speech = applyNpcSpeech(
             live.state,
             ownerActor,

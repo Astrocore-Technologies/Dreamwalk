@@ -1,0 +1,93 @@
+.card {
+  position: relative;
+  min-height: 100%;
+  background: linear-gradient(155deg, var(--surface-raised), var(--surface));
+  color: var(--text);
+  overflow-wrap: anywhere;
+}
+.portrait {
+  display: block;
+  width: 100%;
+  /* Leave most of the bounded history slot for the profile and its actions. */
+  max-height: min(240px, 35cqh);
+  aspect-ratio: 16 / 9;
+  object-fit: cover;
+  object-position: center 30%;
+  background: var(--surface-raised);
+}
+.content {
+  padding: 22px;
+}
+.content h2 {
+  margin: 0 34px 14px 0;
+  font-size: clamp(24px, 2.4vw, 36px);
+  line-height: 1.15;
+  letter-spacing: -0.025em;
+}
+.content p {
+  margin: 12px 0;
+  font-size: 15px;
+  line-height: 1.65;
+  white-space: pre-wrap;
+}
+.content .role {
+  display: flex;
+  align-items: baseline;
+  flex-wrap: wrap;
+  gap: 8px;
+  margin-bottom: 16px;
+}
+.role span {
+  padding: 3px 9px;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: color-mix(in srgb, var(--accent) 12%, var(--surface));
+  color: var(--muted);
+  font-size: 13px;
+}
+.close {
+  position: absolute;
+  top: 10px;
+  right: 10px;
+  z-index: 1;
+  display: grid;
+  place-items: center;
+  width: 44px;
+  height: 44px;
+  border: 1px solid var(--line);
+  border-radius: 12px;
+  background: var(--surface);
+  color: var(--text);
+  cursor: pointer;
+}
+.close:focus-visible {
+  outline: 3px solid var(--accent);
+  outline-offset: 2px;
+}
+.talk {
+  width: 100%;
+  min-height: 48px;
+  margin-top: 10px;
+}
+@media (max-width: 760px) {
+  .content {
+    padding: 18px;
+  }
+  .portrait {
+    max-height: min(230px, 35cqh);
+  }
+}
+
+.thoughtReader {
+  margin-top: 16px;
+  padding-top: 16px;
+  border-top: 1px solid var(--line);
+}
+.thoughtReader > button {
+  width: 100%;
+  min-height: 44px;
+}
+.content .thoughtProvenance {
+  color: var(--muted);
+  font-size: 13px;
+}

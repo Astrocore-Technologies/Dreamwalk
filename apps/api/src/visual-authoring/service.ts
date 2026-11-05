@@ -194,6 +194,9 @@ export class VisualAuthoringService {
         const request = generationRequestSchema.parse({
           ...buildArtRequest(p, b.role, styleReferenceRevisionId),
           declineReuse: b.declineReuse,
+          ...(b.automaticKnownCostPolicy
+            ? { automaticKnownCostPolicy: b.automaticKnownCostPolicy }
+            : {}),
           ...(b.liveTestSessionId ? { liveTestSessionId: b.liveTestSessionId } : {}),
         });
         await c.query(
@@ -254,6 +257,19 @@ export class VisualAuthoringService {
         ).rows[0];
         if (!row || row.quote_id !== b.quoteId || row.reused_revision_id)
           fail(409, 'QUOTE_MISMATCH', 'QUOTE_MISMATCH');
+        const settlementPolicy = row.quote_result?.quote?.automaticKnownCostSettlement;
+        if (
+          settlementPolicy &&
+          (settlementPolicy.version !== 'known-cost-v1' ||
+            b.automaticKnownCostPolicyHash !== settlementPolicy.fingerprint)
+        )
+          fail(
+            409,
+            'IMAGE_SETTLEMENT_POLICY_CONSENT_REQUIRED',
+            'IMAGE_SETTLEMENT_POLICY_CONSENT_REQUIRED',
+          );
+        if (!settlementPolicy && b.automaticKnownCostPolicyHash)
+          fail(409, 'IMAGE_SETTLEMENT_POLICY_MISMATCH', 'IMAGE_SETTLEMENT_POLICY_MISMATCH');
         if (row.job_id && row.dispatch_operation_id !== b.operationId)
           fail(409, 'GENERATION_ALREADY_STARTED', 'GENERATION_ALREADY_STARTED');
         if (row.dispatch_operation_id && row.dispatch_operation_id !== b.operationId)
@@ -280,6 +296,9 @@ export class VisualAuthoringService {
       operationId: b.operationId,
       consent: true,
       ...(b.estimateRiskConsent ? { estimateRiskConsent: true } : {}),
+      ...(b.automaticKnownCostPolicyHash
+        ? { automaticKnownCostPolicyHash: b.automaticKnownCostPolicyHash }
+        : {}),
     });
     await this.db.query(
       `UPDATE visual_authoring_stage_items SET job_id=$4,updated_at=now()

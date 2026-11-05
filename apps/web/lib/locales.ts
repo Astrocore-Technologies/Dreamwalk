@@ -10,10 +10,45 @@ export const localeNames: Record<Locale, string> = {
 };
 export const intlLocales: Record<Locale, string> = { uk: 'uk-UA', en: 'en-GB', ru: 'ru-RU' };
 const messages: Record<string, Record<Locale, string>> = {
+  'Замечена смерть персонажа': {
+    ru: 'Замечена смерть персонажа',
+    en: 'A character died',
+    uk: 'Помічено смерть персонажа',
+  },
+  'Замечена потеря сознания': {
+    ru: 'Замечена потеря сознания',
+    en: 'A character lost consciousness',
+    uk: 'Помічено втрату свідомості',
+  },
+  'Персонаж пришёл в сознание': {
+    ru: 'Персонаж пришёл в сознание',
+    en: 'A character regained consciousness',
+    uk: 'Персонаж опритомнів',
+  },
+  'Персонаж вернулся к жизни': {
+    ru: 'Персонаж вернулся к жизни',
+    en: 'A character returned to life',
+    uk: 'Персонаж повернувся до життя',
+  },
+  'Замечено состояние персонажа': {
+    ru: 'Замечено состояние персонажа',
+    en: 'A character’s condition was observed',
+    uk: 'Помічено стан персонажа',
+  },
   'Недавно редактировали': {
     ru: 'Недавно редактировали',
     en: 'Recently edited',
     uk: 'Нещодавно редагували',
+  },
+  'История перемещена в удалённые': {
+    ru: 'История перемещена в удалённые',
+    en: 'Story moved to deleted stories',
+    uk: 'Історію переміщено до видалених',
+  },
+  'История восстановлена в черновики': {
+    ru: 'История восстановлена в черновики',
+    en: 'Story restored as a draft',
+    uk: 'Історію відновлено до чернеток',
   },
   ...gameMessages,
   ...directorMessages,
@@ -166,6 +201,12 @@ const messages: Record<string, Record<Locale, string>> = {
     en: 'The actual cost is captured after preparation; the remaining reserve is released.',
     uk: 'Після підготовки спишеться фактична вартість, решта резерву повернеться.',
   },
+  'Подтверждённый расход спишется автоматически в пределах резерва, даже если подготовка не удалась.':
+    {
+      ru: 'Подтверждённый расход спишется автоматически в пределах резерва, даже если подготовка не удалась. Остаток резерва вернётся. Неизвестный расход или превышение резерва оставят резерв удержанным без дополнительного списания. Автоматического повтора запроса не будет.',
+      en: 'Verified usage is charged automatically within the reserve, even if preparation fails. The remaining reserve is released. Unknown costs or costs above the reserve keep the reserve held without an additional charge. The request will not retry automatically.',
+      uk: 'Підтверджена витрата спишеться автоматично в межах резерву, навіть якщо підготовка не вдалася. Решта резерву повернеться. Невідомі витрати або перевищення резерву залишать резерв утриманим без додаткового списання. Автоматичного повтору запиту не буде.',
+    },
   'Подтвердить и начать': {
     ru: 'Подтвердить и начать',
     en: 'Confirm and start',

@@ -8,7 +8,9 @@ import { useDraftAutosave } from '@/lib/use-draft-autosave';
 import { LocationMapIntent } from './studio/location-map-intent';
 import { StoryLorebookEditor } from './studio/story-lorebook-editor';
 import { StoryNpcEditor } from './studio/story-npc-editor';
+import { SceneParticipants } from './studio/scene-participants';
 import { PrivateRelease } from './studio/private-release';
+import { StoryPlayableBuilder } from './visual-authoring/story-playable-builder';
 import { StoryCoverDialog, useStoryCoverText } from './studio/story-cover-dialog';
 import { useT } from '@/lib/i18n';
 import { useRouter } from 'next/navigation';
@@ -1175,6 +1177,20 @@ function AdventureEditor({ id }: { id: string }) {
                                     }
                                   />
                                 </Field>
+                                <SceneParticipants
+                                  adventureId={isNew ? undefined : id}
+                                  storyNpcIds={draft.content.npcIds}
+                                  value={scene.participantNpcIds}
+                                  disabled={busy}
+                                  onChange={(participantNpcIds) =>
+                                    content(
+                                      'scenes',
+                                      draft.content.scenes.map((s) =>
+                                        s.id === scene.id ? { ...s, participantNpcIds } : s,
+                                      ),
+                                    )
+                                  }
+                                />
                               </div>
                               <aside className={styles.sceneContext}>
                                 <img src={coverUrl(draft)} alt="" />
@@ -1294,11 +1310,23 @@ function AdventureEditor({ id }: { id: string }) {
                 {draft.content.boundaries.length > 0 && (
                   <p className="muted">{draft.content.boundaries.join(' · ')}</p>
                 )}
-                <p className="muted">
-                  {t(
-                    'Игровая карта и тестовый запуск доступны ниже. История без карты остаётся литературным черновиком.',
-                  )}
-                </p>
+                {isNew ? (
+                  <div className="form-actions">
+                    <p className="muted">
+                      {t('Сначала сохраните историю и выбранный режим доступа.')}
+                    </p>
+                    <Button type="button" busy={busy} onClick={() => void save()}>
+                      <Save size={16} />
+                      {t('Сохранить')}
+                    </Button>
+                  </div>
+                ) : (
+                  <p className="muted">
+                    {t(
+                      'Игровая карта и тестовый запуск доступны ниже. История без карты остаётся литературным черновиком.',
+                    )}
+                  </p>
+                )}
               </div>
             )}
             {step === 7 && (
@@ -1438,6 +1466,14 @@ function AdventureEditor({ id }: { id: string }) {
           </div>
         </fieldset>
       </form>
+      {!isNew && step === 6 && (
+        <StoryPlayableBuilder
+          adventureId={id}
+          beforePrepare={autosave.flush}
+          onApplied={refreshArtModeration}
+          embedded
+        />
+      )}
       {coverGenerationOpen && (
         <StoryCoverDialog
           adventureId={isNew ? undefined : id}

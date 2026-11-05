@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { readFile } from 'node:fs/promises';
+import { readFile, readdir } from 'node:fs/promises';
 import { createHash } from 'node:crypto';
 import ts from 'typescript';
 import { dictionaries, supportedLocales } from '../../apps/web/lib/locales.ts';
@@ -171,7 +171,8 @@ test('Studio retains standalone editor safeguards and uses reviewed builder plus
   assert.doesNotMatch(editor, /dangerouslySetInnerHTML|JSON\.parse|<Textarea/);
   assert.match(studio, /useDirtyWarning\(dirty\)/);
   assert.match(studio, /dirty \? setConfirm\('leave'\)/);
-  assert.doesNotMatch(studio, /<StoryPlayableBuilder/);
+  assert.match(studio, /<\/form>\s*\{!isNew && step === 6 && \([\s\S]*?<StoryPlayableBuilder\b/);
+  assert.match(studio, /<StoryPlayableBuilder\b[^>]*beforePrepare=\{autosave.flush\}/);
   assert.match(studio, /<PrivateRelease[\s\S]*?beforePublish=\{autosave.flush\}/);
   assert.doesNotMatch(studio, /<PlayableMapEditor/);
 });
@@ -491,4 +492,125 @@ test('server profile updates do not expose manual account adoption controls', as
     );
     assert.doesNotMatch(source, /ReleasePolicyReview|release-policy|policyTarget/);
   }
+});
+
+test('every browser new-campaign launch explicitly requests turns, never realtime', async () => {
+  const root = new URL('../../apps/web/', import.meta.url);
+  const launches = [];
+  async function inspectDirectory(relative = '') {
+    for (const entry of await readdir(new URL(relative, root), { withFileTypes: true })) {
+      if (entry.name.startsWith('.') || entry.name === 'node_modules') continue;
+      const file = relative + entry.name;
+      if (entry.isDirectory()) {
+        await inspectDirectory(file + '/');
+        continue;
+      }
+      if (!/\.tsx?$/.test(file)) continue;
+      const source = ts.createSourceFile(
+        file,
+        await readFile(new URL(file, root), 'utf8'),
+        ts.ScriptTarget.Latest,
+        true,
+        file.endsWith('.tsx') ? ts.ScriptKind.TSX : ts.ScriptKind.TS,
+      );
+      const property = (object, name) =>
+        object.properties.find(
+          (value) => ts.isPropertyAssignment(value) && value.name.getText(source) === name,
+        )?.initializer;
+      const walk = (node) => {
+        if (
+          ts.isCallExpression(node) &&
+          node.expression.getText(source) === 'api' &&
+          ts.isStringLiteral(node.arguments[0]) &&
+          node.arguments[0].text === '/game/campaigns'
+        ) {
+          const options = node.arguments[1];
+          if (options && ts.isObjectLiteralExpression(options)) {
+            const method = property(options, 'method');
+            if (method && ts.isStringLiteral(method) && method.text === 'POST') {
+              const body = property(options, 'body');
+              assert.ok(body && ts.isCallExpression(body), file);
+              assert.equal(body.expression.getText(source), 'JSON.stringify', file);
+              const payload = body.arguments[0];
+              assert.ok(ts.isObjectLiteralExpression(payload), file);
+              assert.equal(property(payload, 'turnBased')?.kind, ts.SyntaxKind.TrueKeyword, file);
+              launches.push(file);
+            }
+          }
+        }
+        ts.forEachChild(node, walk);
+      };
+      walk(source);
+    }
+  }
+  await inspectDirectory();
+  assert.deepEqual(launches.sort(), [
+    'components/game/adventure-launch.tsx',
+    'components/game/game-page.tsx',
+    'components/studio/playable-map-editor.tsx',
+  ]);
+});
+
+test('Studio turn rules have no off switch and preserve existing drafts until an explicit edit', async () => {
+  const source = await readFile(
+    new URL('../../apps/web/components/studio/turn-ruleset-editor.tsx', import.meta.url),
+    'utf8',
+  );
+  const js = ts.transpileModule(source, {
+    compilerOptions: { jsx: ts.JsxEmit.ReactJSX, module: ts.ModuleKind.CommonJS },
+  }).outputText;
+  const contracts = await import('@dreamwalk/contracts');
+  const runtime = await import('react/jsx-runtime');
+  const { renderToStaticMarkup } = await import('react-dom/server');
+  const module = { exports: {} };
+  const imports = {
+    '@dreamwalk/contracts': contracts,
+    'react/jsx-runtime': runtime,
+    '../ui': { Field: 'label', Input: 'input' },
+    '../game/turn-messages': { useTurnText: () => (key) => key },
+    '../visual-authoring/workshop.module.css': { default: {} },
+  };
+  new Function('require', 'exports', 'module', js)(
+    (name) => {
+      assert.ok(Object.hasOwn(imports, name), name);
+      return imports[name];
+    },
+    module.exports,
+    module,
+  );
+  const descendants = (node) =>
+    Array.isArray(node)
+      ? node.flatMap(descendants)
+      : node && typeof node === 'object'
+        ? [node, ...descendants(node.props?.children)]
+        : [];
+  const defaults = contracts.turnRulesSchema.parse({});
+  for (const value of [undefined, { ...defaults, movement: 9 }]) {
+    const saved = structuredClone(value),
+      changes = [];
+    const tree = module.exports.TurnRulesetEditor({
+      value,
+      onChange: (next) => changes.push(next),
+    });
+    assert.deepEqual(changes, [], 'Opening an old draft must not save or convert anything');
+    const html = renderToStaticMarkup(tree);
+    assert.doesNotMatch(html, /type="checkbox"|type="radio"|<select/);
+    const inputs = descendants(tree).filter((node) => node.type === 'input');
+    assert.equal(inputs.length, 7);
+    assert.ok(inputs.every((node) => node.props.type === 'number'));
+    assert.equal(inputs[0].props.value, (value ?? defaults).movement);
+    for (const input of inputs) {
+      input.props.onChange({ target: { value: String(input.props.max + 1) } });
+      input.props.onChange({ target: { value: 'invalid' } });
+    }
+    assert.deepEqual(changes, []);
+    inputs[0].props.onChange({ target: { value: '12' } });
+    assert.deepEqual(changes, [{ ...(value ?? defaults), movement: 12 }]);
+    assert.deepEqual(value, saved);
+  }
+  const preview = module.exports.TurnRulesetEditor({
+    disabled: true,
+    onChange: () => assert.fail('Preview cannot edit rules'),
+  });
+  assert.match(renderToStaticMarkup(preview), /<fieldset[^>]*disabled/);
 });

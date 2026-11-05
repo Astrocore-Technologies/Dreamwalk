@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
-import type { NpcBrain } from '@dreamwalk/contracts';
+import type { NpcBrain, NpcObservationKind } from '@dreamwalk/contracts';
 import { api, errorMessage } from '@/lib/client';
 import { useT } from '@/lib/i18n';
 import { useTurnText } from '../game/turn-messages';
@@ -20,6 +20,11 @@ const goalLabels = {
   warn: 'Предупредить',
 };
 export const observationLabels = {
+  died: 'Замечена смерть персонажа',
+  lost_consciousness: 'Замечена потеря сознания',
+  regained_consciousness: 'Персонаж пришёл в сознание',
+  revived: 'Персонаж вернулся к жизни',
+  life_state_seen: 'Замечено состояние персонажа',
   item_placed: 'Предмет поставлен',
   item_given: 'Предмет передан',
   item_consumed: 'Предмет съеден',
@@ -35,7 +40,7 @@ export const observationLabels = {
   known_entity: 'Исходное знание',
   authored_fact: 'Авторский факт',
   said: 'Услышана реплика',
-};
+} satisfies Record<Exclude<NpcObservationKind, 'harmed' | 'pushed' | 'attempted'>, string>;
 const channelLabels = { direct: 'Наблюдение', heard: 'Слух', report: 'Сообщение другого NPC' };
 export function LivingNpcPreview({
   adventureId,

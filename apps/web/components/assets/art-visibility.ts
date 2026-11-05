@@ -54,7 +54,8 @@ export function canvasSceneArt(
   const visible = visibleSceneArt(projection, art);
   const slot = `map:${projection.map.id}:background`;
   if (
-    projection.map.backgroundMode === 'schematic' &&
+    (projection.map.spatialMode === 'location_only' ||
+      projection.map.backgroundMode === 'schematic') &&
     !projection.map.spatialGrounding &&
     illustration?.mapId === projection.map.id &&
     illustration.slot === slot &&

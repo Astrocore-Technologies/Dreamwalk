@@ -26,6 +26,9 @@ export type CampaignSummary = {
   title?: string | null;
   sourceRevision?: number | null;
   playableVersionId?: string | null;
+  adventureId?: string | null;
+  createdAt?: string;
+  updatedAt?: string;
 };
 export type { GameEnvelope } from '@dreamwalk/contracts';
 export type CommandBody = {
@@ -43,6 +46,7 @@ export type CommandBody = {
     | 'npc.promise'
     | 'turn.end'
     | 'turn.reaction';
+  ordinaryGeneration?: boolean;
   promiseId?: string;
   decision?: 'accept' | 'decline' | 'defend';
   turnFence?: { roundId: string; phaseEpoch: number; rulesetVersion: 1 };

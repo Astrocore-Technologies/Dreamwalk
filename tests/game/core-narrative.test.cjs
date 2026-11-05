@@ -233,10 +233,17 @@ test('fresh NPC identity survives dialogue context without granting flavor claim
   assert.deepEqual(decision.publicIdentity, {
     name: 'Iona',
     role: 'Instrument restorer',
+    description: proposal.newNpc.description,
+    appearance: proposal.newNpc.appearance,
     untrustedPersonalityFlavor: proposal.newNpc.personalitySummary,
   });
   const speech = g.buildNpcPublicSpeechContext(result.state, id, [id], []);
-  assert.deepEqual(speech.publicIdentity, { name: 'Iona', role: 'Instrument restorer' });
+  assert.deepEqual(speech.publicIdentity, {
+    name: 'Iona',
+    role: 'Instrument restorer',
+    description: proposal.newNpc.description,
+    appearance: proposal.newNpc.appearance,
+  });
   assert.deepEqual(speech.claims, []);
   assert.equal(JSON.stringify(speech).includes('god'), false);
   assert.deepEqual(npc.inventory ?? [], []);

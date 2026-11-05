@@ -33,3 +33,31 @@ repreparation became a full-width primary action in the new grid. The follow-up 
 the existing locale marker and groups unchanged reprepare/refresh controls as secondary
 status actions. New heading-position and bounded secondary-action assertions retain
 all previous coverage. Fresh full CI and screenshots are required after this correction.
+
+## Consolidated continuation, November 5
+
+The builder and character/location workshop presentations are combined with the
+private-release test teardown repair on main `41d35bfb8f327072b5097f1a0b27d3198f9e5de3`.
+The previously reviewed workshop correction uses the exact textbox role/name for
+the retained brief assertions. The teardown waits for PostgreSQL client end events
+after `pool.end()` and before stopping the disposable cluster, without swallowing
+errors or changing assertions, retries or timeouts.
+
+Integration retains the current main map-planning errors, unresolved financial-state
+guards, exact accepted known-cost policy, explicit dispatch consent and settlement
+refresh handler. Both current-main component controllers remain byte-identical;
+all 12 builder and 42 workshop event-handler ASTs are unchanged. Every current-main
+source-contract assertion is retained alongside the presentation checks.
+
+The nine builder source-contract tests, changed JavaScript/TypeScript lint and all
+13 changed files' repository-configured formatting pass locally. TypeScript syntax
+parsing finds no errors in the two components. These bounded checks do not establish
+full type/build, PostgreSQL or browser success. Current-head CI, Vercel and fresh
+rendered evidence are still required; no paid call or manual deployment was made.
+
+Independent integration review caught the newly available embedded Studio preview:
+its builder must not add a second page-level heading, a link back to the same editor,
+or the shared shell's desktop heading reserve. An explicit presentation-only embedded
+mode keeps an h2 and a local header, while the standalone route retains its h1 and
+Back link. Source coverage preserves autosave flush/apply callbacks; the existing
+Studio browser journey now checks both 1536px and 390px and captures each header.

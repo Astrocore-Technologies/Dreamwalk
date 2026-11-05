@@ -13,6 +13,7 @@ const {
 } = require('../../apps/api/dist/generation/service.js');
 const { readOwnerGenerationConfig } = require('../../apps/api/dist/generation/config.js');
 const { digest } = require('../../apps/api/dist/ai/context.js');
+const { createObservatoryState } = require('../../packages/game-core/dist');
 const {
   reserveGenerationSpend,
   settleGenerationSpend,
@@ -832,7 +833,7 @@ test(
           database,
           ai,
           campaignId,
-          {},
+          createObservatoryState(['player', 'friend']),
           'player',
           {
             contextHash: 'public-canon',

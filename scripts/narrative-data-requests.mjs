@@ -13,6 +13,10 @@ export function redactNarrativeContent(value) {
         turn.introducedScene.name = 'Unrecorded place';
         turn.introducedScene.description = '[Removed]';
       }
+      if (turn.introducedItem) {
+        turn.introducedItem.name = 'Unrecorded object';
+        turn.introducedItem.description = '[Removed]';
+      }
       if (turn.introducedNpc) {
         turn.introducedNpc.name = 'Resident';
         turn.introducedNpc.roleLabel = 'Supporting character';
@@ -29,6 +33,10 @@ export function redactNarrativeContent(value) {
   }
   if (typeof value.destinationMapId === 'string' && value.destinationMapId.startsWith('scene-')) {
     value.label = 'Unrecorded place';
+    delete value.labelTranslations;
+  }
+  if (typeof value.id === 'string' && value.id.startsWith('prop-') && value.kind === 'item') {
+    value.label = 'Unrecorded object';
     delete value.labelTranslations;
   }
   if (value.supportingNpc?.generated) {
@@ -55,6 +63,8 @@ export function redactNarrativeContent(value) {
       memory.causes = [];
       memory.processedCauses = [];
       delete memory.summary;
+      delete memory.cognition;
+      delete memory.lastActionOutcome;
       memory.knowledgeRevision = (memory.knowledgeRevision ?? 0) + 1;
       memory.goal = { kind: 'patrol', revision: (memory.goal?.revision ?? 0) + 1, evidenceIds: [] };
       for (const obligation of memory.obligations ?? []) {

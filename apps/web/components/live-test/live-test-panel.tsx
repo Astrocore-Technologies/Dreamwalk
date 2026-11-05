@@ -311,6 +311,9 @@ export function LiveTestPanel({
           turnFence: batch.turnFence,
           ...consentFence,
           consent: true,
+          ...(request.automaticKnownCostPolicy === 'known-cost-v1'
+            ? { automaticKnownCostPolicy: request.automaticKnownCostPolicy }
+            : {}),
         }),
       });
       if (mounted.current && responseScope.current(stamp)) {
@@ -588,6 +591,9 @@ export function LiveTestPanel({
                       }
                     />
                     {m(request.estimateSnapshot ? 'requestReserveConsent' : 'requestConsent')}
+                    {request.automaticKnownCostPolicy === 'known-cost-v1' && (
+                      <small data-known-text-cost-consent>{m('knownCostConsent')}</small>
+                    )}
                   </label>
                   <Button
                     type="button"

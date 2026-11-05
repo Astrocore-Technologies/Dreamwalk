@@ -156,9 +156,9 @@ async function setup(
             credits: 0,
             expiresAt: new Date(Date.now() + 300000).toISOString(),
             demo: true,
-            requiresConsent: true,
+            requiresConsent: false,
             providerUpperMicros: 0,
-            provider: initialFeed.configuration.provider,
+            provider: 'local-turn-resolver',
             external: false,
             policyVersion: 'ui-locale-fixture',
           },
@@ -210,16 +210,24 @@ for (const locale of ['uk', 'en', 'ru'] as const) {
     page,
   }) => {
     const next: Locale = locale === 'uk' ? 'ru' : locale === 'en' ? 'uk' : 'en';
-    const { story, composer, quotes, submissions, noPaidRoutes } = await setup(page, locale);
+    let releaseQuote: (() => void) | undefined;
+    const { story, composer, quotes, submissions, noPaidRoutes } = await setup(
+      page,
+      locale,
+      false,
+      () =>
+        new Promise<void>((resolve) => {
+          releaseQuote = resolve;
+        }),
+    );
     await composer(locale).fill('A language-neutral test post 123');
     await story.getByRole('button', { name: copy[locale].send, exact: true }).click();
-    await expect(story.getByTestId('story-quote')).toBeVisible();
+    await expect.poll(() => Boolean(releaseQuote)).toBe(true);
     expect(quotes).toHaveLength(1);
     expect(quotes[0].input.replyLocale).toBe(locale);
     expect(quotes[0].language).toBe(locale);
     await selectLocale(page, next);
-    await expect(story.getByTestId('story-reply-language')).toContainText(copy[locale].name);
-    await story.getByRole('button', { name: copy[next].confirm, exact: true }).click();
+    releaseQuote?.();
     await expect(composer(next)).toHaveValue('');
     expect(submissions).toHaveLength(1);
     expect(submissions[0].input).toMatchObject(quotes[0].input);
@@ -227,8 +235,10 @@ for (const locale of ['uk', 'en', 'ru'] as const) {
     expect(submissions[0].language).toBe(next);
     await composer(next).fill('A new post after choosing another language');
     await story.getByRole('button', { name: copy[next].send, exact: true }).click();
-    await expect(story.getByTestId('story-reply-language')).toContainText(copy[next].name);
-    expect(quotes).toHaveLength(2);
+    await expect.poll(() => quotes.length).toBe(2);
+    releaseQuote?.();
+    await expect(composer(next)).toHaveValue('');
+    await expect(story.getByTestId('story-quote')).toHaveCount(0);
     expect(quotes[1].input.replyLocale).toBe(next);
     noPaidRoutes();
   });
@@ -240,9 +250,9 @@ test('an uncertain submission retry keeps its original operation and language ac
   const { story, composer, quotes, submissions, noPaidRoutes } = await setup(page, 'uk', true);
   await composer('uk').fill('An uncertain test post');
   await story.getByRole('button', { name: copy.uk.send, exact: true }).click();
-  await expect(story.getByTestId('story-quote')).toBeVisible();
+  await expect(story.getByRole('button', { name: copy.uk.retry, exact: true })).toBeVisible();
+  await expect(story.getByTestId('story-quote')).toHaveCount(0);
   await selectLocale(page, 'en');
-  await story.getByRole('button', { name: copy.en.confirm, exact: true }).click();
   await expect(story.getByRole('button', { name: copy.en.retry, exact: true })).toBeVisible();
   expect(submissions).toHaveLength(1);
   await selectLocale(page, 'ru');
@@ -253,7 +263,7 @@ test('an uncertain submission retry keeps its original operation and language ac
   expect(submissions).toHaveLength(2);
   expect(submissions[1].input).toEqual(submissions[0].input);
   expect(submissions[1].input.replyLocale).toBe('uk');
-  expect(submissions.map((request) => request.language)).toEqual(['en', 'ru']);
+  expect(submissions.map((request) => request.language)).toEqual(['uk', 'ru']);
   noPaidRoutes();
 });
 
@@ -280,9 +290,7 @@ test('language changes during pending quote and submit preserve their result and
   await expect.poll(() => Boolean(releaseQuote)).toBe(true);
   await selectLocale(page, 'en');
   releaseQuote?.();
-  await expect(story.getByTestId('story-quote')).toBeVisible();
-  await expect(story.getByTestId('story-reply-language')).toContainText(copy.uk.name);
-  await story.getByRole('button', { name: copy.en.confirm, exact: true }).click();
+  await expect(story.getByTestId('story-quote')).toHaveCount(0);
   await expect.poll(() => Boolean(releaseSubmit)).toBe(true);
   await selectLocale(page, 'ru');
   releaseSubmit?.();

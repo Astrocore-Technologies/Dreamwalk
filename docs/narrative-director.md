@@ -28,6 +28,35 @@ Malformed/oversized proposal; unsupported mechanic; protected-name replacement; 
 
 ## Honest limits
 
+### Semantic physical consequences
+
+An unresolved attempt can now carry one director-adjudicated `narrativeImpact`
+(`harm`, `blocked`, `unconscious`, `death`, `recover`, or `revive`) against an existing visible NPC. Interpretation uses the
+current fictional scene and player intent, not a command vocabulary or tracked
+weapon requirement. It is a separate coauthoring consequence, not a replay of a
+previously resolved hit, and does not consume another main action. Ordinary
+mechanical actions and player reaction protections are unchanged.
+
+The context declares the permitted damage and lifecycle transitions before generation.
+The server validates the attempt segment, target, readset and world-phase fence;
+it commits the impact admission, vitality change, existing witnessed-harm event
+and narration atomically. Repeating the same admission does not repeat damage.
+The recorded impact remains available to later narration. No item, weapon
+capability or ownership is granted as a side effect.
+
+Death and unconsciousness now persist explicitly. Inactive NPCs cannot speak,
+perceive, plan, follow or use items. Their bodies remain visible and inspectable;
+existing inventory and historical memories remain intact. Lifecycle changes cancel
+old plans/paths and pending replies, invalidate pre-transition AI results, and
+record observations only for actual witnesses. Recovery cannot revive a dead NPC;
+revival requires a distinct new canonical outcome justified by the current attempt.
+Legacy zero-vitality NPCs are treated as unconscious, never retroactively dead.
+
+PvP, permanent-disability details and a firearm/ammunition subsystem remain outside
+this capability. Semantic intent interpretation and prose consistency still require
+model-quality evaluation; structural validation cannot prove that the model
+understood an arbitrary sentence correctly.
+
 Schema validation can guarantee supported mechanics and explicit fact/reference constraints, not prove all free prose is semantically consistent or compelling. Live-model quality needs the approved secure evaluation. Generated art needs separate cost-risk authorization and actual pixel inspection. Neither code-native placeholders nor mock fixtures constitute a competitive finished visual product.
 
 ## Account erasure
@@ -130,3 +159,71 @@ knowledge, protected canon, player agency, validation, consent, provider or budg
 gates. Verification uses offline request-body tests, isolated PostgreSQL/API tests
 and synthetic browser fixtures in RU/EN/UK. Live-model literary quality and paid
 generation are not claimed.
+
+## Director reply intent binding (2026-11-03)
+
+An existing NPC's reply in a shared director proposal may voluntarily start/stop
+companionship or queue a wait, using the exact current observation from its safe
+voice context. Admission carries that server-derived observation into the same
+source/audience/context checks as targeted NPC speech. An older, missing or foreign
+source rejects the complete proposal, including newly proposed canon or NPCs.
+
+Director voice previews still omit private action targets and provisioning.
+Movement/inspection intents are therefore unavailable in director replies; the
+existing targeted NPC route retains its separately validated action context.
+A newborn's first reply has no provider-visible observation identity before
+materialization and cannot include companionship or action intents. Plain newborn
+creation and speech remain atomic and supported. No extra provider call, automatic
+retry or campaign migration is introduced.
+
+### Lifecycle verification and physical boundaries
+
+NPC free-text contact attempts are adjudicated by the director rather than consumed
+by the limited hit/push keyword fast path. Existing explicit typed hit/push actions
+keep their resource and reaction rules, and player-target text stays on the PvP
+reaction path. Semantic lifecycle effects do not move a target, create equipment,
+consume ammunition, or establish mechanical ownership of a fictional prop. A
+narrated displacement requires its own committed positional action. Independent
+pickup and impact segments can commit atomically; an invalid later segment rolls
+back both. Replies still require a fresh audience-safe voice context.
+
+### Targeted and private physical roleplay
+
+A targeted post containing an attempt uses director adjudication, including
+recovery or revival of an unavailable NPC. Pure NPC dialogue keeps its existing
+route. Targeted mixed posts have one reply owner; they do not also schedule an
+earlier NPC reply. Audible public dialogue needs no implicit approach. Private
+textual canon and narration carry server-derived recipient scope, and neither
+public context nor public evidence can reuse that private wording. NPC voice
+evidence remains separate from director canon.
+
+An unaddressed whisper attempt has actor-only narrator scope. Its separately
+heard speech retains the existing area audience, with any queued reply waiting
+for the director outcome and the existing lifecycle, quote and funding checks.
+Private narration cannot create a shared scene, NPC or new item. Physical state
+and witnessed events remain observable independently of private words. Existing
+world-plan bodies are frozen before the director result; bystanders learn the
+committed event for a later admitted decision rather than silently replacing or
+adding a paid request.
+
+Mixed posts with unresolved physical attempts retain every typed action in order;
+local submission does not pre-apply a later pickup or move. Deferred deterministic
+actions use the ordinary player's remaining resources and reaction rules. Fully
+deterministic local posts retain their free fast path.
+
+Targeted after-impact speech has at most two conditional safe voice variants,
+limited to 8 KiB of additional base/delta context. All private claim authorization
+uses the original snapshot, not simulated trust, gifts or revival. Inactive bases
+contain only already audience-permitted public/participant observations. The
+actual effect, lifecycle revision and fresh voice hash must match before speaking.
+A stale advisory reply is omitted, not silently queued. Its unverified narrator
+prose is replaced by a scoped typed consequence summary so fictional quoted words
+do not become canon while the independently valid physical effect remains.
+
+Area-whisper speech is pending-only until its ordered position is committed. Its
+quote can preview a possible source without writing words into live NPC memory.
+The frozen projected knowledge revision, source identity, lifecycle, audience and
+body remain fenced. Changed post-impact knowledge cancels the unused reply through
+existing financial settlement; no second count, generation or consent is hidden.
+An immediate area reply is therefore not guaranteed after an injury. A harmless
+unchanged source can admit and receive its original frozen reply once.

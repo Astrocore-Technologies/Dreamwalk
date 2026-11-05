@@ -178,14 +178,29 @@ await test(
       assert.ok(g.footprintDistance(followed, player) <= 1);
       assert.equal(g.footprintOverlaps(followed, player), false);
       assert.equal(JSON.stringify(p).includes('sourceObservationId'), false);
-      assert.equal(
-        (
-          await db.query(
-            "SELECT count(*)::int AS n FROM game_npc_decision_requests WHERE campaign_id=$1 AND purpose='plan'",
-            [id],
-          )
-        ).rows[0].n,
-        0,
+      const considerations = (
+        await db.query(
+          "SELECT npc_id,context FROM game_npc_decision_requests WHERE campaign_id=$1 AND purpose='plan'",
+          [id],
+        )
+      ).rows;
+      assert.equal(considerations.length, 1, 'The active-map NPC is considered once per round');
+      assert.equal(considerations[0].npc_id, 'keeper');
+      assert.equal(considerations[0].context.worldRoundDecision.roundId, end.turnFence.roundId);
+      const jobs = (
+        await db.query(
+          'SELECT credits,provider_upper_micros,spark_hold_id FROM npc_ai_jobs WHERE campaign_id=$1',
+          [id],
+        )
+      ).rows;
+      assert.ok(
+        jobs.every(
+          (job) =>
+            job.credits === 0 &&
+            BigInt(job.provider_upper_micros) === 0n &&
+            job.spark_hold_id === null,
+        ),
+        'Local companionship consideration must not create paid provider or wallet reservations',
       );
       await stopApi();
       await startApi();

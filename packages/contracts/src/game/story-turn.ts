@@ -1,6 +1,7 @@
 import type { CurrencyFunding } from '../sparks';
 import { turnFenceSchema } from './turns';
 import { z } from 'zod';
+import type { GameError } from './index';
 import { npcCompanionIntentSchema, npcActionIntentSchema } from './world-items';
 import { narrativeActionSchema, narrativeSceneSchema, narrativeNpcSchema } from './narrative';
 const id = z
@@ -39,13 +40,42 @@ export const storyClarificationSchema = z.enum([
   'TOO_MANY_SEGMENTS',
 ]);
 export const storyActionSchema = narrativeActionSchema.extend({
-  kind: z.enum([...narrativeActionSchema.shape.kind.options, 'approach']),
+  kind: z.enum([...narrativeActionSchema.shape.kind.options, 'approach', 'move_to']),
+  target: z
+    .object({ x: z.number().int().min(0).max(63), y: z.number().int().min(0).max(63) })
+    .strict()
+    .optional(),
 });
+/** Semantic interpretation of the player's current departure, never an already completed journey. */
+export const storyTravelIntentSchema = z
+  .object({
+    segmentIndex: z.number().int().min(0).max(5),
+    destinationName: z
+      .string()
+      .trim()
+      .min(2)
+      .max(120)
+      .regex(/^[^<>\p{Cc}\p{Cf}]+$/u)
+      .regex(/[\p{L}\p{N}]/u),
+    description: z.string().trim().min(1).max(500),
+    template: z.enum(['room', 'courtyard']),
+  })
+  .strict();
+export type StoryTravelIntent = z.infer<typeof storyTravelIntentSchema>;
+/** Semantic coauthoring result, not a weapon or an unrestricted combat command. */
+export const narrativeImpactSchema = z
+  .object({
+    targetId: id,
+    effect: z.enum(['harm', 'blocked', 'unconscious', 'death', 'recover', 'revive']),
+  })
+  .strict();
+export type NarrativeImpact = z.infer<typeof narrativeImpactSchema>;
 export const storyTurnProposalSchema = z
   .object({
     turnId: z.uuid(),
     contextHash: z.string().min(1).max(160),
     status: z.enum(['ready', 'clarification']),
+    travelIntent: storyTravelIntentSchema.nullable().optional(),
     code: storyClarificationSchema.nullable(),
     steps: z
       .array(
@@ -53,6 +83,8 @@ export const storyTurnProposalSchema = z
           .object({
             segmentIndex: z.number().int().min(0).max(5),
             action: storyActionSchema.nullable(),
+            narrativeImpact: narrativeImpactSchema.nullable().optional(),
+            sceneEncounter: z.object({ npcId: id }).strict().optional(),
             replyNpcId: id.nullable().optional(),
             replyContextHash: z.string().min(1).max(160).nullable().optional(),
             reply: z
@@ -68,7 +100,21 @@ export const storyTurnProposalSchema = z
               ])
               .nullable(),
           })
-          .strict(),
+          .strict()
+          .superRefine((step, ctx) => {
+            if (
+              step.sceneEncounter &&
+              (step.action ||
+                step.narrativeImpact ||
+                step.reply ||
+                step.replyNpcId ||
+                step.replyContextHash)
+            )
+              ctx.addIssue({
+                code: 'custom',
+                message: 'Scene encounter cannot be combined with another step effect',
+              });
+          }),
       )
       .max(6),
     narrative: z
@@ -76,6 +122,19 @@ export const storyTurnProposalSchema = z
         narration: z.string().trim().min(1).max(2000),
         newScene: narrativeSceneSchema.nullable(),
         newNpc: narrativeNpcSchema.nullable(),
+        newItem: z
+          .object({
+            name: z
+              .string()
+              .trim()
+              .min(2)
+              .max(120)
+              .regex(/^[^<>\p{Cc}\p{Cf}]+$/u),
+            description: z.string().trim().min(1).max(500),
+          })
+          .strict()
+          .nullable()
+          .optional(),
         evidenceIds: z.array(id).max(8),
       })
       .strict()
@@ -88,9 +147,26 @@ export type StoryActionPreview = {
   targetLabel?: string;
   action: z.infer<typeof storyActionSchema>;
 };
+/** Server-resolved results retained for deferred narration, never executable proposals. */
+export interface StoryAttackOutcome {
+  segmentIndex: number;
+  kind: 'hit' | 'push';
+  targetId: string;
+  code:
+    | GameError
+    | 'ACTION_SUCCEEDED'
+    | 'ACTION_PENDING'
+    | 'PUSH_BLOCKED'
+    | 'NARRATIVE_HARM'
+    | 'NARRATIVE_BLOCKED';
+}
 export interface StoryQuote {
+  automaticKnownCostPolicy?: 'known-cost-v1';
+  automaticKnownCostPolicyHash?: string;
   /** Current-map vision is part of this same quote, never an extra generation. */
   runtimeMapImages?: number;
+  generatedLocationImages?: number;
+  estimateRiskConsentRequired?: boolean;
   chargeUnit?: 'sparks' | 'credits';
   funding?: CurrencyFunding;
   sparkReservedSubunits?: string | null;
@@ -126,10 +202,13 @@ export interface StoryTurnQuoteResponse {
   segments: StorySegment[];
   actionPreview: StoryActionPreview[];
   confirmationHash?: string;
+  /** Explicit location-only RP posts need no second action-confirmation dialog. */
+  travel?: { destinationName: string; generationRequired: boolean };
   quote?: StoryQuote;
 }
 export const storyTurnSubmitSchema = storyTurnInputSchema
   .extend({
+    automaticKnownCostPolicy: z.literal('known-cost-v1').optional(),
     turnId: z.uuid(),
     quoteId: z.uuid(),
     consent: z.literal(true),
@@ -147,6 +226,15 @@ export const storyTurnConfirmSchema = z
   .strict();
 export type StoryTurnConfirm = z.infer<typeof storyTurnConfirmSchema>;
 export interface StoryTurnReceipt {
+  travel?: {
+    destinationName: string;
+    status: 'prepared' | 'accepted' | 'committed' | 'failed' | 'declined';
+    imageStatus?: string;
+    sparkStatus?: 'held' | 'pending' | 'settled' | 'released';
+    funding?: CurrencyFunding;
+    sparkReservedSubunits?: string;
+    sparkCapturedSubunits?: string | null;
+  };
   generationNeedsConfirmation?: boolean;
   id: string;
   operationId: string;
@@ -190,7 +278,7 @@ export interface StoryFeedEntry {
   authorLabel?: string;
   text?: string;
   code?: string;
-  action?: z.infer<typeof narrativeActionSchema>;
+  action?: z.infer<typeof storyActionSchema>;
   legacy?: boolean;
 }
 export interface StoryTurnFeed {

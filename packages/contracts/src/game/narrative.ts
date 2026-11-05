@@ -49,12 +49,18 @@ export const narrativeNpcSchema = z
     publicSpeechStyle: z.enum(['neutral', 'warm', 'formal', 'terse', 'wry']),
     goal: z.enum(['patrol', 'help']),
     placement: z.enum(['current', 'new_scene']),
+    spatialMode: z.literal('location_only').optional(),
     spawn: z
       .object({ x: z.number().int().min(0).max(63), y: z.number().int().min(0).max(63) })
-      .strict(),
+      .strict()
+      .optional(),
     knownEntityIds: z.array(id).max(8),
   })
-  .strict();
+  .strict()
+  .superRefine((n, ctx) => {
+    if (n.spatialMode === 'location_only' ? !!n.spawn : !n.spawn)
+      ctx.addIssue({ code: 'custom', message: 'NPC placement must match spatial mode' });
+  });
 export const narrativeSceneSchema = z
   .object({
     name: copy(120),
@@ -63,10 +69,19 @@ export const narrativeSceneSchema = z
     connection: z
       .object({
         fromMapId: id,
-        x: z.number().int().min(0).max(63),
-        y: z.number().int().min(0).max(63),
+        spatialMode: z.literal('location_only').optional(),
+        x: z.number().int().min(0).max(63).optional(),
+        y: z.number().int().min(0).max(63).optional(),
       })
-      .strict(),
+      .strict()
+      .superRefine((c, ctx) => {
+        if (
+          c.spatialMode === 'location_only'
+            ? c.x !== undefined || c.y !== undefined
+            : c.x === undefined || c.y === undefined
+        )
+          ctx.addIssue({ code: 'custom', message: 'Connection must match spatial mode' });
+      }),
   })
   .strict();
 export const narrativeActionSchema = z
@@ -80,6 +95,7 @@ export const narrativeActionSchema = z
       'consume',
       'give',
       'transition',
+      'travel',
       'wait',
       'hit',
       'push',
@@ -106,17 +122,43 @@ export interface ConfirmedNarrativeTurn {
   requestHash: string;
   tick: number;
   narration: string;
+  /** Server-owned textual audience. Legacy entries without scope remain public. */
+  channel?: 'public' | 'whisper';
+  audienceIds?: string[];
   sceneId?: string;
   npcId?: string;
   evidenceIds: string[];
   introducedScene?: { id: string; name: string; description: string };
   introducedNpc?: { id: string; name: string; roleLabel: string };
+  introducedItem?: { id: string; name: string; description: string };
+  sceneEncounter?: {
+    segmentIndex: number;
+    npcId: string;
+    fingerprint: string;
+    requestToken: string;
+  };
+  /** Durable admission prevents a deferred director retry from applying injury twice. */
+  impact?: {
+    segmentIndex: number;
+    targetId: string;
+    effect: 'harm' | 'blocked' | 'unconscious' | 'death' | 'recover' | 'revive';
+    damage: number;
+    lifeStateBefore?: 'conscious' | 'unconscious' | 'dead';
+    lifeStateAfter?: 'conscious' | 'unconscious' | 'dead';
+    vitalityBefore?: number;
+    vitalityAfter?: number;
+  };
 }
 export interface NarrativeCanon {
   revision: number;
   turns: ConfirmedNarrativeTurn[];
 }
 export const narrativePublicTurnSchema = z
-  .object({ id: z.string().uuid(), tick: z.number().int().nonnegative(), narration: copy(2000) })
+  .object({
+    id: z.string().uuid(),
+    tick: z.number().int().nonnegative(),
+    narration: copy(2000),
+    channel: z.enum(['say', 'whisper']).optional(),
+  })
   .strict();
 export type NarrativePublicTurn = z.infer<typeof narrativePublicTurnSchema>;

@@ -566,7 +566,9 @@ test('injected strict provider admits contact proposals only from the supplied l
       async (_url, init) => {
         const body = JSON.parse(init.body);
         assert.ok(
-          body.text.format.schema.properties.actions.items.properties.kind.enum.includes(kind),
+          body.text.format.schema.properties.actions.items.anyOf.some((action) =>
+            action.properties.kind.enum.includes(kind),
+          ),
         );
         return new Response(
           JSON.stringify({

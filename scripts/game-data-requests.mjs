@@ -118,6 +118,11 @@ export function purgeLivingNpcReferences(state, actorId, archivedRoots = [], arc
   for (const [npcId, brain] of Object.entries(state.npcBrains ?? {})) {
     const memory = brain.living;
     if (!memory) continue;
+    // Generated character prose can paraphrase the erased actor without retaining
+    // an identifier or complete evidence list. Drop all derived RP conservatively.
+    const cognitionChanged = Boolean(memory.cognition || memory.lastActionOutcome);
+    delete memory.cognition;
+    delete memory.lastActionOutcome;
     const removed = new Set();
     for (const observation of memory.observations ?? []) {
       if (
@@ -145,7 +150,7 @@ export function purgeLivingNpcReferences(state, actorId, archivedRoots = [], arc
       observation.audienceIds = (observation.audienceIds ?? []).filter((id) => id !== actorId);
       return true;
     });
-    let changed = memory.observations.length !== before || audienceChanged;
+    let changed = cognitionChanged || memory.observations.length !== before || audienceChanged;
     if (
       brain.planSource &&
       (brain.planSource.actorId === actorId ||

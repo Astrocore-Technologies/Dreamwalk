@@ -69,7 +69,7 @@ test('ordered actions precede NPC reply; several speech segments survive stable 
   assert.equal(r.error, undefined);
   assert.deepEqual(
     r.entries.map((e) => e.kind),
-    ['speech', 'npc_reply', 'attempt', 'outcome', 'speech', 'npc_reply'],
+    ['speech', 'attempt', 'outcome', 'speech', 'npc_reply', 'narration'],
   );
   assert.equal(s.npcUtterances?.length ?? 0, 0);
   const speechEntries = r.entries.filter((e) => ['speech', 'npc_reply'].includes(e.kind));
@@ -82,18 +82,19 @@ test('ordered actions precede NPC reply; several speech segments survive stable 
     ),
   );
 });
-test('whispers never create canon or public prose; physical outcomes only safe templates', () => {
+test('whisper attempts create only scoped canon and safe physical outcomes', () => {
   const s = near();
   const { r, p, id } = turn(s, input('private *wait*', 'keeper', 'whisper'));
   assert.equal(r.error, undefined);
-  assert.equal(r.state.narrativeCanon, s.narrativeCanon);
+  assert.deepEqual(r.state.narrativeCanon.turns.at(-1).audienceIds, ['alice', 'keeper']);
+  assert.equal(g.projectState(r.state, 'bob').narrative.turns.length, 0);
   for (const entry of r.entries.filter((e) => e.kind !== 'outcome'))
     assert.deepEqual(new Set(entry.audienceIds), new Set(['alice', 'keeper']));
   assert.equal(r.entries.find((e) => e.kind === 'outcome').text, undefined);
   p.narrative = { narration: 'leak', newScene: null, newNpc: null, evidenceIds: [] };
   assert.equal(
     g.applyStoryTurnProposal(s, 'alice', input('private *wait*', 'keeper', 'whisper'), id, p).error,
-    'FORBIDDEN',
+    undefined,
   );
   assert.throws(
     () => g.buildStoryTurnContext(s, 'alice', input('secret', null, 'whisper'), randomUUID()),
@@ -159,7 +160,7 @@ test('unknown mechanism clarifies; malicious action cannot create money/items or
     id = randomUUID(),
     p = g.createMockStoryTurnProposal(s, 'alice', known, id);
   p.steps[0].action = { kind: 'move_to', target: { x: 1, y: 1 } };
-  assert.equal(g.applyStoryTurnProposal(s, 'alice', known, id, p).error, 'INVALID_ACTION');
+  assert.equal(g.applyStoryTurnProposal(s, 'alice', known, id, p).error, 'FORBIDDEN');
 });
 test('targeted locked-door failure remains truthful and private wording stays out of public outcome', () => {
   const s = near();
@@ -220,16 +221,27 @@ test('provider-inferred immediate action dry-run uses original safe speech evide
     code: null,
     steps: [
       { segmentIndex: 0, action: { kind: 'inspect', targetId: 'key' }, reply: null },
-      { segmentIndex: 1, action: null, reply: { code: 'acknowledged' } },
+      {
+        segmentIndex: 1,
+        action: null,
+        reply: { code: 'acknowledged' },
+        replyNpcId: 'keeper',
+        replyContextHash: context.sceneSpeakers.find((v) => v.npcId === 'keeper').speechHash,
+      },
     ],
-    narrative: null,
+    narrative: {
+      narration: 'The current scene continues.',
+      newScene: null,
+      newNpc: null,
+      evidenceIds: [],
+    },
   };
   const before = JSON.stringify(s),
     r = g.applyStoryTurnProposal(s, 'alice', i, id, proposal);
   assert.equal(r.error, undefined);
   assert.equal(JSON.stringify(s), before);
   assert.equal(r.actions.length, 1);
-  assert.equal(r.entries.at(-1).kind, 'npc_reply');
+  assert.ok(r.entries.some((entry) => entry.kind === 'npc_reply'));
 });
 test('whisper give transfers private item but public physical outcome contains no item or target identity', () => {
   const s = near();
@@ -246,13 +258,8 @@ test('whisper give transfers private item but public physical outcome contains n
   const { r } = turn(s, i);
   assert.equal(r.error, undefined);
   assert.equal(r.state.entities[privateId].ownerId, 'keeper');
-  const publicEntries = r.entries.filter((e) => e.channel === 'say');
-  assert.ok(publicEntries.length);
-  assert.ok(publicEntries.every((e) => e.audienceIds.includes('bob')));
-  const serialized = JSON.stringify(publicEntries);
-  assert.ok(!serialized.includes(privateId));
-  assert.ok(!serialized.includes('PRIVATE_WHISPER_CANARY'));
-  assert.deepEqual(publicEntries[0].action, { kind: 'give' });
+  assert.ok(r.entries.every((e) => e.channel === 'whisper' && !e.audienceIds.includes('bob')));
+  assert.ok(!JSON.stringify(g.projectState(r.state, 'bob')).includes('PRIVATE_WHISPER_CANARY'));
   assert.equal(r.actions[0].action.itemId, privateId);
   assert.ok(!JSON.stringify(g.projectState(r.state, 'bob')).includes(privateId));
 });
@@ -271,16 +278,14 @@ test('unquoted failed inferred action never commits dependent success prose in e
       code: null,
       steps: [
         { segmentIndex: 0, action: { kind: 'open', targetId: 'door' }, reply: null },
-        { segmentIndex: 1, action: null, reply: target ? { text: 'The door is now open!' } : null },
+        { segmentIndex: 1, action: null, reply: null },
       ],
-      narrative: target
-        ? null
-        : {
-            narration: 'The door opens successfully.',
-            newScene: null,
-            newNpc: null,
-            evidenceIds: [],
-          },
+      narrative: {
+        narration: 'The door opens successfully.',
+        newScene: null,
+        newNpc: null,
+        evidenceIds: [],
+      },
     };
     const before = JSON.stringify(s),
       r = g.applyStoryTurnProposal(s, 'alice', i, id, p);
@@ -305,4 +310,56 @@ test('mismatched provider action cannot borrow another quoted failure to publish
   assert.equal(r.clarification, 'UNSUPPORTED');
   assert.equal(r.state, s);
   assert.deepEqual(r.entries, []);
+});
+
+test('old permitted local knowledge reaches an actual story reply without importing another NPC secrets', () => {
+  const d = g.createCompleteObservatoryDraft();
+  delete d.supportingNpcPolicy;
+  d.npcs[0].initialFacts = [
+    {
+      id: 'workshop-hours',
+      title: 'Workshop',
+      text: 'The workshop opens after sunrise.',
+      disclosure: 'public',
+      relevanceTopics: ['workshop'],
+    },
+    {
+      id: 'private-workshop',
+      title: 'Workshop',
+      text: 'UNREVEALED_WORKSHOP_SECRET',
+      disclosure: 'never',
+      relevanceTopics: ['workshop'],
+    },
+  ];
+  const s = g.createStateFromPlayable(g.compilePlayableDraft(d).playable, ['alice', 'bob']);
+  Object.assign(s.entities.alice, { x: 5, y: 4 });
+  for (let i = 0; i < 24; i++)
+    s.npcBrains.keeper.living.observations.push({
+      id: `smalltalk-${i}`,
+      eventId: `smalltalk-${i}`,
+      rootId: `smalltalk-${i}`,
+      tick: i + 1,
+      kind: 'said',
+      actorId: 'alice',
+      mapId: s.entities.keeper.mapId,
+      text: 'An unrelated greeting',
+      confidence: 'witnessed',
+      channel: 'direct',
+      depth: 0,
+      disclosure: 'public',
+      audienceIds: ['alice', 'keeper'],
+    });
+  const i = input('When does the workshop open?'),
+    id = randomUUID();
+  const context = g.buildStoryTurnContext(s, 'alice', i, id);
+  assert.match(JSON.stringify(context), /The workshop opens after sunrise/);
+  assert.doesNotMatch(JSON.stringify(context), /UNREVEALED_WORKSHOP_SECRET/);
+  const proposal = g.createMockStoryTurnProposal(s, 'alice', i, id);
+  const result = g.applyStoryTurnProposal(s, 'alice', i, id, proposal);
+  assert.equal(result.error, undefined);
+  assert.match(
+    result.entries.find((entry) => entry.kind === 'npc_reply').text,
+    /workshop opens after sunrise/,
+  );
+  assert.doesNotMatch(JSON.stringify(result.entries), /UNREVEALED_WORKSHOP_SECRET/);
 });

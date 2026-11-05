@@ -2,6 +2,7 @@ import {
   readStoryImages,
   storyVisionInput,
   storyVisionCounter,
+  usesStoryExactCount,
   type StoryVisionPolicy,
 } from '../ai/story-vision';
 import {
@@ -26,13 +27,20 @@ import {
   type TextEstimationPolicy,
 } from '../generation/estimates';
 import type { PreparedTextRequest } from '../ai/types';
+import { bodyHash, countOpenAiInput } from '../ai/text-preflight';
+import {
+  StoryMapCountRequired,
+  pinnedStoryMapCounter,
+  storyMapExactCounter,
+} from './story-map-count';
 export interface AuthoringTextProfile {
   model: string;
   contextTokens: number;
   contextBudgetTokens?: number;
   maxOutputTokens: number;
   storyPlanMaxOutputTokens?: number;
-  storyVision?: StoryVisionPolicy;
+  storyVision?: StoryVisionPolicy | false;
+  runtimeVision?: StoryVisionPolicy | false;
   maxInputBytes: number;
   inputMicrosPerMillion: number;
   outputMicrosPerMillion: number;
@@ -66,7 +74,10 @@ export interface AuthoringTextRequest {
 export interface AuthoringTextProvider {
   readonly version: string;
   readonly profile?: AuthoringTextProfile;
-  prepareTextRequest?(context: unknown): PreparedTextRequest | undefined;
+  prepareTextRequest?(
+    context: unknown,
+    pinned?: TextReserveSnapshot | null,
+  ): PreparedTextRequest | undefined;
   generate(request: AuthoringTextRequest): Promise<AuthoringTextResult>;
 }
 export interface AuthoringTextDefinition {
@@ -109,12 +120,23 @@ export function buildAuthoringTextRequestBody(
 /** Separate private-authoring adapter: no NPC/world schemas or authoritative game effects. */
 export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
   readonly version: string;
+  private storyCounts = new Map<string, { tokens: number; expiresAt: number }>();
   constructor(
     private definition: AuthoringTextDefinition,
     private apiKey: string | undefined,
     private transport: typeof fetch = fetch,
     readonly profile: AuthoringTextProfile = LIVE_TEXT,
   ) {
+    // Reuse the already-enabled exact multimodal capability and its reviewed rates.
+    // An explicit storyVision=false opts out; no stored operator configuration changes.
+    if (
+      definition.purpose === 'story_plan' &&
+      profile.storyVision === undefined &&
+      usesStoryExactCount(profile.runtimeVision) &&
+      profile.runtimeVision
+    ) {
+      profile = { ...profile, storyVision: { ...profile.runtimeVision, maxImages: 4 } };
+    }
     if (definition.purpose === 'story_plan' && profile.storyPlanMaxOutputTokens !== undefined) {
       if (
         !profile.estimation ||
@@ -172,7 +194,37 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
       )
       .digest('hex');
   }
-  prepareTextRequest(context: unknown): PreparedTextRequest | undefined {
+  private counter(body: string, context: unknown, pinned?: TextReserveSnapshot | null) {
+    if (!usesStoryExactCount(this.profile.storyVision) || !readStoryImages(context).length)
+      return storyVisionCounter(body, this.profile.model, this.profile.storyVision);
+    const hash = bodyHash(body),
+      cached = this.storyCounts.get(hash);
+    if (cached && cached.expiresAt <= Date.now()) this.storyCounts.delete(hash);
+    const exact =
+      pinnedStoryMapCounter(body, this.profile.model, this.version, pinned) ??
+      (cached && cached.expiresAt > Date.now()
+        ? storyMapExactCounter(body, this.profile.model, cached.tokens)
+        : undefined);
+    if (!exact)
+      throw new StoryMapCountRequired(
+        body,
+        this.profile.model,
+        this.version,
+        (operationId) => countOpenAiInput(body, this.apiKey, operationId, this.transport),
+        (tokens, expiresAt) => {
+          if (!Number.isSafeInteger(tokens) || tokens < 0 || !Number.isFinite(expiresAt))
+            throw new Error('TEXT_COUNT_INVALID_RESPONSE');
+          if (this.storyCounts.size >= 128)
+            this.storyCounts.delete(this.storyCounts.keys().next().value!);
+          this.storyCounts.set(hash, { tokens, expiresAt });
+        },
+      );
+    return storyVisionCounter(body, this.profile.model, this.profile.storyVision, exact);
+  }
+  prepareTextRequest(
+    context: unknown,
+    pinned?: TextReserveSnapshot | null,
+  ): PreparedTextRequest | undefined {
     if (!this.profile.estimation) {
       if (readStoryImages(context).length) throw new Error('MAP_VISION_POLICY_REQUIRED');
       return undefined;
@@ -196,7 +248,7 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
             : {}),
         },
         this.version,
-        storyVisionCounter(body, this.profile.model, this.profile.storyVision),
+        this.counter(body, context, pinned),
       ),
     };
   }
@@ -222,7 +274,7 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
           measureTextContext(
             body,
             this.profile,
-            storyVisionCounter(body, this.profile.model, this.profile.storyVision),
+            this.counter(body, request.context, request.textReservationSnapshot),
           ),
         );
       } catch {
@@ -233,7 +285,7 @@ export class BoundedAuthoringTextProvider implements AuthoringTextProvider {
       throw new ProviderFailure('AUTHORING_CONTEXT_TOO_LARGE', false);
     let snapshot: TextReserveSnapshot | undefined;
     if (this.profile.estimation) {
-      const prepared = this.prepareTextRequest(request.context)!;
+      const prepared = this.prepareTextRequest(request.context, request.textReservationSnapshot)!;
       const pinned = request.textReservationSnapshot;
       if (
         !pinned ||

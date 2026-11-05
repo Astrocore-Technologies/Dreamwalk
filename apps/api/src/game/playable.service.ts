@@ -1,3 +1,4 @@
+import { bindUnresolvedScenePresence } from './unresolved-scene-presence';
 import { schematicStorySource, playableMapBindings } from './story-map-mode';
 import { AuthoringTextEngine } from '../live-test/authoring-text';
 import { prepareStoryMapImages } from './story-map-images';
@@ -63,7 +64,10 @@ export class PlayableService {
     const owner = await this.auth.require(req);
     if (
       !(
-        await this.db.query('SELECT id FROM adventures WHERE id=$1 AND owner_id=$2', [id, owner.id])
+        await this.db.query(
+          'SELECT id FROM adventures WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL',
+          [id, owner.id],
+        )
       ).length
     )
       fail(404, 'NOT_FOUND', 'NOT_FOUND');
@@ -205,10 +209,10 @@ export class PlayableService {
     if (!compiled.playable) fail(400, 'INVALID_MAP', compiled.errors.join(';'));
     const saved = await this.db.tx(async (c) => {
       const story = (
-        await c.query('SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 FOR UPDATE', [
-          id,
-          user.id,
-        ])
+        await c.query(
+          'SELECT * FROM adventures WHERE id=$1 AND owner_id=$2 AND deleted_at IS NULL FOR UPDATE',
+          [id, user.id],
+        )
       ).rows[0];
       if (!story) fail(404, 'NOT_FOUND', 'NOT_FOUND');
       await this.validateNpcReferences(c, user.id, input.draft, id);
@@ -352,6 +356,7 @@ export class PlayableService {
             description?: string;
             appearance?: string;
             personality?: string;
+            greeting?: string;
             biography?: string;
             characterProfile?: unknown;
             characterPackageVersionId?: string;
@@ -377,6 +382,8 @@ export class PlayableService {
         role: (source.role ?? '').slice(0, 120),
         description: (source.description ?? '').slice(0, 4000),
         appearance: (source.appearance ?? '').slice(0, 4000),
+        ...(source.personality ? { personality: source.personality.slice(0, 4000) } : {}),
+        ...(source.greeting ? { greeting: source.greeting.slice(0, 2000) } : {}),
       };
       const memory = compiled.playable!.npcBrains[npc.id].living;
       if (memory && (!source.characterProfile || memory.personality.biography === undefined))
@@ -414,6 +421,8 @@ export class PlayableService {
     const payload = {
       schemaVersion: 1,
       compiled: compiled.playable,
+      // Pin the full source manifest even if a playable view omits an ungrounded raster.
+      sourceArtBindings: preparedArt.bindings,
       source: {
         title: story.title,
         sourceLanguage: narrative.sourceLanguage,
@@ -500,6 +509,7 @@ export class PlayableService {
         [story.id, story.owner_id],
       )
     ).rows;
+    // Location identity exists before geometry. A missing map_id never demotes its image.
     for (const image of images) {
       if (!content.locations.some((l) => l.id === image.location_id)) continue;
       additionalBindings.push({
@@ -558,6 +568,8 @@ export class PlayableService {
         role: n.data.role ?? '',
         description: n.data.description ?? '',
         appearance: n.data.appearance ?? '',
+        personality: n.data.personality ?? '',
+        greeting: n.data.greeting ?? '',
         characterProfile: n.data.characterProfile ?? null,
       })),
     };
@@ -628,6 +640,13 @@ export class PlayableService {
     );
     checked.playable.narrativePremise = sourcePackage.narrativePremise;
     for (const npc of sourcePackage.npcDefinitions ?? []) {
+      const entity = checked.playable.entities[npc.id];
+      if (entity?.kind === 'npc' && entity.publicProfile) {
+        if (typeof npc.data.personality === 'string')
+          entity.publicProfile.personality = npc.data.personality.slice(0, 4000);
+        if (typeof npc.data.greeting === 'string')
+          entity.publicProfile.greeting = npc.data.greeting.slice(0, 2000);
+      }
       const memory = checked.playable.npcBrains[npc.id]?.living;
       if (memory && (!npc.data.characterProfile || memory.personality.biography === undefined))
         memory.personality.biography = [npc.data.personality, npc.data.biography]
@@ -888,6 +907,12 @@ export class PlayableService {
     if (!compiled) fail(409, 'START_PREPARATION_REQUIRED', 'START_PREPARATION_REQUIRED');
     const state = createStateFromPlayable(compiled, [actorId], seed);
     state.narrativeSource = { versionId: row.id, checksum: row.checksum };
+    if (Object.values(state.entities).some((entity) => entity.unresolvedScenePresence))
+      bindUnresolvedScenePresence(
+        state,
+        contentSchema.parse(row.package.source?.content),
+        row.checksum,
+      );
     if (!state.narrativePremise) {
       const published = (
         await c.query(

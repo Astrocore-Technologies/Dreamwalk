@@ -2,5 +2,8 @@
   "$schema": "https://openapi.vercel.sh/vercel.json",
   "framework": "nextjs",
   "installCommand": "cd ../.. && npm ci",
-  "buildCommand": "cd ../.. && npm run build:web"
+  "buildCommand": "cd ../.. && npm run build:web",
+  "git": {
+    "deploymentEnabled": false
+  }
 }

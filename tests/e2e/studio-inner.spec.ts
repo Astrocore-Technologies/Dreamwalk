@@ -45,6 +45,11 @@ test('inner story workspace preserves complete drafts while selecting locations 
     ).ok(),
   ).toBeTruthy();
   await page.addInitScript(() => localStorage.setItem('dreamwalk-language', 'en'));
+  const npcResponse = await page.request.post('/api/v1/npcs', {
+    data: { name: 'Synthetic scene keeper', description: 'An authored scene participant.' },
+  });
+  expect(npcResponse.ok()).toBeTruthy();
+  const sceneNpc = await npcResponse.json();
   const locations = [
     { id: randomUUID(), name: 'Synthetic hall', description: 'A quiet hall.' },
     { id: randomUUID(), name: 'Synthetic garden', description: 'A walled garden.' },
@@ -67,7 +72,7 @@ test('inner story workspace preserves complete drafts while selecting locations 
         locations,
         scenes,
         startSceneId: scenes[0].id,
-        npcIds: [],
+        npcIds: [sceneNpc.id],
         boundaries: ['Synthetic custom warning'],
       },
     },
@@ -102,19 +107,73 @@ test('inner story workspace preserves complete drafts while selecting locations 
   await expect(page.getByRole('textbox', { name: 'Scene name', exact: true })).toHaveValue(
     scenes[0].name,
   );
+  const member = page
+    .getByTestId('scene-participants')
+    .getByRole('checkbox', { name: sceneNpc.name, exact: true });
+  await expect(member).not.toBeChecked();
+  const membershipSaved = page.waitForResponse(
+    (response) =>
+      response.request().method() === 'PATCH' &&
+      new URL(response.url()).pathname === `/api/v1/studio/adventures/${story.id}` &&
+      response
+        .request()
+        .postDataJSON()
+        ?.content?.scenes?.[0]?.participantNpcIds?.includes(sceneNpc.id),
+  );
+  await member.check();
+  expect((await membershipSaved).ok()).toBeTruthy();
+  await expect(member).toBeChecked();
   const persisted = await (await page.request.get(`/api/v1/studio/adventures/${story.id}`)).json();
   expect(persisted.content.locations).toEqual([
     locations[0],
     { ...locations[1], name: 'Synthetic garden revised' },
   ]);
   expect(persisted.content.scenes).toEqual([
-    scenes[0],
+    { ...scenes[0], participantNpcIds: [sceneNpc.id] },
     { ...scenes[1], name: 'Synthetic scene revised' },
   ]);
   expect(persisted.content.startSceneId).toBe(scenes[0].id);
   expect(persisted.content.boundaries).toEqual(['Synthetic custom warning']);
   expect(persisted.status).toBe('draft');
   expect(persisted.visibility).toBe('private');
+
+  // Preview exposes the builder without a hidden URL or an automatic paid operation.
+  const buildWrites: string[] = [];
+  page.on('request', (request) => {
+    if (request.method() === 'POST' && request.url().includes('/story-builds/'))
+      buildWrites.push(request.url());
+  });
+  await nav.getByRole('button').nth(6).click();
+  const preparePlan = page.getByRole('button', { name: 'Prepare plan', exact: true });
+  await expect(preparePlan).toBeEnabled();
+  await expect(
+    page.getByRole('heading', { name: 'Build gameplay from your story', exact: true }),
+  ).toBeVisible();
+  expect(await preparePlan.evaluate((button) => button.closest('form') === null)).toBe(true);
+  expect(buildWrites).toEqual([]);
+  const builder = page.getByTestId('story-playable-builder');
+  await expect(builder.locator('h1')).toHaveCount(0);
+  await expect(
+    builder.getByRole('heading', { name: 'Build gameplay from your story', level: 2, exact: true }),
+  ).toBeVisible();
+  await expect(builder.getByRole('link', { name: 'Back to editor', exact: true })).toHaveCount(0);
+  for (const width of [1536, 390]) {
+    await page.setViewportSize({ width, height: 1024 });
+    await expect(builder.locator('header').first()).toHaveCSS('padding-right', '0px');
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+    await page.evaluate(async () => {
+      await document.fonts.ready;
+      await Promise.all(Array.from(document.images, (image) => image.decode().catch(() => {})));
+    });
+    const name = `studio-embedded-builder-en-${width}`;
+    const path = info.outputPath(`${name}.png`);
+    await builder.screenshot({ path, animations: 'disabled' });
+    await info.attach(name, { path, contentType: 'image/png' });
+  }
+  await page.setViewportSize({ width: 1536, height: 1024 });
+  expect(buildWrites).toEqual([]);
 
   // A hidden invalid item must remain discoverable and block the complete draft save.
   await nav.getByRole('button').nth(2).click();

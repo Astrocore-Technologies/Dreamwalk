@@ -1,4 +1,4 @@
-import type { GameEnvelope } from '@dreamwalk/contracts';
+import { hasPosition, type GameEnvelope } from '@dreamwalk/contracts';
 export type EncounterRetryContext = {
   streamId: string;
   connectionEpoch: number;
@@ -15,7 +15,7 @@ export function encounterRetryContext(value: GameEnvelope | null): EncounterRetr
   if (!value) return null;
   const p = value.projection,
     actor = p.entities.find((entry) => entry.id === p.actorId);
-  if (!actor) return null;
+  if (!actor || !hasPosition(actor)) return null;
   return {
     streamId: value.streamId,
     connectionEpoch: value.connectionEpoch,

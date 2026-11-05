@@ -1,6 +1,7 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { useSearchParams } from 'next/navigation';
+import { MapPin, Paintbrush, UserRound } from 'lucide-react';
 import type { AuthoredGameDraft, GameProjection, VisualPackage } from '@dreamwalk/contracts';
 import { api, ApiError, errorMessage, useResource, useClient, type Hero } from '@/lib/client';
 import {
@@ -260,7 +261,7 @@ export function VisualWorkshop() {
       ? packages.data?.find((p) => p.projectId === project.id && project.status === 'ready')
       : null);
   return (
-    <div className={styles.workshop}>
+    <div className={styles.workshop} data-workshop-kind={kind}>
       <PageHeading
         eyebrow="DREAMWALK · DRAWN 2D"
         title={m('title')}
@@ -283,9 +284,38 @@ export function VisualWorkshop() {
           {notice}
         </p>
       )}
+      <div className={styles.kindSwitch} role="group" aria-label={m('title')}>
+        <Button
+          type="button"
+          disabled={working}
+          variant={kind === 'character' ? 'primary' : 'secondary'}
+          aria-pressed={kind === 'character'}
+          onClick={() => {
+            setKind('character');
+            setName('Lyra');
+          }}
+        >
+          <UserRound size={24} aria-hidden="true" />
+          {m('character')}
+        </Button>
+        <Button
+          type="button"
+          disabled={working}
+          variant={kind === 'location' ? 'primary' : 'secondary'}
+          aria-pressed={kind === 'location'}
+          onClick={() => {
+            setKind('location');
+            setName('Rainlight Atelier');
+          }}
+        >
+          <MapPin size={24} aria-hidden="true" />
+          {m('location')}
+        </Button>
+      </div>
       <div className={styles.layout}>
         <form
-          className={styles.form}
+          className={`${styles.form} ${styles.brief}`}
+          data-workshop-brief
           onSubmit={(e) => {
             e.preventDefault();
             if (unsupportedPhoto) {
@@ -322,28 +352,6 @@ export function VisualWorkshop() {
           }}
         >
           <fieldset disabled={working} className="stack" style={{ border: 0, padding: 0 }}>
-            <div className={styles.toolbar}>
-              <Button
-                type="button"
-                variant={kind === 'character' ? 'primary' : 'secondary'}
-                onClick={() => {
-                  setKind('character');
-                  setName('Lyra');
-                }}
-              >
-                {m('character')}
-              </Button>
-              <Button
-                type="button"
-                variant={kind === 'location' ? 'primary' : 'secondary'}
-                onClick={() => {
-                  setKind('location');
-                  setName('Rainlight Atelier');
-                }}
-              >
-                {m('location')}
-              </Button>
-            </div>
             <Field label={g('mode')}>
               <Select
                 aria-label={g('mode')}
@@ -469,7 +477,14 @@ export function VisualWorkshop() {
             </Button>
           </fieldset>
         </form>
-        <div className={styles.preview}>
+        <div className={styles.preview} data-workshop-preview>
+          {!project && !currentPack && (
+            <div className={styles.emptyPreview}>
+              <Paintbrush size={44} aria-hidden="true" />
+              <h2>{m('previewEmpty')}</h2>
+              <p>{m('previewEmptyHint')}</p>
+            </div>
+          )}
           {project && project.status !== 'cancelled' && (
             <>
               <h2>{m(project.kind === 'character' ? 'concept' : 'plan')}</h2>

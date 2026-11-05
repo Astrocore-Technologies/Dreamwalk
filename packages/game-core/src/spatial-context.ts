@@ -1,3 +1,4 @@
+import { hasPosition } from '@dreamwalk/contracts';
 import type { GameState } from '@dreamwalk/contracts';
 import { observedVisible } from './observation-visibility';
 /** Only perceived image-derived facts; no other-map geometry or hidden identities. */
@@ -5,7 +6,7 @@ export function spatialContext(state: GameState, actorId: string) {
   const actor = state.entities[actorId],
     map = actor && state.maps[actor.mapId];
   const g = map?.spatialGrounding;
-  if (!actor || !map || !g) return undefined;
+  if (!hasPosition(actor) || !map || !g) return undefined;
   const bound = state.artBindings?.find((b) => b.slot === `map:${map.id}:background`);
   if (bound && bound.revisionId !== g.imageRevisionId) return undefined;
   const seen = (x: number, y: number) =>

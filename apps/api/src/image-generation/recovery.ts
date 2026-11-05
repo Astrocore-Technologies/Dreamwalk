@@ -1,3 +1,9 @@
+import { ownerPricingIsCurrent } from '../generation/config';
+import {
+  MODEL_REJECTION_STOP,
+  modelRejectionEvidenceHash,
+  modelRejectionGateHistory,
+} from './model-rejection-provenance';
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
 import { z } from 'zod';
@@ -113,7 +119,12 @@ export async function recoverModelRejectionTx(
     (policy.generationPolicyHash && owner.policy_hash !== policy.generationPolicyHash)
   )
     fail(409, 'STALE_STATE', 'STALE_STATE');
-  if (owner.state !== 'stopped' || owner.stop_code !== 'IMAGE_RESULT_UNKNOWN' || !scope?.blocked)
+  const durable = scope?.stop_epoch_id != null || owner.stop_epoch_id != null;
+  if (
+    owner.state !== 'stopped' ||
+    owner.stop_code !== (durable ? MODEL_REJECTION_STOP : 'IMAGE_RESULT_UNKNOWN') ||
+    !scope?.blocked
+  )
     fail(409, 'IMAGE_RECOVERY_STOP_MISMATCH', 'IMAGE_RECOVERY_STOP_MISMATCH');
   const job = (await c.query('SELECT * FROM image_generation_jobs WHERE id=$1 FOR UPDATE', [jobId]))
     .rows[0];
@@ -142,6 +153,89 @@ export async function recoverModelRejectionTx(
     input.evidence.actualMicros > Number(reservation.upper_micros)
   )
     fail(409, 'IMAGE_RECOVERY_COST_REQUIRES_REVIEW', 'IMAGE_RECOVERY_COST_REQUIRES_REVIEW');
+  let stopEvidence: unknown = null;
+  if (durable) {
+    const deny = () =>
+      fail(
+        409,
+        'IMAGE_RECOVERY_DURABLE_STOP_REQUIRES_REVIEW',
+        'IMAGE_RECOVERY_DURABLE_STOP_REQUIRES_REVIEW',
+      );
+    const evidenceHash = modelRejectionEvidenceHash(job, attempt.dispatch_id, job.safe_diagnostic);
+    if (
+      !evidenceHash ||
+      !owner.stop_epoch_id ||
+      !scope.stop_epoch_id ||
+      owner.expires_at !== null ||
+      !scope.approved ||
+      !scope.serialize_outstanding ||
+      !policy.ownerImageProfile ||
+      !ownerPricingIsCurrent(policy.ownerImageProfile.pricing) ||
+      !policy.approved ||
+      !policy.externalEnabled ||
+      (policy.externalExpiresAt && Date.parse(policy.externalExpiresAt) <= Date.now()) ||
+      job.cancel_requested ||
+      job.error_code !== 'DISPATCH_UNCERTAIN' ||
+      job.provider_request_id !== input.evidence.requestId ||
+      attempt.provider_request_id !== input.evidence.requestId ||
+      attempt.request_hash !== job.request_hash ||
+      reservation.kind !== 'image' ||
+      reservation.scope_id !== scope.id ||
+      String(job.upper_micros) !== String(reservation.upper_micros) ||
+      job.generation_policy_revision !== owner.policy_revision ||
+      job.generation_policy_hash !== owner.policy_hash ||
+      String(owner.cap_micros) !== String(scope.total_cap_micros) ||
+      String(owner.image_cap_micros) !== String(scope.image_cap_micros) ||
+      String(owner.text_cap_micros) !== String(scope.text_cap_micros) ||
+      ['total', 'image', 'text'].some(
+        (kind) =>
+          String(scope[`${kind}_cap_micros`]) !==
+          String(
+            policy[`${kind}CapMicros` as 'totalCapMicros' | 'imageCapMicros' | 'textCapMicros'],
+          ),
+      )
+    )
+      deny();
+    // NOWAIT avoids inversion with erasure/source writers while freezing current access.
+    const user = (
+      await c.query('SELECT id,deleted_at,handle FROM users WHERE id=$1 FOR SHARE NOWAIT', [
+        actorId,
+      ])
+    ).rows[0];
+    const source = (
+      await c.query(
+        'SELECT id,owner_id,status,deleted_at FROM adventures WHERE id=$1 FOR SHARE NOWAIT',
+        [job.adventure_id],
+      )
+    ).rows[0];
+    const quote = (
+      await c.query('SELECT * FROM image_generation_quotes WHERE id=$1 FOR SHARE NOWAIT', [
+        job.quote_id,
+      ])
+    ).rows[0];
+    if (
+      !user ||
+      user.deleted_at !== null ||
+      user.handle !== owner.owner_handle ||
+      !source ||
+      source.owner_id !== actorId ||
+      source.status === 'archived' ||
+      source.deleted_at !== null ||
+      !quote ||
+      quote.actor_id !== actorId ||
+      quote.adventure_id !== job.adventure_id ||
+      quote.request_hash !== job.request_hash ||
+      quote.mode !== 'external'
+    )
+      deny();
+    stopEvidence = await modelRejectionGateHistory(
+      c,
+      owner,
+      scope,
+      new Map([[jobId, evidenceHash!]]),
+    );
+    if (!stopEvidence) deny();
+  }
   const otherLiabilities = (
     await c.query(
       `SELECT 1 FROM generation_budget_reservations WHERE scope_id=$1 AND id<>$2 AND
@@ -188,6 +282,7 @@ export async function recoverModelRejectionTx(
     usage,
     reservationId: reservation.id,
     hold: reservation.upper_micros,
+    stopEvidence,
   });
   if (input.mode === 'review')
     return {
@@ -215,6 +310,7 @@ export async function recoverModelRejectionTx(
         errorCode: job.error_code,
         safeDiagnostic: job.safe_diagnostic,
         providerRequestId: job.provider_request_id,
+        stopEvidence,
       },
     ],
   );

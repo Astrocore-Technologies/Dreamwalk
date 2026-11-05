@@ -1,6 +1,13 @@
 'use client';
 import { useT } from '@/lib/i18n';
 export const turnMessages = {
+  unconscious: ['Без сознания', 'Unconscious', 'Непритомний'],
+  dead: ['Мёртв', 'Dead', 'Мертвий'],
+  cannotRespond: [
+    'Персонаж не может говорить или действовать.',
+    'This character cannot speak or act.',
+    'Персонаж не може говорити чи діяти.',
+  ],
   worldWaiting: [
     'Мир разрешает ответы и действия. Если нужна генерация, проверьте её подтверждение под полем истории.',
     'The world is resolving replies and actions. If generation needs confirmation, review it below the story input.',
@@ -97,6 +104,7 @@ export const turnMessages = {
     'Публічний опис ще не додано.',
   ],
   close: ['Закрыть осмотр', 'Close inspection', 'Закрити огляд'],
+  talk: ['Поговорить', 'Talk', 'Поговорити'],
   push: ['Толкнуть', 'Push', 'Штовхнути'],
   hit: ['Ударить', 'Hit', 'Ударити'],
   outOfTurn: [

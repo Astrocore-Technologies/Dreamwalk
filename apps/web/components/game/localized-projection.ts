@@ -17,6 +17,9 @@ export function localizedProjection(
       ...localizedLabel(projection.map, locale),
       exits: projection.map.exits.map((exit) => localizedLabel(exit, locale)),
     },
+    ...(projection.locations
+      ? { locations: projection.locations.map((location) => localizedLabel(location, locale)) }
+      : {}),
     entities: projection.entities.map((entity) => localizedLabel(entity, locale)),
     inventory: projection.inventory.map((entity) => localizedLabel(entity, locale)),
   };

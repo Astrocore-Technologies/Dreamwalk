@@ -210,14 +210,53 @@ test('API-authored realtime fixture retains personality, obligations and private
     await closeInventory(guest);
     await expect(guest.locator('[data-npc-obligation]')).toHaveCount(0);
     await expect(guest.locator('[data-story-code="fulfilled"]')).toBeVisible();
+    // Whisper is spatial now, not a two-party private channel. Keep this transport
+    // privacy fixture outside both the player's and helper's one-cell hearing area.
+    // A bystander next to the helper could hear its reply without having heard the
+    // original whisper, which correctly makes that reply context fail closed.
+    const guestMap = guest.locator('[data-camera-scale]');
+    await guestMap.locator('canvas').scrollIntoViewIfNeeded();
+    const cameraX = Number(await guestMap.getAttribute('data-camera-x'));
+    const cameraY = Number(await guestMap.getAttribute('data-camera-y'));
+    const cameraScale = Number(await guestMap.getAttribute('data-camera-scale'));
+    await guestMap.locator('canvas').click({
+      position: { x: cameraX + 3.5 * 48 * cameraScale, y: cameraY + 3.5 * 48 * cameraScale },
+    });
+    await expect
+      .poll(async () => {
+        const projection = await readProjection(guest, campaignId);
+        const actor = projection.entities.find((entity) => entity.id === projection.actorId)!;
+        return [actor.x, actor.y];
+      })
+      .toEqual([3, 3]);
     const speech = page.getByTestId('unified-story');
     await approachHelper(page);
+    const privacyProjection = await readProjection(page, campaignId);
+    const speaker = privacyProjection.entities.find(
+      (entity) => entity.id === privacyProjection.actorId,
+    )!;
+    const helper = privacyProjection.entities.find((entity) => entity.id === 'helper')!;
+    for (const origin of [speaker, helper])
+      expect(Math.abs(origin.x - 3) + Math.abs(origin.y - 3)).toBeGreaterThan(1);
     await mapAction(page, campaignId, 'helper', 'Сказать');
     await expect(page.getByText('PRIVATE_AUTHOR_FACT_TITLE', { exact: true })).toHaveCount(0);
     await speech.getByRole('button', { name: 'Шёпот', exact: true }).click();
     async function say(text: string) {
       await speech.getByLabel('Твой ход', { exact: true }).fill(text);
+      const quoting = page.waitForResponse(
+        (response) =>
+          response.request().method() === 'POST' &&
+          new URL(response.url()).pathname === `/api/v1/game/campaigns/${campaignId}/turns/quote`,
+      );
       await speech.getByRole('button', { name: 'Отправить', exact: true }).click();
+      const quoteResponse = await quoting;
+      const quote = await quoteResponse.json();
+      expect(quoteResponse.ok(), JSON.stringify(quote)).toBeTruthy();
+      expect(quote.status, JSON.stringify(quote)).toBe('quoted');
+      expect(quoteResponse.request().postDataJSON()).toMatchObject({
+        targetNpcId: 'helper',
+        channel: 'whisper',
+      });
       await expect(speech.getByTestId('story-quote')).toBeVisible();
       const response = page.waitForResponse(
         (r) => /\/turns$/.test(new URL(r.url()).pathname) && r.request().method() === 'POST',

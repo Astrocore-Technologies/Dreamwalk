@@ -1,9 +1,40 @@
-import { Body, Controller, Delete, Get, Inject, Param, Post, Req, Res } from '@nestjs/common';
+import {
+  Body,
+  Controller,
+  Delete,
+  Get,
+  Header,
+  Inject,
+  Param,
+  Post,
+  Req,
+  Query,
+  Res,
+} from '@nestjs/common';
 import type { Request, Response } from 'express';
 import { GameService } from './game.service';
+import { KnownNpcSettlement } from './known-npc-settlement';
 @Controller('api/v1/game')
 export class GameController {
-  constructor(@Inject(GameService) private game: GameService) {}
+  constructor(
+    @Inject(GameService) private game: GameService,
+    @Inject(KnownNpcSettlement) private knownNpcSettlement: KnownNpcSettlement,
+  ) {}
+  @Get('campaigns/:id/ai/jobs/:jobId/settlement')
+  @Header('Cache-Control', 'no-store')
+  npcSettlementQuote(@Req() req: Request, @Param('id') id: string, @Param('jobId') jobId: string) {
+    return this.knownNpcSettlement.handle(req, id, jobId);
+  }
+  @Post('campaigns/:id/ai/jobs/:jobId/settlement')
+  @Header('Cache-Control', 'no-store')
+  npcSettlementConsent(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Param('jobId') jobId: string,
+    @Body() body: unknown,
+  ) {
+    return this.knownNpcSettlement.handle(req, id, jobId, body ?? {});
+  }
   @Get('directors') directors() {
     return this.game.directors();
   }
@@ -77,6 +108,13 @@ export class GameController {
     @Body() body: unknown,
   ) {
     return this.game.worldGenerationConsent(req, id, body);
+  }
+  @Post('campaigns/:id/world-generation/decline') worldGenerationDecline(
+    @Req() req: Request,
+    @Param('id') id: string,
+    @Body() body: unknown,
+  ) {
+    return this.game.worldGenerationDecline(req, id, body);
   }
   @Post('campaigns/:id/turns/:turnId/replies/quote') storyReplyQuote(
     @Req() req: Request,
@@ -153,6 +191,11 @@ export class GameController {
   ) {
     return this.game.aiDecision(req, id, body);
   }
+  @Get('campaigns/:id/npcs/:npcId/inner-thought')
+  @Header('Cache-Control', 'no-store')
+  npcInnerThought(@Req() req: Request, @Param('id') id: string, @Param('npcId') npcId: string) {
+    return this.game.npcInnerThought(req, id, npcId);
+  }
   @Get('campaigns/:id/hero') hero(@Req() req: Request, @Param('id') id: string) {
     return this.game.selectedHero(req, id);
   }
@@ -199,8 +242,8 @@ export class GameController {
   ) {
     return this.game.mediaPreparation(req, id, body);
   }
-  @Get('campaigns') list(@Req() req: Request) {
-    return this.game.list(req);
+  @Get('campaigns') list(@Req() req: Request, @Query('adventureId') adventureId?: unknown) {
+    return this.game.list(req, adventureId);
   }
   @Get('campaigns/:id/members')
   members(@Req() req: Request, @Param('id') id: string) {

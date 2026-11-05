@@ -150,7 +150,7 @@ export function AdventurePage({ slug }: { slug: string }) {
               {tr('Подготовить героя')}
               <ArrowRight size={17} />
             </ButtonLink>
-            <AdventureLaunch adventure={a} />
+            <AdventureLaunch key={`${user?.id}:${a.id}`} adventure={a} />
             {a.visibility !== 'private' ? (
               <Button
                 variant="secondary"

@@ -3,12 +3,29 @@ import { FundingBreakdown, FundingNotice, type WalletFunding } from '../wallet-f
 import { formatSparkSubunits, type StoryQuote } from '@dreamwalk/contracts';
 import { providerSparkSubunits } from '../visual-authoring/spark-equivalent';
 import { useT } from '@/lib/i18n';
+import { useImageText } from '../assets/image-messages';
 import { useStoryText } from './story-messages';
 
 /** One estimate for the exact prepared message; a wallet hold is not a final debit. */
 export function StoryCost({ quote }: { quote: StoryQuote & { funding?: WalletFunding } }) {
   const { locale } = useT();
   const h = useStoryText();
+  const g = useImageText();
+  const knownImageCost =
+    quote.automaticKnownCostPolicy === 'known-cost-v1' &&
+    (!quote.generatedLocationImages || quote.automaticKnownCostPolicyHash) ? (
+      <p data-image-known-cost-policy>
+        {quote.generatedLocationImages
+          ? g('automaticKnownCostNotice')
+          : h('automaticKnownCostNotice')}
+      </p>
+    ) : null;
+  if (quote.provider === 'local-turn-resolver' && !quote.external && quote.credits === 0)
+    return (
+      <div data-testid="story-cost">
+        <p data-spark-quote-price>{h('worldBatchCost')}</p>
+      </div>
+    );
   const reserve = quote.chargeUnit === 'sparks' ? (quote.sparkReservedSubunits ?? null) : null;
   const estimate = quote.estimateSnapshot?.estimatedTotalMicros ?? quote.estimatedTotalMicros;
   const providerEstimate = estimate ?? quote.providerReserveMicros ?? quote.providerUpperMicros;
@@ -33,12 +50,14 @@ export function StoryCost({ quote }: { quote: StoryQuote & { funding?: WalletFun
       <div data-testid="story-cost">
         <FundingBreakdown funding={quote.funding} />
         <FundingNotice />
+        {knownImageCost}
         {vision}
       </div>
     );
   return (
     <div data-testid="story-cost">
       {vision}
+      {knownImageCost}
       <p data-spark-quote-price>
         <strong>
           {amount !== null

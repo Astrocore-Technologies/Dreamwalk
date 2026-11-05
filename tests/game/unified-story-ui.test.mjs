@@ -7,6 +7,7 @@ import {
   storyTargetValid,
   storyDraftKey,
   storyRecipientLabel,
+  storyRecipientForProjection,
 } from '../../apps/web/components/game/story-turn-guards.ts';
 test('API sends the selected default locale without dropping headers, cookies or upload boundaries', async (t) => {
   const calls = [];
@@ -41,8 +42,8 @@ test('story quotes and uncertain resubmissions retain the captured reply locale,
     'utf8',
   );
   assert.match(source, /replyLocale: getLocale\(\)/);
-  assert.match(source, /setPrepared\(\{ input, result, mapId: projection.map.id, key \}\)/);
-  assert.match(source, /const sent = recover \? submitted.current : prepared/);
+  assert.match(source, /const captured = \{ input, result, mapId: projection.map.id, key \}/);
+  assert.match(source, /const sent = recover \? submitted.current : \(immediate \?\? prepared\)/);
   assert.match(source, /\.\.\.sent.input,/);
   assert.match(source, /data-testid="story-reply-language"/);
   assert.match(source, /prepared.input.replyLocale/);
@@ -112,10 +113,52 @@ test('one primary story surface replaces competing forms and guards private reci
   assert.match(source, /aria-label=\{h\('composer'\)\}/);
 });
 
+test('grid speech ignores any selected NPC and inspection never chooses a recipient', async () => {
+  const recipient = { id: 'keeper', label: 'Keeper' };
+  const turnBased = { entities: [], turn: { phase: 'player' } };
+  const effectiveRecipient = storyRecipientForProjection(turnBased, recipient);
+  assert.equal(effectiveRecipient, null);
+  assert.equal(storyRecipientForProjection(turnBased, null), null);
+  assert.equal(storyRecipientForProjection({ entities: [] }, recipient), recipient);
+  for (const channel of ['say', 'whisper']) {
+    assert.equal(storyTargetValid(turnBased, channel, effectiveRecipient?.id), true);
+    assert.equal(
+      storyDraftKey('Keep this draft', channel, effectiveRecipient?.id, 'room'),
+      storyDraftKey('Keep this draft', channel, undefined, 'room'),
+    );
+  }
+  const composer = await readFile(
+    new URL('../../apps/web/components/game/unified-story.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(composer, /storyRecipientForProjection\(projection, recipient\)/);
+  assert.match(composer, /const targetNpcId = activeRecipient\?\.id/);
+  assert.match(composer, /\{activeRecipient && \(/);
+  assert.match(composer, /'nearbySpeech'/);
+  const page = await readFile(
+    new URL('../../apps/web/components/game/game-page.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(
+    page,
+    /if \(p.turn && p.map.spatialMode !== 'location_only'\) \{\s*setInspectedNpcId\(npcId\);\s*return;/,
+  );
+  assert.match(
+    page,
+    /\(!p.turn \|\| p.map.spatialMode === 'location_only'\) &&\s*npc &&\s*!controlsDisabled &&\s*!storyBusy/,
+  );
+  const actions = await readFile(
+    new URL('../../apps/web/components/game/map-actions.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(actions, /!projection.turn && \([\s\S]*?onSay\(e.id\)/);
+});
+
 test('private target loss is blocked and every consent-relevant draft change invalidates its identity', () => {
-  const p = { entities: [{ id: 'keeper', kind: 'npc' }] };
+  const p = { entities: [{ id: 'keeper', kind: 'npc' }], turn: { phase: 'player' } };
   assert.equal(storyTargetValid(p, 'whisper', 'keeper'), true);
-  assert.equal(storyTargetValid(p, 'whisper'), false);
+  assert.equal(storyTargetValid(p, 'whisper'), true);
+  assert.equal(storyTargetValid({ entities: [], turn: { phase: 'player' } }, 'whisper'), true);
   assert.equal(storyTargetValid({ entities: [] }, 'whisper', 'keeper'), false);
   assert.equal(storyTargetValid(p, 'say', 'missing'), false);
   assert.equal(storyTargetValid(p, 'say'), true);
@@ -129,6 +172,24 @@ test('private target loss is blocked and every consent-relevant draft change inv
     assert.notEqual(original, altered);
   assert.equal(original, storyDraftKey(' secret ', 'whisper', 'keeper', 'room'));
 });
+test('legacy whispers require a recipient without blocking turn-based area speech', async () => {
+  const legacy = { entities: [{ id: 'keeper', kind: 'npc' }] };
+  assert.equal(storyTargetValid(legacy, 'say'), true);
+  assert.equal(storyTargetValid(legacy, 'whisper'), false);
+  assert.equal(storyTargetValid(legacy, 'whisper', 'keeper'), true);
+  assert.equal(storyTargetValid(legacy, 'whisper', 'missing'), false);
+  const turnBased = { ...legacy, turn: { phase: 'player' } };
+  assert.equal(storyTargetValid(turnBased, 'say'), true);
+  assert.equal(storyTargetValid(turnBased, 'whisper'), true);
+  assert.equal(storyTargetValid(turnBased, 'whisper', 'missing'), false);
+  const composer = await readFile(
+    new URL('../../apps/web/components/game/unified-story.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(composer, /:\s*projection.turn\s*\? 'areaSpeech'\s*:\s*'legacySpeech'/);
+  assert.match(composer, /:\s*projection.turn\s*\? 'areaWhisper'\s*:\s*'legacyChooseWhisper'/);
+});
+
 test('selected NPC display label updates with locale without changing the selected identity', () => {
   const recipient = { id: 'keeper', label: 'Доглядач' };
   for (const label of ['Доглядач', 'Keeper', 'Смотритель']) {
@@ -215,6 +276,16 @@ test('viewport layout separates history from stable composer and removes the sce
   assert.match(css, /scrollbar-gutter: stable/);
   assert.match(css, /overflow-anchor: none/);
   assert.match(css, /resize: none/);
+  assert.match(css, /\.history\s*\{[^}]*flex: 1 1 0;[^}]*min-height: 72px/s);
+  assert.match(
+    css,
+    /:global\(\.game-shell\) \.composer\s*\{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*max-height: none/s,
+  );
+  assert.match(css, /\.composer > :not\(\.composerFeedback\)\s*\{[^}]*flex-shrink: 0/s);
+  assert.match(
+    css,
+    /\.composerFeedback\s*\{[^}]*flex: 0 1 auto;[^}]*min-height: 0;[^}]*overflow-y: auto/s,
+  );
   const shell = await read('app/design-system.css');
   assert.match(shell, /height: 100dvh/);
   assert.match(shell, /\.main-content > \[data-locale\]/);
@@ -222,4 +293,68 @@ test('viewport layout separates history from stable composer and removes the sce
   // Underlying explicit image generation / binding and cost-consent components remain.
   assert.match(await read('components/game/scene-media.tsx'), /media-preparation/);
   assert.match(story, /<WorldGenerationConfirmation|<StoryReplyConfirmation/);
+});
+
+test('public NPC inspection occupies history without replacing the composer or issuing a command', async () => {
+  const read = (file) =>
+    readFile(new URL(`../../apps/web/components/game/${file}`, import.meta.url), 'utf8');
+  const page = await read('game-page.tsx');
+  const story = await read('unified-story.tsx');
+  const card = await read('npc-public-inspection.tsx');
+  const css = await read('story-feed.module.css');
+  assert.equal((page.match(/<UnifiedStory/g) || []).length, 1);
+  assert.match(page, /inspection=\{/);
+  assert.match(page, /publicProfile\?\.role \|\| inspectedNpc\.supportingNpc\?\.roleLabel/);
+  assert.match(page, /portraitUrl=\{inspectedPortraitUrl\}/);
+  assert.match(
+    page,
+    /\(!p.turn \|\| p.map.spatialMode === 'location_only'\) &&\s*npc &&\s*!controlsDisabled &&\s*!storyBusy/,
+  );
+  assert.match(story, /data-inspecting=\{!!inspection\}/);
+  assert.match(story, /aria-hidden=\{!!inspection\}/);
+  assert.match(story, /tabIndex=\{inspection \? -1 : 0\}/);
+  assert.match(
+    story,
+    /inspection && <div className=\{styles\.inspectionLayer\}>\{inspection\}<\/div>/,
+  );
+  assert.match(css, /visibility: hidden/);
+  assert.match(css, /\.inspectionLayer\s*\{[^}]*container-type: size/s);
+  assert.match(await read('npc-public-inspection.module.css'), /max-height: min\(240px, 35cqh\)/);
+  assert.match(
+    css,
+    /\.inspectionLayer\s*\{[^}]*position: absolute;[^}]*inset: 0;[^}]*overflow-y: auto;/s,
+  );
+  assert.doesNotMatch(
+    card,
+    /dangerouslySetInnerHTML|\bapi\(|\bfetch\(|\bcommand\(|\bprepare\(|\bsubmit\(|secrets|personality|roleId/,
+  );
+  assert.match(card, /role &&/);
+  assert.match(card, /portraitUrl &&/);
+  assert.match(card, /event.key === 'Escape'/);
+  assert.match(card, /focus\(\{ preventScroll: true \}\)/);
+  assert.match(card, /onTalk\(\);/);
+});
+
+test('scene-only speech keeps the exact selected recipient without invented proximity', async () => {
+  const recipient = { id: 'keeper', label: 'Keeper' };
+  const scene = {
+    map: { id: 'room', spatialMode: 'location_only' },
+    turn: { phase: 'player' },
+    entities: [{ id: 'keeper', kind: 'npc' }],
+  };
+  assert.equal(storyRecipientForProjection(scene, recipient), recipient);
+  assert.equal(storyRecipientForProjection(scene, null), null);
+  assert.equal(storyTargetValid(scene, 'whisper', recipient.id), true);
+  assert.equal(storyTargetValid(scene, 'whisper'), true);
+  assert.equal(storyTargetValid(scene, 'whisper', 'offstage'), false);
+  const composer = await readFile(
+    new URL('../../apps/web/components/game/unified-story.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(composer, /locationOnly\s*\? 'sceneWhisperHint'/);
+  assert.match(
+    composer,
+    /channel === 'whisper'\s*\? activeRecipient\s*\? 'sceneTargetWhisperHint'/,
+  );
+  assert.match(composer, /: 'sceneSpeechHint'/);
 });

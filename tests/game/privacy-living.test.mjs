@@ -7,6 +7,33 @@ import {
   redactGameOperationSpeech,
 } from '../../scripts/game-data-requests.mjs';
 import { forceMockNpcTestEnvironment } from '../../scripts/mock-npc-test-env.mjs';
+import { redactNarrativeContent } from '../../scripts/narrative-data-requests.mjs';
+
+test('account erasure clears paraphrased fictional thoughts even without literal actor or evidence IDs', () => {
+  for (const redact of [
+    (state) => purgeLivingNpcReferences(state, 'erased-player'),
+    redactNarrativeContent,
+  ]) {
+    const state = fixture();
+    const memory = state.npcBrains.keeper.living;
+    memory.observations = [];
+    memory.beliefs = [];
+    memory.relationships = {};
+    memory.obligations = [];
+    memory.causes = [];
+    memory.goal = { kind: 'patrol', revision: 1, evidenceIds: [] };
+    memory.cognition = {
+      innerThought: 'I still remember that visitor’s sensitive story.',
+      motive: 'Remember the private conversation',
+      audienceIds: ['other'],
+    };
+    memory.lastActionOutcome = { actionKind: 'wait', status: 'completed', tick: 1 };
+    redact(state);
+    assert.equal(memory.cognition, undefined);
+    assert.equal(memory.lastActionOutcome, undefined);
+    assert.doesNotMatch(JSON.stringify(state), /sensitive story|private conversation/);
+  }
+});
 
 test('test processes cannot inherit approved external NPC credentials or budget', () => {
   const env = {
