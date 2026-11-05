@@ -10,8 +10,42 @@ import {
 } from './support/map-actions';
 import { profileOwnerReload } from './support/renderer-diagnostics';
 import { exposeDiscoveryFixtures } from './support/discovery-fixtures';
-import { test, expect, type Page } from '@playwright/test';
+import { test as base, expect, type BrowserContext, type Page } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
+
+// All clients stay live throughout the journey. Fixture teardown has a separate
+// lifecycle budget; its named close step still must finish within 30 seconds.
+const test = base.extend<{ partyContexts: BrowserContext[] }>({
+  partyContexts: async ({ browser }, use, info) => {
+    const contexts: BrowserContext[] = [];
+    try {
+      const setup = await Promise.allSettled(
+        Array.from({ length: 4 }, async (_, index) => {
+          contexts[index] = await browser.newContext({
+            baseURL: info.project.use.baseURL,
+            viewport: { width: 1440, height: 1000 },
+            reducedMotion: 'reduce',
+          });
+        }),
+      );
+      const failed = setup.filter((result) => result.status === 'rejected');
+      if (failed.length) throw new AggregateError(failed.map((result) => result.reason));
+      await use(contexts);
+    } finally {
+      await base.step(
+        'Close the four owned browser contexts',
+        async () => {
+          const closed = await Promise.allSettled(
+            contexts.filter(Boolean).map((context) => context.close()),
+          );
+          const failed = closed.filter((result) => result.status === 'rejected');
+          if (failed.length) throw new AggregateError(failed.map((result) => result.reason));
+        },
+        { timeout: 30_000 },
+      );
+    }
+  },
+});
 
 async function account(page: Page, index: number) {
   const handle = `story_${randomUUID().replaceAll('-', '').slice(0, 12)}`;
@@ -44,7 +78,7 @@ async function capture(page: Page, filename: string) {
   await page.screenshot({ path: test.info().outputPath(filename), fullPage: false });
 }
 test('four players retain the legacy realtime Observatory ending with owned heroes', async ({
-  browser,
+  partyContexts: contexts,
 }) => {
   // Four independent live WebGL pages also record trace snapshots. Measured CI:
   // setup/joins ~22s, four privacy disclosures ~84s, room capture ~9s,
@@ -52,23 +86,13 @@ test('four players retain the legacy realtime Observatory ending with owned hero
   // Keep per-action 15s and per-route-step 30s limits; only the complete
   // four-player journey needs a larger cumulative budget than one-player tests.
   test.setTimeout(300000);
-  const contexts = await Promise.all(
-    Array.from({ length: 4 }, () =>
-      browser.newContext({
-        baseURL: test.info().project.use.baseURL,
-        viewport: { width: 1440, height: 1000 },
-        reducedMotion: 'reduce',
-      }),
-    ),
-  );
   const pages = await Promise.all(contexts.map((c) => c.newPage()));
   const [owner, ...guests] = pages;
   for (const page of pages) {
     page.setDefaultTimeout(15000);
     page.setDefaultNavigationTimeout(30000);
   }
-  let journeyCompleted = false;
-  try {
+  await test.step('Complete the four-player journey', async () => {
     const accounts = await Promise.all(pages.map((p, i) => account(p, i + 1)));
     await legacyRealtimeLaunch(owner);
     await exposeDiscoveryFixtures(owner);
@@ -172,7 +196,9 @@ test('four players retain the legacy realtime Observatory ending with owned hero
     await test.step(
       'Approach the brass key through the UI',
       () => approachTarget(owner, id, 'key'),
-      { timeout: 30000 },
+      {
+        timeout: 30000,
+      },
     );
     await test.step(
       'Pick up the brass key through the UI',
@@ -385,24 +411,5 @@ test('four players retain the legacy realtime Observatory ending with owned hero
       await owner.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
     await capture(owner, 'sample-adventure-ending-mobile.png');
-    journeyCompleted = true;
-  } finally {
-    if (journeyCompleted) {
-      // Successful tests must finish every owned context/trace teardown before
-      // Playwright reuses the worker browser for the next scenario.
-      await Promise.all(contexts.map((context) => context.close()));
-    } else {
-      // A failed journey retains its original action error even if the browser
-      // is already closing. Playwright discards that failed worker afterwards.
-      const cleanup = Promise.allSettled(contexts.map((context) => context.close()));
-      let timer: ReturnType<typeof setTimeout> | undefined;
-      await Promise.race([
-        cleanup,
-        new Promise<void>((resolve) => {
-          timer = setTimeout(resolve, 5000);
-        }),
-      ]);
-      if (timer) clearTimeout(timer);
-    }
-  }
+  });
 });
