@@ -83,7 +83,7 @@ test('all browser shards retain isolation, bounded jobs and an all-success aggre
     const block = workflow
       .split(`  browser_${index}:\n`)[1]
       .split(/\n {2}(?:browser_\d|platform):/)[0];
-    assert.match(block, /timeout-minutes: 20/);
+    assert.match(block, /timeout-minutes: 30/);
     assert.match(block, /runs-on: ubuntu-latest/);
     assert.match(block, /postgres:17\.10-alpine/);
     assert.equal((block.match(new RegExp(`browser-${index}-ephemeral`, 'g')) ?? []).length, 2);

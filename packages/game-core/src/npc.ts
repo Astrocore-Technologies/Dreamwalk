@@ -1,6 +1,7 @@
 import { isActorConscious } from '@dreamwalk/contracts';
 import { footprintDistance, adjacentFootprintAnchors } from '@dreamwalk/contracts';
 import { characterAppraisal } from './character';
+import { applyNpcSocialReactions } from './npc-social';
 import { matchesTurnFence, turnFence } from './turns';
 import { recordNpcCognition, reviseNpcBelief } from './living-reasoning';
 import { npcActionAllowed, npcConditionsMet } from './living-policy';
@@ -249,7 +250,7 @@ export function acceptNpcPlan(state: GameState, id: string, input: unknown): Gam
   const actionError = validateNpcPlanActions(state, id, p.actions, p.targetRevisions);
   if (actionError) return { ...result(state), error: actionError };
   if (
-    p.cognition &&
+    (p.cognition || p.socialReactions?.length) &&
     (p.knowledgeRevision === undefined ||
       !brain.living ||
       p.knowledgeRevision > brain.living.knowledgeRevision ||
@@ -265,6 +266,11 @@ export function acceptNpcPlan(state: GameState, id: string, input: unknown): Gam
       if (r.error) return { ...result(state), error: r.error };
       revised = r.state;
     }
+  }
+  if (p.socialReactions?.length) {
+    const social = applyNpcSocialReactions(revised, id, p.socialReactions);
+    if (social.error) return { ...result(state), error: social.error };
+    revised = social.state;
   }
   if (p.cognition) {
     const thought = recordNpcCognition(revised, id, p.cognition, {

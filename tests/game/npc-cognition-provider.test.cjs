@@ -64,6 +64,16 @@ test('speech updates the current beat without inventing ownership or answering f
 test('fresh autonomous decision uses own character and scene, not automatic obedience', () => {
   const body = JSON.parse(buildOpenAiNpcRequestBody(config, 'plan', { npcId: 'keeper' }));
   assert.match(body.instructions, /even if nobody addressed it/);
+  assert.match(body.instructions, /socialReactions/);
+  assert.match(body.instructions, /subjective responses to hearing words, not proof/);
+  assert.match(body.instructions, /repeated flattery/);
+  assert.match(body.instructions, /No extra model request is needed/);
+  assert.equal(
+    openAiOutputSchema('plan').properties.socialReactions.items.properties.affinity.maximum,
+    1,
+  );
+  assert.equal(openAiOutputSchema('speech').properties.socialReactions, undefined);
+
   assert.match(body.instructions, /Do not automatically obey or help/);
   assert.match(
     body.instructions,
@@ -126,7 +136,7 @@ test('synthetic provider round-trips speech and plan cognition without granting 
       context: {
         ...optionalContext,
         knowledgeRevision: 4,
-        observations: [],
+        observations: optionalContext.observations ?? [],
         visibleEntities: [],
         ownInventory: [],
         allowedActions: ['wait'],
@@ -166,6 +176,29 @@ test('synthetic provider round-trips speech and plan cognition without granting 
   });
   assert.deepEqual(plan.proposal.cognition, cognition);
   assert.equal(plan.proposal.knowledgeRevision, 4);
+  const social = {
+    actorId: 'alice',
+    observationId: 'heard-alice',
+    affinity: 1,
+    respect: 0,
+    fear: -1,
+  };
+  const socialAnswer = {
+    actions: [{ kind: 'wait', targetId: null, itemId: null, target: null }],
+    socialReactions: [social],
+  };
+  const interpreted = await generate('plan', socialAnswer, {
+    observations: [{ id: 'heard-alice' }],
+  });
+  assert.deepEqual(interpreted.proposal.socialReactions, [social]);
+  assert.equal(interpreted.proposal.knowledgeRevision, 4);
+  assert.equal((await generate('plan', socialAnswer)).failureCode, 'PROVIDER_INVALID_EVIDENCE');
+  assert.equal(
+    (await generate('plan', { ...socialAnswer, socialReactions: [{ ...social, trust: 1 }] }))
+      .failureCode,
+    'PROVIDER_INVALID_RESULT',
+  );
+
   const bad = await generate('speech', {
     text: 'Hello',
     cognition: { ...cognition, audienceIds: ['alice'] },

@@ -531,3 +531,30 @@ test('erasure cancels dangling deferred jobs and removes erased turn metadata fr
   assert.equal(retained.projection.turn, undefined);
   assert.equal(retained.projection.entities[0].feedback, undefined);
 });
+
+test('erasing a speaker removes their retained subjective relationship and text fingerprints', () => {
+  const state = fixture();
+  const relation = state.npcBrains.keeper.living.relationships['erased-player'];
+  relation.evidenceIds = [];
+  relation.social = {
+    audienceIds: ['erased-player', 'keeper'],
+    lastObservedTick: 42,
+    recentTextKeys: ['derived-private-key'],
+  };
+  relation.character = { affinity: 3, respect: 2, fear: 0 };
+  purgeLivingNpcReferences(state, 'erased-player');
+  assert.equal(state.npcBrains.keeper.living.relationships['erased-player'], undefined);
+  assert.doesNotMatch(JSON.stringify(state), /derived-private-key/);
+});
+
+test('erasing a former listener narrows cumulative social audience without making it public', () => {
+  const state = fixture();
+  state.npcBrains.keeper.living.relationships.other.evidenceIds = [];
+  state.npcBrains.keeper.living.relationships.other.social = {
+    audienceIds: ['erased-player'],
+    lastObservedTick: 4,
+    recentTextKeys: [],
+  };
+  purgeLivingNpcReferences(state, 'erased-player');
+  assert.deepEqual(state.npcBrains.keeper.living.relationships.other.social.audienceIds, []);
+});
