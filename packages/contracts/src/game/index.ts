@@ -1,4 +1,4 @@
-import { tokenSizeSchema, footprintCells, type TokenSize } from './battlemap';
+import { tokenSizeSchema, footprintCells, hasPosition, type TokenSize } from './battlemap';
 export * from './battlemap';
 import { npcPlaceholderSchema, type NpcPlaceholder } from './npc-placeholder';
 export * from './npc-placeholder';
@@ -195,7 +195,19 @@ export const gameLabelTranslationsSchema = z
   })
   .strict();
 export type GameLabelTranslations = z.infer<typeof gameLabelTranslationsSchema>;
-export interface GameEntity extends GamePoint {
+export const unresolvedScenePresenceSchema = z
+  .object({
+    kind: z.literal('unspecified_opening'),
+    sourceMapId: gameIdSchema,
+    sourceSceneId: gameIdSchema,
+    sourceChecksum: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
+export type UnresolvedScenePresence = z.infer<typeof unresolvedScenePresenceSchema>;
+export interface GameEntityBase {
+  /** Server-private opening provenance. Never part of public projection or NPC knowledge. */
+  unresolvedScenePresence?: UnresolvedScenePresence;
+
   lifeState?: import('./lifecycle').ActorLifeState;
   /** Changes on any lifecycle transition, invalidating pre-incapacity jobs even after revival. */
   lifeRevision?: number;
@@ -237,7 +249,57 @@ export interface GameEntity extends GamePoint {
   encounterId?: string;
   knownIds?: string[];
 }
+export type PositionedGameEntity = GameEntityBase &
+  GamePoint & { spatialMode?: undefined; sceneId?: undefined };
+export type LocationOnlyGameEntity = GameEntityBase & {
+  spatialMode: 'location_only';
+  sceneId: string;
+  x?: never;
+  y?: never;
+};
+export type GameEntity = PositionedGameEntity | LocationOnlyGameEntity;
+export const scenePresenceSchema = z
+  .object({
+    version: z.literal(1),
+    entrySceneId: gameIdSchema,
+    scenes: z
+      .array(
+        z
+          .object({
+            id: gameIdSchema,
+            participantIds: z.array(gameIdSchema).max(128),
+            evidence: z
+              .object({
+                kind: z.enum(['authored_scene', 'accepted_story_plan', 'committed_event']),
+                reference: z.string().trim().min(1).max(500),
+              })
+              .strict(),
+          })
+          .strict(),
+      )
+      .min(1)
+      .max(50),
+  })
+  .strict()
+  .superRefine((value, ctx) => {
+    if (
+      new Set(value.scenes.map((s) => s.id)).size !== value.scenes.length ||
+      !value.scenes.some((s) => s.id === value.entrySceneId)
+    )
+      ctx.addIssue({ code: 'custom', message: 'Invalid scene identities' });
+    const ids = value.scenes.flatMap((s) => s.participantIds);
+    if (new Set(ids).size !== ids.length)
+      ctx.addIssue({ code: 'custom', message: 'Duplicate scene participant' });
+  });
+export type ScenePresence = z.infer<typeof scenePresenceSchema>;
+export const locationImageSchema = z
+  .object({ revisionId: z.uuid(), sha256: z.string().regex(/^[a-f0-9]{64}$/) })
+  .strict();
 export interface GameMap {
+  spatialMode?: 'location_only';
+  scenePresence?: ScenePresence;
+  locationImage?: z.infer<typeof locationImageSchema>;
+
   description?: string;
   composition?: SceneComposition;
   spatialGrounding?: MapSpatialGrounding;
@@ -488,6 +550,54 @@ export const mapSpatialGroundingSchema = z
         ctx.addIssue({ code: 'custom', message: 'Landmark outside map' });
   });
 export type MapSpatialGrounding = z.infer<typeof mapSpatialGroundingSchema>;
+function validateSpatialMap(
+  m: {
+    spatialMode?: 'location_only';
+    scenePresence?: ScenePresence;
+    spawns: unknown[];
+    blocked: unknown[];
+    exits: unknown[];
+    spatialGrounding?: unknown;
+    composition?: unknown;
+  },
+  ctx: z.RefinementCtx,
+) {
+  if (m.spatialMode === 'location_only') {
+    if (
+      !m.scenePresence ||
+      m.spawns.length ||
+      m.blocked.length ||
+      m.exits.length ||
+      m.spatialGrounding ||
+      m.composition
+    )
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Location-only maps require scene presence and no invented geometry',
+      });
+  } else if (!m.spawns.length || m.scenePresence)
+    ctx.addIssue({
+      code: 'custom',
+      message: 'Positioned maps require spawns and no scene-presence override',
+    });
+}
+function validateSpatialEntity(
+  e: {
+    spatialMode?: 'location_only';
+    sceneId?: string;
+    x?: number;
+    y?: number;
+    patrolTarget?: unknown;
+    movementTrace?: unknown;
+  },
+  ctx: z.RefinementCtx,
+) {
+  if (e.spatialMode === 'location_only') {
+    if (!e.sceneId || e.x !== undefined || e.y !== undefined || e.patrolTarget || e.movementTrace)
+      ctx.addIssue({ code: 'custom', message: 'Location-only entities cannot have coordinates' });
+  } else if (e.x === undefined || e.y === undefined || e.sceneId !== undefined)
+    ctx.addIssue({ code: 'custom', message: 'Positioned entities require coordinates' });
+}
 export const gameMapSchema = z
   .object({
     description: z.string().trim().max(6000).optional(),
@@ -496,12 +606,15 @@ export const gameMapSchema = z
     labelTranslations: gameLabelTranslationsSchema.optional(),
     composition: sceneCompositionSchema.optional(),
     spatialGrounding: mapSpatialGroundingSchema.optional(),
+    spatialMode: z.literal('location_only').optional(),
+    scenePresence: scenePresenceSchema.optional(),
+    locationImage: locationImageSchema.optional(),
     backgroundMode: z.literal('schematic').optional(),
     sceneProfile: z.enum(['observatory-interior-v1', 'observatory-roof-v1']).optional(),
     width: z.number().int().min(1).max(64),
     height: z.number().int().min(1).max(64),
     blocked: z.array(gamePointSchema).max(4096),
-    spawns: z.array(gamePointSchema).min(1).max(4),
+    spawns: z.array(gamePointSchema).max(4),
     exits: z
       .array(
         z
@@ -522,6 +635,7 @@ export const gameMapSchema = z
   })
   .strict()
   .superRefine((m, ctx) => {
+    validateSpatialMap(m, ctx);
     for (const p of [...m.blocked, ...m.spawns, ...m.exits])
       if (p.x >= m.width || p.y >= m.height)
         ctx.addIssue({ code: 'custom', message: 'Coordinate outside map' });
@@ -570,8 +684,10 @@ export const gamePublicEntitySchema = z
     characterAnimation: characterAnimationSchema.optional(),
     visual: z.enum(['key', 'token', 'journal', 'door', 'keeper', 'traveler']).optional(),
     mapId: gameIdSchema,
-    x: z.number().int().min(0).max(63),
-    y: z.number().int().min(0).max(63),
+    spatialMode: z.literal('location_only').optional(),
+    sceneId: gameIdSchema.optional(),
+    x: z.number().int().min(0).max(63).optional(),
+    y: z.number().int().min(0).max(63).optional(),
     revision: z.number().int().nonnegative(),
     ownerId: gameIdSchema.optional(),
     locked: z.boolean().optional(),
@@ -581,7 +697,9 @@ export const gamePublicEntitySchema = z
     lastInputSeq: z.number().int().nonnegative().optional(),
     encounterId: gameIdSchema.optional(),
   })
-  .strict();
+  .strict()
+  .superRefine(validateSpatialEntity)
+  .transform((entity): GameEntity => entity as GameEntity);
 export const gamePublicEncounterSchema = z
   .object({
     id: gameIdSchema,
@@ -714,8 +832,9 @@ export const gameProjectionSchema = z
     for (const e of p.entities) {
       if (
         e.mapId !== p.map.id ||
-        e.x + footprintCells(e) > p.map.width ||
-        e.y + footprintCells(e) > p.map.height ||
+        (hasPosition(e) &&
+          (e.x + footprintCells(e) > p.map.width || e.y + footprintCells(e) > p.map.height)) ||
+        (e.spatialMode === 'location_only') !== (p.map.spatialMode === 'location_only') ||
         e.ownerId !== undefined
       )
         invalid('Invalid visible entity');
@@ -802,6 +921,9 @@ export const authoredGameDraftSchema = z
             labelTranslations: gameLabelTranslationsSchema.optional(),
             composition: sceneCompositionSchema.optional(),
             spatialGrounding: mapSpatialGroundingSchema.optional(),
+            spatialMode: z.literal('location_only').optional(),
+            scenePresence: scenePresenceSchema.optional(),
+            locationImage: locationImageSchema.optional(),
             backgroundMode: z.literal('schematic').optional(),
             sceneProfile: z.enum(['observatory-interior-v1', 'observatory-roof-v1']).optional(),
             description: z.string().trim().max(6000).optional(),
@@ -809,7 +931,7 @@ export const authoredGameDraftSchema = z
             width: z.number().int().min(5).max(32),
             height: z.number().int().min(5).max(32),
             blocked: z.array(gamePointSchema).max(1024),
-            spawns: z.array(gamePointSchema).min(1).max(4),
+            spawns: z.array(gamePointSchema).max(4),
             exits: z
               .array(
                 z
@@ -840,8 +962,10 @@ export const authoredGameDraftSchema = z
             label: authoredLabel,
             labelTranslations: gameLabelTranslationsSchema.optional(),
             mapId: gameIdSchema,
-            x: z.number().int().min(0).max(31),
-            y: z.number().int().min(0).max(31),
+            spatialMode: z.literal('location_only').optional(),
+            sceneId: gameIdSchema.optional(),
+            x: z.number().int().min(0).max(31).optional(),
+            y: z.number().int().min(0).max(31).optional(),
             visual: z.enum(['key', 'token', 'journal', 'door']),
             publicProfile: z
               .object({
@@ -868,12 +992,15 @@ export const authoredGameDraftSchema = z
             id: gameIdSchema,
             npcPlaceholder: npcPlaceholderSchema.optional(),
             sourceNpcId: z.string().uuid().optional(),
+            unresolvedScenePresence: unresolvedScenePresenceSchema.optional(),
             itemStock: npcItemStockSchema.optional(),
             label: authoredLabel,
             labelTranslations: gameLabelTranslationsSchema.optional(),
             mapId: gameIdSchema,
-            x: z.number().int().min(0).max(31),
-            y: z.number().int().min(0).max(31),
+            spatialMode: z.literal('location_only').optional(),
+            sceneId: gameIdSchema.optional(),
+            x: z.number().int().min(0).max(31).optional(),
+            y: z.number().int().min(0).max(31).optional(),
             visual: z.enum(['keeper', 'traveler']),
             publicProfile: z
               .object({
@@ -931,7 +1058,23 @@ export const authoredGameDraftSchema = z
       })
       .strict(),
   })
-  .strict();
+  .strict()
+  .superRefine((d, ctx) => {
+    for (const m of d.maps) validateSpatialMap(m, ctx);
+    for (const e of [...d.objects, ...d.npcs]) validateSpatialEntity(e, ctx);
+    for (const npc of d.npcs)
+      if (
+        npc.unresolvedScenePresence &&
+        (npc.spatialMode !== 'location_only' ||
+          npc.mapId !== npc.unresolvedScenePresence.sourceMapId ||
+          npc.sceneId !== npc.unresolvedScenePresence.sourceSceneId)
+      )
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Unresolved presence must match the original location-only singleton',
+        });
+  });
+
 export type AuthoredGameDraft = z.infer<typeof authoredGameDraftSchema>;
 export interface NpcMemoryFact {
   eventId: string;
@@ -947,7 +1090,7 @@ export interface NpcBrain {
   movementGeneration?: number;
   traits: ('cautious' | 'helpful')[];
   goal: 'patrol' | 'help';
-  patrolTarget: GamePoint;
+  patrolTarget?: GamePoint;
   facts: NpcMemoryFact[];
   plan: GameAction[];
   cursor: number;

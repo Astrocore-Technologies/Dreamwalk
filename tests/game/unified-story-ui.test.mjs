@@ -139,8 +139,14 @@ test('grid speech ignores any selected NPC and inspection never chooses a recipi
     new URL('../../apps/web/components/game/game-page.tsx', import.meta.url),
     'utf8',
   );
-  assert.match(page, /if \(p.turn\) \{\s*setInspectedNpcId\(npcId\);\s*return;/);
-  assert.match(page, /if \(!p.turn && npc && !controlsDisabled && !storyBusy\)/);
+  assert.match(
+    page,
+    /if \(p.turn && p.map.spatialMode !== 'location_only'\) \{\s*setInspectedNpcId\(npcId\);\s*return;/,
+  );
+  assert.match(
+    page,
+    /\(!p.turn \|\| p.map.spatialMode === 'location_only'\) &&\s*npc &&\s*!controlsDisabled &&\s*!storyBusy/,
+  );
   const actions = await readFile(
     new URL('../../apps/web/components/game/map-actions.tsx', import.meta.url),
     'utf8',
@@ -300,7 +306,10 @@ test('public NPC inspection occupies history without replacing the composer or i
   assert.match(page, /inspection=\{/);
   assert.match(page, /publicProfile\?\.role \|\| inspectedNpc\.supportingNpc\?\.roleLabel/);
   assert.match(page, /portraitUrl=\{inspectedPortraitUrl\}/);
-  assert.match(page, /if \(!p.turn && npc && !controlsDisabled && !storyBusy\)/);
+  assert.match(
+    page,
+    /\(!p.turn \|\| p.map.spatialMode === 'location_only'\) &&\s*npc &&\s*!controlsDisabled &&\s*!storyBusy/,
+  );
   assert.match(story, /data-inspecting=\{!!inspection\}/);
   assert.match(story, /aria-hidden=\{!!inspection\}/);
   assert.match(story, /tabIndex=\{inspection \? -1 : 0\}/);
@@ -324,4 +333,25 @@ test('public NPC inspection occupies history without replacing the composer or i
   assert.match(card, /event.key === 'Escape'/);
   assert.match(card, /focus\(\{ preventScroll: true \}\)/);
   assert.match(card, /onTalk\(\);/);
+});
+
+test('scene-only speech keeps the exact selected recipient without invented proximity', async () => {
+  const recipient = { id: 'keeper', label: 'Keeper' };
+  const scene = {
+    map: { id: 'room', spatialMode: 'location_only' },
+    turn: { phase: 'player' },
+    entities: [{ id: 'keeper', kind: 'npc' }],
+  };
+  assert.equal(storyRecipientForProjection(scene, recipient), recipient);
+  assert.equal(storyRecipientForProjection(scene, null), null);
+  assert.equal(storyTargetValid(scene, 'whisper', recipient.id), true);
+  assert.equal(storyTargetValid(scene, 'whisper'), true);
+  assert.equal(storyTargetValid(scene, 'whisper', 'offstage'), false);
+  const composer = await readFile(
+    new URL('../../apps/web/components/game/unified-story.tsx', import.meta.url),
+    'utf8',
+  );
+  assert.match(composer, /locationOnly\s*\? 'sceneWhisperHint'/);
+  assert.match(composer, /channel === 'whisper'\s*\? activeRecipient\s*\? 'sceneTargetWhisperHint'/);
+  assert.match(composer, /: 'sceneSpeechHint'/);
 });

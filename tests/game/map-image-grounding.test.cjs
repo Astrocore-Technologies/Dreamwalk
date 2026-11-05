@@ -191,8 +191,13 @@ test('rocks, water, unknown, disconnected floor and low confidence never become 
   for (const cell of ['~', '#', '?', 'X', 'D']) {
     const { source, proposal } = fixture();
     const r = proposal.rooms[0];
-    r.spatialGrounding.rows[8] =
-      r.spatialGrounding.rows[8].slice(0, 14) + cell + r.spatialGrounding.rows[8].slice(15);
+    // No original safe anchor remains: the bounded repair must not choose
+    // an unrelated opening merely because some other floor exists.
+    for (const point of r.spawns)
+      r.spatialGrounding.rows[point.y] =
+        r.spatialGrounding.rows[point.y].slice(0, point.x) +
+        cell +
+        r.spatialGrounding.rows[point.y].slice(point.x + 1);
     assert.throws(() => compileStoryPlan(source, proposal), /UNSAFE_SPAWN/);
   }
   const { source, proposal } = fixture();
@@ -557,17 +562,51 @@ test('builder analyzes effective manual art bindings, aliases old map IDs and ho
     assert.deepEqual(requested, [{ location_id: 'room', revision_id: manual }]);
     assert.equal(prepared.bindings[0].slot, 'map:room:background');
     assert.equal(prepared.source.mapImages[0].revisionId, manual);
-    overrides = [{ location_id: 'room', revision_id: studio, source_hash: 'synthetic' }];
+    overrides = [
+      { location_id: 'room', revision_id: studio, source_hash: 'synthetic', map_id: null },
+    ];
     const changed = await service.source(c, 'owner', 'story');
     assert.deepEqual(requested, [{ location_id: 'room', revision_id: studio }]);
     assert.notEqual(prepared.hash, changed.hash);
     assert.equal(service.sameAuthorSource(prepared.source, changed.source), false);
+    assert.equal(changed.source.mapImages[0].locationId, 'room');
+    assert.equal(changed.source.mapImages[0].framing, 'contain-24x24');
+    assert.equal(changed.source.omittedMapImages, undefined);
+    const exactPlan = structuredClone(f.proposal);
+    exactPlan.rooms[0].spatialGrounding.imageRevisionId = studio;
+    assert.equal(
+      compileStoryPlan(changed.source, exactPlan).playable.maps.room.spatialGrounding
+        .imageRevisionId,
+      studio,
+    );
+    exactPlan.rooms[0].spatialGrounding.confidence = 0.2;
+    assert.throws(() => compileStoryPlan(changed.source, exactPlan), /MAP_IMAGE_UNCERTAIN/);
   } finally {
     imagesModule.prepareStoryMapImages = original;
   }
 });
 
-test('missing vision policy offers a text-only schematic without pretending to analyze images', () => {
+function locationOnlyPlan(proposal) {
+  const room = proposal.rooms[0];
+  delete room.spatialGrounding;
+  room.spawns = [];
+  room.blocked = [];
+  room.surfaces = [];
+  room.scenePresence = {
+    version: 1,
+    entrySceneId: 'arrival',
+    scenes: [
+      {
+        id: 'arrival',
+        participantIds: [],
+        evidence: { kind: 'accepted_story_plan', reference: room.locationId },
+      },
+    ],
+  };
+  return proposal;
+}
+
+test('missing vision policy offers location-only RP without pretending to analyze images', () => {
   const { schematicStorySource } = require('../../apps/api/dist/game/story-map-mode');
   const { source, proposal } = fixture();
   const fallback = schematicStorySource(source, {});
@@ -591,8 +630,7 @@ test('missing vision policy offers a text-only schematic without pretending to a
     source,
     'configured invalid policy does not silently downgrade',
   );
-  const planned = structuredClone(proposal);
-  delete planned.rooms[0].spatialGrounding;
+  const planned = locationOnlyPlan(structuredClone(proposal));
   assert.ok(compileStoryPlan(fallback, planned).playable);
   const body = JSON.parse(
     buildAuthoringTextRequestBody(
@@ -606,12 +644,11 @@ test('missing vision policy offers a text-only schematic without pretending to a
   assert.equal(body.input.includes('omittedMapImages'), true);
 });
 
-test('schematic launch never binds unanalysed artwork over invented coordinates', () => {
+test('location-only launch keeps unanalysed original artwork with no invented coordinates', () => {
   const { schematicStorySource } = require('../../apps/api/dist/game/story-map-mode');
   const { PlayableService } = require('../../apps/api/dist/game/playable.service');
   const { source, proposal } = fixture();
-  const planned = structuredClone(proposal);
-  delete planned.rooms[0].spatialGrounding;
+  const planned = locationOnlyPlan(structuredClone(proposal));
   const portrait = { slot: 'npc:portrait:portrait', revisionId: randomUUID() };
   const original = {
     plannerSource: source,
@@ -623,7 +660,8 @@ test('schematic launch never binds unanalysed artwork over invented coordinates'
   const schematic = { ...original, plannerSource: schematicStorySource(source, {}) };
   const service = new PlayableService({}, {}, {});
   const playable = service.compileLaunchPlan(schematic, planned);
-  assert.deepEqual(playable.artBindings, [portrait]);
+  assert.deepEqual(playable.artBindings, original.sourceArtBindings);
+  assert.equal(playable.maps.room.spatialMode, 'location_only');
   assert.equal(playable.maps.room.spatialGrounding, undefined);
   assert.equal(original.sourceArtBindings.length, 2);
   assert.equal(
@@ -678,19 +716,19 @@ test('launch fallback is source-hash fenced, repeatable, private, and leaves com
   assert.ok(compiled.package.plannerSource.mapImages);
 });
 
-test('schematic author drafts preserve the image association but publication filters its playable view', () => {
+test('location-only author drafts and publication preserve the exact original map association', () => {
   const {
     schematicStorySource,
     playableMapBindings,
   } = require('../../apps/api/dist/game/story-map-mode');
   const { source, proposal } = fixture();
-  const planned = structuredClone(proposal);
-  delete planned.rooms[0].spatialGrounding;
+  const planned = locationOnlyPlan(structuredClone(proposal));
   const checked = compileStoryPlan(schematicStorySource(source, {}), planned);
-  assert.equal(checked.draft.maps[0].backgroundMode, 'schematic');
+  assert.equal(checked.draft.maps[0].spatialMode, 'location_only');
+  assert.equal(checked.draft.maps[0].backgroundMode, undefined);
   const binding = { slot: 'map:room:background', revisionId: source.mapImages[0].revisionId };
   const authoredBindings = [binding];
-  assert.deepEqual(playableMapBindings(authoredBindings, checked.playable.maps), []);
+  assert.deepEqual(playableMapBindings(authoredBindings, checked.playable.maps), [binding]);
   assert.deepEqual(authoredBindings, [binding]);
   assert.deepEqual(
     playableMapBindings(authoredBindings, compileStoryPlan(source, proposal).playable.maps),
@@ -893,4 +931,227 @@ test('illustration file access recomputes the current map and still requires mem
   member = true;
   takenDown = true;
   await assert.rejects(read);
+});
+
+function syntheticMapServiceConfig() {
+  const id = require.resolve('../../apps/api/dist/config');
+  require.cache[id] = {
+    id,
+    filename: id,
+    loaded: true,
+    exports: {
+      config: {
+        NODE_ENV: 'test',
+        DATABASE_URL: 'postgresql://synthetic@127.0.0.1:1/never_connect',
+      },
+    },
+  };
+}
+
+test('location map without existing geometry freezes the exact map revision and apply assigns its map link', async () => {
+  syntheticMapServiceConfig();
+  const { PlayableService } = require('../../apps/api/dist/game/playable.service');
+  const { StoryBuildService } = require('../../apps/api/dist/game/story-build.service');
+  const imagesModule = require('../../apps/api/dist/game/story-map-images');
+  const original = imagesModule.prepareStoryMapImages;
+  const { source, proposal } = fixture();
+  const image = source.mapImages[0];
+  let payload, pinned, requested;
+  const statements = [];
+  imagesModule.prepareStoryMapImages = async (_c, _art, _owner, images) => {
+    requested = images;
+    return images.map((entry) => ({
+      ...image,
+      locationId: entry.location_id,
+      revisionId: entry.revision_id,
+    }));
+  };
+  const c = {
+    query: async (sql, args) => {
+      statements.push([sql, args]);
+      if (sql.includes('FROM studio_location_images'))
+        return { rows: [{ location_id: 'room', revision_id: image.revisionId, map_id: null }] };
+      if (sql.startsWith('SELECT count')) return { rows: [{ n: 0 }] };
+      if (sql.startsWith('INSERT INTO game_playable_versions')) payload = JSON.parse(args[4]);
+      return { rows: [] };
+    },
+  };
+  const art = {
+    prepareLaunchManifestTx: async (_c, _id, _owner, _locations, _npcs, bindings) => ({
+      draftRevision: 1,
+      bindings,
+    }),
+    pinPrepared: async (_c, _id, prepared) => {
+      pinned = prepared;
+    },
+    reusableRevisionTx: async (_c, _owner, id) => {
+      assert.equal(id, image.revisionId);
+      return { row: { metadata: { kind: 'background', camera: 'top-down', style: 'drawn2D' } } };
+    },
+  };
+  try {
+    const service = new PlayableService({}, {}, art);
+    await service.freezeLaunchSource(
+      c,
+      {
+        id: randomUUID(),
+        owner_id: 'owner',
+        title: source.title,
+        edit_revision: 1,
+        data: { content: source.content },
+      },
+      'private',
+    );
+    assert.deepEqual(requested, [{ location_id: 'room', revision_id: image.revisionId }]);
+    assert.equal(payload.plannerSource.mapImages[0].locationId, 'room');
+    assert.equal(payload.plannerSource.mapImages[0].revisionId, image.revisionId);
+    assert.deepEqual(pinned.bindings, [
+      { slot: 'map:room:background', revisionId: image.revisionId },
+    ]);
+    assert.equal(
+      service.compileLaunchPlan(payload, proposal).maps.room.spatialGrounding.imageRevisionId,
+      image.revisionId,
+    );
+    const checked = compileStoryPlan(source, proposal);
+    const builder = new StoryBuildService({ tx: (work) => work(c) }, art);
+    builder.lock = async () => {};
+    builder.own = async () => ({
+      status: 'proposed',
+      project_status: 'concept',
+      source_hash: 'a'.repeat(64),
+      adventure_id: 'story',
+      proposal,
+      draft: checked.draft,
+    });
+    builder.source = async () => ({
+      hash: 'a'.repeat(64),
+      source,
+      images: [{ location_id: 'room', revision_id: image.revisionId, map_id: null }],
+      bindings: [],
+      gameRevision: 1,
+      artRevision: 1,
+    });
+    await builder.apply('owner', randomUUID(), {
+      operationId: randomUUID(),
+      sourceHash: 'a'.repeat(64),
+      reviewed: true,
+      imageReuseConsent: true,
+    });
+    const linked = statements.find(([sql]) => sql.startsWith('UPDATE studio_location_images'));
+    assert.deepEqual(linked[1], ['story', 'room', 'room']);
+    const saved = statements.find(([sql]) => sql.startsWith('INSERT INTO art_story_asset_drafts'));
+    assert.deepEqual(JSON.parse(saved[1][1]), [
+      { slot: 'map:room:background', revisionId: image.revisionId },
+    ]);
+  } finally {
+    imagesModule.prepareStoryMapImages = original;
+  }
+});
+
+test('source manifest pins survive a filtered playable view and exact revision access remains required', async () => {
+  syntheticMapServiceConfig();
+  const { AssetReuseService } = require('../../apps/api/dist/assets/reuse.service');
+  const { visualDigest } = require('../../apps/api/dist/visual-authoring/fingerprint');
+  const binding = {
+    slot: 'map:room:background',
+    revisionId: randomUUID(),
+    sha256: 'a'.repeat(64),
+    mime: 'image/png',
+    width: 768,
+    height: 768,
+  };
+  const prepared = {
+    adventureId: 'story',
+    draftRevision: 1,
+    bindings: [binding],
+    checksum: visualDigest([binding]),
+    pins: [{ ...binding, grantId: null, rights: { licenseLabel: 'Owned' } }],
+  };
+  let sourceBindings = [binding],
+    available = true,
+    takenDown = false;
+  const statements = [];
+  const c = {
+    query: async (sql, args) => {
+      statements.push([sql, args]);
+      if (sql.startsWith('SELECT adventure_id,package'))
+        return {
+          rows: [
+            {
+              adventure_id: 'story',
+              package: { compiled: { artBindings: [] }, sourceArtBindings: sourceBindings },
+            },
+          ],
+        };
+      if (sql.startsWith('SELECT package'))
+        return {
+          rows: [{ package: { compiled: { artBindings: [] }, sourceArtBindings: sourceBindings } }],
+        };
+      if (sql.startsWith('SELECT f.owner_id')) return { rows: [{ owner_id: 'owner' }] };
+      if (sql.startsWith('SELECT id FROM users') || sql.startsWith('SELECT id FROM assets'))
+        return { rows: [{}], rowCount: 1 };
+      if (sql.startsWith('SELECT r.upload_id')) {
+        assert.deepEqual(args, [binding.revisionId, 'version', binding.slot]);
+        return { rows: available ? [{ upload_id: 'upload' }] : [] };
+      }
+      if (sql.startsWith('SELECT 1 FROM art_asset_takedowns'))
+        return { rows: [], rowCount: takenDown ? 1 : 0 };
+      return { rows: [], rowCount: 0 };
+    },
+  };
+  const assets = new AssetReuseService({});
+  await assets.pinPrepared(c, 'version', prepared);
+  const pin = statements.find(([sql]) => sql.startsWith('INSERT INTO art_playable_pins'));
+  assert.deepEqual(pin[1], [
+    'version',
+    binding.slot,
+    binding.revisionId,
+    null,
+    { licenseLabel: 'Owned' },
+  ]);
+  await assets.assertPinsAvailable(c, 'version');
+  available = false;
+  await assert.rejects(() => assets.assertPinsAvailable(c, 'version'), /ART_UNAVAILABLE/);
+  available = true;
+  takenDown = true;
+  await assert.rejects(() => assets.assertPinsAvailable(c, 'version'), /ART_UNAVAILABLE/);
+  sourceBindings = [{ ...binding, revisionId: randomUUID() }];
+  await assert.rejects(() => assets.pinPrepared(c, 'version', prepared), /MANIFEST_CONFLICT/);
+});
+
+test('compiled location-only freeze keeps full source and playable map manifests', async () => {
+  syntheticMapServiceConfig();
+  const { PlayableService } = require('../../apps/api/dist/game/playable.service');
+  const { schematicStorySource } = require('../../apps/api/dist/game/story-map-mode');
+  const { source, proposal } = fixture();
+  locationOnlyPlan(proposal);
+  const draft = compileStoryPlan(schematicStorySource(source, {}), proposal).draft;
+  const binding = { slot: 'map:room:background', revisionId: source.mapImages[0].revisionId };
+  let payload;
+  const c = {
+    query: async (sql, args) => {
+      if (sql.startsWith('SELECT draft,revision')) return { rows: [{ draft, revision: 1 }] };
+      if (sql.startsWith('SELECT count')) return { rows: [{ n: 0 }] };
+      if (sql.startsWith('INSERT INTO game_playable_versions')) payload = JSON.parse(args[4]);
+      return { rows: [] };
+    },
+  };
+  const service = new PlayableService(
+    {},
+    {},
+    {
+      prepareManifestTx: async () => ({ draftRevision: 1, bindings: [binding] }),
+      pinPrepared: async (_c, _version, prepared) => assert.deepEqual(prepared.bindings, [binding]),
+    },
+  );
+  service.validateNpcReferences = async () => {};
+  service.validateLocations = () => {};
+  await service.freeze(
+    c,
+    { id: randomUUID(), owner_id: 'owner', title: source.title, data: { content: source.content } },
+    'private',
+    1,
+  );
+  assert.deepEqual(payload.sourceArtBindings, [binding]);
+  assert.deepEqual(payload.compiled.artBindings, [binding]);
 });

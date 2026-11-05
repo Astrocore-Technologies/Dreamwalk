@@ -14,12 +14,36 @@ export const TOKEN_FOOTPRINT: Readonly<Record<TokenSize, number>> = {
   huge: 2.55,
 };
 
-type Occupant = { x: number; y: number; kind?: string; tokenSize?: TokenSize };
+type Occupant = {
+  x?: number;
+  y?: number;
+  spatialMode?: 'location_only';
+  kind?: string;
+  tokenSize?: TokenSize;
+};
+/** Unknown positions never acquire a placeholder coordinate or collision footprint. */
+export function hasPosition<T extends { x?: number; y?: number; spatialMode?: 'location_only' }>(
+  entity: T | undefined | null,
+): entity is T & { x: number; y: number } {
+  return (
+    !!entity &&
+    entity.spatialMode !== 'location_only' &&
+    Number.isFinite(entity.x) &&
+    Number.isFinite(entity.y)
+  );
+}
+export function isLocationOnlyMap(
+  map: { spatialMode?: 'location_only' } | undefined | null,
+): boolean {
+  return map?.spatialMode === 'location_only';
+}
+
 export function footprintCells(entity?: { kind?: string; tokenSize?: TokenSize }): number {
   if (entity?.kind !== 'npc' && entity?.kind !== 'player') return 1;
   return entity.tokenSize === 'huge' ? 3 : entity.tokenSize === 'large' ? 2 : 1;
 }
 export function occupiedCells(entity: Occupant) {
+  if (!hasPosition(entity)) return [];
   const edge = footprintCells(entity);
   return Array.from({ length: edge * edge }, (_, i) => ({
     x: entity.x + (i % edge),
@@ -28,6 +52,7 @@ export function occupiedCells(entity: Occupant) {
 }
 /** Manhattan distance between nearest occupied cells (zero means overlap). */
 export function footprintDistance(a: Occupant, b: Occupant): number {
+  if (!hasPosition(a) || !hasPosition(b)) return Infinity;
   const aw = footprintCells(a),
     bw = footprintCells(b);
   return (
@@ -42,6 +67,7 @@ export function footprintInside(
   entity: Occupant,
   area: { x: number; y: number; width: number; height: number },
 ) {
+  if (!hasPosition(entity)) return false;
   const edge = footprintCells(entity);
   return (
     entity.x >= area.x &&
@@ -55,6 +81,7 @@ export function footprintIntersectsArea(
   entity: Occupant,
   area: { x: number; y: number; width: number; height: number },
 ) {
+  if (!hasPosition(entity)) return false;
   const edge = footprintCells(entity);
   return (
     entity.x < area.x + area.width &&
@@ -66,6 +93,7 @@ export function footprintIntersectsArea(
 
 /** Candidate top-left anchors whose footprint touches a target edge. */
 export function adjacentFootprintAnchors(actor: Occupant, target: Occupant) {
+  if (!hasPosition(actor) || !hasPosition(target)) return [];
   const own = footprintCells(actor),
     other = footprintCells(target);
   const points: { x: number; y: number }[] = [];

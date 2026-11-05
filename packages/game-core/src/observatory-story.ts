@@ -1,3 +1,4 @@
+import { hasPosition } from '@dreamwalk/contracts';
 import type { AuthoredGameDraft } from '@dreamwalk/contracts';
 import { createAuthoredDraft } from './authored';
 
@@ -64,6 +65,7 @@ export function createCompleteObservatoryDraft(): AuthoredGameDraft {
   );
   const keeper = draft.npcs.find((npc) => npc.id === 'keeper')!;
   // This small scene has a staffed post: do not walk away while a player reads the offer.
+  if (!hasPosition(keeper)) throw new Error('OBSERVATORY_POSITION_REQUIRED');
   keeper.patrolTarget = { x: keeper.x, y: keeper.y };
   keeper.personality = {
     role: 'helper',

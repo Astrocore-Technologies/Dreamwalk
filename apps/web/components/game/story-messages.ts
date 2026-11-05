@@ -81,6 +81,23 @@ export const storyMessages = {
     'Whispering without a recipient is unavailable in this old save. Speech to everyone nearby requires explicitly enabling turn-based play.',
     'У старому збереженні шепіт без співрозмовника недоступний. Для мови до всіх поруч потрібно явно ввімкнути покрокові ходи.',
   ],
+  sceneSpeech: ['Речь в сцене', 'Speech in the scene', 'Мова в сцені'],
+  sceneWhisper: ['Личный шёпот', 'Private whisper', 'Особистий шепіт'],
+  sceneSpeechHint: [
+    'Речь обращена к участникам текущей сцены. Точные расстояния пока не определены.',
+    'Speech is addressed to the participants in this scene. Exact distances are not established yet.',
+    'Мова звернена до учасників поточної сцени. Точні відстані ще не визначені.',
+  ],
+  sceneTargetWhisperHint: [
+    'Шёпот услышит только выбранный собеседник.',
+    'Only the selected recipient can hear the whisper.',
+    'Шепіт почує лише обраний співрозмовник.',
+  ],
+  sceneWhisperHint: [
+    'Без выбранного собеседника этот шёпот останется в твоём ходе.',
+    'Without a selected recipient, this whisper stays in your own turn.',
+    'Без обраного співрозмовника цей шепіт залишиться у твоєму ході.',
+  ],
   nearbySpeech: ['Речь рядом', 'Speech nearby', 'Мова поруч'],
   nearbyWhisper: ['Шёпот рядом', 'Nearby whisper', 'Шепіт поруч'],
   areaSpeech: [

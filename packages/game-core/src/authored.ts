@@ -1,3 +1,4 @@
+import { hasPosition } from '@dreamwalk/contracts';
 import { initializeTurnController } from './turns';
 import {
   BATTLEMAP_CELLS,
@@ -109,6 +110,18 @@ export function createAuthoredDraft(
     roundPolicy: { maxRounds: 5, planningMs: 30000 },
   };
 }
+function authoredPosition(e: {
+  spatialMode?: 'location_only';
+  sceneId?: string;
+  x?: number;
+  y?: number;
+}):
+  | { spatialMode: 'location_only'; sceneId: string; x?: never; y?: never }
+  | { x: number; y: number; spatialMode?: undefined; sceneId?: undefined } {
+  return e.spatialMode === 'location_only'
+    ? { spatialMode: 'location_only', sceneId: e.sceneId! }
+    : { x: e.x!, y: e.y! };
+}
 export function compilePlayableDraft(input: unknown): {
   playable?: PlayablePackage;
   errors: string[];
@@ -174,8 +187,7 @@ export function compilePlayableDraft(input: unknown): {
       visual: o.visual,
       ...(o.publicProfile ? { publicProfile: structuredClone(o.publicProfile) } : {}),
       mapId: o.mapId,
-      x: o.x,
-      y: o.y,
+      ...authoredPosition(o),
       revision: 0,
       ...(o.kind === 'door'
         ? { locked: o.locked ?? false, open: o.open ?? false, keyId: o.keyId }
@@ -183,11 +195,27 @@ export function compilePlayableDraft(input: unknown): {
     };
   }
   for (const n of d.npcs) {
+    if (n.unresolvedScenePresence) {
+      const map = maps[n.mapId];
+      const scene = map?.scenePresence?.scenes.find((scene) => scene.id === n.sceneId);
+      if (
+        n.sourceNpcId !== n.id ||
+        map?.spatialMode !== 'location_only' ||
+        !scene ||
+        map.scenePresence?.entrySceneId === scene.id ||
+        scene.participantIds.length !== 1 ||
+        scene.participantIds[0] !== n.id
+      )
+        errors.push(`npc:${n.id}:unresolved-source-presence`);
+    }
     entities[n.id] = {
       id: n.id,
       kind: 'npc',
       ...(n.tokenSize ? { tokenSize: n.tokenSize } : {}),
       ...(n.npcPlaceholder ? { npcPlaceholder: n.npcPlaceholder } : {}),
+      ...(n.unresolvedScenePresence
+        ? { unresolvedScenePresence: structuredClone(n.unresolvedScenePresence) }
+        : {}),
       ...(n.characterAnimation
         ? { characterAnimation: structuredClone(n.characterAnimation) }
         : {}),
@@ -196,8 +224,7 @@ export function compilePlayableDraft(input: unknown): {
       visual: n.visual,
       ...(n.publicProfile ? { publicProfile: structuredClone(n.publicProfile) } : {}),
       mapId: n.mapId,
-      x: n.x,
-      y: n.y,
+      ...authoredPosition(n),
       revision: 0,
       inventory: [],
       ...(n.itemStock ? { itemStock: structuredClone(n.itemStock) } : {}),
@@ -219,7 +246,7 @@ export function compilePlayableDraft(input: unknown): {
         : {}),
       traits: ['cautious', 'helpful'],
       goal: n.goal,
-      patrolTarget: n.patrolTarget ?? { x: n.x, y: n.y },
+      ...(hasPosition(n) ? { patrolTarget: n.patrolTarget ?? { x: n.x, y: n.y } } : {}),
       facts: [],
       plan: [],
       cursor: 0,
@@ -376,7 +403,7 @@ export function compilePlayableDraft(input: unknown): {
           kind: 'known_entity',
           tick: 0,
           mapId: entity.mapId,
-          point: { x: entity.x, y: entity.y },
+          ...(hasPosition(entity) ? { point: { x: entity.x, y: entity.y } } : {}),
           channel: 'direct',
           confidence: 'witnessed',
           targetId: entity.id,
@@ -427,12 +454,15 @@ export function compilePlayableDraft(input: unknown): {
   const state = createStateFromPlayable(playable, [], 1);
   errors.push(...validateMapState(state));
   for (const m of Object.values(maps)) {
+    if (m.spatialMode === 'location_only') continue;
     if (m.spatialGrounding) {
       if (m.width !== BATTLEMAP_CELLS || m.height !== BATTLEMAP_CELLS)
         errors.push(`map:${m.id}:image-grounding-size`);
       for (const p of m.spawns)
         if (m.spatialGrounding.rows[p.y]?.[p.x] !== '.') errors.push(`map:${m.id}:image-spawn`);
-      for (const npc of Object.values(entities).filter((e) => e.kind === 'npc' && e.mapId === m.id))
+      for (const npc of Object.values(entities)
+        .filter((e) => e.kind === 'npc' && e.mapId === m.id)
+        .filter(hasPosition))
         for (let y = npc.y; y < npc.y + footprintCells(npc); y++)
           for (let x = npc.x; x < npc.x + footprintCells(npc); x++)
             if (m.spatialGrounding.rows[y]?.[x] !== '.')
@@ -450,7 +480,7 @@ export function compilePlayableDraft(input: unknown): {
   }
   const solid = new Set<string>();
   for (const e of Object.values(entities)) {
-    if (e.ownerId) continue;
+    if (e.ownerId || !hasPosition(e)) continue;
     const map = maps[e.mapId];
     if (!map) continue;
     if (map.blocked.some((p) => p.x === e.x && p.y === e.y)) errors.push(`entity:${e.id}:wall`);
@@ -459,7 +489,11 @@ export function compilePlayableDraft(input: unknown): {
       if (solid.has(cell)) errors.push(`entity:${e.id}:overlap`);
       solid.add(cell);
     }
-    if (e.kind === 'npc' && !findPath(state, e.mapId, e, npcBrains[e.id].patrolTarget, e.id))
+    if (
+      e.kind === 'npc' &&
+      npcBrains[e.id].patrolTarget &&
+      !findPath(state, e.mapId, e, npcBrains[e.id].patrolTarget!, e.id)
+    )
       errors.push(`npc:${e.id}:patrol-path`);
   }
   // Discover map entrances and keys together: an unreachable second map cannot donate a key.
@@ -467,17 +501,24 @@ export function compilePlayableDraft(input: unknown): {
   for (const e of Object.values(open.entities)) if (e.kind === 'door' && !e.locked) e.open = true;
   const entrances = new Map<string, { x: number; y: number }[]>();
   if (maps[d.startMapId]) entrances.set(d.startMapId, [...maps[d.startMapId].spawns]);
+  // Location travel is already an explicit semantic action to known destinations. A mixed
+  // package may arrive through a validated positioned spawn, without inventing a grid exit.
+  if (Object.values(maps).some((m) => m.spatialMode === 'location_only'))
+    for (const map of Object.values(maps))
+      if (map.spatialMode !== 'location_only') entrances.set(map.id, [...map.spawns]);
   // Creature-held objects are reachable at a free adjacent edge, not by walking
   // into the carrier's occupied cells. Legacy 1x1 reachability stays unchanged.
   const reachableLocation = (
     mapId: string,
-    point: { x: number; y: number } & Partial<GameEntity>,
+    point: { x?: number; y?: number } & Partial<GameEntity>,
   ) =>
-    (entrances.get(mapId) ?? []).some((spawn) =>
-      (footprintCells(point) > 1 ? adjacentFootprintAnchors(spawn, point) : [point]).some(
-        (target) => findPath(open, mapId, spawn, target) !== null,
-      ),
-    );
+    maps[mapId]?.spatialMode === 'location_only' ||
+    (hasPosition(point) &&
+      (entrances.get(mapId) ?? []).some((spawn) =>
+        (footprintCells(point) > 1 ? adjacentFootprintAnchors(spawn, point) : [point]).some(
+          (target) => findPath(open, mapId, spawn, target) !== null,
+        ),
+      ));
   const keys = new Set<string>();
   let changed = true;
   for (let iteration = 0; changed && iteration < 128; iteration++) {
@@ -491,7 +532,9 @@ export function compilePlayableDraft(input: unknown): {
         changed = true;
       }
     }
-    for (const door of Object.values(open.entities).filter((e) => e.kind === 'door' && e.locked)) {
+    for (const door of Object.values(open.entities)
+      .filter((e) => e.kind === 'door' && e.locked)
+      .filter(hasPosition)) {
       if (
         door.keyId &&
         keys.has(door.keyId) &&
@@ -519,8 +562,12 @@ export function compilePlayableDraft(input: unknown): {
         }
       }
   }
-  for (const id of Object.keys(maps)) if (!entrances.has(id)) errors.push(`map:${id}:unreachable`);
-  for (const door of Object.values(open.entities).filter((e) => e.kind === 'door' && e.locked))
+  for (const id of Object.keys(maps))
+    if (maps[id].spatialMode !== 'location_only' && !entrances.has(id))
+      errors.push(`map:${id}:unreachable`);
+  for (const door of Object.values(open.entities).filter(
+    (e) => e.kind === 'door' && e.locked && hasPosition(e),
+  ))
     errors.push(`entity:${door.id}:unreachable-key`);
   for (const m of Object.values(maps))
     for (const exit of m.exits)
@@ -533,7 +580,10 @@ export function compilePlayableDraft(input: unknown): {
     for (const condition of objective.completion.conditions) {
       const prefix = `objective:${objective.id}`;
       if (condition.kind === 'party_reaches_map') {
-        if (!maps[condition.mapId] || !entrances.has(condition.mapId))
+        if (
+          !maps[condition.mapId] ||
+          (maps[condition.mapId].spatialMode !== 'location_only' && !entrances.has(condition.mapId))
+        )
           errors.push(`${prefix}:unreachable-map`);
         continue;
       }

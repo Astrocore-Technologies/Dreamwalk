@@ -1,3 +1,6 @@
+import { sharesScene, enterScene, publicSceneMap, scenePresenceErrors } from './scene-presence';
+export { sharesScene } from './scene-presence';
+import { hasPosition } from '@dreamwalk/contracts';
 import { travelLocations, travelToLocation } from './location-travel';
 import { isActorConscious, actorLifeState } from '@dreamwalk/contracts';
 import { observedVisible } from './observation-visibility';
@@ -49,15 +52,17 @@ const directions = [
 export function walkable(
   s: GameState,
   mapId: string,
-  p: GamePoint,
+  p: { x?: number; y?: number },
   actorId?: string,
   strict = false,
 ): boolean {
+  if (!hasPosition(p)) return false;
   const m = s.maps[mapId];
   const actor = actorId ? s.entities[actorId] : undefined;
-  const placed = { ...actor, ...p };
+  const placed = { ...actor, ...p, spatialMode: undefined };
   if (
     !m ||
+    m.spatialMode === 'location_only' ||
     !footprintInside(placed, { x: 0, y: 0, width: m.width, height: m.height }) ||
     occupiedCells(placed).some((cell) => m.blocked.some((b) => same(b, cell)))
   )
@@ -76,12 +81,14 @@ export function walkable(
 export function findPath(
   s: GameState,
   mapId: string,
-  from: GamePoint,
-  to: GamePoint,
+  from: { x?: number; y?: number; spatialMode?: 'location_only' },
+  to: { x?: number; y?: number; spatialMode?: 'location_only' },
   actorId?: string,
   strict = false,
   area?: GameEncounter['area'],
 ): GamePoint[] | null {
+  if (!hasPosition(from) || !hasPosition(to) || s.maps[mapId]?.spatialMode === 'location_only')
+    return null;
   if (
     (area &&
       (!footprintInside({ ...s.entities[actorId ?? ''], ...from }, area) ||
@@ -216,6 +223,25 @@ export function addPlayer(state: GameState, id: string): GameResult {
     n = Object.values(s.entities).filter((e) => e.kind === 'player').length;
   const mapId = s.startMapId ?? 'observatory',
     map = s.maps[mapId];
+  if (map?.spatialMode === 'location_only') {
+    const sceneId = map.scenePresence?.entrySceneId;
+    if (!sceneId) return fail(state, 'TARGET_UNAVAILABLE');
+    const actor: GameEntity = {
+      id,
+      kind: 'player',
+      mapId,
+      spatialMode: 'location_only',
+      sceneId,
+      revision: 0,
+      inventory: [],
+      movementGeneration: 0,
+      lastInputSeq: 0,
+    };
+    s.entities[id] = actor;
+    if (!enterScene(s, actor, mapId, sceneId)) return fail(state, 'TARGET_UNAVAILABLE');
+    s.revision++;
+    return result(s, [{ kind: 'actor.joined', actorId: id, mapId }]);
+  }
   if (!map?.spawns.length) return fail(state, 'PATH_BLOCKED');
   const spawn = map.spawns
     .map((_, offset) => map.spawns[(n + offset) % map.spawns.length])
@@ -240,7 +266,7 @@ export function moveInput(state: GameState, id: string, input: GameMove): GameRe
   const a = state.entities[id];
   if (!a || !isActorConscious(a) || (a.kind !== 'player' && a.kind !== 'npc'))
     return fail(state, 'FORBIDDEN');
-  if (a.encounterId) return fail(state, 'WRONG_MODE');
+  if (!hasPosition(a) || a.encounterId) return fail(state, 'WRONG_MODE');
   if (input.movementGeneration !== a.movementGeneration || input.inputSeq <= (a.lastInputSeq ?? 0))
     return fail(state, 'STALE_STATE');
   const path = findPath(state, a.mapId, a, input.target, id);
@@ -276,7 +302,7 @@ export function tick(state: GameState, tickCount = 1): GameResult {
     s.tick++;
     if (s.tick % 4 !== 0) continue;
     for (const a of Object.values(s.entities).sort((a, b) => a.id.localeCompare(b.id))) {
-      if (!isActorConscious(a) || a.encounterId || !a.path?.length) continue;
+      if (!hasPosition(a) || !isActorConscious(a) || a.encounterId || !a.path?.length) continue;
       const next = a.path[0];
       if (
         !walkable(s, a.mapId, next, a.id, !!s.npcBrains?.[a.id]?.living?.companionship) ||
@@ -300,6 +326,7 @@ export function tick(state: GameState, tickCount = 1): GameResult {
   return result(s, events);
 }
 export function visible(s: GameState, a: GameEntity, b: GameEntity): boolean {
+  if (!hasPosition(a) || !hasPosition(b)) return sharesScene(s, a, b);
   if (a.mapId !== b.mapId || b.ownerId || footprintDistance(a, b) > 9) return false;
   // Any exposed occupied cell can be seen; neither collision footprint nor anchor
   // position may turn an otherwise visible large creature invisible.
@@ -353,6 +380,7 @@ function actionInternal(
   if (action.kind === 'consume') return consumeWorldItem(state, id, action.targetId!);
   if (action.kind === 'communicate') return communicateNpcObservations(state, id, action);
   if (action.kind === 'move_to') {
+    if (!hasPosition(a)) return fail(state, 'WRONG_MODE');
     if (!action.target) return fail(state, 'INVALID_ACTION');
     if (!inRound)
       return moveInput(state, id, {
@@ -375,7 +403,8 @@ function actionInternal(
   }
   if (['wait', 'defend', 'flee'].includes(action.kind)) {
     const s = copy(state);
-    if (action.kind === 'flee' && a.encounterId) {
+    if (action.kind === 'flee' && !hasPosition(a)) return fail(state, 'WRONG_MODE');
+    if (action.kind === 'flee' && a.encounterId && hasPosition(a)) {
       const e = s.encounters[a.encounterId];
       // A large actor at the boundary needs its whole footprint to clear it.
       // Validate the swept path; never jump a wall, actor, or another encounter.
@@ -460,7 +489,8 @@ function actionInternal(
   }
   const target = action.targetId ? state.entities[action.targetId] : undefined;
   if (!target || !visible(state, a, target)) return fail(state, 'TARGET_UNAVAILABLE');
-  if (footprintDistance(a, target) > 1) return fail(state, 'OUT_OF_RANGE');
+  if (!sharesScene(state, a, target) && footprintDistance(a, target) > 1)
+    return fail(state, 'OUT_OF_RANGE');
   if (
     ['talk', 'distract'].includes(action.kind) &&
     target.kind === 'npc' &&
@@ -495,6 +525,11 @@ function actionInternal(
         delete t.item.surfaceSlot;
       }
       if (t.kind !== 'item' || t.ownerId) return fail(state, 'TARGET_UNAVAILABLE');
+      for (const scene of s.maps[t.mapId].scenePresence?.scenes ?? [])
+        if (scene.participantIds.includes(t.id)) {
+          scene.participantIds = scene.participantIds.filter((member) => member !== t.id);
+          s.maps[t.mapId].revision++;
+        }
       t.ownerId = id;
       (actor.inventory ??= []).push(t.id);
       break;
@@ -588,7 +623,8 @@ export const applyAction = (state: GameState, id: string, action: GameAction): G
 };
 export function beginEncounter(state: GameState, id: string, nowMs = 0): GameResult {
   const actor = state.entities[id];
-  if (!actor || !isActorConscious(actor) || actor.encounterId) return fail(state, 'WRONG_MODE');
+  if (!hasPosition(actor) || !isActorConscious(actor) || actor.encounterId)
+    return fail(state, 'WRONG_MODE');
   const map = state.maps[actor.mapId];
   const area = {
     x: Math.max(0, Math.min(actor.x - 2, map.width - 5)),
@@ -603,6 +639,7 @@ export function beginEncounter(state: GameState, id: string, nowMs = 0): GameRes
     expanded = false;
     for (const candidate of Object.values(state.entities)) {
       if (
+        !hasPosition(candidate) ||
         candidate.mapId !== actor.mapId ||
         !['player', 'npc'].includes(candidate.kind) ||
         (candidate.kind === 'npc' && !isActorConscious(candidate)) ||
@@ -660,7 +697,7 @@ export function beginEncounter(state: GameState, id: string, nowMs = 0): GameRes
   if (participants.length > 24) return fail(state, 'RATE_LIMITED');
   for (const p of participants) {
     const a = s.entities[p];
-    if (!footprintInside(a, area)) return fail(state, 'PATH_BLOCKED');
+    if (!hasPosition(a) || !footprintInside(a, area)) return fail(state, 'PATH_BLOCKED');
     if (occupiedCells(a).some((cell) => occupied.has(key(cell)))) {
       const candidates: GamePoint[] = [];
       for (let y = area.y; y < area.y + area.height; y++)
@@ -824,6 +861,7 @@ function encounterJoinPoint(
   encounter: GameEncounter,
   strict: boolean,
 ) {
+  if (!hasPosition(actor)) return undefined;
   if (
     footprintInside(actor, encounter.area) &&
     walkable(state, actor.mapId, actor, actor.id, strict)
@@ -903,6 +941,7 @@ export function projectState(s: GameState, id: string): GameProjection {
     delete c.knownIds;
     delete c.inventory;
     delete c.itemStock;
+    delete c.unresolvedScenePresence;
     delete c.lifeRevision;
     if (['npc', 'player'].includes(c.kind)) c.lifeState = actorLifeState(c);
     if (c.id !== id) {
@@ -930,13 +969,17 @@ export function projectState(s: GameState, id: string): GameProjection {
           narrative: {
             revision: s.narrativeCanon.revision,
             turns: s.narrativeCanon.turns
-              .filter((turn) => narrativeTurnVisibleTo(turn, id))
+              .filter(
+                (turn) =>
+                  narrativeTurnVisibleTo(turn, id) &&
+                  (actor.spatialMode !== 'location_only' || !!turn.audienceIds?.includes(id)),
+              )
               .slice(-16)
               .map(({ id, tick, narration, channel, audienceIds }) => ({
                 id,
                 tick,
                 narration,
-                ...(channel === 'whisper' || audienceIds !== undefined
+                ...(channel === 'whisper' || (channel !== 'public' && audienceIds !== undefined)
                   ? { channel: 'whisper' as const }
                   : {}),
               })),
@@ -950,7 +993,7 @@ export function projectState(s: GameState, id: string): GameProjection {
     tick: s.tick,
     revision: s.revision,
     actorId: id,
-    map: structuredClone(s.maps[actor.mapId]),
+    map: publicSceneMap(s, actor),
     ...(s.rulesetVersion === 'hybrid-v3' ? { locations: travelLocations(s) } : {}),
     entities: Object.values(s.entities)
       .filter((e) => e.id === id || visible(s, actor, e))
@@ -1024,12 +1067,17 @@ export function mockNpcDecision(s: GameState, id = 'keeper'): unknown {
   const a = s.entities[id];
   if (!a) return null;
   const recipient = Object.values(s.entities).find(
-    (e) => e.kind === 'player' && visible(s, a, e) && footprintDistance(a, e) <= 1,
+    (e) =>
+      e.kind === 'player' &&
+      visible(s, a, e) &&
+      (sharesScene(s, a, e) || footprintDistance(a, e) <= 1),
   );
   const action: GameAction =
     recipient && a.inventory?.length
       ? { kind: 'give', targetId: recipient.id, itemId: a.inventory[0] }
-      : { kind: 'move_to', target: { x: 7, y: 4 } };
+      : hasPosition(a)
+        ? { kind: 'move_to', target: { x: 7, y: 4 } }
+        : { kind: 'wait' };
   return {
     contextRevision: s.revision,
     mapRevision: s.maps[a.mapId].revision,
@@ -1077,6 +1125,19 @@ export function validateMapState(s: GameState): string[] {
   for (const [id, e] of Object.entries(s.entities))
     if (id !== e.id) errors.push(`entity:${id}:id-mismatch`);
   for (const m of Object.values(s.maps)) {
+    if (m.spatialMode === 'location_only') {
+      if (
+        !Number.isInteger(m.width) ||
+        !Number.isInteger(m.height) ||
+        m.width < 1 ||
+        m.height < 1 ||
+        m.width > 64 ||
+        m.height > 64
+      )
+        errors.push(`map:${m.id}:size`);
+      errors.push(...scenePresenceErrors(s, m));
+      continue;
+    }
     if (m.width < 1 || m.height < 1 || m.width > 64 || m.height > 64 || !m.spawns.length)
       errors.push(`map:${m.id}:size`);
     for (const p of m.spawns) if (!walkable(s, m.id, p)) errors.push(`map:${m.id}:spawn`);
@@ -1087,9 +1148,13 @@ export function validateMapState(s: GameState): string[] {
   const ownership = new Map<string, string>();
   for (const e of Object.values(s.entities)) {
     const map = s.maps[e.mapId];
-    if (!map || !footprintInside(e, { x: 0, y: 0, width: map.width, height: map.height }))
+    if (
+      !map ||
+      (map.spatialMode !== 'location_only' &&
+        !footprintInside(e, { x: 0, y: 0, width: map.width, height: map.height }))
+    )
       errors.push(`entity:${e.id}:position`);
-    if (footprintCells(e) > 1 && !walkable(s, e.mapId, e, e.id, true))
+    if (hasPosition(e) && footprintCells(e) > 1 && !walkable(s, e.mapId, e, e.id, true))
       errors.push(`entity:${e.id}:footprint`);
     if (e.ownerId && (!s.entities[e.ownerId]?.inventory?.includes(e.id) || e.kind !== 'item'))
       errors.push(`entity:${e.id}:owner`);
@@ -1128,7 +1193,9 @@ export function validateMapState(s: GameState): string[] {
       }
     }
   }
-  for (const door of Object.values(unlocked.entities).filter((e) => e.kind === 'door' && e.locked))
+  for (const door of Object.values(unlocked.entities).filter(
+    (e) => e.kind === 'door' && e.locked && hasPosition(e),
+  ))
     errors.push(`entity:${door.id}:unreachable-key`);
   return errors;
 }
@@ -1143,13 +1210,22 @@ export function buildNpcContext(state: GameState, id: string) {
     goals: state.npcBrains?.[id]
       ? [state.npcBrains[id].goal]
       : ['watch_observatory', 'help_nearby_visitors'],
-    allowedActions: ['move_to', 'wait', 'inspect', 'give'] as const,
+    allowedActions: hasPosition(npc)
+      ? (['move_to', 'wait', 'inspect', 'give'] as const)
+      : (['wait', 'inspect', 'give'] as const),
     maxPlanActions: state.npcBrains?.[id] ? 3 : 1,
     cooldownTicks: 20,
     ownInventory: [...(npc.inventory ?? [])],
     visible: Object.values(state.entities)
       .filter((e) => e.id !== id && observedVisible(state, npc, e))
-      .map((e) => ({ id: e.id, kind: e.kind, x: e.x, y: e.y, revision: e.revision })),
+      .map((e) => ({
+        id: e.id,
+        kind: e.kind,
+        ...(hasPosition(e)
+          ? { x: e.x, y: e.y }
+          : { sceneId: e.sceneId, spatialMode: 'location_only' }),
+        revision: e.revision,
+      })),
     // Memorized facts are not live positions or permission to target a hidden entity.
     knownIds: [...(npc.knownIds ?? [])],
     mapRevision: state.maps[npc.mapId].revision,
@@ -1188,3 +1264,5 @@ export * from './location-travel';
 export * from './story-attacks';
 export * from './story-impact';
 export * from './lifecycle';
+
+export * from './story-scene-encounters';

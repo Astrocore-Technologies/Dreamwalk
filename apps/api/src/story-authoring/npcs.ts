@@ -1,3 +1,4 @@
+import { remapSceneParticipants } from './scene-participants';
 import { Inject, Injectable } from '@nestjs/common';
 import { createHash, randomUUID } from 'node:crypto';
 import type { PoolClient } from 'pg';
@@ -138,7 +139,18 @@ export class StoryNpcService {
     const ids = source.content.npcIds;
     const next = [...new Set([...ids.map((id) => (id === replaceId ? npcId : id)), npcId])];
     if (next.length > 30) fail(400, 'VALIDATION_FAILED', 'NPC_LIMIT');
-    const data = { ...source, status: 'draft', content: { ...source.content, npcIds: next } };
+    const data = {
+      ...source,
+      status: 'draft',
+      content: {
+        ...source.content,
+        npcIds: next,
+        scenes: remapSceneParticipants(
+          source.content.scenes,
+          new Map(ids.map((id) => [id, id === replaceId ? npcId : id])),
+        ),
+      },
+    };
     return (
       await c.query(
         "UPDATE adventures SET data=$2,status='draft',updated_at=now() WHERE id=$1 RETURNING edit_revision",

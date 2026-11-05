@@ -50,11 +50,18 @@ export function validateStoryLoreReferences(content: {
   npcIds: string[];
   locations: { id: string }[];
   lorebook?: StoryLoreEntry[];
+  scenes?: { participantNpcIds?: string[] }[];
 }) {
-  return (content.lorebook ?? []).every(
-    (entry) =>
-      entry.knowerNpcIds.every((id) => content.npcIds.includes(id)) &&
-      (!entry.locationId || content.locations.some((location) => location.id === entry.locationId)),
+  return (
+    (content.scenes ?? []).every((scene) =>
+      (scene.participantNpcIds ?? []).every((id) => content.npcIds.includes(id)),
+    ) &&
+    (content.lorebook ?? []).every(
+      (entry) =>
+        entry.knowerNpcIds.every((id) => content.npcIds.includes(id)) &&
+        (!entry.locationId ||
+          content.locations.some((location) => location.id === entry.locationId)),
+    )
   );
 }
 
@@ -63,6 +70,12 @@ export function readerStoryContent<T extends Record<string, unknown>>(
   content: T,
 ): Omit<T, 'lorebook'> {
   const { lorebook: _lorebook, ...safe } = content;
+  if (Array.isArray(safe.scenes))
+    (safe as Record<string, unknown>).scenes = safe.scenes.map((scene: unknown) => {
+      if (!scene || typeof scene !== 'object' || Array.isArray(scene)) return scene;
+      const { participantNpcIds: _participants, ...publicScene } = scene as Record<string, unknown>;
+      return publicScene;
+    });
   return safe;
 }
 

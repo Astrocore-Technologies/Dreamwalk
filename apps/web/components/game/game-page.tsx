@@ -7,6 +7,7 @@ import { useRouter } from 'next/navigation';
 import { ArrowLeft, Compass, Moon, Radio, UsersRound } from 'lucide-react';
 import {
   adjacentFootprintAnchors,
+  hasPosition,
   footprintInside,
   occupiedCells,
   footprintOverlaps,
@@ -310,10 +311,11 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
     void game.command({ type: 'action', action });
   }
   function approach(entity: GamePoint) {
-    if (!p || !own || !playerAvailable) return;
+    if (!p || !own || !hasPosition(own) || !playerAvailable) return;
     const blocked = new Set(p.map.blocked.map((point) => `${point.x},${point.y}`));
     for (const door of p.entities)
-      if (door.kind === 'door' && !door.open) blocked.add(`${door.x},${door.y}`);
+      if (door.kind === 'door' && !door.open && hasPosition(door))
+        blocked.add(`${door.x},${door.y}`);
     const points = adjacentFootprintAnchors(own, entity)
       .filter((point) => {
         const placed = { ...own, ...point };
@@ -324,6 +326,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             (other) =>
               other.id !== own.id &&
               (other.kind === 'npc' || other.kind === 'player') &&
+              hasPosition(other) &&
               footprintOverlaps(placed, other),
           )
         );
@@ -484,7 +487,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                 {t('Игровая версия {version}', { version: game.campaign.sourceRevision })}
               </small>
             )}
-            {own && (
+            {own && hasPosition(own) && (
               <p
                 className={styles.position}
                 data-testid="game-position"
@@ -520,7 +523,7 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             onAction={act}
             onApproach={approach}
             onSelectNpc={(npcId) => {
-              if (p.turn) {
+              if (p.turn && p.map.spatialMode !== 'location_only') {
                 setInspectedNpcId(npcId);
                 return;
               }
@@ -575,7 +578,12 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
                     (entity) => entity.kind === 'npc' && entity.id === inspectedNpcId,
                   );
                   if (npc && npcUnavailable(npc)) return;
-                  if (!p.turn && npc && !controlsDisabled && !storyBusy)
+                  if (
+                    (!p.turn || p.map.spatialMode === 'location_only') &&
+                    npc &&
+                    !controlsDisabled &&
+                    !storyBusy
+                  )
                     setRecipient({ id: npc.id, label: npc.label || t('NPC') });
                 }}
               />

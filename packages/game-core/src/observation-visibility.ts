@@ -1,8 +1,12 @@
+import { hasPosition } from '@dreamwalk/contracts';
+import { sharesScene } from './scene-presence';
 import { isActorConscious } from '@dreamwalk/contracts';
 import { occupiedCells, type GameEntity, type GameState } from '@dreamwalk/contracts';
 import { visible } from './index';
 /** Perception only. Never use image observations to authorize or block an action. */
 export function observedVisible(state: GameState, actor: GameEntity, target: GameEntity): boolean {
+  if (!hasPosition(actor) || !hasPosition(target))
+    return isActorConscious(actor) && sharesScene(state, actor, target);
   if (!isActorConscious(actor) || !visible(state, actor, target)) return false;
   const map = state.maps[actor.mapId],
     g = map?.spatialGrounding;

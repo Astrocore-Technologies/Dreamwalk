@@ -1,5 +1,6 @@
 import { readFile } from 'node:fs/promises';
 import { basename, resolve } from 'node:path';
+import { z } from 'zod';
 import type { GameState } from '@dreamwalk/contracts';
 import { runtimeMapView } from '@dreamwalk/game-core';
 import { config } from '../config';
@@ -12,6 +13,17 @@ import {
 import type { AiPurpose } from '../ai/types';
 import { sourceAccessSql, sourceLiveSql } from './source-access';
 import { renderRuntimeMapRaster } from './runtime-map-raster';
+
+const locationMapContextSchema = z
+  .object({
+    spatialMode: z.literal('location_only'),
+    mapId: z.string().min(1).max(100),
+    sceneId: z.string().min(1).max(100),
+    actorId: z.string().min(1).max(100),
+    revisionId: z.uuid(),
+    sha256: z.string().regex(/^[a-f0-9]{64}$/),
+  })
+  .strict();
 
 type Query = (sql: string, values: unknown[]) => Promise<Record<string, unknown>[]>;
 function terrainStatus(
@@ -107,6 +119,32 @@ export async function extendRuntimeMap<T extends object>(
 ): Promise<T> {
   if (!['plan', 'speech', 'story_turn', 'narrative', 'intent'].includes(purpose)) return context;
   const value = context as Record<string, unknown>;
+  const actor = state.entities[actorId];
+  const map = actor && state.maps[actor.mapId];
+  if (map?.spatialMode === 'location_only') {
+    const row = await currentRaster(
+      (sql, values) => db.query(sql, values),
+      campaignId,
+      state,
+      actorId,
+    );
+    if (!row) return context;
+    if (row.revisionId !== map.locationImage?.revisionId || row.sha256 !== map.locationImage?.sha256)
+      throw new Error('MAP_IMAGE_SOURCE_CHANGED');
+    // No crop can be proven without geometry. Keep the original map in the UI,
+    // but never promote the complete image to an NPC's personal visual evidence.
+    return {
+      ...context,
+      locationMapContext: locationMapContextSchema.parse({
+        spatialMode: 'location_only',
+        mapId: map.id,
+        sceneId: actor.sceneId,
+        actorId,
+        revisionId: row.revisionId,
+        sha256: row.sha256,
+      }),
+    };
+  }
   const view = runtimeMapView(state, observers(state, actorId, value, purpose, npcId));
   const row = await currentRaster(
     (sql, values) => db.query(sql, values),
@@ -130,6 +168,34 @@ export async function extendRuntimeMap<T extends object>(
   });
   return { ...context, runtimeMapImage };
 }
+async function locationMapStillCurrent(
+  query: Query,
+  campaignId: string,
+  state: GameState,
+  context: unknown,
+) {
+  const raw = (context as { locationMapContext?: unknown } | null)?.locationMapContext;
+  if (raw === undefined) return true;
+  try {
+    const value = locationMapContextSchema.parse(raw),
+      actor = state.entities[value.actorId],
+      map = state.maps[value.mapId];
+    if (
+      map?.spatialMode !== 'location_only' ||
+      actor?.spatialMode !== 'location_only' ||
+      actor.mapId !== map.id ||
+      actor.sceneId !== value.sceneId ||
+      map.locationImage?.revisionId !== value.revisionId ||
+      map.locationImage.sha256 !== value.sha256
+    )
+      return false;
+    const row = await currentRaster(query, campaignId, state, actor.id);
+    return row?.revisionId === value.revisionId && row.sha256 === value.sha256;
+  } catch {
+    return false;
+  }
+}
+
 /** Recheck public positions, observer view, exact current-map pin and revocation before any dispatch.
  * Raster bytes stay frozen in the existing quote; a different image never triggers a hidden reprice. */
 export async function runtimeMapStillCurrent(
@@ -139,7 +205,7 @@ export async function runtimeMapStillCurrent(
   context: unknown,
 ) {
   const image = readRuntimeMapImage(context);
-  if (!image) return true;
+  if (!image) return locationMapStillCurrent(query, campaignId, state, context);
   try {
     if (digest(runtimeMapView(state, image.view.observerIds)) !== digest(image.view)) return false;
     if (
@@ -166,7 +232,7 @@ export async function runtimeMapSourceStillCurrent(
   context: unknown,
 ) {
   const image = readRuntimeMapImage(context);
-  if (!image) return true;
+  if (!image) return locationMapStillCurrent(query, campaignId, state, context);
   try {
     const actorId =
       image.view.observerIds.find((id) => state.entities[id]?.kind === 'player') ??

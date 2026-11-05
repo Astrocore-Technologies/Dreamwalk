@@ -1,4 +1,5 @@
 import {
+  hasPosition,
   actorLifeState,
   isActorConscious,
   narrativeImpactSchema,
@@ -168,7 +169,8 @@ export function applyStoryImpact(
     delete affected.path;
   }
   if (damage) {
-    affected.feedback = { kind: 'hit', sequence: next.revision, dx: 0, dy: 0 };
+    if (hasPosition(affected))
+      affected.feedback = { kind: 'hit', sequence: next.revision, dx: 0, dy: 0 };
     events.push({ kind: 'action.hit', actorId, targetId: affected.id, mapId: affected.mapId });
   }
   if (lifeStateAfter !== target.lifeState) {

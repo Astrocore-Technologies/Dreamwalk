@@ -1,3 +1,4 @@
+import { bindUnresolvedScenePresence } from './unresolved-scene-presence';
 import { schematicStorySource, playableMapBindings } from './story-map-mode';
 import { AuthoringTextEngine } from '../live-test/authoring-text';
 import { prepareStoryMapImages } from './story-map-images';
@@ -417,6 +418,8 @@ export class PlayableService {
     const payload = {
       schemaVersion: 1,
       compiled: compiled.playable,
+      // Pin the full source manifest even if a playable view omits an ungrounded raster.
+      sourceArtBindings: preparedArt.bindings,
       source: {
         title: story.title,
         sourceLanguage: narrative.sourceLanguage,
@@ -503,6 +506,7 @@ export class PlayableService {
         [story.id, story.owner_id],
       )
     ).rows;
+    // Location identity exists before geometry. A missing map_id never demotes its image.
     for (const image of images) {
       if (!content.locations.some((l) => l.id === image.location_id)) continue;
       additionalBindings.push({
@@ -900,6 +904,12 @@ export class PlayableService {
     if (!compiled) fail(409, 'START_PREPARATION_REQUIRED', 'START_PREPARATION_REQUIRED');
     const state = createStateFromPlayable(compiled, [actorId], seed);
     state.narrativeSource = { versionId: row.id, checksum: row.checksum };
+    if (Object.values(state.entities).some((entity) => entity.unresolvedScenePresence))
+      bindUnresolvedScenePresence(
+        state,
+        contentSchema.parse(row.package.source?.content),
+        row.checksum,
+      );
     if (!state.narrativePremise) {
       const published = (
         await c.query(

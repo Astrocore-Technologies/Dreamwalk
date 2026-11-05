@@ -102,8 +102,8 @@ export function LocationImageDialog({
     locked = useRef(false),
     pending = useRef<{ key: string; id: string } | null>(null),
     flush = useRef(beforePrepare);
-  // Unsaved geometry is never part of this operation. Match the visibly selected
-  // illustration-only mode even when an older saved binding supplied mapId.
+  // Unsaved geometry is never part of this operation. An empty link still saves
+  // the location’s game map; it does not change the image’s purpose.
   const attachmentMapId = playableDirty ? '' : mapId;
   flush.current = beforePrepare;
   async function prepare() {

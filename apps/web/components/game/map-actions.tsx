@@ -1,6 +1,6 @@
 'use client';
 import { useEffect, useRef } from 'react';
-import { footprintDistance } from '@dreamwalk/contracts';
+import { footprintDistance, hasPosition } from '@dreamwalk/contracts';
 import type { GameAction, GameProjection } from '@dreamwalk/contracts';
 import { useItemText } from './item-messages';
 import styles from './game.module.css';
@@ -30,11 +30,14 @@ export function MapActions({
   const text = useItemText(),
     ref = useRef<HTMLDivElement>(null);
   const turnText = useTurnText();
+  const locationOnly = projection.map.spatialMode === 'location_only';
   const entities = ids.flatMap((id) => {
     const e = projection.entities.find((e) => e.id === id);
     return e ? [e] : [];
   });
-  const exits = projection.map.exits.filter((e) => ids.includes('exit:' + e.id));
+  const exits = (locationOnly ? [] : projection.map.exits).filter((e) =>
+    ids.includes('exit:' + e.id),
+  );
   useEffect(() => {
     const previous = document.activeElement;
     ref.current?.querySelector<HTMLButtonElement>('button')?.focus();
@@ -88,7 +91,7 @@ export function MapActions({
             </button>
             <button
               type="button"
-              disabled={disabled || !own || footprintDistance(own, e) > 1}
+              disabled={disabled || !own || !hasPosition(own) || footprintDistance(own, e) > 1}
               onClick={() => act({ kind: 'transition', targetId: e.id })}
             >
               {text('transition')}
@@ -99,7 +102,7 @@ export function MapActions({
       {entities.map((e) => {
         const unavailable = npcUnavailable(e);
         const lifeState = publicLifeState(e);
-        const near = !!own && footprintDistance(own, e) <= 1;
+        const near = !!own && hasPosition(own) && hasPosition(e) && footprintDistance(own, e) <= 1;
         const main = disabled || !near || (!!projection.turn && projection.turn.resources.main < 1);
         const additional =
           disabled || !near || (!!projection.turn && projection.turn.resources.additional < 1);
@@ -138,7 +141,7 @@ export function MapActions({
                   </button>
                 </>
               )}
-              {e.kind === 'item' && e.item?.edible && (
+              {!locationOnly && e.kind === 'item' && e.item?.edible && (
                 <button
                   type="button"
                   disabled={main}
@@ -147,7 +150,7 @@ export function MapActions({
                   {text('eat')}
                 </button>
               )}
-              {e.kind === 'item' && e.item?.portable !== false && (
+              {!locationOnly && e.kind === 'item' && e.item?.portable !== false && (
                 <button
                   type="button"
                   disabled={additional}
@@ -156,7 +159,7 @@ export function MapActions({
                   {text('take')}
                 </button>
               )}
-              {!near && (
+              {!locationOnly && !near && hasPosition(e) && (
                 <button
                   type="button"
                   disabled={disabled}
@@ -168,25 +171,26 @@ export function MapActions({
                   {text('approach')}
                 </button>
               )}
-              {(e.kind === 'npc' || (e.kind === 'player' && e.id !== projection.actorId)) && (
-                <>
-                  <button
-                    type="button"
-                    disabled={main || unavailable}
-                    onClick={() => act({ kind: 'push', targetId: e.id })}
-                  >
-                    {text('push')}
-                  </button>
-                  <button
-                    type="button"
-                    disabled={main || unavailable}
-                    onClick={() => act({ kind: 'hit', targetId: e.id })}
-                  >
-                    {text('hit')}
-                  </button>
-                </>
-              )}
-              {e.kind === 'door' && (
+              {!locationOnly &&
+                (e.kind === 'npc' || (e.kind === 'player' && e.id !== projection.actorId)) && (
+                  <>
+                    <button
+                      type="button"
+                      disabled={main || unavailable}
+                      onClick={() => act({ kind: 'push', targetId: e.id })}
+                    >
+                      {text('push')}
+                    </button>
+                    <button
+                      type="button"
+                      disabled={main || unavailable}
+                      onClick={() => act({ kind: 'hit', targetId: e.id })}
+                    >
+                      {text('hit')}
+                    </button>
+                  </>
+                )}
+              {!locationOnly && e.kind === 'door' && (
                 <>
                   <button
                     type="button"
