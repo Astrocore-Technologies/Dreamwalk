@@ -160,7 +160,26 @@ export interface StoryAttackOutcome {
     | 'NARRATIVE_HARM'
     | 'NARRATIVE_BLOCKED';
 }
+export interface AutonomousSpeechSkip {
+  id: string;
+  createdAt: string;
+  reason:
+    'allowance_exhausted' | 'allowance_unavailable' | 'legacy_uncovered' | 'insufficient_funds';
+}
+export interface AutonomousSpeechReceipt {
+  id: string;
+  createdAt: string;
+  status: 'held' | 'unknown' | 'settled' | 'released';
+  outcome: 'delivered' | 'silent' | 'failed' | 'pending';
+  reservedSubunits: string;
+  capturedSubunits: string | null;
+  funding: CurrencyFunding;
+}
 export interface StoryQuote {
+  autonomousSpeechPolicy?: 'bounded-npc-speech-v1';
+  autonomousSpeechPolicyHash?: string;
+  optionalAutonomousSpeechRequests?: number;
+  optionalAutonomousSpeechSparkSubunits?: string;
   automaticKnownCostPolicy?: 'known-cost-v1';
   automaticKnownCostPolicyHash?: string;
   /** Current-map vision is part of this same quote, never an extra generation. */
@@ -172,6 +191,8 @@ export interface StoryQuote {
   chargeUnit?: 'sparks' | 'credits';
   funding?: CurrencyFunding;
   sparkReservedSubunits?: string | null;
+  /** Mandatory text/media tranches only; optional speech is funded before its actual dispatch. */
+  requiredSparkSubunits?: string;
   sparkQuoteId?: string | null;
   sparkRateVersion?: string;
   id: string;

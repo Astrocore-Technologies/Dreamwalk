@@ -1,4 +1,9 @@
 import {
+  autonomousSpeechEnvelope,
+  loadAutonomousSpeechEvidence,
+  type AutonomousSpeechEnvelope,
+} from '../generation/autonomous-speech-envelope';
+import {
   nativeRequestStop,
   stopGenerationAuthorization,
   withGenerationStop,
@@ -405,6 +410,107 @@ export class NpcAiEngine {
       // Oversized/unpriced/unsupported contexts cannot become a partial low total.
       return null;
     }
+  }
+  /** Local only. The empty probe obtains the configured speech tariff/limits, not a generated answer. */
+  autonomousSpeechSnapshot() {
+    if (!this.provider.external || !this.provider.prepareTextRequest) return null;
+    try {
+      return (
+        this.provider.prepareTextRequest('speech', { contextHash: 'bounded-npc-speech-v1' })
+          ?.snapshot ?? null
+      );
+    } catch {
+      return null;
+    }
+  }
+  autonomousSpeechRequestSnapshot(context: DecisionContext) {
+    if (context.runtimeMapImage || context.textCountEvidence) return null;
+    try {
+      return this.provider.prepareTextRequest?.('speech', context)?.snapshot ?? null;
+    } catch {
+      return null;
+    }
+  }
+  /** Current frozen body estimate, never the whole future context allowance. */
+  localAutonomousSpeechForecast(context: DecisionContext): number | null {
+    if (this.isFreeBuiltInSimulation()) return 0;
+    if (!context.worldPlanCommunication) return null;
+    return this.localRequestForecast('speech', context);
+  }
+  localAutonomousSpeechAllowance(): number | null {
+    if (this.isFreeBuiltInSimulation()) return 0;
+    const snapshot = this.autonomousSpeechSnapshot();
+    if (!snapshot) return null;
+    try {
+      return autonomousSpeechEnvelope(snapshot, {
+        providerId: this.provider.id,
+        providerVersion: this.provider.version,
+        policyVersion: this.policy.version,
+        sourceVersionId: 'forecast',
+        sourceRequestId: 'forecast',
+        sourceContextDigest: 'forecast',
+        npcId: 'forecast',
+        turnFence: null,
+      }).reserveMicros;
+    } catch {
+      return null;
+    }
+  }
+  async quoteAutonomousSpeech(
+    c: PoolClient,
+    ownerId: string,
+    source: Pick<
+      AutonomousSpeechEnvelope,
+      'sourceVersionId' | 'sourceRequestId' | 'sourceContextDigest' | 'npcId' | 'turnFence'
+    >,
+  ) {
+    const snapshot = this.autonomousSpeechSnapshot();
+    if (!snapshot) fail(409, 'SPARK_PRICE_UNVERIFIED', 'SPARK_PRICE_UNVERIFIED');
+    let envelope: AutonomousSpeechEnvelope;
+    try {
+      envelope = autonomousSpeechEnvelope(snapshot!, {
+        ...source,
+        providerId: this.provider.id,
+        providerVersion: this.provider.version,
+        policyVersion: this.policy.version,
+      });
+    } catch {
+      return fail(409, 'SPARK_PRICE_UNVERIFIED', 'SPARK_PRICE_UNVERIFIED');
+    }
+    const id = randomUUID(),
+      expiresAt = new Date(Date.now() + this.policy.quoteMs).toISOString();
+    const spark = await new SparksAccounting().quote(c, {
+      ownerId,
+      operationId: id,
+      sourceKind: 'npc',
+      sourceId: id,
+      reserveSubunits: providerMicrosToSparkSubunits(String(envelope.reserveMicros)),
+      expiresAt,
+      providerQuote: { autonomousSpeechEnvelope: envelope },
+      tariff: sparkTariff(snapshot!, this.provider.id, snapshot!.providerFingerprint),
+    });
+    return {
+      envelope,
+      quote: {
+        id,
+        credits: 0,
+        demo: false,
+        external: true,
+        requiresConsent: true,
+        chargeUnit: 'sparks' as const,
+        sparkReservedSubunits: spark.reserve_subunits,
+        sparkQuoteId: spark.id,
+        sparkRateVersion: sparkQuoteRateVersion(spark.price_snapshot),
+        ...optionalFunding(await quoteFunding(c, spark.id)),
+        expiresAt,
+        providerUpperMicros: null,
+        providerReserveMicros: envelope.reserveMicros,
+        estimatedTotalMicros: envelope.estimatedTotalMicros,
+        providerEnforcesQuotedCap: false,
+        provider: this.provider.id,
+        policyVersion: this.policy.version,
+      },
+    };
   }
   private async requestPlan(
     scope: AiScope,
@@ -1780,7 +1886,14 @@ export class NpcAiEngine {
       .rows[0];
     const quote = (await c.query('SELECT * FROM spark_quotes WHERE id=$1', [j.spark_hold_id]))
       .rows[0];
-    return ordinaryFailureSettlement(j, batch, request, hold, quote);
+    return ordinaryFailureSettlement(
+      j,
+      batch,
+      request,
+      hold,
+      quote,
+      batch && request ? await loadAutonomousSpeechEvidence(c, batch, request) : undefined,
+    );
   }
   private async settleProvider(
     c: PoolClient,
@@ -2073,9 +2186,23 @@ export class NpcAiEngine {
     return this.db.tx(async (c) => {
       await c.query("SET LOCAL statement_timeout='2000ms'");
       const result = await c.query(`WITH expired AS (
-        SELECT id FROM npc_ai_jobs WHERE status IN ('committed','stale','cancelled','failed','reconciling')
-        AND COALESCE(completed_at,created_at)<now()-interval '7 days' AND (context<>'{}'::jsonb OR proposal IS NOT NULL)
-        ORDER BY COALESCE(completed_at,created_at),id FOR UPDATE SKIP LOCKED LIMIT 1000
+        SELECT j.id FROM npc_ai_jobs j WHERE j.status IN ('committed','stale','cancelled','failed','reconciling')
+        AND COALESCE(j.completed_at,j.created_at)<now()-interval '7 days' AND (j.context<>'{}'::jsonb OR j.proposal IS NOT NULL)
+        AND NOT EXISTS(SELECT 1 FROM game_npc_decision_requests source
+          JOIN game_world_generation_batches b ON b.campaign_id=source.campaign_id
+          JOIN game_campaigns campaign ON campaign.id=b.campaign_id
+          WHERE source.job_id=j.id AND b.state='accepted' AND b.accepted_at IS NOT NULL
+          AND b.autonomous_speech_entries @> jsonb_build_array(jsonb_build_object('envelope',jsonb_build_object('sourceRequestId',source.id::text)))
+          AND campaign.status='active' AND campaign.state->'turnController'->>'phase'='world'
+          AND campaign.state->'turnController'->>'roundId'=b.turn_fence->>'roundId')
+        AND NOT EXISTS(SELECT 1 FROM game_autonomous_speech_bindings child
+          JOIN game_npc_decision_requests source ON source.id=child.source_request_id
+          JOIN game_npc_decision_requests request ON request.id=child.request_id
+          LEFT JOIN npc_ai_jobs child_job ON child_job.id=request.job_id
+          LEFT JOIN spark_holds hold ON hold.id=child_job.spark_hold_id
+          WHERE (source.job_id=j.id OR child.native_quote_id=j.quote_id)
+          AND (hold.status='pending' OR child_job.status IN ('queued','reserved','running','result_received','validated','reconciling')))
+        ORDER BY COALESCE(j.completed_at,j.created_at),j.id FOR UPDATE OF j SKIP LOCKED LIMIT 1000
       ) UPDATE npc_ai_jobs j SET context='{}',proposal=NULL,context_hash='retention-expired' FROM expired e WHERE j.id=e.id`);
       await c.query(
         'DELETE FROM npc_ai_cache WHERE cache_key IN (SELECT cache_key FROM npc_ai_cache WHERE expires_at<=now() LIMIT 1000)',
@@ -2248,6 +2375,7 @@ export class NpcAiService extends NpcAiEngine implements OnModuleInit, OnModuleD
       await this.db.query(`DELETE FROM npc_ai_quotes q WHERE id IN
         (SELECT id FROM npc_ai_quotes q2 WHERE expires_at<now()-interval '1 hour'
          AND NOT EXISTS (SELECT 1 FROM npc_ai_jobs j WHERE j.quote_id=q2.id)
+         AND NOT EXISTS (SELECT 1 FROM game_autonomous_speech_bindings child WHERE child.native_quote_id=q2.id)
          AND NOT EXISTS (SELECT 1 FROM game_world_generation_batches b WHERE b.state='accepted'
            AND b.entries @> jsonb_build_array(jsonb_build_object('quote',jsonb_build_object('id',q2.id::text)))) LIMIT 1000)`);
     } catch {

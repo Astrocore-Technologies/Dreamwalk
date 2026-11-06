@@ -15,9 +15,9 @@ export const turnMessages = {
   ],
   localInput: ['Действия хода · бесплатно', 'Turn actions · free', 'Дії ходу · безкоштовно'],
   lobbyIntro: [
-    'Пошаговая история: ходи по сцене, говори с несколькими NPC, затем передай ход миру. Сейчас используются бесплатные тестовые решения.',
-    'A turn-based story: walk through the scene, address several NPCs, then pass the turn to the world. Decisions currently use free test fixtures.',
-    'Покрокова історія: ходи сценою, говори з кількома NPC, а потім передай хід світу. Зараз використовуються безкоштовні тестові рішення.',
+    'Пошаговая история: ходи по сцене, говори с несколькими NPC, затем передай ход миру.',
+    'A turn-based story: walk through the scene, address several NPCs, then pass the turn to the world.',
+    'Покрокова історія: ходи сценою, говори з кількома NPC, а потім передай хід світу.',
   ],
   locked: [
     'Действие недоступно в этой фазе или ресурс хода исчерпан.',

@@ -45,6 +45,40 @@ export function StoryCost({ quote }: { quote: StoryQuote & { funding?: WalletFun
           : 'The current map image and visible characters are part of the AI request. Analysis is included in this estimate.'}
     </small>
   ) : null;
+  if (
+    quote.requiredSparkSubunits !== undefined ||
+    (quote.optionalAutonomousSpeechRequests ?? 0) > 0 ||
+    quote.optionalAutonomousSpeechSparkSubunits !== undefined
+  ) {
+    const validSubunits = (value: unknown): value is string =>
+      typeof value === 'string' && /^\d+$/.test(value);
+    // Legacy world quotes retain the full optional permission envelope. Only
+    // subtract exact, validated subunits; never infer required funds from an
+    // aggregate provider estimate or rewrite the quote submitted for consent.
+    const required = validSubunits(quote.requiredSparkSubunits)
+      ? quote.requiredSparkSubunits
+      : quote.requiredSparkSubunits === undefined &&
+          validSubunits(reserve) &&
+          validSubunits(quote.optionalAutonomousSpeechSparkSubunits) &&
+          BigInt(reserve) >= BigInt(quote.optionalAutonomousSpeechSparkSubunits)
+        ? (BigInt(reserve) - BigInt(quote.optionalAutonomousSpeechSparkSubunits)).toString()
+        : null;
+    return (
+      <div data-testid="story-cost">
+        {vision}
+        {knownImageCost}
+        <p data-world-required-reserve>
+          <strong>
+            {required !== null
+              ? h('worldRequiredReserve', { amount: formatSparkSubunits(required, locale) })
+              : h('worldRequiredReserveUnavailable')}
+          </strong>
+        </p>
+        <p>{h('worldRequiredReserveHint')}</p>
+        <FundingNotice />
+      </div>
+    );
+  }
   if (quote.funding)
     return (
       <div data-testid="story-cost">

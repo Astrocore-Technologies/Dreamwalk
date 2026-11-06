@@ -84,6 +84,7 @@ try {
     'integration-known-npc-settlement.test.mjs',
     'integration-known-authoring-settlement.test.mjs',
     'integration-automatic-settlement.test.mjs',
+    'integration-autonomous-speech.test.mjs',
     'integration-verified-access-recovery.test.mjs',
     'integration-location-only.test.mjs',
     'integration-text-plan-positions.test.mjs',

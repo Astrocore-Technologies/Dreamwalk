@@ -29,6 +29,12 @@ export async function purgeNpcAiData(client, userId, campaigns) {
     )
   ).rows;
   const affectedIds = [...new Set([...ids, ...jobs.map((j) => j.campaign_id)])];
+  // Autonomous paid dialogue can paraphrase another participant's contribution.
+  // Clear the durable public delivery before scrubbing its native provenance.
+  await client.query(
+    'DELETE FROM game_story_feed WHERE npc_job_id IS NOT NULL AND campaign_id=ANY($1::uuid[])',
+    [affectedIds],
+  );
   for (const j of jobs) {
     const dispatched = j.status === 'running' || j.status === 'reconciling';
     if (j.provider_budget_status === 'reserved') {
@@ -55,6 +61,13 @@ export async function purgeNpcAiData(client, userId, campaigns) {
     [affectedIds, userId],
   );
   await client.query('DELETE FROM npc_ai_cache WHERE campaign_id=ANY($1::uuid[])', [affectedIds]);
+  // Confirmed erasure also retires future-speech linkage before native quote deletion.
+  // This is private body/source authorization, never a financial hold or billing receipt.
+  await client.query(
+    `DELETE FROM game_autonomous_speech_bindings child USING npc_ai_quotes q
+     WHERE child.native_quote_id=q.id AND (q.campaign_id=ANY($1::uuid[]) OR q.user_id=$2)`,
+    [affectedIds, userId],
+  );
   // Some consumed quotes can remain referenced; scrub their private linkage before deletion.
   await client.query(
     `UPDATE npc_ai_quotes SET request_snapshot=CASE WHEN request_snapshot IS NULL THEN NULL ELSE (request_snapshot-'bodySha256'-'id'-'fingerprint')||'{"privateInputErased":true}'::jsonb END WHERE campaign_id=ANY($1::uuid[]) OR user_id=$2`,

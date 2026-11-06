@@ -1,3 +1,4 @@
+import { loadAutonomousSpeechEvidence } from '../generation/autonomous-speech-envelope';
 import {
   Inject,
   Injectable,
@@ -330,7 +331,8 @@ export class KnownNpcSettlement implements OnModuleInit, OnModuleDestroy {
             await c.query(
               `SELECT * FROM game_world_generation_batches
           WHERE campaign_id=$1 AND owner_id=$2 AND accepted_at IS NOT NULL
-          AND entries @> jsonb_build_array(jsonb_build_object('requestId',$3::text,'quote',jsonb_build_object('id',$4::text)))
+          AND (entries @> jsonb_build_array(jsonb_build_object('requestId',$3::text,'quote',jsonb_build_object('id',$4::text)))
+            OR EXISTS(SELECT 1 FROM game_autonomous_speech_bindings child WHERE child.batch_id=game_world_generation_batches.id AND child.request_id=$3::uuid AND child.native_quote_id=$4::uuid))
           ORDER BY id LIMIT 2`,
               [campaignId, ownerId, job.request_meta.runtimeRequestId, job.quote_id],
             )
@@ -373,6 +375,10 @@ export class KnownNpcSettlement implements OnModuleInit, OnModuleDestroy {
           batches[0],
           request,
           dreams,
+          false,
+          batches[0] && request
+            ? await loadAutonomousSpeechEvidence(c, batches[0], request)
+            : undefined,
         )
       )
         return;

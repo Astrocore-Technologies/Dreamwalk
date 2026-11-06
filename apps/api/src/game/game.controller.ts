@@ -92,8 +92,9 @@ export class GameController {
   @Get('campaigns/:id/world-generation') worldGenerationStatus(
     @Req() req: Request,
     @Param('id') id: string,
+    @Query('speechReceiptBefore') speechReceiptBefore?: string,
   ) {
-    return this.game.worldGenerationStatus(req, id);
+    return this.game.worldGenerationStatus(req, id, speechReceiptBefore);
   }
   @Post('campaigns/:id/world-generation/quote') worldGenerationQuote(
     @Req() req: Request,

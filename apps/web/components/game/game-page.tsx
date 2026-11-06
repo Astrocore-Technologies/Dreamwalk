@@ -454,7 +454,13 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             activeName={
               members.data?.members.find((m) => m.actorId === p.turn?.activeActorId)?.username
             }
-            onEnd={() => void game.command({ type: 'turn.end', ordinaryGeneration: true })}
+            onEnd={() =>
+              void game.command({
+                type: 'turn.end',
+                ordinaryGeneration: true,
+                ordinarySpeechPolicy: 'bounded-npc-speech-v1',
+              })
+            }
             onReaction={(decision) => void game.command({ type: 'turn.reaction', decision })}
           />
         </div>

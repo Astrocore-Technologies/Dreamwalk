@@ -1,4 +1,8 @@
 import {
+  autonomousSpeechBoundEntry,
+  type AutonomousSpeechEvidence,
+} from '../generation/autonomous-speech-envelope';
+import {
   acceptedWorldKnownCostPolicyMatches,
   worldKnownCostPolicyRequired,
 } from '../generation/known-cost-policy';
@@ -20,6 +24,7 @@ export function automaticNpcAdmission(
   request?: QueryResultRow,
   dreams?: { hold: QueryResultRow; quote: QueryResultRow },
   historicalSourceProof = false,
+  speechEvidence?: AutonomousSpeechEvidence,
 ): boolean {
   try {
     const p = job.request_snapshot;
@@ -125,6 +130,16 @@ export function automaticNpcAdmission(
         (e: QueryResultRow) =>
           e.requestId === job.request_meta.runtimeRequestId && e.quote?.id === native.id,
       );
+      if (matching.length === 0 && request && speechEvidence) {
+        const child = autonomousSpeechBoundEntry(
+          batch,
+          speechEvidence.binding,
+          request,
+          native,
+          speechEvidence.source,
+        );
+        if (child) matching.push(child);
+      }
       if (
         !request ||
         !batch.accepted_at ||

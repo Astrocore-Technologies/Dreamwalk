@@ -6,6 +6,8 @@ import { LocationTravelGeneration } from './location-travel-generation';
 import { previewPendingStorySpeech } from './pending-story-speech';
 import { isActorConscious } from '@dreamwalk/contracts';
 import { forecastWorldRound } from './round-cost-forecast';
+import { autonomousSpeechForecastContexts } from './autonomous-speech-forecast';
+import { readRoundFundingAvailability } from './round-funding-availability';
 import { stampNpcThoughtAudience, projectNpcInnerThought } from './npc-thought-access';
 import {
   campaignDirectorUpdateSchema,
@@ -111,6 +113,9 @@ import {
   respondNpcObligation,
   resolveNpcFactTopic,
   createMockNpcPublicResponse,
+  validateNpcCommunication,
+  currentNpcPlan,
+  worldTurnActorGate,
   proposePlayerTextIntent,
   proposePlayerActionIntent,
   confirmPlayerTextIntent,
@@ -166,6 +171,7 @@ export const commandSchema = z
     intent: gameIntentSchema.optional(),
     expectedRevision: z.number().int().nonnegative().optional(),
     ordinaryGeneration: z.boolean().optional(),
+    ordinarySpeechPolicy: z.literal('bounded-npc-speech-v1').optional(),
   })
   .strict();
 export const moveSchema = gameMoveSchema
@@ -592,11 +598,16 @@ export class GameService implements OnModuleDestroy {
       return projectNpcInnerThought(live.state, access.actorId, npcId, authored.length > 0);
     });
   }
-  worldGenerationStatus(req: Request, id: string) {
+  worldGenerationStatus(req: Request, id: string, speechReceiptBefore?: unknown) {
     return this.serial(id, async () => {
       const a = await this.access(req, id),
         live = await this.load(id, false);
-      const status = await this.worldGeneration.status(a.user.id, id, live.state);
+      const status = await this.worldGeneration.status(
+        a.user.id,
+        id,
+        live.state,
+        speechReceiptBefore,
+      );
       // Owner authorization above precedes private context inspection. Reading
       // this forecast must not schedule, preflight, quote, or settle a request.
       const forecast =
@@ -605,9 +616,21 @@ export class GameService implements OnModuleDestroy {
         status.unknown ||
         !live.state.turnController
           ? null
-          : await forecastWorldRound(this.db, this.ai, id, live.state, (state, request) =>
-              this.deferredSpeechContext(state, request),
+          : await forecastWorldRound(
+              this.db,
+              this.ai,
+              id,
+              live.state,
+              (state, request) => this.deferredSpeechContext(state, request),
+              (state, npcId) =>
+                autonomousSpeechForecastContexts(
+                  state,
+                  npcId,
+                  this.ai.contextBudgetBytes(),
+                  localeSchema.safeParse(a.user.settings?.language).data ?? 'en',
+                ),
             );
+      const availableFunding = await readRoundFundingAvailability(this.db, a.user.id);
       const ordinary =
         (
           await this.db.query(
@@ -616,7 +639,7 @@ export class GameService implements OnModuleDestroy {
             [id, a.user.id],
           )
         )[0] ?? null;
-      return { ...status, forecast, ordinary };
+      return { ...status, forecast, ordinary, availableFunding };
     });
   }
   worldGenerationQuote(req: Request, id: string, body: unknown) {
@@ -1708,7 +1731,37 @@ export class GameService implements OnModuleDestroy {
             (!memory.cognition.sourceObservationId ||
               (!!state.turnController &&
                 memory.cognition.roundId === state.turnController.roundId));
-          if ('silent' in proposal.data && proposal.data.silent) {
+          if (job.context.worldPlanCommunication) {
+            if (this.matchesWorldPlanCommunication(state, job.npcId, job.context)) {
+              if ('silent' in proposal.data && proposal.data.silent) {
+                next = this.blockWorldPlanCommunication(
+                  state,
+                  job.npcId,
+                  'NPC_COMMUNICATION_SILENT',
+                );
+                accepted = job.context.responseOptional === true;
+              } else if (
+                'text' in proposal.data &&
+                proposal.data.text &&
+                !proposal.data.itemIntents?.length &&
+                !proposal.data.companionIntent &&
+                !proposal.data.actionIntent
+              ) {
+                const result = stepWorldNpcPlan(state, job.npcId, {
+                  text: proposal.data.text,
+                  replyLocale: request.data.replyLocale,
+                  deliveryId: job.id,
+                });
+                if (
+                  !result.error &&
+                  result.events.some((event) => event.kind === 'npc.communicated')
+                ) {
+                  next = recordNpcEvents(state, result.state, result.events, 'ai-' + job.id).state;
+                  accepted = true;
+                }
+              }
+            }
+          } else if ('silent' in proposal.data && proposal.data.silent) {
             accepted = job.context.responseOptional === true;
             if (accepted && proposal.data.cognition && !keepPrivateCognition) {
               const thought = recordNpcCognition(state, job.npcId, proposal.data.cognition, {
@@ -2064,7 +2117,8 @@ export class GameService implements OnModuleDestroy {
       digest(frozen.performance ?? null) === digest(current.performance ?? null) &&
       digest(frozen.currentPlace ?? null) === digest(current.currentPlace ?? null) &&
       digest(frozen.publicSpeechStyle ?? null) === digest(current.publicSpeechStyle ?? null) &&
-      digest(frozen.requestedFactIds ?? []) === digest(current.requestedFactIds ?? [])
+      digest(frozen.requestedFactIds ?? []) === digest(current.requestedFactIds ?? []) &&
+      digest(frozen.companionship ?? null) === digest(current.companionship ?? null)
     );
   }
   private async scheduleAutonomousRequests(id: string, live: Live) {
@@ -2262,11 +2316,54 @@ export class GameService implements OnModuleDestroy {
         (await this.story.requireLegacyReplyConsent(id, r))
       )
         continue;
+      if (r.context.worldPlanCommunication) {
+        let current: ReturnType<GameService['speechContext']> | undefined;
+        try {
+          current = this.speechContext(
+            live.state,
+            String(r.npc_id),
+            String(r.context.recipientId),
+            r.context.channel,
+            r.context.observationIds,
+            undefined,
+            undefined,
+            undefined,
+            r.context.replyLocale,
+          );
+        } catch {
+          /* Invalid target/evidence must not consume a public-speech allowance. */
+        }
+        if (
+          !current ||
+          !this.matchesWorldPlanCommunication(live.state, String(r.npc_id), r.context) ||
+          !this.frozenSpeechContext(live.state, String(r.npc_id), r.context, current)
+        ) {
+          await this.worldGeneration.failUnspent(id, r.id, 'NPC_COMMUNICATION_STALE');
+          continue;
+        }
+      }
       const storyReply = await this.story.quotedReply(id, r);
       const worldReply =
         !storyReply && this.ai.releaseGeneration()
           ? await this.worldGeneration.quotedWorldRequest(id, r)
           : null;
+      if (worldReply && r.context.worldPlanCommunication) {
+        // Binding may have assigned the accepted batch payer after this queued row
+        // was read. Adopt only the exact authoritative bound request, never "null".
+        const bound = worldReply.request;
+        if (
+          !bound?.requesterUserId ||
+          bound.id !== r.id ||
+          bound.npcId !== r.npc_id ||
+          bound.purpose !== r.purpose ||
+          bound.causeKey !== r.cause_key ||
+          digest(bound.context) !== digest(r.context)
+        ) {
+          await this.worldGeneration.failUnspent(id, r.id, 'WORLD_ADMISSION_FAILED');
+          continue;
+        }
+        r = { ...r, requester_user_id: bound.requesterUserId };
+      }
       const quotedReply = storyReply || worldReply;
       if (
         this.ai.releaseGeneration() &&
@@ -2638,7 +2735,11 @@ export class GameService implements OnModuleDestroy {
             await this.worldGeneration.failUnspent(
               id,
               r.id,
-              /^[A-Z0-9_]{1,80}$/.test(message) ? message : 'WORLD_ADMISSION_FAILED',
+              r.context.worldPlanCommunication && message === 'INSUFFICIENT_SPARKS'
+                ? 'AUTONOMOUS_SPEECH_INSUFFICIENT_FUNDS'
+                : /^[A-Z0-9_]{1,80}$/.test(message)
+                  ? message
+                  : 'WORLD_ADMISSION_FAILED',
             );
           else if (worldReply) await this.worldGeneration.invalidate(id, r.id);
           else
@@ -2744,6 +2845,8 @@ export class GameService implements OnModuleDestroy {
               job.context,
               live.eventSeq + 1,
             );
+          if (accepted && job.purpose === 'speech' && job.context.worldPlanCommunication)
+            await this.story.writeAutonomousReply(c, id, live.state, next, job, live.eventSeq + 1);
           await this.saveIntentOutcome(c, intentOutcome);
           await this.saveNarrativeOutcome(c, id, next, narrativeOutcome);
         },
@@ -3511,9 +3614,15 @@ export class GameService implements OnModuleDestroy {
         async (c) => {
           if (ordinaryRoundId !== undefined)
             await c.query(
-              `INSERT INTO game_ordinary_round_consents(campaign_id,round_id,owner_id,operation_id)
-               VALUES($1,$2,$3,$4) ON CONFLICT(campaign_id,round_id) DO NOTHING`,
-              [id, ordinaryRoundId, a.user.id, command.operationId],
+              `INSERT INTO game_ordinary_round_consents(campaign_id,round_id,owner_id,operation_id,policy_version)
+               VALUES($1,$2,$3,$4,$5) ON CONFLICT(campaign_id,round_id) DO NOTHING`,
+              [
+                id,
+                ordinaryRoundId,
+                a.user.id,
+                command.operationId,
+                command.ordinarySpeechPolicy ?? null,
+              ],
             );
           if (job)
             await c.query(
@@ -4020,7 +4129,7 @@ export class GameService implements OnModuleDestroy {
           const roundId = live.state.turnController.roundId;
           const authority = (
             await this.db.query(
-              `SELECT owner_id,operation_id FROM game_ordinary_round_consents
+              `SELECT owner_id,operation_id,policy_version FROM game_ordinary_round_consents
            WHERE campaign_id=$1 AND round_id=$2 AND state='pending'`,
               [id, roundId],
             )
@@ -4040,6 +4149,12 @@ export class GameService implements OnModuleDestroy {
           try {
             const result = await this.worldGeneration.quote(authority.owner_id, id, live.state, {
               operationId: authority.operation_id,
+              ...(authority.policy_version === 'bounded-npc-speech-v1'
+                ? {
+                    autonomousSpeechPolicy: authority.policy_version,
+                    automaticKnownCostPolicy: 'known-cost-v1',
+                  }
+                : {}),
             });
             await this.worldGeneration.consent(
               authority.owner_id,
@@ -4049,6 +4164,12 @@ export class GameService implements OnModuleDestroy {
                 operationId: authority.operation_id,
                 quoteId: result.quote.id,
                 consent: true,
+                ...(authority.policy_version === 'bounded-npc-speech-v1'
+                  ? {
+                      autonomousSpeechPolicyHash: result.quote.autonomousSpeechPolicyHash,
+                      automaticKnownCostPolicyHash: result.quote.automaticKnownCostPolicyHash,
+                    }
+                  : {}),
               },
               roundId,
             );
@@ -4077,6 +4198,185 @@ export class GameService implements OnModuleDestroy {
     } finally {
       this.ordinaryAdmissions.delete(id);
     }
+  }
+  private matchesWorldPlanCommunication(state: GameState, npcId: string, context: DecisionContext) {
+    const parsed = z
+      .object({
+        sourceRequestId: z.uuid(),
+        roundId: z.string(),
+        brainGeneration: z.number().int().nonnegative(),
+        cursor: z.number().int().nonnegative(),
+      })
+      .strict()
+      .safeParse(context.worldPlanCommunication);
+    const brain = state.npcBrains?.[npcId],
+      action = brain?.plan[brain.cursor];
+    return (
+      parsed.success &&
+      !!brain &&
+      !!currentNpcPlan(state, npcId) &&
+      action?.kind === 'communicate' &&
+      state.turnController?.roundId === parsed.data.roundId &&
+      matchesTurnFence(state, context.turnFence as TurnFence) &&
+      brain.generation === parsed.data.brainGeneration &&
+      brain.cursor === parsed.data.cursor &&
+      action.targetId === context.recipientId &&
+      action.channel === context.channel &&
+      digest([...(action.observationIds ?? [])].sort()) ===
+        digest([...((context.observationIds as string[]) ?? [])].sort()) &&
+      !worldTurnActorGate(state, npcId, action) &&
+      !validateNpcCommunication(state, npcId, action).error
+    );
+  }
+  private blockWorldPlanCommunication(state: GameState, npcId: string, code: string) {
+    const next = structuredClone(state),
+      brain = next.npcBrains![npcId];
+    brain.plan = [];
+    brain.cursor = 0;
+    delete brain.planSource;
+    brain.living!.lastActionOutcome = {
+      actionKind: 'communicate',
+      status: 'blocked',
+      code,
+      tick: state.tick,
+      ...(state.turnController ? { roundId: state.turnController.roundId } : {}),
+    };
+    next.revision++;
+    return next;
+  }
+  /** A private plan authorizes intent only. Public words require their own admitted delivery. */
+  private async prepareWorldPlanCommunication(id: string, state: GameState, npcId: string) {
+    const brain = state.npcBrains![npcId],
+      action = brain.plan[brain.cursor];
+    const roundId = state.turnController!.roundId;
+    const error =
+      worldTurnActorGate(state, npcId, action) ??
+      (!currentNpcPlan(state, npcId) ? 'STALE_STATE' : undefined) ??
+      validateNpcCommunication(state, npcId, action).error;
+    if (error) return { state: this.blockWorldPlanCommunication(state, npcId, error) };
+    const causeKey = `round:${roundId}:${npcId}:communication:${brain.generation}:${brain.cursor}`;
+    const prior = (
+      await this.db.query(
+        `SELECT r.status,r.result_code,j.status AS job_status FROM game_npc_decision_requests r
+       LEFT JOIN npc_ai_jobs j ON j.id=r.job_id
+       WHERE r.campaign_id=$1 AND r.npc_id=$2 AND r.purpose='speech' AND r.cause_key=$3`,
+        [id, npcId, causeKey],
+      )
+    )[0];
+    if (prior) {
+      if (
+        prior.status === 'queued' ||
+        (prior.status === 'scheduled' &&
+          ['queued', 'reserved', 'running', 'result_received', 'validated'].includes(
+            prior.job_status,
+          ))
+      )
+        return { state, pending: true };
+      return {
+        state: this.blockWorldPlanCommunication(
+          state,
+          npcId,
+          prior.result_code ?? 'NPC_COMMUNICATION_UNAVAILABLE',
+        ),
+      };
+    }
+    // Dedupe only a committed provider reply with this exact recipient, channel and evidence.
+    // A reply to the player cannot satisfy a different NPC-to-NPC communication.
+    const spoken = await this.db.query(
+      `SELECT context,proposal FROM npc_ai_jobs WHERE campaign_id=$1 AND npc_id=$2
+       AND purpose='speech' AND status='committed' AND context->'turnFence'->>'roundId'=$3
+       ORDER BY created_at DESC,id LIMIT 32`,
+      [id, npcId, roundId],
+    );
+    for (const reply of spoken) {
+      if (
+        reply.context.recipientId !== action.targetId ||
+        reply.context.channel !== action.channel ||
+        digest([...(reply.context.observationIds ?? [])].sort()) !==
+          digest([...action.observationIds!].sort()) ||
+        typeof reply.proposal?.text !== 'string'
+      )
+        continue;
+      const utterance = state.npcUtterances?.find(
+        (item) =>
+          item.speakerId === npcId &&
+          item.text === reply.proposal.text &&
+          item.audienceIds.includes(action.targetId!) &&
+          digest([...(item.sourceObservationIds ?? [])].sort()) ===
+            digest([...action.observationIds!].sort()),
+      );
+      if (!utterance) continue;
+      const delivered = stepWorldNpcPlan(state, npcId, {
+        utteranceId: utterance.id,
+        replyLocale: localeSchema.parse(reply.context.replyLocale ?? 'en'),
+      });
+      if (!delivered.error && delivered.events.some((event) => event.kind === 'npc.communicated'))
+        return { state: recordNpcEvents(state, delivered.state, delivered.events, causeKey).state };
+    }
+    const parent = (
+      await this.db.query(
+        `SELECT r.id FROM game_npc_decision_requests r JOIN npc_ai_jobs j ON j.id=r.job_id
+       WHERE r.campaign_id=$1 AND r.npc_id=$2 AND r.purpose='plan' AND j.status='committed'
+       AND r.context->'turnFence'->>'roundId'=$3 AND j.proposal->>'brainGeneration'=$4
+       ORDER BY r.created_at DESC,r.id LIMIT 1`,
+        [id, npcId, roundId, String(brain.generation - 1)],
+      )
+    )[0];
+    if (!parent)
+      return {
+        state: this.blockWorldPlanCommunication(state, npcId, 'NPC_COMMUNICATION_PLAN_UNAVAILABLE'),
+      };
+    const language = (
+      await this.db.query(
+        `SELECT COALESCE((SELECT r.context->>'replyLocale' FROM game_npc_decision_requests r
+         WHERE r.campaign_id=c.id AND r.context->'turnFence'->>'roundId'=$2
+         AND r.context->>'replyLocale' IN ('uk','en','ru') ORDER BY r.created_at DESC,r.id LIMIT 1),
+         u.settings->>'language','en') AS reply_locale
+       FROM game_campaigns c JOIN users u ON u.id=c.owner_id WHERE c.id=$1`,
+        [id, roundId],
+      )
+    )[0];
+    const locale = localeSchema.safeParse(language?.reply_locale);
+    const context = this.speechContext(
+      state,
+      npcId,
+      action.targetId!,
+      action.channel!,
+      action.observationIds,
+      undefined,
+      undefined,
+      undefined,
+      locale.success ? locale.data : 'en',
+    );
+    const hash = digest({ campaignId: id, causeKey });
+    const request: NpcDecisionRequest = {
+      id: `${hash.slice(0, 8)}-${hash.slice(8, 12)}-4${hash.slice(13, 16)}-a${hash.slice(17, 20)}-${hash.slice(20, 32)}`,
+      npcId,
+      purpose: 'speech',
+      causeKey,
+      context: {
+        ...context,
+        generationPolicy: 'world-batch-v1',
+        worldPrepared: true,
+        responseOptional: true,
+        worldPlanCommunication: {
+          sourceRequestId: String(parent.id),
+          roundId,
+          brainGeneration: brain.generation,
+          cursor: brain.cursor,
+        },
+      },
+    };
+    const next = structuredClone(state);
+    next.npcBrains![npcId].living!.lastActionOutcome = {
+      actionKind: 'communicate',
+      status: 'blocked',
+      code: 'NPC_COMMUNICATION_PENDING_GENERATION',
+      tick: state.tick,
+      roundId,
+    };
+    next.revision++;
+    return { state: next, request, pending: true };
   }
   private async advanceTurnWorld(id: string, live: Live) {
     const turn = live.state.turnController;
@@ -4154,7 +4454,30 @@ export class GameService implements OnModuleDestroy {
         (brain.cursor >= brain.plan.length ? companionAction(state, npcId) : undefined);
       const applied = companion
         ? applyWorldTurnAction(state, npcId, companion, turnFence(state)!)
-        : stepWorldNpcPlan(state, npcId);
+        : stepWorldNpcPlan(state, npcId, undefined, {
+            requireCommunicationDelivery:
+              !!this.ai?.releaseGeneration?.() || !!this.ai?.provider?.external,
+          });
+      if ('communicationDeliveryRequired' in applied && applied.communicationDeliveryRequired) {
+        state = applied.state;
+        const communication = await this.prepareWorldPlanCommunication(id, state, npcId);
+        state = communication.state;
+        if (communication.pending) {
+          await this.persist(
+            id,
+            live,
+            state,
+            'npc.communication.requested',
+            undefined,
+            async (c) => {
+              if (communication.request) await insertNpcRequest(c, id, communication.request);
+            },
+          );
+          live.decisionsPending = true;
+          return;
+        }
+        continue;
+      }
       if (!applied.error || applied.error === 'PATH_BLOCKED' || applied.error === 'ROUND_LOCKED')
         state = recordNpcEvents(
           state,
@@ -4275,6 +4598,19 @@ export class GameService implements OnModuleDestroy {
         }
       }
       for (const npcId of Object.keys(live.state.npcBrains ?? {})) {
+        const brain = live.state.npcBrains![npcId];
+        if (
+          brain.plan[brain.cursor]?.kind === 'communicate' &&
+          (this.ai?.releaseGeneration?.() || this.ai?.provider?.external)
+        ) {
+          const blocked = this.blockWorldPlanCommunication(
+            live.state,
+            npcId,
+            'NPC_COMMUNICATION_REQUIRES_WORLD_PHASE',
+          );
+          await this.persist(id, live, blocked, 'npc.communication.blocked');
+          continue;
+        }
         const beforePlan = live.state,
           plan = stepNpcPlan(beforePlan, npcId);
         if (!plan.error) {

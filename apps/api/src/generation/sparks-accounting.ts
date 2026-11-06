@@ -1,3 +1,5 @@
+import { readAutonomousSpeechBoundEntry } from './autonomous-speech-envelope';
+import { pendingWorldBatchFunding } from './world-batch-funding';
 import {
   acceptedWorldKnownCostPolicyMatches,
   worldKnownCostPolicyRequired,
@@ -59,7 +61,7 @@ export async function verifyAcceptedWorldBatch(
   ownerId: string,
   proof: AcceptedWorldBatchProof,
   sparkQuoteId?: string,
-): Promise<void> {
+): Promise<{ optionalSpeech: boolean }> {
   z.uuid().parse(proof.batchId);
   const batch = (
     await c.query('SELECT * FROM game_world_generation_batches WHERE id=$1 FOR UPDATE', [
@@ -75,15 +77,21 @@ export async function verifyAcceptedWorldBatch(
     await c.query('SELECT * FROM npc_ai_quotes WHERE id=$1 FOR UPDATE', [proof.nativeQuoteId])
   ).rows[0];
   const campaign = (
-    await c.query('SELECT state,status,owner_id FROM game_campaigns WHERE id=$1 FOR SHARE', [
-      proof.campaignId,
-    ])
+    await c.query(
+      'SELECT state,status,owner_id,source_version_id FROM game_campaigns WHERE id=$1 FOR SHARE',
+      [proof.campaignId],
+    )
   ).rows[0];
   const entries = Array.isArray(batch?.entries) ? batch.entries : [];
   const matches = entries.filter(
     (entry: { requestId: string; quote: { id: string } }) =>
       entry.requestId === proof.runtimeRequestId && entry.quote?.id === proof.nativeQuoteId,
   );
+  const child =
+    matches.length === 0 && batch && request && native
+      ? await readAutonomousSpeechBoundEntry(c, batch, request, native)
+      : undefined;
+  if (child) matches.push(child);
   const entry = matches[0];
   const acceptedAt = batch?.accepted_at ? new Date(batch.accepted_at).getTime() : NaN;
   if (
@@ -118,6 +126,7 @@ export async function verifyAcceptedWorldBatch(
     !campaign ||
     campaign.status !== 'active' ||
     campaign.owner_id !== ownerId ||
+    (child && campaign.source_version_id !== child.sourceVersionId) ||
     campaign.state?.turnController?.phase !== 'world' ||
     !matchesTurnFence(campaign.state, batch.turn_fence)
   )
@@ -147,6 +156,9 @@ export async function verifyAcceptedWorldBatch(
     if (
       !spark ||
       native.spark_quote_id !== sparkQuoteId ||
+      (child &&
+        (String(spark.reserve_subunits) !== String(child.quote.sparkReservedSubunits) ||
+          spark.price_snapshot?.tariff?.sparkRateVersion !== child.quote.sparkRateVersion)) ||
       spark.source_kind !== 'npc' ||
       spark.source_id !== native.id ||
       spark.operation_id !== native.id ||
@@ -163,6 +175,7 @@ export async function verifyAcceptedWorldBatch(
     )
       reject('WORLD_BATCH_CONSENT_STALE');
   }
+  return { optionalSpeech: !!child };
 }
 
 export interface SparkQuoteInput {
@@ -365,10 +378,13 @@ export class SparksAccounting {
   ) {
     z.uuid().parse(ownerId);
     z.uuid().parse(quoteId);
+    let optionalSpeech = false;
     if (worldBatch) {
       if ('preparationId' in worldBatch)
         await verifyAcceptedTravelBatch(c, ownerId, worldBatch, quoteId);
-      else await verifyAcceptedWorldBatch(c, ownerId, worldBatch, quoteId);
+      else
+        optionalSpeech = (await verifyAcceptedWorldBatch(c, ownerId, worldBatch, quoteId))
+          .optionalSpeech;
     }
     const wallet = (
       await c.query('SELECT * FROM spark_wallets WHERE owner_id=$1 FOR UPDATE', [ownerId])
@@ -403,6 +419,17 @@ export class SparksAccounting {
       parseSparkInteger(String(wallet.balance_subunits)) -
       parseSparkInteger(String(wallet.held_subunits));
     if (sparkReserve > available) reject('INSUFFICIENT_SPARKS');
+    if (optionalSpeech) {
+      // The exact child is affordable only after every accepted mandatory sibling,
+      // including other campaigns of this payer. Acceptance uses this same wallet
+      // lock; never lock another campaign/batch while holding it.
+      const mandatory = await pendingWorldBatchFunding(c, ownerId);
+      if (
+        available + dreamAvailable - reserve < mandatory.total ||
+        available - sparkReserve < mandatory.sparksOnly
+      )
+        reject('AUTONOMOUS_SPEECH_INSUFFICIENT_FUNDS');
+    }
     const duplicateSource = (
       await c.query(
         'SELECT id FROM spark_holds WHERE owner_id=$1 AND source_kind=$2 AND source_id=$3',

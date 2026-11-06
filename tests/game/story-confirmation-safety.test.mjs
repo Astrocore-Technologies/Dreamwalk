@@ -868,7 +868,7 @@ test('ordinary world status never mounts consent or makes writes, including acro
   ui.render({ campaignId: 'campaign', scope: 'round-22', disabled: false, access: 'owner' });
   await ui.flush();
   assert.equal(ui.elements('reply-confirmation').length, 0);
-  assert.equal(ui.has('worldCostForecastHint'), false);
+  assert.equal(ui.has('worldCostForecastHint'), true, 'base estimate explains its limited scope');
   assert.match(ui.text(), /worldCostForecast:/);
   ui.expire();
   await ui.flush();
@@ -1522,3 +1522,587 @@ for (const [status, jobStatus, sparkStatus, sparkCapturedSubunits, message] of [
     );
     ui.unmount();
   });
+
+const autonomousReceipt = (id, outcome, amount) => ({
+  id,
+  createdAt: '2026-01-02T12:30:00.000Z',
+  status: 'settled',
+  outcome,
+  reservedSubunits: '10000',
+  capturedSubunits: amount,
+  funding: { dreamsCapturedSubunits: '0', sparksCapturedSubunits: amount },
+});
+for (const locale of ['ru', 'en', 'uk']) {
+  test(`autonomous receipt pagination reads only and retains the current unknown-liability warning (${locale})`, async () => {
+    const calls = [];
+    let finishOlder;
+    const current = {
+      available: false,
+      pending: true,
+      unknown: true,
+      speechReceipts: [autonomousReceipt('new', 'delivered', '1664')],
+      speechReceiptNext: 'older-cursor',
+    };
+    const ui = await harness(
+      'world-generation-confirmation',
+      (...args) => {
+        calls.push(args);
+        return args[0].includes('?')
+          ? new Promise((resolve) => {
+              finishOlder = resolve;
+            })
+          : Promise.resolve(current);
+      },
+      locale,
+    );
+    ui.render({
+      campaignId: 'campaign',
+      scope: 'round',
+      disabled: false,
+      access: 'owner',
+      phase: 'players',
+    });
+    await ui.flush();
+    assert.equal(ui.has('worldSpeechDelivered'), true);
+    assert.equal(ui.elements('time').length, 1);
+    assert.equal(ui.has('worldCostUnresolved'), true);
+    ui.button('worldSpeechOlder')();
+    ui.render();
+    assert.equal(ui.has('worldSpeechDelivered'), false, 'old receipt page disappears immediately');
+    assert.equal(ui.has('worldCostUnresolved'), true, 'billing gate is not the receipt page');
+    finishOlder({
+      ...current,
+      speechReceipts: [autonomousReceipt('old', 'failed', '888')],
+      speechReceiptNext: undefined,
+    });
+    await ui.flush();
+    assert.equal(ui.has('worldSpeechFailed'), true);
+    assert.equal(ui.has('worldSpeechDelivered'), false);
+    assert.equal(ui.has('worldCostUnresolved'), true);
+    ui.button('worldSpeechNewest')();
+    ui.render();
+    await ui.flush();
+    assert.equal(ui.has('worldSpeechDelivered'), true);
+    assert.equal(ui.has('worldSpeechFailed'), false);
+    assert.deepEqual(
+      calls.map((args) => args[0]),
+      [
+        '/game/campaigns/campaign/world-generation',
+        '/game/campaigns/campaign/world-generation?speechReceiptBefore=older-cursor',
+        '/game/campaigns/campaign/world-generation',
+      ],
+    );
+    assert.ok(
+      calls.every((args) => args.length === 1),
+      'no quote, consent, retry or mutation',
+    );
+    ui.unmount();
+  });
+}
+
+for (const interruption of ['campaign', 'access']) {
+  test(`late autonomous receipt page cannot cross ${interruption} boundary`, async () => {
+    const calls = [];
+    let finishOlder;
+    const initial = {
+      campaignId: 'campaign',
+      scope: 'round',
+      disabled: false,
+      access: 'owner',
+      phase: 'players',
+    };
+    const ui = await harness('world-generation-confirmation', (...args) => {
+      calls.push(args);
+      if (args[0].includes('?'))
+        return new Promise((resolve) => {
+          finishOlder = resolve;
+        });
+      return Promise.resolve({
+        available: false,
+        pending: false,
+        speechReceipts: [autonomousReceipt('new', 'delivered', '1664')],
+        speechReceiptNext: 'older-cursor',
+      });
+    });
+    ui.render(initial);
+    await ui.flush();
+    ui.button('worldSpeechOlder')();
+    ui.render();
+    ui.render({
+      ...initial,
+      ...(interruption === 'campaign' ? { campaignId: 'other' } : { access: 'member' }),
+    });
+    assert.equal(ui.has('worldSpeechDelivered'), false);
+    finishOlder({
+      available: false,
+      pending: false,
+      speechReceipts: [autonomousReceipt('old', 'failed', '888')],
+    });
+    await ui.flush();
+    assert.equal(ui.has('worldSpeechFailed'), false, 'late old-page reply is ignored');
+    if (interruption === 'access') ui.render(initial);
+    ui.expire();
+    await ui.flush();
+    assert.equal(ui.has('worldSpeechFailed'), false);
+    assert.ok(
+      !calls.slice(2).some((args) => args[0].includes('speechReceiptBefore')),
+      'page cursor resets at the ownership/campaign boundary',
+    );
+    assert.ok(calls.every((args) => args.length === 1));
+    ui.unmount();
+  });
+}
+
+test('failed older receipt read does not display a stale page or erase current unknown liability', async () => {
+  const calls = [];
+  const ui = await harness('world-generation-confirmation', async (...args) => {
+    calls.push(args);
+    if (args[0].includes('?')) throw Error('STATUS_FAILED');
+    return {
+      available: false,
+      pending: true,
+      unknown: true,
+      speechReceipts: [autonomousReceipt('new', 'silent', '555')],
+      speechReceiptNext: 'older-cursor',
+    };
+  });
+  ui.render({
+    campaignId: 'campaign',
+    scope: 'round',
+    disabled: false,
+    access: 'owner',
+    phase: 'players',
+  });
+  await ui.flush();
+  assert.equal(ui.has('worldSpeechSilent'), true);
+  ui.button('worldSpeechOlder')();
+  ui.render();
+  await ui.flush();
+  assert.equal(ui.has('worldSpeechSilent'), false);
+  assert.equal(ui.has('worldCostUnresolved'), true);
+  assert.equal(ui.elements('reply-confirmation').length, 0);
+  assert.ok(calls.every((args) => args.length === 1));
+  ui.unmount();
+});
+
+for (const locale of ['ru', 'en', 'uk']) {
+  test(`bounded ordinary speech skip is explained without intermediate consent or a fake charge (${locale})`, async () => {
+    const calls = [];
+    const ui = await harness(
+      'world-generation-confirmation',
+      async (...args) => {
+        calls.push(args);
+        return {
+          available: false,
+          pending: false,
+          speechSkips: [
+            {
+              id: 'skip-one',
+              createdAt: '2026-01-02T12:30:00.000Z',
+              reason: 'allowance_exhausted',
+            },
+            {
+              id: 'skip-two',
+              createdAt: '2026-01-02T12:31:00.000Z',
+              reason: 'allowance_unavailable',
+            },
+            {
+              id: 'skip-three',
+              createdAt: '2026-01-02T12:32:00.000Z',
+              reason: 'legacy_uncovered',
+            },
+            {
+              id: 'skip-four',
+              createdAt: '2026-01-02T12:33:00.000Z',
+              reason: 'insufficient_funds',
+            },
+          ],
+        };
+      },
+      locale,
+    );
+    const initial = {
+      campaignId: 'campaign',
+      scope: 'round',
+      disabled: false,
+      access: 'owner',
+      phase: 'world',
+    };
+    ui.render(initial);
+    await ui.flush();
+    assert.equal(ui.has('worldSpeechSkipExhausted'), true);
+    assert.equal(ui.has('worldSpeechSkipUnavailable'), true);
+    assert.equal(ui.has('worldSpeechSkipLegacy'), true);
+    assert.equal(ui.has('worldSpeechSkipInsufficientFunds'), true);
+    assert.equal(ui.elements('reply-confirmation').length, 0);
+    assert.equal(ui.has('worldSpeechReceipts'), false);
+    assert.equal(ui.has('worldPending'), false);
+    ui.render({ ...initial, phase: 'players' });
+    await ui.flush();
+    assert.equal(ui.elements('reply-confirmation').length, 0);
+    ui.render({ ...initial, access: 'member', phase: 'players' });
+    assert.equal(ui.has('worldSpeechSkipExhausted'), false);
+    assert.equal(ui.has('worldSpeechSkipUnavailable'), false);
+    assert.equal(ui.has('worldSpeechSkipLegacy'), false);
+    assert.equal(ui.has('worldSpeechSkipInsufficientFunds'), false);
+    assert.ok(
+      calls.every((args) => args.length === 1),
+      'status only; no additional consent/quote',
+    );
+    ui.unmount();
+  });
+}
+
+const roundCostStatus = () => ({
+  available: true,
+  pending: false,
+  availableFunding: { sparksSubunits: '10000', dreamsSubunits: '15000', totalSubunits: '25000' },
+  forecast: {
+    estimatedSparkSubunits: '20000',
+    estimatedTotalMicros: 10000,
+    baseEstimatedSparkSubunits: '12000',
+    optionalAutonomousSpeechRequests: 2,
+    optionalAutonomousSpeechSparkSubunits: '8000',
+    optionalAutonomousSpeechAllowanceSubunits: '90000000',
+    optionalAutonomousSpeechUnestimatedRequests: 0,
+    requestCount: 2,
+    basis: 'local_round_forecast',
+    includesMapAnalysis: false,
+    finalQuoteRequired: true,
+  },
+});
+const roundCostProps = () => ({
+  campaignId: 'campaign',
+  scope: 'round',
+  disabled: false,
+  access: 'owner',
+  phase: 'players',
+});
+const pricedCopy = (key, amount, locale) =>
+  `${key}:${JSON.stringify({ amount: formatSparkSubunits(amount, locale) })}`;
+for (const locale of ['ru', 'en', 'uk']) {
+  test(`round forecast separates current-context prices, actual funding and a closed permission ceiling (${locale})`, async () => {
+    const calls = [];
+    const ui = await harness(
+      'world-generation-confirmation',
+      async (...args) => {
+        calls.push(args);
+        return roundCostStatus();
+      },
+      locale,
+    );
+    ui.render(roundCostProps());
+    await ui.flush();
+    assert.equal(ui.has(pricedCopy('worldCostForecast', '12000', locale)), true);
+    assert.equal(ui.has(pricedCopy('worldTotalCostForecast', '20000', locale)), true);
+    assert.equal(
+      ui.has(
+        `worldOptionalSpeechForecast:${JSON.stringify({
+          amount: formatSparkSubunits('8000', locale),
+          count: 2,
+        })}`,
+      ),
+      true,
+    );
+    assert.equal(
+      ui.has(
+        `worldAvailableFunding:${JSON.stringify({
+          sparks: formatSparkSubunits('10000', locale),
+          dreams: formatSparkSubunits('15000', locale),
+          total: formatSparkSubunits('25000', locale),
+        })}`,
+      ),
+      true,
+    );
+    const details = ui.elements('details');
+    assert.equal(details.length, 1);
+    assert.equal(details[0].props.open, undefined, 'technical ceiling is closed by default');
+    assert.equal(details[0].props.children[0].type, 'summary');
+    assert.equal(details[0].props.children[0].props.children, 'worldSpeechAllowanceDetails');
+    assert.equal(
+      details[0].props.children[1].props.children,
+      `worldOptionalSpeechAllowance:${JSON.stringify({
+        amount: formatSparkSubunits('90000000', locale),
+        count: 2,
+      })}`,
+    );
+    assert.equal(ui.has('worldOptionalSpeechConditions'), true);
+    assert.equal(ui.elements('reply-confirmation').length, 0);
+    assert.equal(ui.elements('button').length, 0);
+    assert.ok(
+      calls.every((args) => args.length === 1),
+      'forecast performs no quote/consent/paid count',
+    );
+    ui.unmount();
+  });
+
+  test(`unknown optional estimate preserves the known base without inventing a total (${locale})`, async () => {
+    const status = roundCostStatus();
+    status.forecast.estimatedSparkSubunits = null;
+    status.forecast.estimatedTotalMicros = null;
+    status.forecast.optionalAutonomousSpeechSparkSubunits = null;
+    status.forecast.optionalAutonomousSpeechUnestimatedRequests = 1;
+    status.availableFunding = null;
+    const ui = await harness('world-generation-confirmation', async () => status, locale);
+    ui.render(roundCostProps());
+    await ui.flush();
+    assert.equal(ui.has(pricedCopy('worldCostForecast', '12000', locale)), true);
+    assert.equal(ui.has('worldOptionalSpeechForecastUnavailable:{"count":1}'), true);
+    assert.doesNotMatch(
+      ui.text(),
+      /worldTotalCostForecast:|worldOptionalSpeechForecast:|worldAvailableFunding:/,
+    );
+    assert.equal(
+      ui.has('worldFundingUnavailable'),
+      true,
+      'unavailable funding is not shown as zero',
+    );
+    assert.equal(ui.elements('reply-confirmation').length, 0);
+    ui.unmount();
+  });
+}
+
+test('pricing and available funds are hidden after failed or unverified reads without changing consent state', async () => {
+  let failed = false;
+  const ui = await harness('world-generation-confirmation', async () => {
+    if (failed) throw Error('STATUS_FAILED');
+    return roundCostStatus();
+  });
+  const initial = roundCostProps();
+  ui.render(initial);
+  await ui.flush();
+  assert.match(ui.text(), /worldAvailableFunding:/);
+  for (const membership of [{ membershipPending: true }, { membershipError: true }]) {
+    ui.render({ ...initial, ...membership });
+    assert.doesNotMatch(
+      ui.text(),
+      /worldAvailableFunding:|worldCostForecast:|worldOptionalSpeechForecast:|worldOptionalSpeechAllowance:/,
+    );
+    assert.equal(ui.has('worldFundingUnavailable'), true);
+  }
+  ui.render(initial);
+  failed = true;
+  ui.expire();
+  await ui.flush();
+  assert.doesNotMatch(
+    ui.text(),
+    /worldAvailableFunding:|worldCostForecast:|worldOptionalSpeechForecast:|worldOptionalSpeechAllowance:/,
+  );
+  assert.equal(ui.has('worldFundingUnavailable'), true);
+  assert.equal(ui.elements('reply-confirmation').length, 0);
+  ui.unmount();
+});
+
+for (const interruption of ['campaign', 'access', 'scope']) {
+  test(`current pricing cannot survive a ${interruption} leave-and-return or late status response`, async () => {
+    let reads = 0;
+    let finishOld;
+    const calls = [];
+    const ui = await harness('world-generation-confirmation', (...args) => {
+      calls.push(args);
+      if (++reads === 1) return Promise.resolve(roundCostStatus());
+      return new Promise((resolve) => {
+        finishOld = resolve;
+      });
+    });
+    const initial = roundCostProps();
+    ui.render(initial);
+    await ui.flush();
+    assert.match(ui.text(), /worldAvailableFunding:/);
+    ui.expire();
+    const other =
+      interruption === 'campaign'
+        ? { campaignId: 'other' }
+        : interruption === 'access'
+          ? { access: 'member' }
+          : { scope: 'other' };
+    ui.render({ ...initial, ...other });
+    assert.doesNotMatch(ui.text(), /worldAvailableFunding:|worldCostForecast:/);
+    ui.render(initial);
+    assert.doesNotMatch(ui.text(), /worldAvailableFunding:|worldCostForecast:/);
+    finishOld(roundCostStatus());
+    await ui.flush();
+    assert.doesNotMatch(ui.text(), /worldAvailableFunding:|worldCostForecast:/);
+    assert.equal(ui.has('worldFundingUnavailable'), true);
+    assert.ok(calls.every((args) => args.length === 1));
+    ui.unmount();
+  });
+}
+
+test('round pricing, funding and skipped-speech explanations have complete locale and placeholder parity', async () => {
+  const source = await readFile(
+    new URL('../../apps/web/components/game/story-messages.ts', import.meta.url),
+    'utf8',
+  );
+  const code = transformSync(source, { loader: 'ts', format: 'cjs' }).code;
+  const module = { exports: {} };
+  new Function('require', 'module', 'exports', code)(() => ({}), module, module.exports);
+  const keys = [
+    'worldCostForecast',
+    'worldCostForecastHint',
+    'worldAvailableFunding',
+    'worldFundingUnavailable',
+    'worldTotalCostForecast',
+    'worldOptionalSpeechForecast',
+    'worldOptionalSpeechForecastUnavailable',
+    'worldOptionalSpeechConditions',
+    'worldSpeechAllowanceDetails',
+    'worldOptionalSpeechAllowance',
+    'worldOptionalSpeechIncluded',
+    'worldSpeechSkipInsufficientFunds',
+    'worldRequiredReserve',
+    'worldRequiredReserveUnavailable',
+    'worldRequiredReserveHint',
+  ];
+  for (const key of keys) {
+    const variants = module.exports.storyMessages[key];
+    assert.equal(variants.length, 3, key);
+    assert.equal(new Set(variants).size, 3, key);
+    const placeholders = variants.map((text) =>
+      [...text.matchAll(/\{(\w+)\}/g)].map((m) => m[1]).sort(),
+    );
+    assert.deepEqual(placeholders[0], placeholders[1], key);
+    assert.deepEqual(placeholders[1], placeholders[2], key);
+  }
+  for (const [index, phrase] of [
+    'не обязательный резерв',
+    'not a required reserve',
+    'не обов’язковий резерв',
+  ].entries())
+    assert.ok(
+      module.exports.storyMessages.worldOptionalSpeechAllowance[index]
+        .toLowerCase()
+        .includes(phrase),
+      phrase,
+    );
+});
+
+for (const locale of ['ru', 'en', 'uk']) {
+  test(`world quote shows required reservation, not full-context speech ceiling as expected price (${locale})`, async () => {
+    const ui = await harness('story-cost', undefined, locale);
+    const quoted = {
+      ...quote().quote,
+      sparkReservedSubunits: '90120000',
+      requiredSparkSubunits: '120000',
+      optionalAutonomousSpeechSparkSubunits: '90000000',
+      optionalAutonomousSpeechRequests: 2,
+      generatedLocationImages: 1,
+      generatedLocationGroundingStages: 1,
+      automaticKnownCostPolicy: 'known-cost-v1',
+      automaticKnownCostPolicyHash: 'policy-hash',
+      runtimeMapImages: 1,
+      funding: {
+        policyVersion: 'dreams-first-v1',
+        dreamsReservedSubunits: '10000',
+        sparksReservedSubunits: '90110000',
+        totalReservedSubunits: '90120000',
+        maxSparksSubunits: '90120000',
+        allocation: 'estimate',
+      },
+    };
+    const snapshot = structuredClone(quoted);
+    ui.render({ quote: quoted });
+    assert.equal(ui.has(pricedCopy('worldRequiredReserve', '120000', locale)), true);
+    assert.equal(ui.has('worldRequiredReserveHint'), true);
+    assert.equal(ui.has('automaticKnownCostNotice'), true);
+    assert.equal(
+      ui.elements('small').some((node) => node.props['data-runtime-map-consent']),
+      true,
+    );
+    assert.equal(
+      ui.elements('funding').length,
+      0,
+      'the aggregate allocation is not a mandatory reservation',
+    );
+    assert.equal(ui.elements('funding-notice').length, 1);
+    assert.doesNotMatch(ui.text(), /estimatedCost:|estimatedHold:/);
+    assert.deepEqual(quoted, snapshot, 'the immutable quote is not rewritten for presentation');
+    ui.unmount();
+  });
+}
+
+test('legacy world required reserve fallback uses exact nonnegative subunits only', async () => {
+  const ui = await harness('story-cost');
+  const base = {
+    ...quote().quote,
+    sparkReservedSubunits: '90120000',
+    optionalAutonomousSpeechSparkSubunits: '90000000',
+    optionalAutonomousSpeechRequests: 2,
+  };
+  for (const [patch, amount] of [
+    [{}, '120000'],
+    [{ sparkReservedSubunits: '90000000' }, '0'],
+    [{ requiredSparkSubunits: '40000' }, '40000'],
+    [
+      {
+        sparkReservedSubunits: '90071992547409932',
+        optionalAutonomousSpeechSparkSubunits: '90071992547409930',
+      },
+      '2',
+    ],
+    [{ sparkReservedSubunits: '1' }, null],
+    [{ sparkReservedSubunits: '-1' }, null],
+    [{ sparkReservedSubunits: '1.2' }, null],
+    [{ optionalAutonomousSpeechSparkSubunits: '90000000x' }, null],
+    [{ optionalAutonomousSpeechSparkSubunits: undefined }, null],
+    [{ requiredSparkSubunits: 'invalid' }, null],
+  ]) {
+    ui.render({ quote: { ...base, ...patch } });
+    if (amount === null) assert.equal(ui.has('worldRequiredReserveUnavailable'), true);
+    else assert.equal(ui.has(pricedCopy('worldRequiredReserve', amount, 'ru')), true);
+    assert.doesNotMatch(ui.text(), /estimatedCost:|estimatedHold:/);
+  }
+  ui.unmount();
+});
+
+test('explicit world quote keeps full allowance in closed details and consents the original policy once', async () => {
+  const calls = [];
+  const prepared = quote();
+  Object.assign(prepared.quote, {
+    optionalAutonomousSpeechRequests: 2,
+    optionalAutonomousSpeechSparkSubunits: '90000000',
+    sparkReservedSubunits: '90120000',
+    requiredSparkSubunits: '120000',
+    autonomousSpeechPolicyHash: 'original-policy-hash',
+    generatedLocationImages: 1,
+    estimateRiskConsentRequired: true,
+  });
+  const snapshot = structuredClone(prepared.quote);
+  const ui = await harness('story-reply-confirmation', async (path, options) => {
+    calls.push({ path, body: JSON.parse(options.body) });
+    return path.endsWith('/quote') ? prepared : { accepted: true };
+  });
+  ui.render({ ...props(), worldBatch: true });
+  ui.expire();
+  await tick();
+  ui.render();
+  assert.equal(ui.elements('cost')[0].props.quote, prepared.quote);
+  assert.equal(ui.elements('details').length, 1);
+  assert.equal(ui.elements('details')[0].props.open, undefined);
+  assert.equal(ui.has('worldOptionalSpeechConditions'), true);
+  assert.equal(calls.length, 1, 'preparation cannot consent itself');
+  ui.button('confirm')();
+  await tick();
+  ui.render();
+  assert.equal(calls.length, 2);
+  assert.equal(calls[1].body.autonomousSpeechPolicyHash, 'original-policy-hash');
+  assert.equal(calls[1].body.quoteId, prepared.quote.id);
+  assert.equal(calls[1].body.estimateRiskConsent, true);
+  assert.deepEqual(prepared.quote, snapshot);
+  ui.unmount();
+});
+
+test('shared campaign lobby introduction never labels every real campaign as free test fixtures', async () => {
+  const source = await readFile(
+    new URL('../../apps/web/components/game/turn-messages.ts', import.meta.url),
+    'utf8',
+  );
+  const intro = source.match(/lobbyIntro: \[([\s\S]*?)\],/)[1];
+  assert.doesNotMatch(intro, /бесплат|безкоштов|free|тест|test|демо|demo/i);
+  for (const phrase of [
+    'Пошаговая история: ходи по сцене, говори с несколькими NPC, затем передай ход миру.',
+    'A turn-based story: walk through the scene, address several NPCs, then pass the turn to the world.',
+    'Покрокова історія: ходи сценою, говори з кількома NPC, а потім передай хід світу.',
+  ])
+    assert.ok(intro.includes(phrase));
+});

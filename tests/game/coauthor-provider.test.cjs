@@ -381,3 +381,109 @@ test('turn-post pocketing an already carried prop is a no-op success, not a dupl
   assert.equal(post.entries.find((entry) => entry.kind === 'outcome').code, 'ACTION_SUCCEEDED');
   assert.equal(post.untrustedRoleplay.length, 0);
 });
+
+test('natural existing-item handoff survives deferred post, one injected provider response and atomic admission', async () => {
+  const draft = g.createCompleteObservatoryDraft();
+  delete draft.supportingNpcPolicy;
+  let state = g.createStateFromPlayable(g.compilePlayableDraft(draft).playable, ['alice']);
+  Object.assign(state.entities.alice, { x: 5, y: 4, inventory: ['key'] });
+  Object.assign(state.entities.keeper, { x: 6, y: 4, label: 'Борис', inventory: [] });
+  Object.assign(state.entities.key, { ownerId: 'alice', label: 'латунный ключ' });
+  state = g.initializeTurnController(state, ['alice']).state;
+  const turnId = randomUUID();
+  const input = {
+    operationId: randomUUID(),
+    text: '*Передаю Борису латунный ключ, который нашёл у входа.*',
+    channel: 'say',
+    replyLocale: 'ru',
+    expectedCanonRevision: 0,
+    turnFence: g.turnFence(state),
+  };
+  const runtime = Object.create(StoryTurnRuntime.prototype);
+  runtime.port = {};
+  const post = runtime.simulateTurnPost(state, 'alice', input, turnId, 'synthetic-owner');
+  assert.equal(post.state.entities.key.ownerId, 'alice');
+  state = g.endPlayerTurn(post.state, 'alice', g.turnFence(post.state)).state;
+  const worldInput = { ...input, text: post.directorText, turnFence: g.turnFence(state) };
+  const context = {
+    ...g.buildStoryTurnContext(state, 'alice', worldInput, turnId),
+    turnBasedDeferredDirector: true,
+  };
+  assert.deepEqual(context.actionPreview, []);
+  assert.equal(context.itemTransferPolicy.segmentCandidates[0].items[0].id, 'key');
+  let calls = 0;
+  const provider = new OpenAiNpcProvider(
+    {
+      enabled: true,
+      apiKey: 'synthetic-fixture-key',
+      model: 'synthetic-model',
+      version: 'handoff-test',
+      maxInputBytes: 64000,
+      maxOutputTokens: 1000,
+      maxResponseBytes: 1000000,
+      inputMicrosPerMillion: 1,
+      outputMicrosPerMillion: 1,
+    },
+    async (_url, init) => {
+      calls++;
+      const request = JSON.parse(init.body);
+      assert.match(request.instructions, /current explicit handoff can additionally use give/);
+      assert.match(request.instructions, /not command keywords/);
+      assert.match(
+        request.instructions,
+        /Ordinary untracked props, services and descriptive roleplay remain unrestricted/,
+      );
+      return new Response(
+        JSON.stringify({
+          id: 'synthetic-handoff',
+          status: 'completed',
+          service_tier: 'default',
+          output: [
+            {
+              type: 'message',
+              content: [
+                {
+                  type: 'output_text',
+                  text: JSON.stringify({
+                    status: 'ready',
+                    code: null,
+                    steps: [
+                      {
+                        segmentIndex: 0,
+                        action: { kind: 'give', itemId: 'key', targetId: 'keeper' },
+                        reply: null,
+                      },
+                    ],
+                    narrative: {
+                      narration: 'Борис принял латунный ключ.',
+                      newScene: null,
+                      newNpc: null,
+                      evidenceIds: [],
+                    },
+                  }),
+                },
+              ],
+            },
+          ],
+          usage: { input_tokens: 50, output_tokens: 100 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    },
+  );
+  const generated = await provider.generate({
+    jobId: randomUUID(),
+    purpose: 'story_turn',
+    context,
+    signal: new AbortController().signal,
+    maxCostMicros: 100,
+  });
+  assert.equal(generated.failureCode, undefined);
+  assert.equal(calls, 1);
+  const result = g.applyStoryTurnProposal(state, 'alice', worldInput, turnId, generated.proposal);
+  assert.equal(result.error, undefined);
+  assert.equal(result.clarification, undefined);
+  assert.equal(result.state.entities.key.ownerId, 'keeper');
+  assert.deepEqual(result.state.entities.keeper.inventory, ['key']);
+  assert.equal(result.events.filter((e) => e.kind === 'action.give').length, 1);
+});

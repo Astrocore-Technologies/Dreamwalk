@@ -28,6 +28,11 @@ const { canonical } = require('../../apps/api/dist/ai/context.js');
 const { activateReleaseDeployment } = require('../images/release-deployment-fixture.cjs');
 const { endPlayerTurn, turnFence } = require('../../packages/game-core/dist');
 const { ApiException } = require('../../apps/api/dist/errors.js');
+const { SparksAccounting } = require('../../apps/api/dist/generation/sparks-accounting.js');
+const {
+  pendingWorldBatchFunding,
+  mandatoryWorldBatchFunding,
+} = require('../../apps/api/dist/generation/world-batch-funding.js');
 const { eraseImageGeneration } = require('../../apps/api/dist/image-generation/data-requests.js');
 const database = new Db();
 const code = (expected) => (error) => error.getResponse?.().code === expected;
@@ -348,6 +353,13 @@ await test(
           travelGroundingPolicyHash: q.quote.travelGroundingPolicyHash,
         });
       }
+      const pendingFunding = () =>
+        database.tx(async (c) => {
+          await c.query('SELECT owner_id FROM spark_wallets WHERE owner_id=$1 FOR UPDATE', [
+            owner.user.id,
+          ]);
+          return pendingWorldBatchFunding(c, owner.user.id);
+        });
       async function drain(id, live, allowUnpaidContinuation = false) {
         for (let i = 0; i < 60; i++) {
           await game.processDecisionRequests(id, live);
@@ -529,6 +541,61 @@ await test(
             0,
           );
           await accept(id, q);
+          const acceptedFundingBatch = (
+            await db.query('SELECT * FROM game_world_generation_batches WHERE id=$1', [q.quote.id])
+          ).rows[0];
+          const fullMandatory = mandatoryWorldBatchFunding(acceptedFundingBatch);
+          assert.equal(fullMandatory.total.toString(), q.quote.requiredSparkSubunits);
+          assert.deepEqual(
+            await pendingFunding(),
+            fullMandatory,
+            'text, exact image and future grounding are all protected',
+          );
+          const fundingProbe = await db.connect();
+          try {
+            await fundingProbe.query('BEGIN');
+            const imageNative = (
+              await fundingProbe.query('SELECT * FROM image_generation_quotes WHERE id=$1', [
+                acceptedFundingBatch.media_entries[0].imageQuoteId,
+              ])
+            ).rows[0];
+            const accounting = new SparksAccounting();
+            const hold = await accounting.reserve(
+              fundingProbe,
+              owner.user.id,
+              imageNative.spark_quote_id,
+            );
+            const expected =
+              fullMandatory.total -
+              BigInt(acceptedFundingBatch.media_entries[0].quote.sparkReservedSubunits);
+            assert.equal(
+              (await pendingWorldBatchFunding(fundingProbe, owner.user.id)).total,
+              expected,
+              'native image hold is not counted twice',
+            );
+            await accounting.settle(fundingProbe, owner.user.id, hold.id, {
+              outcome: 'unknown',
+              receiptId: 'synthetic-pending-image',
+            });
+            assert.equal(
+              (await pendingWorldBatchFunding(fundingProbe, owner.user.id)).total,
+              expected,
+            );
+            assert.equal(
+              (await fundingProbe.query('SELECT status FROM spark_holds WHERE id=$1', [hold.id]))
+                .rows[0].status,
+              'pending',
+              'reading protected funding never releases an unknown hold',
+            );
+          } finally {
+            await fundingProbe.query('ROLLBACK');
+            fundingProbe.release();
+          }
+          assert.deepEqual(
+            await pendingFunding(),
+            fullMandatory,
+            'rollback leaves the real synthetic lifecycle untouched',
+          );
           assert.equal(
             (
               await db.query(
@@ -575,8 +642,17 @@ await test(
           const enqueue = grounding.enqueueAcceptedTravelGrounding.bind(grounding);
           let lostEnqueueReply = false;
           grounding.enqueueAcceptedTravelGrounding = async (...args) => {
+            const beforeFunding = await pendingFunding();
             const native = await enqueue(...args);
             if (!lostEnqueueReply) {
+              assert.equal(
+                (await pendingFunding()).total,
+                beforeFunding.total -
+                  BigInt(
+                    acceptedFundingBatch.media_entries[0].grounding.quote.sparkReservedSubunits,
+                  ),
+                'the original grounding tranche is replaced by its exact native hold once',
+              );
               lostEnqueueReply = true;
               // Expire only the exact native quote after its job and hold committed.
               // Recovery must use that job, never try a fresh reserve or quote.

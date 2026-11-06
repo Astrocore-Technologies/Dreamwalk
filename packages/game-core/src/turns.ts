@@ -20,7 +20,11 @@ import {
   type TurnProjection,
 } from '@dreamwalk/contracts';
 import { applyUnbudgetedAction, findPath, visible, walkable } from './index';
-import { npcReplyObservation } from './living';
+import {
+  npcReplyObservation,
+  communicateNpcObservations,
+  type NpcCommunicationDelivery,
+} from './living';
 import { npcActionAllowed } from './living-policy';
 import { companionAction } from './companionship';
 
@@ -666,6 +670,7 @@ export function applyWorldTurnAction(
   npcId: string,
   input: GameAction,
   fence: TurnFence,
+  communication?: NpcCommunicationDelivery,
 ): GameResult {
   const turn = state.turnController;
   if (!turn || !matchesTurnFence(state, fence)) return fail(state, 'STALE_STATE');
@@ -718,7 +723,9 @@ export function applyWorldTurnAction(
     resolved =
       action.kind === 'hit' || action.kind === 'push'
         ? resolveContact(state, npcId, action)
-        : applyUnbudgetedAction(state, npcId, action);
+        : action.kind === 'communicate' && communication
+          ? communicateNpcObservations(state, npcId, action, communication)
+          : applyUnbudgetedAction(state, npcId, action);
   if (resolved.error) return resolved;
   const next = resolved.state === state ? clone(state) : resolved.state;
   next.turnController!.worldActions++;
