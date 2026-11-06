@@ -2197,7 +2197,9 @@ export class StoryTurnRuntime {
       !deferredDirector &&
       !applied.error &&
       !applied.clarification &&
-      applied.actions.some((preview) => !['pick_up', 'travel'].includes(preview.action.kind)) &&
+      applied.actions.some(
+        (preview) => !['pick_up', 'travel', 'drop'].includes(preview.action.kind),
+      ) &&
       r.confirmed_action_hash !== npcContextFingerprint(applied.actions);
     const status = applied.error
       ? 'stale'

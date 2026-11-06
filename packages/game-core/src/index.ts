@@ -7,6 +7,7 @@ import { isActorConscious, actorLifeState } from '@dreamwalk/contracts';
 import { observedVisible, imageLineOfSight } from './observation-visibility';
 import { narrativeTurnVisibleTo } from './narrative';
 import { consumeWorldItem } from './world-items';
+import { dropOwnedItem } from './item-placement';
 import { projectTurnController, applyTurnAction, applyWorldTurnAction, turnFence } from './turns';
 import { projectObjectives } from './objectives';
 import { projectVisibleArtBindings } from './art';
@@ -436,6 +437,7 @@ function actionInternal(
   if (!gameActionSchema.safeParse(action).success) return fail(state, 'INVALID_ACTION');
   if (action.kind === 'travel') return travelToLocation(state, id, action.targetId!);
   if (action.kind === 'consume') return consumeWorldItem(state, id, action.targetId!);
+  if (action.kind === 'drop') return dropOwnedItem(state, id, action.targetId!, action.target!);
   if (action.kind === 'communicate') return communicateNpcObservations(state, id, action);
   if (action.kind === 'move_to') {
     if (!hasPosition(a)) return fail(state, 'WRONG_MODE');
@@ -1322,6 +1324,7 @@ export * from './story-turn';
 export * from './turns';
 
 export * from './world-items';
+export * from './item-placement';
 
 export * from './runtime-map-view';
 

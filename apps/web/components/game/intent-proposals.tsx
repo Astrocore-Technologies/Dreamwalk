@@ -22,6 +22,7 @@ const actionLabels: Partial<Record<GameAction['kind'], string>> = {
   move_to: 'Подойти',
   inspect: 'Осмотреть',
   pick_up: 'Подобрать',
+  drop: 'Положить на землю',
   unlock: 'Отпереть',
   open: 'Открыть дверь',
   close: 'Закрыть дверь',

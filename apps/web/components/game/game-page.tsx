@@ -53,6 +53,7 @@ const actionKeys: Partial<Record<GameAction['kind'], string>> = {
   talk: 'Поговорить',
   distract: 'Отвлечь',
   pick_up: 'Подобрать',
+  drop: 'Положить на землю',
   give: 'Передать',
   unlock: 'Отпереть',
   knock: 'Постучать',

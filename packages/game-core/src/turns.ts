@@ -212,7 +212,7 @@ type Cost = 'main' | 'additional' | null;
 export function turnActionCost(action: GameAction): Cost {
   if (['inspect', 'talk', 'communicate', 'travel'].includes(action.kind)) return null;
   if (
-    ['pick_up', 'give', 'open', 'close', 'unlock', 'lock', 'knock', 'transition'].includes(
+    ['pick_up', 'drop', 'give', 'open', 'close', 'unlock', 'lock', 'knock', 'transition'].includes(
       action.kind,
     )
   )
