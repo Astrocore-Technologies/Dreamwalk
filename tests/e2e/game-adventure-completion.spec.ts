@@ -80,12 +80,12 @@ async function capture(page: Page, filename: string) {
 test('four players retain the legacy realtime Observatory ending with owned heroes', async ({
   partyContexts: contexts,
 }) => {
-  // Four independent live WebGL pages also record trace snapshots. Measured CI:
-  // setup/joins ~22s, four privacy disclosures ~84s, room capture ~9s,
-  // key+door ~32s, before roof/journal, four reloads and two final captures.
-  // Keep per-action 15s and per-route-step 30s limits; only the complete
-  // four-player journey needs a larger cumulative budget than one-player tests.
-  test.setTimeout(300000);
+  // CI 538's two traces reach the ending and advance through the final reloads,
+  // but exhaust 300s: setup/privacy/capture ~85s, eleven UI route steps ~150s,
+  // then four sequential reloads ~70s and final inventory/captures ~30s.
+  // SwiftShader makes otherwise successful actions expensive. Allow cumulative
+  // headroom without relaxing the 15s expectations or 25s/30s phase bounds.
+  test.setTimeout(420_000);
   const pages = await Promise.all(contexts.map((c) => c.newPage()));
   const [owner, ...guests] = pages;
   for (const page of pages) {
@@ -309,93 +309,103 @@ test('four players retain the legacy realtime Observatory ending with owned hero
     );
     // Persistence is per-client, not a simultaneous four-WebGL cold-start benchmark.
     // Keep all four contexts live, but let each real reload finish before starting
-    // the next; no reload retry, renderer bypass or additional timeout budget.
+    // the next; no reload retry or renderer bypass. Each reload is bounded separately.
     for (const [index, page] of pages.entries()) {
-      // Inspect the restored map temporarily without changing this player's reading position.
-      const viewport = await page.locator('[data-renderer-active]').evaluate((element) => {
-        const rect = element.getBoundingClientRect();
-        return {
-          x: scrollX,
-          y: scrollY,
-          offscreen: rect.bottom <= 0 || rect.top >= innerHeight,
-          detailsOpen: document
-            .querySelector('[data-testid="campaign-details"]')
-            ?.hasAttribute('open'),
-        };
-      });
-      const finishProfile = index === 0 ? await profileOwnerReload(page, test.info()) : undefined;
-      try {
-        await page.reload();
-        // Restored scroll may leave the map offscreen, where rendering is correctly paused.
-        // Reveal it as a user would before asserting its actual restored scene.
-        await page
-          .getByRole('group', { name: 'Карта приключения', exact: true })
-          .scrollIntoViewIfNeeded();
-        // A restored HTTP projection can show the ending before Pixi/socket startup.
-        // Use the existing 15s expectation bound for actual readiness on every client,
-        // not force-clicking a toolbar while reconnect banners still move its layout.
-        await expect
-          .poll(() =>
-            page.evaluate(
-              (expectedScene) => {
-                const host = document.querySelector<HTMLElement>('[data-camera-scale]');
-                const canvas = host?.querySelector('canvas');
-                const bounds = canvas?.getBoundingClientRect();
-                const scale = Number(host?.dataset.cameraScale);
-                return {
-                  connected:
-                    document.querySelector('[data-connected]')?.getAttribute('data-connected') ===
-                    'true',
-                  rendered:
-                    !!canvas &&
-                    canvas.width > 0 &&
-                    canvas.height > 0 &&
-                    !!bounds &&
-                    bounds.width > 0 &&
-                    bounds.height > 0 &&
-                    Number.isFinite(scale) &&
-                    scale > 0 &&
-                    host?.dataset.sceneProfile === expectedScene,
-                };
-              },
-              index === 0 ? 'observatory-roof-v1' : 'observatory-interior-v1',
-            ),
-          )
-          .toEqual({ connected: true, rendered: true });
-      } finally {
-        await finishProfile?.();
-      }
-      await expect
-        .poll(
-          async () =>
-            (await readProjection(page, id)).objectives?.find(
-              (objective) => objective.id === 'recover-journal',
-            )?.status,
-        )
-        .toBe('achieved');
-      await expect(page.getByTestId('campaign-objectives')).toHaveCount(0);
-      if (viewport.detailsOpen) await campaignDetails(page);
-      await page.evaluate(
-        ({ x, y }) => window.scrollTo({ left: x, top: y, behavior: 'instant' }),
-        viewport,
-      );
-      await expect
-        .poll(() =>
-          page.evaluate(
-            ({ x, y }) => Math.max(Math.abs(scrollX - x), Math.abs(scrollY - y)),
+      await test.step(
+        `Reload and verify player ${index + 1}`,
+        async () => {
+          // Inspect the restored map temporarily without changing this player's reading position.
+          const viewport = await page.locator('[data-renderer-active]').evaluate((element) => {
+            const rect = element.getBoundingClientRect();
+            return {
+              x: scrollX,
+              y: scrollY,
+              offscreen: rect.bottom <= 0 || rect.top >= innerHeight,
+              detailsOpen: document
+                .querySelector('[data-testid="campaign-details"]')
+                ?.hasAttribute('open'),
+            };
+          });
+          const finishProfile =
+            index === 0 ? await profileOwnerReload(page, test.info()) : undefined;
+          try {
+            await page.reload();
+            // Restored scroll may leave the map offscreen, where rendering is correctly paused.
+            // Reveal it as a user would before asserting its actual restored scene.
+            await page
+              .getByRole('group', { name: 'Карта приключения', exact: true })
+              .scrollIntoViewIfNeeded();
+            // A restored HTTP projection can show the ending before Pixi/socket startup.
+            // Use the existing 15s expectation bound for actual readiness on every client,
+            // not force-clicking a toolbar while reconnect banners still move its layout.
+            await expect
+              .poll(() =>
+                page.evaluate(
+                  (expectedScene) => {
+                    const host = document.querySelector<HTMLElement>('[data-camera-scale]');
+                    const canvas = host?.querySelector('canvas');
+                    const bounds = canvas?.getBoundingClientRect();
+                    const scale = Number(host?.dataset.cameraScale);
+                    return {
+                      connected:
+                        document
+                          .querySelector('[data-connected]')
+                          ?.getAttribute('data-connected') === 'true',
+                      rendered:
+                        !!canvas &&
+                        canvas.width > 0 &&
+                        canvas.height > 0 &&
+                        !!bounds &&
+                        bounds.width > 0 &&
+                        bounds.height > 0 &&
+                        Number.isFinite(scale) &&
+                        scale > 0 &&
+                        host?.dataset.sceneProfile === expectedScene,
+                    };
+                  },
+                  index === 0 ? 'observatory-roof-v1' : 'observatory-interior-v1',
+                ),
+              )
+              .toEqual({ connected: true, rendered: true });
+          } finally {
+            await finishProfile?.();
+          }
+          await expect
+            .poll(
+              async () =>
+                (await readProjection(page, id)).objectives?.find(
+                  (objective) => objective.id === 'recover-journal',
+                )?.status,
+            )
+            .toBe('achieved');
+          await expect(page.getByTestId('campaign-objectives')).toHaveCount(0);
+          if (viewport.detailsOpen) await campaignDetails(page);
+          await page.evaluate(
+            ({ x, y }) => window.scrollTo({ left: x, top: y, behavior: 'instant' }),
             viewport,
-          ),
-        )
-        .toBeLessThan(1);
-      const restoredOffscreen = await page.locator('[data-renderer-active]').evaluate((element) => {
-        const rect = element.getBoundingClientRect();
-        return rect.bottom <= 0 || rect.top >= innerHeight;
-      });
-      if (viewport.offscreen && restoredOffscreen)
-        await expect(page.locator('[data-renderer-active]')).toHaveAttribute(
-          'data-renderer-active',
-          'false',
-        );
+          );
+          await expect
+            .poll(() =>
+              page.evaluate(
+                ({ x, y }) => Math.max(Math.abs(scrollX - x), Math.abs(scrollY - y)),
+                viewport,
+              ),
+            )
+            .toBeLessThan(1);
+          const restoredOffscreen = await page
+            .locator('[data-renderer-active]')
+            .evaluate((element) => {
+              const rect = element.getBoundingClientRect();
+              return rect.bottom <= 0 || rect.top >= innerHeight;
+            });
+          if (viewport.offscreen && restoredOffscreen)
+            await expect(page.locator('[data-renderer-active]')).toHaveAttribute(
+              'data-renderer-active',
+              'false',
+            );
+        },
+        { timeout: 30_000 },
+      );
     }
     await owner
       .getByRole('group', { name: 'Карта приключения', exact: true })
@@ -405,11 +415,19 @@ test('four players retain the legacy realtime Observatory ending with owned hero
       'true',
     );
     await expect((await inventory(owner)).locator('[data-inventory-id="journal"]')).toHaveCount(1);
-    await capture(owner, 'sample-adventure-ending-desktop.png');
+    await test.step(
+      'Capture the ending on desktop',
+      () => capture(owner, 'sample-adventure-ending-desktop.png'),
+      { timeout: 25_000 },
+    );
     await owner.setViewportSize({ width: 390, height: 844 });
     expect(
       await owner.evaluate(() => document.documentElement.scrollWidth <= window.innerWidth),
     ).toBe(true);
-    await capture(owner, 'sample-adventure-ending-mobile.png');
+    await test.step(
+      'Capture the ending on mobile',
+      () => capture(owner, 'sample-adventure-ending-mobile.png'),
+      { timeout: 25_000 },
+    );
   });
 });
