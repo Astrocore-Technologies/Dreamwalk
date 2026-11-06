@@ -137,7 +137,7 @@ test('non-owner runtime can register once while Dreams RLS denies other roles', 
     await client.query('RESET ROLE');
     const policies = (
       await client.query(
-        "SELECT tablename,cmd,roles FROM pg_policies WHERE schemaname=$1 AND policyname LIKE 'dream_runtime_%' ORDER BY tablename,cmd",
+        "SELECT tablename,cmd,roles::text[] AS roles FROM pg_policies WHERE schemaname=$1 AND policyname LIKE 'dream_runtime_%' ORDER BY tablename,cmd",
         [schema],
       )
     ).rows;
