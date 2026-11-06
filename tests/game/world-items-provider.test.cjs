@@ -215,6 +215,140 @@ test('real NPC adapter protocol accepts typed item intents through fake transpor
   assert.equal(stale.accepted, false);
   assert.equal(calls, 1);
 });
+test('returned existing item is grounded in current custody and admitted atomically through fake provider transport', async () => {
+  const { playable } = compileStoryPlan(source, plan);
+  let s = g.createStateFromPlayable(playable, ['alice']);
+  Object.assign(s.entities.alice, { x: 3, y: 3 });
+  s = g.endPlayerTurn(s, 'alice', g.turnFence(s)).state;
+  const initial = g.materializeNpcItems(
+    s,
+    npc,
+    'alice',
+    [{ kind: 'give_stock', definitionId: 'battery', recipientId: 'alice' }],
+    'initial-gift',
+  );
+  assert.equal(initial.error, undefined);
+  s = g.finishWorldPhase(initial.state, g.turnFence(initial.state)).state;
+  const itemId = s.entities.alice.inventory[0];
+  const returned = g.applyAction(s, 'alice', { kind: 'give', itemId, targetId: npc });
+  assert.equal(returned.error, undefined);
+  s = g.recordNpcEvents(s, returned.state, returned.events, 'actual-return').state;
+  s = g.endPlayerTurn(s, 'alice', g.turnFence(s)).state;
+  const transfer = s.npcBrains[npc].living.observations.find(
+    (o) => o.itemTransfer?.itemId === itemId,
+  );
+  const service = Object.create(GameService.prototype);
+  service.ai = { contextBudgetBytes: () => 64000 };
+  const context = service.speechContext(
+    s,
+    npc,
+    'alice',
+    'say',
+    [transfer.id],
+    undefined,
+    undefined,
+    undefined,
+    'ru',
+  );
+  assert.deepEqual(
+    context.itemProvisioning.ownedItems.map((i) => ({ id: i.id, revision: i.revision })),
+    [{ id: itemId, revision: s.entities[itemId].revision }],
+  );
+  assert.equal(context.claims[0].itemTransfer.recipientId, npc);
+  let calls = 0;
+  const provider = new OpenAiNpcProvider(
+    {
+      enabled: true,
+      apiKey: 'synthetic-fixture-key',
+      model: 'synthetic-model',
+      version: 'custody-test',
+      maxInputBytes: 64000,
+      maxOutputTokens: 500,
+      maxResponseBytes: 64000,
+      inputMicrosPerMillion: 1,
+      outputMicrosPerMillion: 1,
+    },
+    async (_url, init) => {
+      calls++;
+      const body = JSON.parse(init.body);
+      assert.match(
+        body.instructions,
+        /Current listed custody takes precedence over an older statement/,
+      );
+      assert.match(body.instructions, /Preserve independent refusal/);
+      assert.match(body.instructions, /confidence=witnessed event is perceived evidence/);
+      assert.match(body.instructions, /current custody alone does not establish that history/);
+      assert.ok(body.input.includes(itemId));
+      return new Response(
+        JSON.stringify({
+          id: 'synthetic-custody',
+          status: 'completed',
+          service_tier: 'default',
+          output: [
+            {
+              type: 'message',
+              content: [
+                {
+                  type: 'output_text',
+                  text: JSON.stringify({
+                    text: 'Держи ту же батарею.',
+                    itemIntents: [
+                      {
+                        kind: 'give_existing',
+                        definitionId: null,
+                        itemId,
+                        recipientId: 'alice',
+                        surfaceId: null,
+                        x: null,
+                        y: null,
+                      },
+                    ],
+                  }),
+                },
+              ],
+            },
+          ],
+          usage: { input_tokens: 50, output_tokens: 35 },
+        }),
+        { status: 200, headers: { 'content-type': 'application/json' } },
+      );
+    },
+  );
+  const result = await provider.generate({
+    jobId: randomUUID(),
+    purpose: 'speech',
+    context,
+    signal: new AbortController().signal,
+    maxCostMicros: 100,
+  });
+  const job = {
+    id: randomUUID(),
+    npcId: npc,
+    purpose: 'speech',
+    context,
+    contextHash: context.contextHash,
+    proposal: result.proposal,
+  };
+  const evaluated = await service.evaluateDecision('synthetic-campaign', s, job);
+  assert.equal(evaluated.accepted, true);
+  assert.deepEqual(evaluated.next.entities.alice.inventory, [itemId]);
+  assert.equal(evaluated.next.entities[itemId].revision, s.entities[itemId].revision + 1);
+  assert.equal(Object.keys(evaluated.next.entities).length, Object.keys(s.entities).length);
+  assert.equal(
+    evaluated.next.npcBrains[npc].living.observations.filter(
+      (o) => o.itemTransfer?.itemId === itemId && o.itemTransfer.recipientId === 'alice',
+    ).length,
+    1,
+  );
+  assert.equal(evaluated.next.npcUtterances.at(-1).text, 'Держи ту же батарею.');
+  const replay = await service.evaluateDecision('synthetic-campaign', evaluated.next, job);
+  assert.equal(replay.accepted, false);
+  assert.deepEqual(
+    replay.next?.entities.alice.inventory ?? evaluated.next.entities.alice.inventory,
+    [itemId],
+  );
+  assert.equal(calls, 1);
+});
 test('static sprite normalization preserves alpha and rejects opaque or empty art', async () => {
   const rgba = Buffer.alloc(100 * 160 * 4);
   for (let y = 20; y < 145; y++)

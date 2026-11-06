@@ -182,6 +182,9 @@ export interface NpcObservation {
   speechIdentity?: { turnId: string; segmentIndex: number };
   /** Server-stamped first pickup of an admitted mundane story prop. This is not legal ownership. */
   itemOwnershipContext?: 'unestablished';
+  /** Server-witnessed transfer snapshot. Subject to this observation's full audience ACL. */
+  itemTransfer?: { itemId: string; label?: string; revision: number; recipientId?: string };
+
   depth: number;
   disclosure: 'public' | 'participants' | 'private';
   audienceIds: string[];
