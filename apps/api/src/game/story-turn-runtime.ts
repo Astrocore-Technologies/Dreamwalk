@@ -39,7 +39,6 @@ import {
   recordNpcEvents,
   parsePlayerTextAction,
   storyContactOutcomeCode,
-  isNpcStoryContact,
   storyTurnMode,
   synchronizePendingSpeechEvidence,
   storyPrivateAudience,

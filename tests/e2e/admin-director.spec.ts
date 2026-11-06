@@ -148,7 +148,11 @@ for (const locale of ['en', 'ru', 'uk'] as const) {
     await page.goto('/admin/models');
     await expect(page.getByRole('heading', { name: text.title, exact: true })).toBeVisible();
     const choose = page.getByRole('combobox', { name: text.choose, exact: true });
-    const behavior = page.getByRole('textbox', { name: text.behavior, exact: true });
+    // Field includes its help text inside the label, so the accessible name includes the hint.
+    const behavior = page
+      .getByTestId('director-catalog')
+      .getByRole('textbox', { name: text.behavior, exact: false });
+    await expect(behavior).toHaveCount(1);
     const save = page.getByRole('button', { name: text.save, exact: true });
     await expect(choose.locator('option')).toHaveCount(3);
     await expect(choose).toHaveValue('coauthor');
@@ -299,7 +303,10 @@ test('pending director saves disable repeated edits and clearing behavior restor
     return route.fulfill({ json: saved });
   });
   await page.goto('/admin/models');
-  const behavior = page.getByRole('textbox', { name: labels.en.behavior, exact: true });
+  const behavior = page
+    .getByTestId('director-catalog')
+    .getByRole('textbox', { name: labels.en.behavior, exact: false });
+  await expect(behavior).toHaveCount(1);
   await expect(behavior).toHaveValue(saved.profiles[0].behaviorInstructions!);
   await behavior.fill('');
   const save = page.getByRole('button', { name: labels.en.save, exact: true });
