@@ -11,10 +11,12 @@ import { useVisualText } from './visual-authoring/messages';
 import { readStoryReturn, storyWithHero } from './story-return';
 import { StoryReturnLink } from './story-return-link';
 import { useHeroText } from './game/hero-selection';
+import { CampaignHistory } from './game/campaign-history';
+import type { CampaignSummary } from './game/use-game';
 import { useT } from '@/lib/i18n';
 import Link from 'next/link';
-import { useSearchParams } from 'next/navigation';
-import { useState } from 'react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { useEffect, useRef, useState } from 'react';
 import styles from './heroes.module.css';
 import {
   ArrowUpRight,
@@ -68,10 +70,40 @@ export function LibraryPage() {
     shared: Adventure[];
   }>('/library');
   const invitations = useResource<Invitation[]>('/invitations');
-  const [tab, setTab] = useState(
-    ['shared', 'invitations'].includes(params.get('tab') || '') ? params.get('tab')! : 'favorites',
-  );
-  const [busy, setBusy] = useState<string | null>(null);
+  const campaigns = useResource<{ campaigns: CampaignSummary[] }>('/game/campaigns');
+  const router = useRouter();
+  const requestedTab = params.get('tab') || '';
+  const tab = ['shared', 'invitations', 'playable', 'drafts', 'history'].includes(requestedTab)
+    ? requestedTab
+    : 'favorites';
+  // A completed invitation may update only the navigation that started it.
+  // Invalidate on every transition, including Back/Forward to the same tab later.
+  const queryKey = params.toString();
+  const responseScope = useRef({ queryKey, active: true });
+  if (responseScope.current.queryKey !== queryKey) {
+    responseScope.current.active = false;
+    responseScope.current = { queryKey, active: true };
+  }
+  useEffect(() => {
+    responseScope.current.active = false;
+    responseScope.current = { ...responseScope.current, active: true };
+    return () => {
+      responseScope.current.active = false;
+    };
+  }, []);
+  function setTab(next: string) {
+    responseScope.current.active = false;
+    responseScope.current = { queryKey, active: true };
+    setResponse(null);
+    const query = new URLSearchParams(params.toString());
+    query.set('tab', next);
+    router.push(`/library?${query}`, { scroll: false });
+  }
+  const [response, setResponse] = useState<{
+    scope: typeof responseScope.current;
+    id: string;
+  } | null>(null);
+  const busy = response?.scope === responseScope.current ? response.id : null;
   const invitationLabels = {
     pending: tr('Ожидает ответа'),
     accepted: tr('Принято'),
@@ -79,12 +111,14 @@ export function LibraryPage() {
     revoked: tr('Доступ отозван'),
   };
   async function respond(id: string, decision: 'accept' | 'decline') {
-    setBusy(id);
+    const scope = responseScope.current;
+    setResponse({ scope, id });
     try {
       await api(`/invitations/${id}/respond`, {
         method: 'POST',
         body: JSON.stringify({ decision }),
       });
+      if (!scope.active) return;
       invitations.reload();
       reload();
       toast(
@@ -94,9 +128,9 @@ export function LibraryPage() {
       );
       if (decision === 'accept') setTab('shared');
     } catch (error) {
-      toast(errorMessage(error));
+      if (scope.active) toast(errorMessage(error));
     } finally {
-      setBusy(null);
+      if (scope.active) setResponse(null);
     }
   }
   return (
@@ -126,7 +160,7 @@ export function LibraryPage() {
             data?.privatePublished?.length,
           ],
           ['drafts', tr('Мои истории'), data?.drafts.length],
-          ['history', tr('Прохождения'), 0],
+          ['history', tr('Прохождения'), campaigns.data?.campaigns.length],
         ].map(([key, label, count]) => (
           <button
             key={key}
@@ -216,16 +250,10 @@ export function LibraryPage() {
             />
           )}
         </>
+      ) : tab === 'history' ? (
+        <CampaignHistory resource={campaigns} />
       ) : loading ? (
         <Loading />
-      ) : tab === 'history' ? (
-        <Empty
-          title={tr('Первое приключение впереди')}
-          description={tr(
-            'Игровые сессии появятся на следующем этапе. А пока выбери мир и подготовь героя.',
-          )}
-          action={<ButtonLink href="/my-characters">{tr('Создать героя')}</ButtonLink>}
-        />
       ) : tab === 'playable' ? (
         <div className="adventure-grid">
           {data?.privatePublished?.map((a) => (
@@ -389,7 +417,7 @@ export function HeroesPage() {
                   <ButtonLink
                     href={
                       storyWithHero(returnTo, hero.id) ||
-                      `/game?heroId=${encodeURIComponent(hero.id)}`
+                      `/explore?heroId=${encodeURIComponent(hero.id)}`
                     }
                   >
                     <Play size={17} aria-hidden="true" />

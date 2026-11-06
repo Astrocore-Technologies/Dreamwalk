@@ -59,7 +59,7 @@ test('legacy realtime composer keeps audience, order and scene input coherent', 
     await campaignDetails(owner);
     await owner.getByLabel('Пригласить по имени пользователя').fill(guestHandle);
     await owner.getByRole('button', { name: 'Пригласить игрока', exact: true }).click();
-    await guest.goto('/game');
+    await guest.goto('/library?tab=history');
     await guest
       .getByRole('button', { name: 'Принять приглашение в кампанию', exact: true })
       .click();

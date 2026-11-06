@@ -24,7 +24,8 @@ function Router() {
         <KnownNpcSettlementPage campaignId={path.split('/')[2]} jobId={path.split('/')[4]} />
       </Protected>
     );
-  else if (path === '/game' || path.startsWith('/game/'))
+  else if (path === '/game') content = <GamePage />;
+  else if (path.startsWith('/game/'))
     content = (
       <Protected>
         <GamePage campaignId={path.split('/')[2]} />

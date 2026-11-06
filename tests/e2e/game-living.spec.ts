@@ -162,7 +162,7 @@ test('API-authored realtime fixture retains personality, obligations and private
     await page.getByLabel('Пригласить по имени пользователя').fill(guestHandle);
     await page.getByRole('button', { name: 'Пригласить игрока', exact: true }).click();
     await expect(page.getByText('Игрок приглашён', { exact: true })).toBeVisible();
-    await guest.goto('/game');
+    await guest.goto('/library?tab=history');
     await guest.getByRole('button', { name: 'Принять приглашение в кампанию' }).click();
     await expect(guest).toHaveURL(new RegExp(`/game/${campaignId}$`));
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();

@@ -156,7 +156,8 @@ test('author, player and account surfaces retain controls in both themes; gamepl
     }
     for (const route of routes) {
       await page.goto(route);
-      await expect(page).toHaveURL(new RegExp(`${route.replaceAll('/', '\\/')}$`));
+      const destination = route === '/game' ? '/explore' : route;
+      await expect(page).toHaveURL(new RegExp(`${destination.replaceAll('/', '\\/')}$`));
       await expect(page.locator('#main-content h1').first()).toBeVisible();
       if (route === '/studio/npcs/new')
         await expect(page.getByLabel('Имя NPC', { exact: true })).toBeVisible();
