@@ -119,7 +119,7 @@ test('four players retain the legacy realtime Observatory ending with owned hero
         data: { username: accounts[i + 1].handle },
       });
       expect(invitation.ok()).toBeTruthy();
-      await guest.goto('/game');
+      await guest.goto('/library?tab=history');
       await guest.getByLabel('Герой для этого прохождения').selectOption(accounts[i + 1].heroId);
       await guest
         .getByRole('button', { name: 'Принять приглашение в кампанию', exact: true })

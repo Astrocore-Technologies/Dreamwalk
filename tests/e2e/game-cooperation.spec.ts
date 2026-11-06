@@ -60,7 +60,7 @@ test('two independent browser sessions share one key, preserve it on reload, and
     await owner.getByLabel('Пригласить по имени пользователя').fill(guestAccount.handle);
     await owner.getByRole('button', { name: 'Пригласить игрока', exact: true }).click();
     await expect(owner.getByText('Игрок приглашён', { exact: true })).toBeVisible();
-    await guest.goto('/game');
+    await guest.goto('/library?tab=history');
     await guest.getByRole('button', { name: 'Принять приглашение в кампанию' }).click();
     await expect(guest).toHaveURL(new RegExp(`/game/${campaignId}$`));
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();

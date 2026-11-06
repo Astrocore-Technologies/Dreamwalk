@@ -245,9 +245,9 @@ export function Shell({ children }: { children: React.ReactNode }) {
             </Link>
           ) : inGame ? (
             <div id="game-toolbar" className="game-toolbar-slot">
-              <Link href="/game" className="game-return">
+              <Link href="/explore" className="game-return">
                 <ArrowLeft size={18} />
-                {tr('К кампаниям')}
+                {tr('Открыть миры')}
               </Link>
             </div>
           ) : null}

@@ -7,7 +7,7 @@ test('hero choice travels through every campaign launch and membership acceptanc
   for (const file of [
     'home/home-page.tsx',
     'game/adventure-launch.tsx',
-    'game/game-page.tsx',
+    'game/campaign-history.tsx',
     'studio/playable-map-editor.tsx',
   ]) {
     const text = await source(file);
@@ -20,12 +20,15 @@ test('hero choice travels through every campaign launch and membership acceptanc
     assert.match(text, /\.accepts\(lease\)/);
   }
   assert.match(
-    await source('game/game-page.tsx'),
+    await source('game/campaign-history.tsx'),
     /accept`[\s\S]*JSON\.stringify\(heroSelection\.body\)/,
   );
 });
 test('hero cards have a gameplay entry and private pinned data is fetched only from own scoped endpoint', async () => {
-  assert.match(await source('personal.tsx'), /\/game\?heroId=\$\{encodeURIComponent\(hero\.id\)/);
+  assert.match(
+    await source('personal.tsx'),
+    /\/explore\?heroId=\$\{encodeURIComponent\(hero\.id\)/,
+  );
   const selection = await source('game/hero-selection.tsx');
   assert.match(selection, /\/game\/campaigns\/\$\{campaignId\}\/hero/);
   assert.match(selection, /<details>/);

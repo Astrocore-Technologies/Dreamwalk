@@ -598,7 +598,6 @@ test('every browser new-campaign launch explicitly requests turns, never realtim
   await inspectDirectory();
   assert.deepEqual(launches.sort(), [
     'components/game/adventure-launch.tsx',
-    'components/game/game-page.tsx',
     'components/studio/playable-map-editor.tsx',
   ]);
 });

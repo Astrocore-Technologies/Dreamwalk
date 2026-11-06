@@ -3,8 +3,8 @@ import { npcUnavailable, publicLifeState } from './turn-ui';
 import { useEffect, useMemo, useRef, useState } from 'react';
 import Link from 'next/link';
 import { createPortal } from 'react-dom';
-import { useRouter } from 'next/navigation';
-import { ArrowLeft, Compass, Moon, Radio, UsersRound } from 'lucide-react';
+import { useRouter, useSearchParams } from 'next/navigation';
+import { ArrowLeft, Radio, UsersRound } from 'lucide-react';
 import {
   adjacentFootprintAnchors,
   hasPosition,
@@ -15,14 +15,13 @@ import {
 import type { GameAction, GameEntity, GamePoint } from '@dreamwalk/contracts';
 import { api, errorMessage, useClient, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
-import { Button, ErrorBox, Field, Input, Loading, PageHeading } from '@/components/ui';
+import { Button, ErrorBox, Field, Input, Loading } from '@/components/ui';
 import { artPreviewUrl } from '../assets/types';
 import { authorizedArt } from '../assets/art-visibility';
 import { useAssetText } from '../assets/messages';
 import { useCampaignArt } from '../assets/use-campaign-art';
-import { HeroSelection, useHeroSelection, useHeroText, CampaignHero } from './hero-selection';
-import { DirectorSelection, useDirectorSelection, CampaignDirector } from './director-selection';
-import { useLaunchGate } from './use-launch-gate';
+import { CampaignHero } from './hero-selection';
+import { CampaignDirector } from './director-selection';
 import { localizedProjection } from './localized-projection';
 import { NarrativePreferences } from './narrative-preferences';
 import { GameCanvas } from './game-canvas';
@@ -36,7 +35,7 @@ import { useItemText } from './item-messages';
 import { UnifiedStory, type StoryRecipient } from './unified-story';
 import { NpcPublicInspection } from './npc-public-inspection';
 import { LivingNotices } from './living-notices';
-import { useGame, type CampaignSummary } from './use-game';
+import { useGame } from './use-game';
 import styles from './game.module.css';
 
 function GameToolbar({ children }: { children: React.ReactNode }) {
@@ -88,139 +87,19 @@ function entityKey(entity: Pick<GameEntity, 'id' | 'kind'>, actorId: string) {
   return entity.kind === 'player' ? 'Другой герой' : entity.kind === 'npc' ? 'NPC' : 'Предмет';
 }
 export function GamePage({ campaignId }: { campaignId?: string }) {
-  return campaignId ? <CampaignRoom key={campaignId} campaignId={campaignId} /> : <CampaignLobby />;
-}
-function CampaignLobby() {
-  const turnText = useTurnText();
-  const heroSelection = useHeroSelection();
-  const heroText = useHeroText();
-  const directorSelection = useDirectorSelection('lobby');
-  const launchGate = useLaunchGate(`${heroSelection.heroId}:${directorSelection.profileId}`);
-  const { t } = useT();
-  const router = useRouter();
-  const campaigns = useResource<{ campaigns: CampaignSummary[] }>('/game/campaigns');
-  const [busy, setBusy] = useState(false),
-    [error, setError] = useState('');
-  async function create() {
-    if (!heroSelection.ready || !directorSelection.ready) return;
-    const lease = launchGate.begin();
-    if (!lease) return;
-    let navigating = false;
-    setBusy(true);
-    setError('');
-    try {
-      const result = await api<{ campaignId: string }>('/game/campaigns', {
-        method: 'POST',
-        body: JSON.stringify({
-          template: 'observatory-v1',
-          turnBased: true,
-          directorProfileId: directorSelection.profileId,
-          ...heroSelection.body,
-        }),
-      });
-      if (launchGate.accepts(lease)) {
-        router.push(`/game/${result.campaignId}`);
-        navigating = true;
-      }
-    } catch (err) {
-      if (launchGate.accepts(lease)) setError(errorMessage(err));
-    } finally {
-      if (!navigating && launchGate.finish(lease)) setBusy(false);
-    }
-  }
-  async function accept(id: string) {
-    if (!heroSelection.ready) return;
-    const lease = launchGate.begin();
-    if (!lease) return;
-    let navigating = false;
-    setBusy(true);
-    setError('');
-    try {
-      await api(`/game/campaigns/${id}/accept`, {
-        method: 'POST',
-        body: JSON.stringify(heroSelection.body),
-      });
-      if (launchGate.accepts(lease)) {
-        router.push(`/game/${id}`);
-        navigating = true;
-      }
-    } catch (err) {
-      if (launchGate.accepts(lease)) setError(errorMessage(err));
-    } finally {
-      if (!navigating && launchGate.finish(lease)) setBusy(false);
-    }
-  }
-  return (
-    <div className={styles.root}>
-      <PageHeading
-        eyebrow={t('Игровой прототип')}
-        title={t('Обсерватория')}
-        description={turnText('lobbyIntro')}
-      />
-      <HeroSelection selection={heroSelection} disabled={busy} />
-      <DirectorSelection selection={directorSelection} disabled={busy} />
-      <Link
-        className="button secondary"
-        href={`/?heroId=${encodeURIComponent(heroSelection.heroId)}`}
-      >
-        {heroText('adventures')}
-      </Link>
-      <section className={styles.hero}>
-        <div className={styles.heroArt} aria-hidden="true">
-          <Moon size={72} strokeWidth={0.7} />
-          <span>✧</span>
-        </div>
-        <div>
-          <p className={styles.kicker}>{t('Исследование')}</p>
-          <h2>{t('Обсерватория')}</h2>
-          <p>{t('Этот отдельный тестовый мир не изменяет твои опубликованные истории.')}</p>
-          <Button
-            busy={busy}
-            disabled={!heroSelection.ready || !directorSelection.ready}
-            onClick={() => void create()}
-          >
-            <Compass size={18} />
-            {t('Новая кампания')}
-          </Button>
-        </div>
-      </section>
-      {(error || campaigns.error) && <ErrorBox message={error || campaigns.error} />}
-      <h2>{t('Твои кампании')}</h2>
-      {campaigns.loading ? (
-        <Loading />
-      ) : !campaigns.data?.campaigns.length ? (
-        <p className={styles.muted}>{t('Пока нет сохранений')}</p>
-      ) : (
-        <div className={styles.campaignList}>
-          {campaigns.data.campaigns.map((campaign) => (
-            <article key={campaign.id} className={styles.campaignCard}>
-              <div>
-                <span className={styles.kicker}>{t('Сохранённое прохождение')}</span>
-                <h3>{campaign.title || t('Обсерватория')}</h3>
-                <code>{campaign.id.slice(0, 8)}</code>
-              </div>
-              {campaign.membership === 'pending' ? (
-                <Button
-                  busy={busy}
-                  disabled={!heroSelection.ready}
-                  onClick={() => void accept(campaign.id)}
-                >
-                  {t('Принять приглашение в кампанию')}
-                </Button>
-              ) : (
-                <Link className="button secondary" href={`/game/${campaign.id}`}>
-                  {t('Продолжить приключение')}
-                </Link>
-              )}
-            </article>
-          ))}
-        </div>
-      )}
-      <p className={styles.footnote}>
-        {t('Это временные игровые изображения. Целевой стиль — рисованный 2D.')}
-      </p>
-    </div>
+  return campaignId ? (
+    <CampaignRoom key={campaignId} campaignId={campaignId} />
+  ) : (
+    <LegacyGameRedirect />
   );
+}
+// Old bookmarks and hero links remain safe navigation, never a campaign launch.
+function LegacyGameRedirect() {
+  const router = useRouter();
+  const heroId = useSearchParams().get('heroId');
+  const href = `/explore${heroId ? `?heroId=${encodeURIComponent(heroId)}` : ''}`;
+  useEffect(() => router.replace(href), [router, href]);
+  return <Loading />;
 }
 function CampaignRoom({ campaignId }: { campaignId: string }) {
   const turnText = useTurnText();
@@ -365,9 +244,9 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
   if (!p)
     return (
       <div className={styles.root}>
-        <Link href="/game" className={`game-return ${styles.back}`}>
+        <Link href="/explore" className={`game-return ${styles.back}`}>
           <ArrowLeft size={16} />
-          {t('К кампаниям')}
+          {t('Открыть миры')}
         </Link>
         {game.error ? (
           <ErrorBox
@@ -406,9 +285,9 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
       <GameToolbar>
         <div className={styles.roomHeader} data-game-toolbar>
           <div>
-            <Link href="/game" className={`game-return ${styles.back}`}>
+            <Link href="/explore" className={`game-return ${styles.back}`}>
               <ArrowLeft size={16} />
-              <span className={styles.visuallyHidden}>{t('К кампаниям')}</span>
+              <span className={styles.visuallyHidden}>{t('Открыть миры')}</span>
             </Link>
             <h1>
               {p.map.label ||

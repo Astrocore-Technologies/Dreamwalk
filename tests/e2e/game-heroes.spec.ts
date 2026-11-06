@@ -33,12 +33,15 @@ test('owned heroes launch and independently join, with pinned private snapshots 
     await owner.getByLabel('Личные заметки', { exact: true }).fill('Личный секрет Лиры');
     await owner.getByRole('button', { name: 'Сохранить героя', exact: true }).click();
     await owner.getByRole('link', { name: 'Играть этим героем', exact: true }).click();
-    await expect(owner).toHaveURL(/\/game\?heroId=/);
+    await expect(owner).toHaveURL(/\/explore\?heroId=/);
     const originalId = new URL(owner.url()).searchParams.get('heroId')!;
-    await expect(owner.getByLabel('Герой для этого прохождения')).toHaveValue(originalId);
-    await owner.getByRole('button', { name: 'Новая кампания', exact: true }).click();
-    await expect(owner).toHaveURL(/\/game\/[a-f0-9-]+$/);
-    const campaignId = new URL(owner.url()).pathname.split('/').at(-1)!;
+    // The retired test-world launcher is fixture setup, not a production UI path.
+    const created = await owner.request.post('/api/v1/game/campaigns', {
+      data: { template: 'observatory-v1', turnBased: true, heroId: originalId },
+    });
+    expect(created.ok()).toBeTruthy();
+    const { campaignId } = (await created.json()) as { campaignId: string };
+    await owner.goto(`/game/${campaignId}`);
     await campaignDetails(owner);
     await expect(
       owner.getByTestId('campaign-hero').getByRole('heading', { name: 'Лира', exact: true }),
@@ -56,7 +59,7 @@ test('owned heroes launch and independently join, with pinned private snapshots 
     });
     expect(heroResponse.ok()).toBeTruthy();
     const guestHero = await heroResponse.json();
-    await guest.goto('/game');
+    await guest.goto('/library?tab=history');
     await guest.getByLabel('Герой для этого прохождения').selectOption(guestHero.id);
     await guest
       .getByRole('button', { name: 'Принять приглашение в кампанию', exact: true })
