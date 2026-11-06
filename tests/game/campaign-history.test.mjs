@@ -210,7 +210,13 @@ test('history handles loading, fetch failure and empty results without a test-wo
   assert.ok(!nodes.some((node) => node.type === 'empty'));
   harness.resource.error = '';
   nodes = harness.render();
-  assert.equal(nodes.find((node) => node.type === 'empty').props.action.props.href, '/explore');
+  const empty = nodes.find((node) => node.type === 'empty');
+  assert.equal(empty.props.action.props.href, '/explore');
+  assert.equal(
+    empty.props.description,
+    'Открой каталог, выбери жанр и загляни в мир. Сохрани интересное приключение в библиотеку, чтобы не потерять.',
+  );
+  for (const locale of supportedLocales) assert.ok(dictionaries[locale][empty.props.description]);
   assert.deepEqual(harness.calls, []);
 });
 

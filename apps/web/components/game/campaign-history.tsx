@@ -88,6 +88,9 @@ export function CampaignHistory({
       ) : !resource.error ? (
         <Empty
           title={t('Пока нет сохранений')}
+          description={t(
+            'Открой каталог, выбери жанр и загляни в мир. Сохрани интересное приключение в библиотеку, чтобы не потерять.',
+          )}
           action={<ButtonLink href="/explore">{t('Найти новый мир')}</ButtonLink>}
         />
       ) : null}
