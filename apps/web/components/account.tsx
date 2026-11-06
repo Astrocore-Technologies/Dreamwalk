@@ -197,7 +197,7 @@ function AuthForm({
                   name="handle"
                   autoComplete="username"
                   required
-                  pattern="[a-z0-9_]{3,30}"
+                  pattern="[a-zA-Z0-9_]{3,30}"
                   placeholder="wanderer"
                 />
               </Field>
@@ -509,7 +509,7 @@ function ProfileForm() {
             <Field label={tr('Логин')}>
               <Input
                 required
-                pattern="[a-z0-9_]{3,30}"
+                pattern="[a-zA-Z0-9_]{3,30}"
                 value={handle}
                 onChange={(e) => setHandle(e.target.value)}
               />

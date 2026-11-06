@@ -70,6 +70,19 @@ for (const locale of ['ru', 'uk', 'en'] as const) {
         });
       }
     }
+    // The native form must allow uppercase, while the API owns canonical uniqueness.
+    await page.goto('/auth/sign-up');
+    const registrations: Record<string, unknown>[] = [];
+    await page.route('**/api/v1/auth/register', (route) => {
+      registrations.push(route.request().postDataJSON());
+      return route.fulfill({ status: 409, json: { code: 'STATE_CONFLICT' } });
+    });
+    await page.locator('input[name="handle"]').fill('Uppercase_QA');
+    await page.locator('#auth-email').fill('case@example.test');
+    await page.locator('#auth-password').fill('synthetic-visual-password');
+    await page.locator('.auth-form form button:not([type="button"])').click();
+    await expect.poll(() => registrations.length).toBe(1);
+    expect(registrations[0]).toMatchObject({ handle: 'Uppercase_QA', name: 'Uppercase_QA' });
     await page.goto('/auth/sign-in');
     const password = page.locator('#auth-password');
     const toggle = page.locator('.auth-password-toggle');
