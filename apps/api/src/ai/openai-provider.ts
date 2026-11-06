@@ -48,6 +48,7 @@ import {
   type NpcProvider,
   type ProviderRequest,
   type ProviderResult,
+  type ProviderOutputEnvelopeDiagnostic,
   type PreparedTextRequest,
 } from './types';
 
@@ -1267,12 +1268,16 @@ export class OpenAiNpcProvider implements NpcProvider {
       costEvidence: 'configured_rates' as const,
     };
     let failureStage: ProviderResult['failureStage'] = 'output_envelope';
-    const failed = (code: string): ProviderResult => ({
+    const failed = (
+      code: string,
+      outputEnvelope?: ProviderOutputEnvelopeDiagnostic,
+    ): ProviderResult => ({
       requestId: value.id,
       usage,
       proposal: null,
       failureCode: code,
       failureStage,
+      ...(outputEnvelope ? { outputEnvelope } : {}),
     });
     if (
       (this.config.contextBudgetTokens !== undefined &&
@@ -1285,19 +1290,55 @@ export class OpenAiNpcProvider implements NpcProvider {
     if (snapshot && usage.costMicros > snapshot.reserveMicros)
       return failed('PROVIDER_RESERVE_EXCEEDED');
     if (value.status !== 'completed') return failed('PROVIDER_INCOMPLETE');
+    let messageItems = 0;
+    let hasMalformedMessage = false,
+      hasMalformedOutputText = false,
+      hasOtherOutput = false,
+      hasOtherContent = false;
     const contents = value.output.flatMap((item) => {
       const parsed = z
         .object({ type: z.literal('message'), content: z.array(z.unknown()) })
         .safeParse(item);
+      if (parsed.success) messageItems++;
+      else if (z.object({ type: z.literal('message') }).safeParse(item).success)
+        hasMalformedMessage = true;
+      else hasOtherOutput = true;
       return parsed.success ? parsed.data.content : [];
     });
-    if (contents.some((item) => z.object({ type: z.literal('refusal') }).safeParse(item).success))
-      return failed('PROVIDER_REFUSED');
+    const hasRefusal = contents.some(
+      (item) => z.object({ type: z.literal('refusal') }).safeParse(item).success,
+    );
     const texts = contents.flatMap((item) => {
       const p = z.object({ type: z.literal('output_text'), text: z.string() }).safeParse(item);
+      if (!p.success) {
+        if (z.object({ type: z.literal('output_text') }).safeParse(item).success)
+          hasMalformedOutputText = true;
+        else if (!z.object({ type: z.literal('refusal') }).safeParse(item).success)
+          hasOtherContent = true;
+      }
       return p.success ? [p.data.text] : [];
     });
-    if (texts.length !== 1) return failed('PROVIDER_INVALID_RESULT');
+    // Observe the existing flatten/filter result, never reject additional shapes or
+    // concatenate/repair text. Refusal still takes precedence over text cardinality.
+    if (hasRefusal || texts.length !== 1) {
+      const bucket = (count: number): '0' | '1' | '2+' =>
+        count === 0 ? '0' : count === 1 ? '1' : '2+';
+      return failed(hasRefusal ? 'PROVIDER_REFUSED' : 'PROVIDER_INVALID_RESULT', {
+        reason: hasRefusal
+          ? 'refusal'
+          : texts.length === 0
+            ? 'missing_output_text'
+            : 'multiple_output_texts',
+        outputItems: bucket(value.output.length),
+        messageItems: bucket(messageItems),
+        contentItems: bucket(contents.length),
+        outputTextItems: bucket(texts.length),
+        hasMalformedMessage,
+        hasMalformedOutputText,
+        hasOtherOutput,
+        hasOtherContent,
+      });
+    }
     try {
       failureStage = 'json';
       const parsed = JSON.parse(texts[0]);

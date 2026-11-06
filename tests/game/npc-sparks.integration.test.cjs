@@ -167,6 +167,9 @@ function fixture(enabled = true, mode = 'success') {
         j.provider_actual_micros = p[2];
       }
       if (sql.includes('provider_request_id=$2,input_tokens')) j.provider_actual_micros = p[4];
+      if (sql.includes("'{failureStage}'")) j.request_meta.failureStage = p[1];
+      if (sql.includes("'{outputEnvelope}'")) j.request_meta.outputEnvelope = JSON.parse(p[1]);
+      if (sql.includes('result_code=$2')) j.result_code = p[1];
       if (sql.includes("status='result_received'")) {
         j.status = 'result_received';
         j.proposal = JSON.parse(p[1]);
@@ -371,6 +374,91 @@ for (const mode of [
       f.restore();
     }
   });
+for (const diagnostic of [
+  undefined,
+  {
+    reason: 'missing_output_text',
+    outputItems: '1',
+    messageItems: '0',
+    contentItems: '0',
+    outputTextItems: '0',
+    hasMalformedMessage: false,
+    hasMalformedOutputText: false,
+    hasOtherOutput: true,
+    hasOtherContent: false,
+  },
+])
+  test(`known envelope failure ${diagnostic ? 'with' : 'without'} diagnostics preserves liability and idempotency`, async () => {
+    const f = fixture();
+    try {
+      const generate = f.engine.provider.generate;
+      f.engine.provider.generate = async () => ({
+        ...(await generate()),
+        proposal: null,
+        failureCode: 'PROVIDER_INVALID_RESULT',
+        failureStage: 'output_envelope',
+        ...(diagnostic ? { outputEnvelope: diagnostic } : {}),
+      });
+      const { input, job } = await f.admit();
+      const metadata = structuredClone(f.state.jobs[0].request_meta);
+      await f.engine.run(job.id, async () => true);
+      const stored = f.state.jobs[0];
+      assert.equal(stored.status, 'stale');
+      assert.equal(stored.result_code, 'PROVIDER_INVALID_RESULT');
+      assert.equal(stored.provider_budget_status, 'spent');
+      assert.equal(stored.provider_actual_micros, 30);
+      assert.equal(stored.proposal, undefined, 'failed envelope never becomes a game proposal');
+      assert.deepEqual(stored.request_meta, {
+        ...metadata,
+        failureStage: 'output_envelope',
+        ...(diagnostic ? { outputEnvelope: diagnostic } : {}),
+      });
+      assert.equal(
+        f.state.holds[0].status,
+        'pending',
+        'existing failure policy still owns settlement',
+      );
+      assert.equal(f.state.balance, 1000n);
+      assert.equal(f.state.held, 200n);
+      assert.equal(f.state.credits, 50);
+      await f.engine.run(job.id, async () => true);
+      const replay = await f.engine.queue(input);
+      assert.equal(replay.id, job.id);
+      assert.equal(replay.outputEnvelope, undefined, 'diagnostic stays server-only');
+      assert.equal(replay.request_meta, undefined);
+      assert.equal(f.state.calls, 1);
+      assert.equal(f.state.holds.length, 1);
+      assert.equal(f.state.ledger.length, 1);
+    } finally {
+      f.restore();
+    }
+  });
+
+test('unknown provider usage keeps reconciliation and no diagnostic or automatic retry', async () => {
+  const f = fixture();
+  try {
+    const generate = f.engine.provider.generate;
+    f.engine.provider.generate = async () => {
+      await generate();
+      throw new ProviderFailure('PROVIDER_USAGE_UNKNOWN', true, 'fixture-unknown');
+    };
+    const { job } = await f.admit();
+    await f.engine.run(job.id, async () => true);
+    const stored = f.state.jobs[0];
+    assert.equal(stored.status, 'reconciling');
+    assert.equal(stored.provider_budget_status, 'unknown');
+    assert.equal(stored.provider_actual_micros, null);
+    assert.equal(stored.request_meta.outputEnvelope, undefined);
+    assert.equal(f.state.holds[0].status, 'pending');
+    assert.equal(f.state.balance, 1000n);
+    assert.equal(f.state.held, 200n);
+    await f.engine.run(job.id, async () => true);
+    assert.equal(f.state.calls, 1);
+  } finally {
+    f.restore();
+  }
+});
+
 test('enabled zero-credit policy still requires explicit consent and stale quote rejects before hold', async () => {
   const f = fixture();
   try {

@@ -6,6 +6,216 @@ const {
 } = require('../../apps/api/dist/ai/openai-provider');
 const { runtimeVisionInstructions } = require('../../apps/api/dist/ai/runtime-vision');
 const config = { model: 'synthetic-no-network', maxOutputTokens: 1000 };
+const emptyEnvelopeDiagnostic = {
+  reason: 'missing_output_text',
+  outputItems: '0',
+  messageItems: '0',
+  contentItems: '0',
+  outputTextItems: '0',
+  hasMalformedMessage: false,
+  hasMalformedOutputText: false,
+  hasOtherOutput: false,
+  hasOtherContent: false,
+};
+const envelopeText = { type: 'output_text', text: JSON.stringify({ text: 'Hello' }) };
+const envelopeMessage = (...content) => ({ type: 'message', content });
+async function generateEnvelope(output, overrides = {}) {
+  const { OpenAiNpcProvider } = require('../../apps/api/dist/ai/openai-provider');
+  let calls = 0;
+  const provider = new OpenAiNpcProvider(
+    {
+      ...config,
+      enabled: true,
+      apiKey: 'synthetic-no-network-key',
+      version: 'envelope-fixture',
+      maxInputBytes: 64000,
+      maxResponseBytes: 64000,
+      inputMicrosPerMillion: 100000,
+      outputMicrosPerMillion: 500000,
+    },
+    async () => {
+      calls++;
+      return new Response(
+        JSON.stringify({
+          id: 'synthetic-envelope',
+          status: 'completed',
+          service_tier: 'default',
+          usage: { input_tokens: 50, output_tokens: 100 },
+          output,
+          ...overrides,
+        }),
+      );
+    },
+  );
+  try {
+    return await provider.generate({
+      jobId: 'synthetic-job',
+      purpose: 'speech',
+      context: { contextHash: 'fixture', privateNote: 'PRIVATE_CONTEXT_CANARY' },
+      signal: new AbortController().signal,
+      maxCostMicros: 10000,
+    });
+  } finally {
+    assert.equal(calls, 1, 'envelope diagnostics never dispatch a repair or retry');
+  }
+}
+
+for (const [name, output, expected] of [
+  ['empty output', [], {}],
+  [
+    'reasoning-only output',
+    [{ type: 'reasoning', summary: 'PRIVATE_PROVIDER_CANARY' }],
+    { outputItems: '1', hasOtherOutput: true },
+  ],
+  ['empty message', [envelopeMessage()], { outputItems: '1', messageItems: '1' }],
+  [
+    'malformed and non-message output',
+    [null, { type: 'message' }, { type: 'message', content: 'PRIVATE_PROVIDER_CANARY' }],
+    { outputItems: '2+', hasMalformedMessage: true, hasOtherOutput: true },
+  ],
+  [
+    'malformed text fields',
+    [envelopeMessage({ type: 'output_text' }, { type: 'output_text', text: { private: true } })],
+    { outputItems: '1', messageItems: '1', contentItems: '2+', hasMalformedOutputText: true },
+  ],
+  [
+    'unrecognized and primitive content',
+    [envelopeMessage(null, { type: 'PRIVATE_PROVIDER_CANARY', text: 'PRIVATE_PROVIDER_CANARY' })],
+    { outputItems: '1', messageItems: '1', contentItems: '2+', hasOtherContent: true },
+  ],
+  [
+    'multiple texts within one message',
+    [envelopeMessage(envelopeText, envelopeText, envelopeText)],
+    {
+      reason: 'multiple_output_texts',
+      outputItems: '1',
+      messageItems: '1',
+      contentItems: '2+',
+      outputTextItems: '2+',
+    },
+  ],
+  [
+    'multiple texts across messages',
+    [envelopeMessage(envelopeText), envelopeMessage(envelopeText)],
+    {
+      reason: 'multiple_output_texts',
+      outputItems: '2+',
+      messageItems: '2+',
+      contentItems: '2+',
+      outputTextItems: '2+',
+    },
+  ],
+  [
+    'refusal',
+    [envelopeMessage({ type: 'refusal', refusal: 'PRIVATE_PROVIDER_CANARY' })],
+    { reason: 'refusal', outputItems: '1', messageItems: '1', contentItems: '1' },
+  ],
+  [
+    'refusal wins over multiple and malformed texts',
+    [
+      envelopeMessage(
+        envelopeText,
+        envelopeText,
+        { type: 'refusal', refusal: 'PRIVATE_PROVIDER_CANARY' },
+        { type: 'output_text', text: 42 },
+      ),
+    ],
+    {
+      reason: 'refusal',
+      outputItems: '1',
+      messageItems: '1',
+      contentItems: '2+',
+      outputTextItems: '2+',
+      hasMalformedOutputText: true,
+    },
+  ],
+])
+  test(`output envelope diagnostic: ${name}`, async () => {
+    const { validateProviderResult } = require('../../apps/api/dist/ai/provider');
+    const result = validateProviderResult(await generateEnvelope(output));
+    assert.deepEqual(result.outputEnvelope, { ...emptyEnvelopeDiagnostic, ...expected });
+    assert.equal(
+      result.failureCode,
+      expected.reason === 'refusal' ? 'PROVIDER_REFUSED' : 'PROVIDER_INVALID_RESULT',
+    );
+    assert.equal(result.failureStage, 'output_envelope');
+    assert.equal(result.proposal, null);
+    assert.equal(result.usage.costMicros, 55);
+    assert.equal(result.usage.costEvidence, 'configured_rates');
+    assert.doesNotMatch(JSON.stringify(result), /PRIVATE_|Hello/);
+    assert.ok(JSON.stringify(result.outputEnvelope).length < 350);
+  });
+
+test('shape observation preserves permissive filtering, single-text success and later failure stages', async () => {
+  const success = await generateEnvelope([
+    null,
+    { type: 'reasoning', summary: 'PRIVATE_PROVIDER_CANARY' },
+    { type: 'message', content: 'invalid' },
+    envelopeMessage({ type: 'output_text', text: false }, null, envelopeText),
+  ]);
+  assert.equal(success.proposal.text, 'Hello');
+  assert.deepEqual(Object.keys(success).sort(), ['proposal', 'requestId', 'usage']);
+  for (const [text, stage] of [
+    ['PRIVATE_NON_JSON', 'json'],
+    ['{}', 'response_schema'],
+  ]) {
+    const failure = await generateEnvelope([envelopeMessage({ type: 'output_text', text })]);
+    assert.equal(failure.failureCode, 'PROVIDER_INVALID_RESULT');
+    assert.equal(failure.failureStage, stage);
+    assert.equal(failure.outputEnvelope, undefined);
+  }
+  const incomplete = await generateEnvelope([], { status: 'incomplete' });
+  assert.equal(incomplete.failureCode, 'PROVIDER_INCOMPLETE');
+  assert.equal(incomplete.outputEnvelope, undefined);
+  const overLimit = await generateEnvelope([], {
+    usage: { input_tokens: 50, output_tokens: 1001 },
+  });
+  assert.equal(overLimit.failureCode, 'PROVIDER_LIMIT_VIOLATION');
+  assert.equal(overLimit.outputEnvelope, undefined);
+});
+
+test('unknown outer envelope, usage and tier remain uncertain with no fabricated diagnostics', async () => {
+  for (const [output, overrides, code] of [
+    [null, {}, 'PROVIDER_USAGE_UNKNOWN'],
+    [
+      [],
+      { usage: { input_tokens: 'PRIVATE_USAGE', output_tokens: 100 } },
+      'PROVIDER_USAGE_UNKNOWN',
+    ],
+    [[], { service_tier: 'unknown' }, 'PROVIDER_TIER_UNKNOWN'],
+  ])
+    await assert.rejects(generateEnvelope(output, overrides), (error) => {
+      assert.equal(error.code, code);
+      assert.equal(error.uncertain, true);
+      assert.equal(error.outputEnvelope, undefined);
+      return true;
+    });
+});
+
+test('optional output diagnostic is strict, finite and backward compatible', () => {
+  const { validateProviderResult } = require('../../apps/api/dist/ai/provider');
+  const legacy = {
+    requestId: 'fixture',
+    proposal: null,
+    failureCode: 'PROVIDER_INVALID_RESULT',
+    failureStage: 'output_envelope',
+    usage: { inputTokens: 50, outputTokens: 100, costMicros: 55 },
+  };
+  assert.deepEqual(validateProviderResult(legacy), legacy);
+  const valid = { ...legacy, outputEnvelope: { ...emptyEnvelopeDiagnostic } };
+  assert.deepEqual(validateProviderResult(valid), valid);
+  for (const invalid of [
+    { ...emptyEnvelopeDiagnostic, text: 'PRIVATE_PROVIDER_CANARY' },
+    { ...emptyEnvelopeDiagnostic, path: ['PRIVATE_PATH_CANARY'] },
+    { ...emptyEnvelopeDiagnostic, reason: 'PRIVATE_REASON_CANARY' },
+    { ...emptyEnvelopeDiagnostic, outputItems: 17 },
+    { ...emptyEnvelopeDiagnostic, outputTextItems: '17' },
+    { ...emptyEnvelopeDiagnostic, hasOtherContent: 'PRIVATE_FLAG_CANARY' },
+    { ...emptyEnvelopeDiagnostic, contentItems: undefined },
+    null,
+  ])
+    assert.throws(() => validateProviderResult({ ...legacy, outputEnvelope: invalid }));
+});
 test('plan and speech use bounded authored RP, never provider hidden reasoning traces', () => {
   for (const purpose of ['plan', 'speech']) {
     const schema = openAiOutputSchema(purpose);

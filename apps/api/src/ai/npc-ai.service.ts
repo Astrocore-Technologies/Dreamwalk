@@ -1764,6 +1764,11 @@ export class NpcAiEngine {
               "UPDATE npc_ai_jobs SET request_meta=jsonb_set(COALESCE(request_meta,'{}'::jsonb),'{failureStage}',to_jsonb($2::text)) WHERE id=$1",
               [id, result.failureStage],
             );
+          if (result.outputEnvelope)
+            await c.query(
+              "UPDATE npc_ai_jobs SET request_meta=jsonb_set(COALESCE(request_meta,'{}'::jsonb),'{outputEnvelope}',$2::jsonb) WHERE id=$1",
+              [id, JSON.stringify(result.outputEnvelope)],
+            );
           if (
             result.failureCode === 'PROVIDER_LIMIT_VIOLATION' &&
             !(this.provider instanceof ReleaseGenerationProvider)
