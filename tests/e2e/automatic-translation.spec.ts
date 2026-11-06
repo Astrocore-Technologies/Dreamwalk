@@ -148,16 +148,19 @@ for (const width of [390, 1536])
     await page.clock.install();
     await page.addInitScript(() => {
       if (!localStorage.getItem('dreamwalk-language'))
-        localStorage.setItem('dreamwalk-language', 'en');
+        localStorage.setItem('dreamwalk-language', 'ru');
     });
     const counts = { en: 0, uk: 0 };
+    let englishReady = false;
     await page.route('**/api/v1/**', async (route) => {
       const path = new URL(route.request().url()).pathname;
       if (path === '/api/v1/auth/me') return route.fulfill({ json: { user: null } });
       if (path !== '/api/v1/adventures') return route.fulfill({ json: [] });
-      const locale = route.request().headers()['accept-language'] === 'uk' ? 'uk' : 'en';
-      counts[locale]++;
-      const pending = locale === 'uk' || counts.en === 1;
+      const requested = route.request().headers()['accept-language'];
+      const locale = requested === 'en' || requested === 'uk' ? requested : 'ru';
+      if (locale !== 'ru') counts[locale]++;
+      // A response count is not job completion: hydration may issue two GETs.
+      const pending = locale === 'uk' || (locale === 'en' && !englishReady);
       return route.fulfill({
         headers: pending ? { 'X-Dreamwalk-Translation-Pending': 'true' } : {},
         json: [
@@ -179,21 +182,36 @@ for (const width of [390, 1536])
             favoriteCount: 0,
             createdAt: '2026-11-03T00:00:00Z',
             updatedAt: '2026-11-03T00:00:00Z',
-            translations: pending
-              ? {}
-              : { en: { title: 'Quiet forest', synopsis: 'A forest story', sourceRevision: 1 } },
+            translations:
+              pending || locale === 'ru'
+                ? {}
+                : { en: { title: 'Quiet forest', synopsis: 'A forest story', sourceRevision: 1 } },
           },
         ],
       });
     });
     await page.goto('/explore');
     const title = page.locator('.card-art-title');
+    await expect(page.locator('.locale-select')).toHaveValue('ru');
     await expect(title).toHaveText('Тихий лес');
+    expect(counts.en).toBe(0);
+    const pendingEnglish = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/v1/adventures' &&
+        response.request().headers()['accept-language'] === 'en' &&
+        response.headers()['x-dreamwalk-translation-pending'] === 'true',
+    );
+    await page.locator('.locale-select').selectOption('en');
+    await (await pendingEnglish).finished();
+    await expect.poll(() => counts.en).toBeGreaterThan(0);
+    await expect(title).toHaveText('Тихий лес');
+    const beforeReady = counts.en;
+    englishReady = true;
     await page.clock.fastForward(1600);
     await expect(title).toHaveText('Quiet forest');
-    expect(counts.en).toBe(2);
+    expect(counts.en).toBe(beforeReady + 1);
     await page.clock.fastForward(6000);
-    expect(counts.en).toBe(2);
+    expect(counts.en).toBe(beforeReady + 1);
     await page.locator('.locale-select').selectOption('uk');
     await expect(title).toHaveText('Тихий лес');
     expect(counts.uk).toBe(1);
@@ -201,7 +219,7 @@ for (const width of [390, 1536])
     await expect(title).toHaveText('Quiet forest');
     await page.clock.fastForward(2000);
     expect(counts.uk).toBe(1);
-    expect(counts.en).toBe(3);
+    expect(counts.en).toBe(beforeReady + 2);
     await page.locator('.locale-select').selectOption('uk');
     await expect(title).toHaveText('Тихий лес');
     expect(counts.uk).toBe(2);
