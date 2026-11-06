@@ -1377,3 +1377,23 @@ workspace typecheck was killed by local memory pressure (exit 137); serial core
 build/typecheck passed afterward. API/database and browser suites were not run
 locally for this slice; exact-head CI remains required. No provider calls,
 production changes, repository publication or deployment were performed.
+
+## 2026-11-06: historical reservation recovery (implementation)
+
+- Added bounded owner-only wallet discovery and a historical authoring deep link,
+  so earlier jobs are not hidden by a newer story build.
+- Added legacy-only NPC/player recovery UI using the existing durable confirmation
+  controller. New automatic requests never gain a manual confirmation button.
+- Legacy player `story_turn` uses complete original admission and cost evidence;
+  exact pre-world-batch hashes are supported without dropping a real batch identity.
+- Terminal funding is checked against its original receipt; pending unknown costs
+  remain untouched. No migration, production mutation or provider retry is involved.
+- Local focused tests and final PostgreSQL/browser acceptance are recorded in the
+  task report. Production settlement still requires a verified release and fresh
+  owner/job/quote/amount checks under the specific owner's consent.
+- Validation: full API build and web typecheck; 250 focused backend regressions,
+  38 browser-controller/discovery tests; real PostgreSQL HTTP NPC/player recovery
+  (concurrent replay, process restart, owner isolation, split Dreams/Sparks),
+  authoring recovery 9/9, and native/permit automatic regression 5/5 all passed.
+  Local disposable PG used 1 MB WAL segments and a 16 MB WAL target due disk limits;
+  transactional/locking behavior was unchanged. Browser E2E is deferred to normal CI.

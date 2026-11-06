@@ -640,6 +640,21 @@ async function npcScenario(source, accepted) {
   assert.equal(settled.hold.status, accepted ? 'settled' : 'pending');
   assert.equal(settled.wallet.balance_subunits, accepted ? '999760' : '1000000');
   assert.equal(settled.wallet.held_subunits, accepted ? '0' : settled.hold.reserved_subunits);
+  if (source === 'npc') {
+    const reader = new KnownNpcSettlement(
+      database,
+      { require: async () => ({ id: who.id }) },
+      grants,
+    );
+    if (accepted) {
+      const view = await reader.handle({}, campaignId, job.id);
+      assert.equal(view.status, 'settled');
+      assert.equal(view.settlementMode, 'automatic');
+    } else {
+      await assert.rejects(reader.handle({}, campaignId, job.id), /NPC_SETTLEMENT_UNAVAILABLE/);
+    }
+  }
+
   assert.deepEqual(
     settled.ledger
       .filter((r) => ['capture', 'release'].includes(r.kind))

@@ -6,6 +6,7 @@ import {
   type OnModuleInit,
   type OnModuleDestroy,
 } from '@nestjs/common';
+import { worldKnownCostPolicyRequired } from '../generation/known-cost-policy';
 import { automaticNpcAdmission } from './automatic-npc-settlement';
 import type { Request } from 'express';
 import type { PoolClient, QueryResultRow } from 'pg';
@@ -17,7 +18,13 @@ import { fail } from '../errors';
 import { digest } from '../ai/context';
 import { GenerationAuthority } from '../generation/service';
 import { fenceGenerationAdmission } from '../generation/scope-fence';
-import { SparksAccounting, sparkQuoteRateVersion } from '../generation/sparks-accounting';
+import {
+  SparksAccounting,
+  sparkQuoteRateVersion,
+  planSparkSettlement,
+  type SparkHold,
+} from '../generation/sparks-accounting';
+import { planDreamSettlement, type DreamHold } from '../generation/dreams-accounting';
 import { textUsageCostMicros } from '../generation/text-pricing';
 
 const amount = z.string().regex(/^(0|[1-9][0-9]{0,15})$/);
@@ -80,9 +87,7 @@ export function knownNpcSettlementQuote(
     !(
       job.subject_kind === 'npc' ||
       (job.subject_kind === 'player' &&
-        (lifecycle === 'automatic' ||
-          lifecycle === 'terminal' ||
-          (lifecycle === 'ordinary-failure' && job.purpose === 'story_turn')))
+        (lifecycle === 'automatic' || lifecycle === 'terminal' || job.purpose === 'story_turn'))
     ) ||
     job.credits !== 0 ||
     job.sponsor_id ||
@@ -315,74 +320,179 @@ export class KnownNpcSettlement implements OnModuleInit, OnModuleDestroy {
     if (!hold || !quote) unavailable();
     // Never rewrite an already terminal manual or automatic receipt.
     if (automatic && ['settled', 'released'].includes(hold.status)) return;
-    const view = knownNpcSettlementQuote(
-      job,
-      hold,
-      quote,
-      automatic || quote.price_snapshot?.providerQuote?.automaticKnownCostPolicy === 'known-cost-v1'
-        ? 'automatic'
-        : 'recovery',
-    );
-    if (automatic) {
-      const native = (await c.query('SELECT * FROM npc_ai_quotes WHERE id=$1', [job.quote_id]))
-        .rows[0];
-      const batches = job.request_meta?.runtimeRequestId
-        ? (
-            await c.query(
-              `SELECT * FROM game_world_generation_batches
-          WHERE campaign_id=$1 AND owner_id=$2 AND accepted_at IS NOT NULL
-          AND (entries @> jsonb_build_array(jsonb_build_object('requestId',$3::text,'quote',jsonb_build_object('id',$4::text)))
-            OR EXISTS(SELECT 1 FROM game_autonomous_speech_bindings child WHERE child.batch_id=game_world_generation_batches.id AND child.request_id=$3::uuid AND child.native_quote_id=$4::uuid))
-          ORDER BY id LIMIT 2`,
-              [campaignId, ownerId, job.request_meta.runtimeRequestId, job.quote_id],
-            )
-          ).rows
-        : [];
-      if (batches.length > 1) return;
-      const request = job.request_meta?.runtimeRequestId
-        ? (
-            await c.query('SELECT * FROM game_npc_decision_requests WHERE id=$1', [
-              job.request_meta.runtimeRequestId,
-            ])
-          ).rows[0]
-        : undefined;
-      let dreams;
-      if (hold.dream_hold_id) {
+    const native = (await c.query('SELECT * FROM npc_ai_quotes WHERE id=$1', [job.quote_id]))
+      .rows[0];
+    const batches = job.request_meta?.runtimeRequestId
+      ? (
+          await c.query(
+            `SELECT * FROM game_world_generation_batches
+        WHERE campaign_id=$1 AND owner_id=$2 AND accepted_at IS NOT NULL
+        AND (entries @> jsonb_build_array(jsonb_build_object('requestId',$3::text,'quote',jsonb_build_object('id',$4::text)))
+          OR EXISTS(SELECT 1 FROM game_autonomous_speech_bindings child WHERE child.batch_id=game_world_generation_batches.id AND child.request_id=$3::uuid AND child.native_quote_id=$4::uuid))
+        ORDER BY id LIMIT 2`,
+            [campaignId, ownerId, job.request_meta.runtimeRequestId, job.quote_id],
+          )
+        ).rows
+      : [];
+    const request = job.request_meta?.runtimeRequestId
+      ? (
+          await c.query('SELECT * FROM game_npc_decision_requests WHERE id=$1', [
+            job.request_meta.runtimeRequestId,
+          ])
+        ).rows[0]
+      : undefined;
+    // Any automatic-policy marker prevents fallback to manual legacy recovery,
+    // including malformed/partial evidence and pre-marker ordinary batches.
+    const automaticAdmission =
+      quote.price_snapshot?.providerQuote?.automaticKnownCostPolicy != null ||
+      job.request_meta?.automaticKnownCostPolicy != null ||
+      batches.some(
+        (batch) =>
+          batch.quote?.ordinaryTurnConsentVersion != null || worldKnownCostPolicyRequired(batch),
+      );
+    const settlementMode = automaticAdmission ? 'automatic' : 'legacy_confirmation';
+    const view = {
+      ...knownNpcSettlementQuote(job, hold, quote, automaticAdmission ? 'automatic' : 'recovery'),
+      settlementMode,
+    };
+    let dreams: { hold: QueryResultRow; quote: QueryResultRow } | undefined;
+    if (hold.dream_hold_id) {
+      if (mutate)
         await c.query('SELECT owner_id FROM dream_wallets WHERE owner_id=$1 FOR UPDATE', [ownerId]);
-        const dh = (
-          await c.query('SELECT * FROM dream_holds WHERE id=$1 AND owner_id=$2 FOR UPDATE', [
-            hold.dream_hold_id,
-            ownerId,
-          ])
-        ).rows[0];
-        const dq = (
-          await c.query('SELECT * FROM dream_quotes WHERE id=$1 AND owner_id=$2', [
-            hold.dream_hold_id,
-            ownerId,
-          ])
-        ).rows[0];
-        if (!dh || !dq) return;
-        dreams = { hold: dh, quote: dq };
-      }
-      if (
-        !automaticNpcAdmission(
-          job,
-          native,
-          authorization,
-          reservation,
-          hold,
-          quote,
-          batches[0],
-          request,
-          dreams,
-          false,
-          batches[0] && request
-            ? await loadAutonomousSpeechEvidence(c, batches[0], request)
-            : undefined,
+      const dh = (
+        await c.query(
+          `SELECT * FROM dream_holds WHERE id=$1 AND owner_id=$2${mutate ? ' FOR UPDATE' : ''}`,
+          [hold.dream_hold_id, ownerId],
         )
-      )
-        return;
+      ).rows[0];
+      const dq = (
+        await c.query('SELECT * FROM dream_quotes WHERE id=$1 AND owner_id=$2', [
+          hold.dream_hold_id,
+          ownerId,
+        ])
+      ).rows[0];
+      if (dh && dq) dreams = { hold: dh, quote: dq };
     }
+    const audits = (
+      await c.query(
+        "SELECT details FROM audit WHERE actor_id=$1 AND target_id=$2 AND action='npc.known_failure.settled'",
+        [ownerId, jobId],
+      )
+    ).rows;
+    let receiptId: string | undefined;
+    if (hold.status !== 'pending') {
+      const details = audits[0]?.details;
+      if (audits.length > 1) unavailable();
+      const candidates = [`commit:${job.id}`, `ordinary-failure:${job.id}`];
+      if (details) {
+        if (
+          !z.uuid().safeParse(details.operationId).success ||
+          details.holdId !== hold.id ||
+          details.actualMicros !== view.actualMicros ||
+          details.captureSubunits !== view.captureSubunits ||
+          details.releaseSubunits !== view.releaseSubunits ||
+          (details.automatic === undefined ? false : details.automatic) !== automaticAdmission
+        )
+          unavailable();
+        candidates.splice(
+          0,
+          candidates.length,
+          details.automatic
+            ? `automatic-npc-settlement:${job.id}`
+            : `owner-npc-settlement:${details.operationId}`,
+        );
+      }
+      const matchingReceipts = candidates.filter((candidate) => {
+        try {
+          return planSparkSettlement(
+            { ...hold, spark_rate_version: view.rateVersion } as SparkHold,
+            {
+              outcome: 'success',
+              actualMicros: view.actualMicros,
+              evidence: 'configured_rates',
+              receiptId: candidate,
+            },
+            true,
+          ).duplicate;
+        } catch {
+          return false;
+        }
+      });
+      if (matchingReceipts.length !== 1) unavailable();
+      receiptId = matchingReceipts[0];
+      try {
+        if (
+          dreams &&
+          (dreams.hold.reason !== null ||
+            String(dreams.hold.captured_subunits) !== view.funding.dreamsCaptureSubunits ||
+            dreams.hold.status !==
+              (view.funding.dreamsCaptureSubunits === '0' ? 'released' : 'settled'))
+        )
+          unavailable();
+        if (
+          dreams &&
+          !planDreamSettlement(
+            { ...dreams.hold, policy_version: 'dreams-first-v1' } as DreamHold,
+            {
+              outcome: 'success',
+              actualSubunits: view.funding.dreamsCaptureSubunits,
+              policyVersion: 'dreams-first-v1',
+              evidence: 'configured_rates',
+              receiptId,
+            },
+            true,
+          ).duplicate
+        )
+          unavailable();
+      } catch {
+        unavailable();
+      }
+    } else if (audits.length) unavailable();
+    const sourceHold =
+      hold.status === 'pending'
+        ? hold
+        : {
+            ...hold,
+            status: 'pending',
+            reason: 'failure_policy_pending',
+            captured_subunits: null,
+            settlement_fingerprint: null,
+          };
+    const sourceDreams =
+      dreams && hold.status !== 'pending'
+        ? {
+            quote: dreams.quote,
+            hold: {
+              ...dreams.hold,
+              status: 'pending',
+              reason: 'unknown',
+              captured_subunits: null,
+              settlement_fingerprint: null,
+            },
+          }
+        : dreams;
+    const proved =
+      batches.length <= 1 &&
+      automaticNpcAdmission(
+        job,
+        native,
+        authorization,
+        reservation,
+        sourceHold,
+        quote,
+        batches[0],
+        request,
+        sourceDreams,
+        !automaticAdmission,
+        batches[0] && request
+          ? await loadAutonomousSpeechEvidence(c, batches[0], request)
+          : undefined,
+      );
+    if (!proved || (automatic && !automaticAdmission)) {
+      if (automatic) return;
+      unavailable();
+    }
+    if (consent && hold.status === 'pending' && automaticAdmission) unavailable();
     if (!mutate) return view;
     if (
       consent &&
@@ -393,6 +503,9 @@ export class KnownNpcSettlement implements OnModuleInit, OnModuleDestroy {
     )
       fail(409, 'NPC_SETTLEMENT_CHANGED', 'NPC_SETTLEMENT_CHANGED');
     // The original hold is the idempotency boundary. Same receipt replays; a different receipt conflicts.
+    const settlementReceiptId = automatic
+      ? `automatic-npc-settlement:${job.id}`
+      : `owner-npc-settlement:${consent!.operationId}`;
     let settled;
     try {
       settled = await new SparksAccounting().settle(
@@ -403,9 +516,7 @@ export class KnownNpcSettlement implements OnModuleInit, OnModuleDestroy {
           outcome: 'success',
           actualMicros: view.actualMicros,
           evidence: 'configured_rates',
-          receiptId: automatic
-            ? `automatic-npc-settlement:${job.id}`
-            : `owner-npc-settlement:${consent!.operationId}`,
+          receiptId: settlementReceiptId,
         },
         true,
       );
@@ -413,6 +524,42 @@ export class KnownNpcSettlement implements OnModuleInit, OnModuleDestroy {
       if (error instanceof Error && /^SPARK_[A-Z_]+$/.test(error.message))
         fail(409, error.message, error.message);
       throw error;
+    }
+    if (
+      settled.status !== (view.captureSubunits === '0' ? 'released' : 'settled') ||
+      String(settled.captured_subunits) !== view.captureSubunits
+    )
+      unavailable();
+    if (hold.dream_hold_id) {
+      const finalDream = (
+        await c.query('SELECT * FROM dream_holds WHERE id=$1 AND owner_id=$2', [
+          hold.dream_hold_id,
+          ownerId,
+        ])
+      ).rows[0];
+      try {
+        if (
+          !finalDream ||
+          finalDream.reason !== null ||
+          String(finalDream.captured_subunits) !== view.funding.dreamsCaptureSubunits ||
+          finalDream.status !==
+            (view.funding.dreamsCaptureSubunits === '0' ? 'released' : 'settled') ||
+          !planDreamSettlement(
+            { ...finalDream, policy_version: 'dreams-first-v1' } as DreamHold,
+            {
+              outcome: 'success',
+              actualSubunits: view.funding.dreamsCaptureSubunits,
+              policyVersion: 'dreams-first-v1',
+              evidence: 'configured_rates',
+              receiptId: settlementReceiptId,
+            },
+            true,
+          ).duplicate
+        )
+          unavailable();
+      } catch {
+        unavailable();
+      }
     }
     if (hold.status === 'pending')
       await c.query('INSERT INTO audit(actor_id,action,target_id,details) VALUES($1,$2,$3,$4)', [
