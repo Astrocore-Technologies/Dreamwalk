@@ -72,6 +72,24 @@ async function fixture(
     const endpoint = new URL(route.request().url()).pathname;
     const method = route.request().method();
     if (method !== 'GET') writes.push(endpoint);
+    if (endpoint.endsWith('/sparks/settlements'))
+      return route.fulfill({
+        json: {
+          ownerId: currentOwner,
+          entries: [
+            {
+              holdId,
+              reservedSubunits: '1000',
+              state: 'verified',
+              kind: 'authoring',
+              jobId,
+              campaignId: null,
+              quote: quote(),
+            },
+          ],
+          nextCursor: null,
+        },
+      });
     if (endpoint.endsWith('/auth/me'))
       return route.fulfill({
         json: {
@@ -393,4 +411,22 @@ test('owner switch during the confirmation re-read discards the old action', asy
       ),
     ),
   ).toEqual([]);
+});
+
+test('wallet finds a historical authoring job independently of the latest story build', async ({
+  page,
+}) => {
+  const f = await fixture(page, 'en', { mode: 'legacy_confirmation' });
+  await page.goto('/wallet/settlements');
+  await expect(page.getByTestId('wallet-settlements')).toBeVisible();
+  await page.getByRole('link', { name: 'Review older operation', exact: true }).click();
+  await expect(page).toHaveURL(`/wallet/settlements/authoring/${jobId}`);
+  const form = page.getByTestId('owner-authoring-settlement');
+  await expect(
+    form.getByRole('button', { name: settlementMessages.en.confirm, exact: true }),
+  ).toBeVisible();
+  expect(f.posts).toHaveLength(0);
+  await form.getByRole('button', { name: settlementMessages.en.confirm, exact: true }).click();
+  await expect(form.getByRole('status')).toHaveText(settlementMessages.en.complete);
+  expect(f.posts).toHaveLength(1);
 });

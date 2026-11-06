@@ -98,7 +98,9 @@ function fixture() {
   const wallet = { balance_subunits: '100000', held_subunits: '5252' };
   const ledger = [],
     audit = [],
-    sqls = [];
+    sqls = [],
+    batches = [],
+    requests = [];
   let requester = owner;
   const client = {
     query: async (sql, values = []) => {
@@ -108,7 +110,11 @@ function fixture() {
       else if (sql.includes('FROM npc_ai_jobs'))
         rows = values[0] === job.id && values[1] === campaign ? [job] : [];
       else if (sql.includes('FROM npc_ai_quotes')) rows = [native];
-      else if (sql.includes('FROM game_world_generation_batches')) rows = [];
+      else if (sql.includes('FROM game_world_generation_batches')) rows = batches;
+      else if (sql.includes('FROM game_npc_decision_requests'))
+        rows = requests.filter((r) => r.id === values[0]);
+      else if (sql.includes('FROM audit'))
+        rows = audit.map((entry) => ({ details: JSON.parse(entry[3]) }));
       else if (sql.includes('FROM npc_ai_provider_budgets'))
         rows = [{ provider_id: job.provider_id }];
       else if (sql.includes('FROM live_test_sessions')) rows = [authorization];
@@ -154,7 +160,7 @@ function fixture() {
     operationId: randomUUID(),
     consent: true,
   };
-  return {
+  const result = {
     owner,
     campaign,
     job,
@@ -167,6 +173,8 @@ function fixture() {
     ledger,
     audit,
     sqls,
+    batches,
+    requests,
     service,
     client,
     body,
@@ -175,6 +183,8 @@ function fixture() {
     },
     call: (input) => service.handle({}, campaign, job.id, input),
   };
+  completeLegacyFixture(result);
+  return result;
 }
 
 test('read quote verifies mixed cache writes and returns only safe exact settlement amounts', async () => {
@@ -487,7 +497,7 @@ test('ordinary known failure settles only its original held bill without new gen
   assert.equal(f.ledger.length, 0); // This proof is read-only; existing accounting owns the one capture.
 });
 
-test('exact ordinary director bill can settle but never expands historical NPC recovery', () => {
+test('director cost proof permits only story_turn while server admission proof owns legacy eligibility', () => {
   const f = ordinaryFixture();
   f.job.subject_kind = 'player';
   f.job.purpose = f.request.purpose = f.batch.entries[0].purpose = 'story_turn';
@@ -495,6 +505,8 @@ test('exact ordinary director bill can settle but never expands historical NPC r
   f.job.status = 'stale';
   f.hold.status = 'pending';
   f.hold.reason = 'failure_policy_pending';
+  assert.equal(knownNpcSettlementQuote(f.job, f.hold, f.quote).captureSubunits, '1486');
+  f.job.purpose = 'speech';
   assert.throws(
     () => knownNpcSettlementQuote(f.job, f.hold, f.quote),
     /NPC_SETTLEMENT_UNAVAILABLE/,
@@ -609,8 +621,7 @@ test('real NPC finalize consumes an ordinary known failure once and leaves later
   assert.deepEqual(f.job.request_meta, metadata);
 });
 
-function automaticFixture() {
-  const f = fixture();
+function completeLegacyFixture(f) {
   const p = Object.assign(f.job.request_snapshot, {
     reserveMicros: 2626,
     providerFingerprint: 'fixture-v1',
@@ -663,7 +674,6 @@ function automaticFixture() {
     ...p,
     policyVersion: 'p1',
     contextHash: f.job.context_hash,
-    automaticKnownCostPolicy: 'known-cost-v1',
   };
   Object.assign(f.quote.price_snapshot.tariff, {
     provider: f.job.provider_id,
@@ -674,18 +684,27 @@ function automaticFixture() {
     cachedInputMicrosPerMillion: String(p.cachePricing.cachedInputMicrosPerMillion),
     cacheWriteMicrosPerMillion: String(p.cachePricing.cacheWrite30mMicrosPerMillion),
   });
-  f.job.request_meta.automaticKnownCostPolicy = 'known-cost-v1';
+  fixtureRequestHash(f);
+}
+function fixtureRequestHash(f) {
   f.job.request_hash = digest({
     scope: {
       campaignId: f.campaign,
       npcId: f.job.npc_id,
       origin: 'user',
       requesterUserId: f.owner,
-      purpose: 'plan',
+      purpose: f.job.purpose,
+      ...(f.job.subject_kind === 'player' ? { subjectKind: 'player' } : {}),
     },
     context: f.job.context,
     ...f.job.request_meta,
   });
+}
+function automaticFixture() {
+  const f = fixture();
+  f.quote.price_snapshot.providerQuote.automaticKnownCostPolicy = 'known-cost-v1';
+  f.job.request_meta.automaticKnownCostPolicy = 'known-cost-v1';
+  fixtureRequestHash(f);
   f.proof = () =>
     automaticNpcAdmission(f.job, f.native, f.authorization, f.reservation, f.hold, f.quote);
   f.automatic = () => f.service.execute(f.client, f.owner, f.campaign, f.job.id, undefined, true);
@@ -855,7 +874,8 @@ test('historical end-turn allowance stays finite, source-linked and excludes ima
       npcId: f.job.npc_id,
       origin: 'user',
       requesterUserId: f.owner,
-      purpose: 'plan',
+      purpose: f.job.purpose,
+      ...(f.job.subject_kind === 'player' ? { subjectKind: 'player' } : {}),
     },
     context: f.job.context,
     ...f.job.request_meta,
@@ -885,4 +905,168 @@ test('terminal status cannot display a hypothetical charge different from persis
   f.hold.captured_subunits = '0';
   await assert.rejects(f.call(), /NPC_SETTLEMENT_UNAVAILABLE/);
   assert.equal(f.ledger.length, 0);
+});
+
+test('legacy player story_turn requires full original proof and exact owner consent', async () => {
+  const f = fixture();
+  f.job.subject_kind = 'player';
+  f.job.purpose = f.native.purpose = 'story_turn';
+  fixtureRequestHash(f);
+  const view = await f.call();
+  assert.equal(view.settlementMode, 'legacy_confirmation');
+  assert.equal(view.captureSubunits, '1486');
+  const result = await f.call(f.body);
+  assert.equal(result.status, 'settled');
+  assert.deepEqual(await f.call(f.body), result);
+  assert.equal(f.ledger.length, 2);
+  assert.equal(f.audit.length, 1);
+});
+for (const [name, change] of [
+  [
+    'changed native quote',
+    (f) => {
+      f.native.request_snapshot.model = 'wrong';
+    },
+  ],
+  [
+    'missing original consent',
+    (f) => {
+      f.job.request_meta.consent = false;
+    },
+  ],
+  [
+    'changed request hash',
+    (f) => {
+      f.job.request_hash = 'wrong';
+    },
+  ],
+  [
+    'partial automatic marker',
+    (f) => {
+      f.job.request_meta.automaticKnownCostPolicy = 'known-cost-v1';
+    },
+  ],
+])
+  test(`legacy recovery rejects ${name}`, async () => {
+    const f = fixture();
+    change(f);
+    await assert.rejects(f.call(f.body), /NPC_SETTLEMENT_UNAVAILABLE/);
+    assert.equal(f.ledger.length, 0);
+  });
+test('automatic pending quote stays read-only and cannot use manual consent endpoint', async () => {
+  const f = automaticFixture();
+  assert.equal((await f.call()).settlementMode, 'automatic');
+  await assert.rejects(f.call(f.body), /NPC_SETTLEMENT_UNAVAILABLE/);
+  assert.equal(f.ledger.length, 0);
+});
+test('terminal GET checks audit against exact ledger receipt before reporting complete', async () => {
+  const f = fixture();
+  await f.call(f.body);
+  f.audit[0][3] = JSON.stringify({ ...JSON.parse(f.audit[0][3]), operationId: randomUUID() });
+  await assert.rejects(f.call(), /NPC_SETTLEMENT_UNAVAILABLE/);
+  assert.equal(f.ledger.length, 2);
+});
+
+test('pre-batch legacy player hash is accepted only when the original field was absent', async () => {
+  const f = fixture();
+  f.job.subject_kind = 'player';
+  f.job.purpose = f.native.purpose = 'story_turn';
+  delete f.job.request_meta.acceptedWorldBatchId;
+  fixtureRequestHash(f);
+  assert.equal((await f.call()).settlementMode, 'legacy_confirmation');
+  f.job.request_meta.acceptedWorldBatchId = null;
+  await assert.rejects(f.call(), /NPC_SETTLEMENT_UNAVAILABLE/);
+  f.job.request_meta.acceptedWorldBatchId = randomUUID();
+  await assert.rejects(f.call(), /NPC_SETTLEMENT_UNAVAILABLE/);
+  assert.equal(f.ledger.length, 0);
+});
+
+test('an ordinary terminal receipt remains readable without inventing a manual recovery audit', async () => {
+  const f = fixture();
+  const { SparksAccounting } = require('../../apps/api/dist/generation/sparks-accounting');
+  await new SparksAccounting().settle(
+    f.client,
+    f.owner,
+    f.hold.id,
+    {
+      outcome: 'success',
+      actualMicros: '743',
+      evidence: 'configured_rates',
+      receiptId: `ordinary-failure:${f.job.id}`,
+    },
+    true,
+  );
+  assert.equal((await f.call()).status, 'settled');
+  assert.equal(f.audit.length, 0);
+  await assert.rejects(f.call(f.body), /SPARK_SETTLEMENT_CONFLICT/);
+  assert.equal(f.ledger.length, 2);
+});
+
+test('pre-automatic manual audit keeps its original receipt and never becomes automatic consent', async () => {
+  const f = fixture();
+  await f.call(f.body);
+  const details = JSON.parse(f.audit[0][3]);
+  delete details.automatic;
+  f.audit[0][3] = JSON.stringify(details);
+  assert.equal((await f.call()).status, 'settled');
+  assert.equal((await f.call(f.body)).status, 'settled');
+  assert.equal(f.ledger.length, 2);
+});
+
+test('an unmarked ordinary accepted batch remains automatic for pending and terminal reads', async () => {
+  const f = fixture();
+  const requestId = randomUUID(),
+    batchId = randomUUID();
+  f.job.request_meta.runtimeRequestId = requestId;
+  f.job.request_meta.acceptedWorldBatchId = batchId;
+  f.requests.push({
+    id: requestId,
+    job_id: f.job.id,
+    requester_user_id: f.owner,
+    campaign_id: f.campaign,
+    npc_id: f.job.npc_id,
+    purpose: f.job.purpose,
+    context: structuredClone(f.job.context),
+  });
+  f.batches.push({
+    id: batchId,
+    state: 'accepted',
+    accepted_at: new Date('2026-10-01'),
+    expires_at: new Date('2026-10-02'),
+    owner_id: f.owner,
+    campaign_id: f.campaign,
+    quote: { ordinaryTurnConsentVersion: 'end-turn-v1' },
+    media_entries: [],
+    entries: [
+      {
+        requestId,
+        npcId: f.job.npc_id,
+        purpose: f.job.purpose,
+        contextDigest: digest(f.job.context),
+        quote: { id: f.native.id },
+      },
+    ],
+  });
+  fixtureRequestHash(f);
+  assert.equal((await f.call()).settlementMode, 'automatic');
+  await assert.rejects(f.call(f.body), /NPC_SETTLEMENT_UNAVAILABLE/);
+  assert.equal(f.ledger.length, 0);
+  const { SparksAccounting } = require('../../apps/api/dist/generation/sparks-accounting');
+  await new SparksAccounting().settle(
+    f.client,
+    f.owner,
+    f.hold.id,
+    {
+      outcome: 'success',
+      actualMicros: '743',
+      evidence: 'configured_rates',
+      receiptId: `ordinary-failure:${f.job.id}`,
+    },
+    true,
+  );
+  const terminal = await f.call();
+  assert.equal(terminal.status, 'settled');
+  assert.equal(terminal.settlementMode, 'automatic');
+  assert.equal(f.audit.length, 0);
+  assert.equal(f.ledger.length, 2);
 });
