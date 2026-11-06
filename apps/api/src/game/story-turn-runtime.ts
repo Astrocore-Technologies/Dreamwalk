@@ -48,6 +48,7 @@ import {
   canNpcHear,
   npcRoleplayObserverIds,
   buildStoryTurnContext,
+  storyDirectorRoleplayPolicy,
   createMockStoryTurnProposal,
   applyStoryTurnProposal,
   parseStorySegments,
@@ -891,8 +892,7 @@ export class StoryTurnRuntime {
         ...(simulation.untrustedRoleplay.length
           ? {
               untrustedRoleplay: simulation.untrustedRoleplay,
-              roleplayPolicy:
-                'Player-authored RP, not a mechanical action or validated inventory, money, damage or movement change. Harmless everyday roleplay can continue naturally.',
+              roleplayPolicy: storyDirectorRoleplayPolicy,
             }
           : {}),
         quotedReplies,
@@ -1357,7 +1357,7 @@ export class StoryTurnRuntime {
                 ...(turn.context.untrustedRoleplay
                   ? {
                       untrustedRoleplay: turn.context.untrustedRoleplay,
-                      roleplayPolicy: turn.context.roleplayPolicy,
+                      roleplayPolicy: storyDirectorRoleplayPolicy,
                     }
                   : {}),
                 turnFence: turnFence(live.state),
@@ -1609,7 +1609,7 @@ export class StoryTurnRuntime {
             ...(turn.context.untrustedRoleplay?.length
               ? {
                   untrustedRoleplay: turn.context.untrustedRoleplay,
-                  roleplayPolicy: turn.context.roleplayPolicy,
+                  roleplayPolicy: storyDirectorRoleplayPolicy,
                 }
               : {}),
             mockProposal: createMockStoryTurnProposal(

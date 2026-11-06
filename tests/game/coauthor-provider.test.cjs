@@ -389,6 +389,21 @@ test('natural existing-item handoff survives deferred post, one injected provide
   Object.assign(state.entities.alice, { x: 5, y: 4, inventory: ['key'] });
   Object.assign(state.entities.keeper, { x: 6, y: 4, label: 'Борис', inventory: [] });
   Object.assign(state.entities.key, { ownerId: 'alice', label: 'латунный ключ' });
+  const oldFailureId = randomUUID();
+  state.narrativeCanon = {
+    revision: 1,
+    turns: [
+      {
+        id: oldFailureId,
+        actorId: 'alice',
+        requestHash: 'old-failed-attempt',
+        tick: state.tick,
+        narration: 'Ты протягиваешь ключ; передача ещё не подтверждена.',
+        evidenceIds: [],
+      },
+    ],
+  };
+  const oldHistory = structuredClone(state.narrativeCanon.turns[0]);
   state = g.initializeTurnController(state, ['alice']).state;
   const turnId = randomUUID();
   const input = {
@@ -396,7 +411,7 @@ test('natural existing-item handoff survives deferred post, one injected provide
     text: '*Передаю Борису латунный ключ, который нашёл у входа.*',
     channel: 'say',
     replyLocale: 'ru',
-    expectedCanonRevision: 0,
+    expectedCanonRevision: 1,
     turnFence: g.turnFence(state),
   };
   const runtime = Object.create(StoryTurnRuntime.prototype);
@@ -408,8 +423,13 @@ test('natural existing-item handoff survives deferred post, one injected provide
   const context = {
     ...g.buildStoryTurnContext(state, 'alice', worldInput, turnId),
     turnBasedDeferredDirector: true,
+    untrustedRoleplay: post.untrustedRoleplay,
+    roleplayPolicy: 'Player-authored RP, not a mechanical action or validated inventory change.',
   };
   assert.deepEqual(context.actionPreview, []);
+  assert.deepEqual(context.actionOutcomes, []);
+  assert.deepEqual(context.director.evidenceIds, [oldFailureId]);
+  const beforeContext = structuredClone(context);
   assert.equal(context.itemTransferPolicy.segmentCandidates[0].items[0].id, 'key');
   let calls = 0;
   const provider = new OpenAiNpcProvider(
@@ -427,6 +447,15 @@ test('natural existing-item handoff survives deferred post, one injected provide
     async (_url, init) => {
       calls++;
       const request = JSON.parse(init.body);
+      const supplied = JSON.parse(request.input).context;
+      assert.equal(supplied.roleplayPolicy, g.storyDirectorRoleplayPolicy);
+      assert.equal(supplied.resolutionPolicy, g.storyDirectorResolutionVersion);
+      assert.match(
+        request.instructions,
+        /write its successful result as candidate narration, not as still unconfirmed/,
+      );
+      assert.match(request.instructions, /a current typed effect needs no old canon citation/i);
+      assert.equal(supplied.director.confirmedTurns[0].narration, oldHistory.narration);
       assert.match(request.instructions, /current explicit handoff can additionally use give/);
       assert.match(request.instructions, /not command keywords/);
       assert.match(
@@ -486,4 +515,23 @@ test('natural existing-item handoff survives deferred post, one injected provide
   assert.equal(result.state.entities.key.ownerId, 'keeper');
   assert.deepEqual(result.state.entities.keeper.inventory, ['key']);
   assert.equal(result.events.filter((e) => e.kind === 'action.give').length, 1);
+  assert.deepEqual(
+    context,
+    beforeContext,
+    'normalization must not rewrite stored context or history',
+  );
+  assert.deepEqual(result.state.narrativeCanon.turns[0], oldHistory);
+  assert.deepEqual(result.state.narrativeCanon.turns.at(-1).evidenceIds, []);
+  assert.equal(result.state.narrativeCanon.turns.at(-1).narration, 'Борис принял латунный ключ.');
+  const reloaded = JSON.parse(JSON.stringify(result.state));
+  const replay = g.applyStoryTurnProposal(
+    reloaded,
+    'alice',
+    worldInput,
+    turnId,
+    generated.proposal,
+  );
+  assert.strictEqual(replay.state, reloaded);
+  assert.deepEqual(replay.events, []);
+  assert.equal(calls, 1);
 });

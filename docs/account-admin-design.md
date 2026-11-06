@@ -39,9 +39,41 @@ banner text color, primary action classes, readable toggle text, block hints and
 assert the banner color, primary action presence and the image's right edge.
 Fresh exact-head CI/screenshots are required for these fixes.
 
-The wider 1:1 goal remains open: the shared header/search/rail shifts content down
-and narrows it relative to the references; profile avatar/action scale, preference
-row density, privacy data-row hierarchy and security field/session composition
-still need a measured second pass. Preserve search, utility, export, deletion and
-session functionality during that work. Reference email verification and real
-account states may differ; do not replace genuine data with mockup examples.
+## Measured account second pass (2026-11-05)
+
+Compared the selected account31–34 reference pixels with the prior account screenshots,
+separating account-card geometry from old shared-shell offsets. The account-only pass
+increases the truthful profile avatar and primary actions, groups all seven preference
+rows without the generic inter-row stack gaps, restores titled export/deletion rows,
+and gives security fields and real session rows a clear bordered composition.
+Password reveal controls use local display state; API payloads, validation, account
+ownership and mutation handlers are unchanged. Current-session termination, export
+request/refresh/archive download, password/DELETE confirmation and all unavailable
+service disclosures remain. No example portrait, email verification or session was
+invented. Verification banners grow for actual unverified/required/error states.
+
+The account subtitle remains on Profile; other account tabs use the compact heading
+shown in their references. Shared search, utility controls, navigation and gameplay
+styles are unchanged. Responsive layouts retain natural height and readable controls
+rather than forcing real data into the mockups' fixed-height examples.
+
+The first exact-head CI480 passed static/build/types, PostgreSQL and fifteen of the
+seventeen account design cases. All sixty attached account/admin/state images were
+inspected. That review prompted further preference line-height/density, privacy
+typography/action/refresh placement and security status/banner refinements. Required
+email verification is correctly a separate access gate; tests distinguish it from
+optional account-banner feedback and add scrolled mobile viewport evidence instead
+of relying on full-page fixed-navigation pixels.
+
+CI482 passed every other gate and all fifteen other design cases. Its two export
+fixtures exposed Chromium's native anchor-download interception limitation: no
+routed download request appears in any failure trace, and the synthetic file download
+is canceled. The real disposable-PostgreSQL account-data test passed in the same run.
+The corrected test boundary keeps request/refresh/completed/expired link-state checks
+in the mocked matrix and expands the real native-download journey to both1536/390px.
+It retains the exact endpoint, filename, successful download, actual owner JSON bytes
+and secret-exclusion checks without changing the production link or API.
+
+Fresh full CI and resulting image inspection remain required. Source comparisons and
+synthetic checks do not establish live-account or full sitewide1:1 acceptance. Shared
+shell controls and real account data remain unchanged.
