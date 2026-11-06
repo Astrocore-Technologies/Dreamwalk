@@ -56,9 +56,9 @@ export const storyMessages = {
     '*Оглядаю двері* Хто проходив тут останнім?',
   ],
   hint: [
-    'Действие — между *звёздочками*, слова — обычным текстом. Попытка станет фактом только после проверки.',
-    'Put an attempted action between *asterisks* and speech in plain text. An attempt becomes fact only after validation.',
-    'Дія — між *зірочками*, слова — звичайним текстом. Спроба стане фактом лише після перевірки.',
+    'Действие — между *звёздочками*, слова — обычным текстом. Описывай завершённые действия как факты истории. Изменения игрового состояния проходят технические проверки.',
+    'Put actions between *asterisks* and speech in plain text. Describe completed actions as story facts. Game-state changes still undergo technical checks.',
+    'Дія — між *зірочками*, слова — звичайним текстом. Описуй завершені дії як факти історії. Зміни ігрового стану проходять технічні перевірки.',
   ],
   scene: ['Ведущему · общая сцена', 'Director · shared scene', 'Ведучому · спільна сцена'],
   director: ['Ведущему', 'To director', 'Ведучому'],
