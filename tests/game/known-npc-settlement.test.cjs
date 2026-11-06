@@ -545,6 +545,19 @@ for (const [name, change] of [
 
 test('real NPC finalize consumes an ordinary known failure once and leaves later rounds unblocked', async () => {
   const f = ordinaryFixture();
+  f.job.request_meta.failureStage = 'output_envelope';
+  f.job.request_meta.outputEnvelope = {
+    reason: 'missing_output_text',
+    outputItems: '0',
+    messageItems: '0',
+    contentItems: '0',
+    outputTextItems: '0',
+    hasMalformedMessage: false,
+    hasMalformedOutputText: false,
+    hasOtherOutput: false,
+    hasOtherContent: false,
+  };
+  const metadata = structuredClone(f.job.request_meta);
   const { NpcAiEngine } = require('../../apps/api/dist/ai/npc-ai.service');
   const { ReleaseGenerationProvider } = require('../../apps/api/dist/generation/release-provider');
   let calls = 0;
@@ -593,6 +606,7 @@ test('real NPC finalize consumes an ordinary known failure once and leaves later
   assert.equal(f.ledger.length, 2);
   assert.equal(calls, 0);
   assert.equal(f.job.proposal.private, 'must remain unchanged');
+  assert.deepEqual(f.job.request_meta, metadata);
 });
 
 function automaticFixture() {

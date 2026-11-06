@@ -28,6 +28,20 @@ const resultSchema = z
         'plan_proposal',
       ])
       .optional(),
+    outputEnvelope: z
+      .object({
+        reason: z.enum(['missing_output_text', 'multiple_output_texts', 'refusal']),
+        outputItems: z.enum(['0', '1', '2+']),
+        messageItems: z.enum(['0', '1', '2+']),
+        contentItems: z.enum(['0', '1', '2+']),
+        outputTextItems: z.enum(['0', '1', '2+']),
+        hasMalformedMessage: z.boolean(),
+        hasMalformedOutputText: z.boolean(),
+        hasOtherOutput: z.boolean(),
+        hasOtherContent: z.boolean(),
+      })
+      .strict()
+      .optional(),
     usage: z
       .object({
         inputTokens: z.number().int().nonnegative().max(10000000),

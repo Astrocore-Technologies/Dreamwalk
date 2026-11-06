@@ -68,6 +68,18 @@ export interface ProviderRequest {
   maxCostMicros: number;
   textReservationSnapshot?: TextReserveSnapshot;
 }
+/** Server-only shape evidence, never provider text, field names, paths or error messages. */
+export interface ProviderOutputEnvelopeDiagnostic {
+  reason: 'missing_output_text' | 'multiple_output_texts' | 'refusal';
+  outputItems: '0' | '1' | '2+';
+  messageItems: '0' | '1' | '2+';
+  contentItems: '0' | '1' | '2+';
+  outputTextItems: '0' | '1' | '2+';
+  hasMalformedMessage: boolean;
+  hasMalformedOutputText: boolean;
+  hasOtherOutput: boolean;
+  hasOtherContent: boolean;
+}
 export interface ProviderResult {
   proposal: unknown;
   requestId: string;
@@ -81,6 +93,8 @@ export interface ProviderResult {
     | 'plan_context'
     | 'plan_beliefs'
     | 'plan_proposal';
+  /** Optional on output-envelope rejection only; older adapters/results omit it. */
+  outputEnvelope?: ProviderOutputEnvelopeDiagnostic;
   usage: {
     inputTokens: number;
     outputTokens: number;

@@ -79,6 +79,23 @@ QueueDecision.runtimeRequestId атомарно проверяет и блоки
 
 ## Ограниченное техническое хранение
 
+### Output-envelope diagnostics (KAN-33)
+
+For a known-usage Responses rejection at `failureStage=output_envelope`, the server
+can retain `request_meta.outputEnvelope`. This optional strict object contains only
+the reason `missing_output_text`, `multiple_output_texts` or `refusal`; `0` / `1` /
+`2+` buckets for output items, valid message items, their flattened content items
+and valid string-valued output texts; and fixed boolean flags for malformed
+messages/text items or other output/content. Malformed message content is still
+ignored, not traversed. These observations do not tighten the existing parser.
+
+No provider text, refusal text, arbitrary type names, private context, field paths
+or schema errors are retained. The diagnostic is not returned by public job DTOs.
+Legacy jobs/adapters omit it. Incomplete, unknown-usage/tier and later JSON/schema
+failures retain their existing classification without this diagnostic. Exact known
+usage still follows the existing settlement policy; unknown cost stays uncertain.
+There is no repair, retry, extra provider call or change to game-state admission.
+
 Фоновая maintenance раз в минуту удаляет private context и proposal терминальных/неопределённых задач старше семи дней: до 1000 строк за проход, SKIP LOCKED и SQL timeout 2 секунды. `reconciling` не означает вечное хранение текста. Не удаляются ledger, receipt/request ID, usage, статус финансовой сверки и reserved/spent/unknown counters; неизвестный расход не становится нулевым из-за retention. Активные/ещё не применённые результаты этим проходом не очищаются. Истёкший cache очищается глобально, даже если в кампанию никто не вернулся. Это технический default, а не утверждение о юридическом сроке финансовых документов; подтверждённое удаление персональных данных остаётся отдельной немедленной процедурой.
 
 Изменения формата request metadata совместимы со старыми PR6 jobs: отсутствующие sponsor/runtime fields трактуются как null, повтор старого operation ID с тем же публичным намерением не создаёт нового резерва. Изменённые предмет, purpose, контекст или согласие по-прежнему конфликтуют.
