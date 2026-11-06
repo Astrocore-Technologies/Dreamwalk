@@ -14,8 +14,12 @@ import {
   socialConversationTone,
   updateCharacterRelationship,
 } from './character';
-import { isUnestablishedStoryPickup, storyPickupOwnershipContext } from './item-observations';
-import { materializeNpcItems, npcItemContext } from './world-items';
+import {
+  isUnestablishedStoryPickup,
+  storyPickupOwnershipContext,
+  witnessedItemTransfer,
+} from './item-observations';
+import { materializeNpcItems, npcItemContext, npcOwnInventory } from './world-items';
 import type { NpcItemIntent } from '@dreamwalk/contracts';
 import { mockAcknowledgement, mockCharacterAcknowledgement, mockFactReply } from './mock-speech';
 import {
@@ -575,10 +579,14 @@ export function recordLivingNpcEvents(
             changed = true;
           }
         }
+      const transfer = witnessedItemTransfer(before, after, e, npcId, eventId);
+      if (transfer) changed = remember(m, transfer, npcId) || changed;
+      // Keep the separate helped response for compatibility, but item.given now
+      // uses the typed snapshot and its actual witness audience rather than public inventory inference.
+      if (e.kind === 'item.given') continue;
       let kind: NpcObservation['kind'] | undefined;
       if (e.kind === 'action.pick_up') kind = 'item_taken';
       if (e.kind === 'item.placed') kind = 'item_placed';
-      if (e.kind === 'item.given') kind = 'item_given';
       if (e.kind === 'item.consumed') kind = 'item_consumed';
       if (['action.open', 'action.close', 'action.unlock', 'action.lock'].includes(e.kind))
         kind = 'door_changed';
@@ -1470,10 +1478,7 @@ export function buildNpcDecisionContext(state: GameState, npcId: string) {
         revision: e.revision,
         ...(['npc', 'player'].includes(e.kind) ? { lifeState: actorLifeState(e) } : {}),
       })),
-    ownInventory: (npc.inventory ?? []).map((id) => ({
-      id,
-      revision: state.entities[id]?.revision,
-    })),
+    ownInventory: npcOwnInventory(state, npcId),
     allowedActions: [
       'move_to',
       'wait',
@@ -1778,6 +1783,7 @@ export function buildNpcPublicSpeechContext(
     ...(o.kind === 'said' ? { isOwnUtterance: o.actorId === npcId } : {}),
     confidence: o.confidence,
     ...(o.lifeState ? { lifeState: o.lifeState } : {}),
+    ...(o.itemTransfer ? { itemTransfer: clone(o.itemTransfer) } : {}),
     ...(o.actorId ? { actorId: o.actorId } : {}),
     ...(o.targetId ? { targetId: o.targetId } : {}),
     ...(o.text && o.kind !== 'attempted' ? { untrustedUtterance: o.text } : {}),

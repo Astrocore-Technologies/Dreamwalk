@@ -82,6 +82,7 @@ export function purgeLivingNpcReferences(state, actorId, archivedRoots = [], arc
         observation.targetId,
         observation.sourceNpcId,
         observation.addressedNpcId,
+        observation.itemTransfer?.recipientId,
       ].includes(actorId) ||
       (typeof observation.text === 'string' && observation.text.includes(actorId))
     )
@@ -131,6 +132,7 @@ export function purgeLivingNpcReferences(state, actorId, archivedRoots = [], arc
           observation.targetId,
           observation.sourceNpcId,
           observation.addressedNpcId,
+          observation.itemTransfer?.recipientId,
         ].includes(actorId) ||
         (typeof observation.text === 'string' && observation.text.includes(actorId))
       ) {
