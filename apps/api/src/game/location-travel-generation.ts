@@ -179,7 +179,6 @@ export class LocationTravelGeneration {
     const destinations = new Set<string>(),
       actors = new Set<string>(),
       connections = new Set<string>();
-    let preparedScenes = 0;
     for (const request of requests) {
       const travels = request.context.travelRequests as
         { destinationName: string; mapId: string | null; ambiguous: boolean }[] | undefined;
@@ -223,9 +222,14 @@ export class LocationTravelGeneration {
           const intent = request.context.worldInput?.text;
           if (typeof intent !== 'string')
             fail(409, 'LOCATION_PREPARATION_STALE', 'LOCATION_PREPARATION_STALE');
-          const context = buildNarrativeContext(state, request.actor_id, intent);
-          if (context.remainingScenes <= preparedScenes || context.remainingTurns <= preparedScenes)
-            fail(409, 'LOCATION_GENERATION_UNAVAILABLE', 'LOCATION_GENERATION_UNAVAILABLE');
+          const context = buildNarrativeContext(
+            state,
+            request.actor_id,
+            intent,
+            'en',
+            undefined,
+            true,
+          );
           const connection = context.availableConnections.find(
             (point) =>
               !connections.has(`${state.entities[request.actor_id].mapId}:${point.x}:${point.y}`),
@@ -262,6 +266,9 @@ export class LocationTravelGeneration {
               evidenceIds: [],
             },
             intent,
+            'en',
+            undefined,
+            true,
           );
           if (preview.error)
             fail(409, 'LOCATION_GENERATION_UNAVAILABLE', 'LOCATION_GENERATION_UNAVAILABLE');
@@ -322,7 +329,6 @@ export class LocationTravelGeneration {
           return stored;
         });
         connections.add(`${row.origin_map_id}:${row.scene.connection.x}:${row.scene.connection.y}`);
-        preparedScenes++;
         if (
           !row.image_quote ||
           (row.state === 'prepared' && Date.parse(row.image_quote.expiresAt) <= Date.now())

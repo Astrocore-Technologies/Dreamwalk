@@ -1,3 +1,4 @@
+import type { EstablishedRoleplayReceipt } from './established-roleplay';
 import { z } from 'zod';
 import { tokenSizeSchema } from './battlemap';
 const id = z
@@ -122,6 +123,8 @@ export interface ConfirmedNarrativeTurn {
   requestHash: string;
   tick: number;
   narration: string;
+  establishedEvents?: EstablishedRoleplayReceipt[];
+  storyProposalHash?: string;
   /** Server-owned textual audience. Legacy entries without scope remain public. */
   channel?: 'public' | 'whisper';
   audienceIds?: string[];
@@ -138,16 +141,18 @@ export interface ConfirmedNarrativeTurn {
     requestToken: string;
   };
   /** Durable admission prevents a deferred director retry from applying injury twice. */
-  impact?: {
-    segmentIndex: number;
-    targetId: string;
-    effect: 'harm' | 'blocked' | 'unconscious' | 'death' | 'recover' | 'revive';
-    damage: number;
-    lifeStateBefore?: 'conscious' | 'unconscious' | 'dead';
-    lifeStateAfter?: 'conscious' | 'unconscious' | 'dead';
-    vitalityBefore?: number;
-    vitalityAfter?: number;
-  };
+  impacts?: NarrativeImpactReceipt[];
+  impact?: NarrativeImpactReceipt;
+}
+export interface NarrativeImpactReceipt {
+  segmentIndex: number;
+  targetId: string;
+  effect: 'harm' | 'blocked' | 'unconscious' | 'death' | 'recover' | 'revive';
+  damage: number;
+  lifeStateBefore?: 'conscious' | 'unconscious' | 'dead';
+  lifeStateAfter?: 'conscious' | 'unconscious' | 'dead';
+  vitalityBefore?: number;
+  vitalityAfter?: number;
 }
 export interface NarrativeCanon {
   revision: number;

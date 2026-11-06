@@ -19,11 +19,13 @@ test('End turn remains visible and correctly disabled during world/reaction and 
       ? require(name)
       : name === '../ui'
         ? { Button: ({ busy: _busy, ...props }) => React.createElement('button', props) }
-        : name === './turn-messages'
-          ? { useTurnText: () => (key) => (key === 'end' ? 'End turn' : key) }
-          : name.endsWith('.css')
-            ? { __esModule: true, default: {} }
-            : require(name);
+        : name === './spatial-recovery'
+          ? { isSpatialRecoveryRequired: () => false }
+          : name === './turn-messages'
+            ? { useTurnText: () => (key) => (key === 'end' ? 'End turn' : key) }
+            : name.endsWith('.css')
+              ? { __esModule: true, default: {} }
+              : require(name);
   new Function('require', 'exports', 'module', js)(load, module.exports, module);
   for (const [phase, ownTurn, disabled] of [
     ['player', true, false],
@@ -52,6 +54,7 @@ test('End turn remains visible and correctly disabled during world/reaction and 
       }),
     );
     assert.match(html, />End turn<\/button>/);
+    assert.doesNotMatch(html, /<dl|<dd|movement|additional|reactionResource/);
     assert.equal(/<button[^>]*disabled/.test(html), disabled, phase);
   }
 });

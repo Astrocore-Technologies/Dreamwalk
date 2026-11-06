@@ -1322,6 +1322,7 @@ export * from './narrative';
 export * from './story-turn';
 
 export * from './turns';
+export * from './pending-speech';
 
 export * from './world-items';
 export * from './item-placement';
@@ -1335,3 +1336,5 @@ export * from './story-impact';
 export * from './lifecycle';
 
 export * from './story-scene-encounters';
+
+export * from './story-established';

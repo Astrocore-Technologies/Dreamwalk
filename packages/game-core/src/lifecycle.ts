@@ -1,3 +1,4 @@
+import { synchronizePendingSpeechEvidence } from './pending-speech';
 import { actorLifeState, type ActorLifeState, type GameState } from '@dreamwalk/contracts';
 
 /** Mutate only an isolated reducer draft. Identity, body, inventory and memories
@@ -55,5 +56,6 @@ export function transitionNpcLifeState(
       (speech) => speech.recipientId !== npcId && speech.actorId !== npcId,
     );
   }
+  synchronizePendingSpeechEvidence(state);
   return true;
 }

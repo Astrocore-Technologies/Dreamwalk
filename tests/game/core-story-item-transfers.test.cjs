@@ -128,7 +128,7 @@ test('owned-item references stay minimal and no NPC inventory or private definit
   for (const entry of r.entries.filter((e) => e.kind === 'outcome'))
     assert.deepEqual(entry.action, { kind: 'give' });
 });
-test('forged ownership, hidden recipient, capacity, stale item and exhausted budget never commit prose or effects', () => {
+test('forged ownership, hidden recipient, capacity and stale item never commit prose or effects', () => {
   for (const alter of [
     (s) => {
       s.entities.key.ownerId = 'bob';
@@ -142,10 +142,6 @@ test('forged ownership, hidden recipient, capacity, stale item and exhausted bud
     (s) => {
       s.worldItemRules = { ...s.worldItemRules, inventoryCapacity: 1 };
       s.entities.keeper.inventory = ['foreign'];
-    },
-    (s) => {
-      for (const key of Object.keys(s.turnController.resources.alice))
-        s.turnController.resources.alice[key] = 0;
     },
   ]) {
     const s = world(true);

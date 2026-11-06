@@ -114,12 +114,17 @@ public scene. Administrative director personas are separate from these permissio
 ## Named directors and per-playthrough selection (KAN-24)
 
 Admin → Models contains a compact catalog of named directors. Administrators can
-create profiles, edit their public name/description and bounded style, pacing and
-initiative, set the default, or archive a profile. Coauthor
+create profiles, edit their public name/description, set the default, or archive a
+profile. KAN-38 replaces the preset selector and three style/pacing/initiative
+controls with one natural-language AI behavior field, `behaviorInstructions`,
+trimmed and limited to 4,000 characters. This is narrator guidance, not authority
+to change access, privacy, payments or other players' choices. Names and descriptions
+remain display text and never become model instructions.
+
+Existing enum fields remain valid as the fallback when behavior is blank. Coauthor
 (natural/balanced/balanced), Storyteller (atmospheric/deliberate/reactive), and Director
-(cinematic/brisk/proactive) are initial profiles and reusable presentation presets.
-There is no arbitrary system-prompt editor. Names and descriptions are display text,
-not model instructions; only the three validated enums enter provider guidance.
+(cinematic/brisk/proactive) remain compatible initial profiles. Nonempty behavior
+replaces that enum-derived delivery prose rather than competing with it.
 
 Players select a director before preparing a story or creating the test campaign.
 The choice is pinned with the start preparation and saved on the new campaign.
@@ -137,7 +142,8 @@ Existing profiles cannot be removed: archiving hides them from new choices but
 preserves saved campaigns and preparations. The original admin `/director-style`
 endpoint remains a compatibility adapter for the catalog's current default only.
 
-GET `/api/v1/game/directors` exposes enabled public choices. GET/POST
+GET `/api/v1/game/directors` exposes enabled public choices, with behavior guidance
+removed. Campaign selection responses also omit that administrator-only text. GET/POST
 `/api/v1/game/campaigns/:id/director` enforce active membership and source access;
 POST additionally requires campaign ownership and the expected selection revision.
 Selecting a director does not dispatch generation, change gameplay state or charge
@@ -148,17 +154,28 @@ upgrading does not discard an administrator's existing settings.
 A shared director turn captures its campaign's selected profile before token
 fitting and quoting. The persisted snapshot is reused on retry/dispatch, so profile
 edits and campaign changes affect new turns rather than prepared replies. The
-actual style, profile ID and selection revision participate in cache/request
-identities. NPC-only speech, whispers and planning do not use this profile. In a
+actual style, behavior text, profile ID and selection revision participate in
+cache/request identities. The optional field has no schema default: pre-field
+frozen contexts retain their old instruction bytes. Newly captured contexts always
+include `behaviorInstructions`, even when blank, selecting the new guard mode.
+Validation returns an already frozen context unchanged rather than reordering its
+JSON keys, preserving the exact count/dispatch request bytes. NPC-only speech, whispers and planning do not use this profile. In a
 mixed director turn it applies only to narration and preserves each NPC's public
 voice and performance. Player detail and dialogue preferences take precedence.
 
-Initiative changes an optional opening inside the requested turn, never schedules
-additional generation or raises scene/NPC/action limits. No style changes private
-knowledge, protected canon, player agency, validation, consent, provider or budget
-gates. Verification uses offline request-body tests, isolated PostgreSQL/API tests
-and synthetic browser fixtures in RU/EN/UK. Live-model literary quality and paid
-generation are not claimed.
+Behavior applies inside the requested turn and never schedules additional provider
+calls. Security, private knowledge, real access/payment consent and other-player
+control boundaries remain server-owned. Fictional developments do not grant real
+account permissions or billing authority; narrator behavior does not impose a
+separate fictional action whitelist.
+
+KAN-38 verification: contracts/game-core/API builds, targeted lint,
+26 unit/source/count checks, eight locale checks and ten isolated PostgreSQL/API
+checks passed on 2026-11-06. Web typecheck passed before the final copy-only edit;
+its final repeat was killed by the environment without a TypeScript diagnostic. Updated RU/EN/UK browser fixtures cover text editing,
+profile switches, clearing, stale revisions and pending saves; browser execution
+has not yet been run for this change. Live-model literary quality, paid generation,
+publication and production deployment are not claimed.
 
 ## Director reply intent binding (2026-11-03)
 

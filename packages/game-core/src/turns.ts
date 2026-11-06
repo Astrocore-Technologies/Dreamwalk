@@ -1,3 +1,4 @@
+import { synchronizePendingSpeechEvidence } from './pending-speech';
 import { hasPosition } from '@dreamwalk/contracts';
 import { transitionNpcLifeState } from './lifecycle';
 import { isActorConscious } from '@dreamwalk/contracts';
@@ -180,10 +181,8 @@ export function applyTurnMove(
   const gate = playerGate(state, actorId, fence);
   if (gate) return fail(state, gate);
   const actor = state.entities[actorId],
-    turn = state.turnController!,
     path = findPath(state, actor.mapId, actor, target, actorId, true);
   if (!hasPosition(actor) || !path) return fail(state, 'PATH_BLOCKED');
-  if (path.length > turn.resources[actorId].movement) return fail(state, 'OUT_OF_RANGE');
   if (!path.length) return done(state);
   const next = clone(state),
     moving = next.entities[actorId],
@@ -197,7 +196,6 @@ export function applyTurnMove(
     moving.x = point.x;
     moving.y = point.y;
     moving.revision++;
-    next.turnController!.resources[actorId].movement--;
     next.tick++;
     points.push({ ...point });
     events.push({ kind: 'actor.moved', actorId, mapId: moving.mapId });
@@ -209,6 +207,7 @@ export function applyTurnMove(
   return done(next, events);
 }
 type Cost = 'main' | 'additional' | null;
+/** Legacy action classification, retained for compatibility; it is not a player quota. */
 export function turnActionCost(action: GameAction): Cost {
   if (['inspect', 'talk', 'communicate', 'travel'].includes(action.kind)) return null;
   if (
@@ -233,6 +232,9 @@ function contactGate(state: GameState, actorId: string, action: GameAction): Gam
     !visible(state, actor, target)
   )
     return 'TARGET_UNAVAILABLE';
+  // A retained body is not permission to control a revoked or non-participating player.
+  if (target.kind === 'player' && !state.turnController?.actorOrder.includes(target.id))
+    return 'FORBIDDEN';
   if (footprintDistance(actor, target) !== 1) return 'OUT_OF_RANGE';
   return undefined;
 }
@@ -338,8 +340,7 @@ export function beginTurnReaction(
   if (
     input.reactorId !== input.action.targetId ||
     state.entities[input.reactorId]?.kind !== 'player' ||
-    !turn.resources[input.reactorId]?.reaction ||
-    (!fromWorld && !turn.resources[input.causeActorId]?.main)
+    !turn.actorOrder.includes(input.reactorId)
   )
     return fail(state, 'FORBIDDEN');
   const depth = 1;
@@ -387,11 +388,7 @@ export function resolveTurnReaction(
     turn.activeActorId !== reactorId
   )
     return fail(state, 'FORBIDDEN');
-  if (
-    !['defend', 'decline'].includes(decision) ||
-    (decision === 'defend' && !turn.resources[reactorId]?.reaction)
-  )
-    return fail(state, 'INVALID_ACTION');
+  if (!['defend', 'decline'].includes(decision)) return fail(state, 'INVALID_ACTION');
   if (
     state.entities[pending.actorId]?.revision !== pending.actorRevision ||
     state.entities[reactorId]?.revision !== pending.targetRevision
@@ -405,8 +402,7 @@ export function resolveTurnReaction(
   if (state.entities[pending.actorId]?.kind === 'npc') {
     t.worldActions++;
     t.worldNpcActions[pending.actorId] = (t.worldNpcActions[pending.actorId] ?? 0) + 1;
-  } else t.resources[pending.actorId].main--;
-  if (decision === 'defend') t.resources[reactorId].reaction--;
+  }
   t.phase = reaction.resumePhase;
   t.activeActorId = reaction.resumeActorId;
   t.phaseEpoch++;
@@ -431,14 +427,12 @@ export function applyTurnAction(
   if (!parsed.success) return fail(state, 'INVALID_ACTION');
   const action = parsed.data;
   if (action.kind === 'move_to') return applyTurnMove(state, actorId, action.target!, fence);
-  const cost = turnActionCost(action),
-    turn = state.turnController!;
-  if (cost && turn.resources[actorId][cost] <= 0) return fail(state, 'ROUND_LOCKED');
+  const turn = state.turnController!;
   if (action.kind === 'hit' || action.kind === 'push') {
     const error = contactGate(state, actorId, action);
     if (error) return fail(state, error);
     const target = state.entities[action.targetId!];
-    if (target.kind === 'player' && turn.resources[target.id]?.reaction)
+    if (target.kind === 'player' && turn.actorOrder.includes(target.id))
       return beginTurnReaction(
         state,
         {
@@ -456,7 +450,6 @@ export function applyTurnAction(
       : applyUnbudgetedAction(state, actorId, action);
   if (resolved.error) return resolved;
   const next = resolved.state === state ? clone(state) : resolved.state;
-  if (cost) next.turnController!.resources[actorId][cost]--;
   if (next.revision === state.revision) next.revision++;
   // Logical game time advances only on explicit resolved actions, never while reading or typing.
   if (!['hit', 'push', 'inspect', 'talk', 'communicate'].includes(action.kind)) next.tick++;
@@ -508,10 +501,8 @@ export function queueTurnSpeech(
     queued.some((s) => s.recipientId === speech.recipientId && s.utteranceId === speech.utteranceId)
   )
     return fail(state, 'STALE_STATE');
-  // Recipient fan-out shares one admitted utterance budget; NPC count is not a speech cap.
-  const roots = new Set(queued.map((s) => s.utteranceId.slice(s.recipientId.length + 1)));
-  if (!roots.has(observation.rootId) && roots.size >= turn.ruleset.maxQueuedSpeech)
-    return fail(state, 'RATE_LIMITED');
+  // Player speech has no per-round quota. Existing source/audience/replay fences remain exact;
+  // the resulting finite world batch still passes its independent quote and funding admission.
   const next = clone(state),
     t = next.turnController!;
   t.deferredSpeech.push({
@@ -521,6 +512,7 @@ export function queueTurnSpeech(
     roundId: t.roundId,
     phaseEpoch: t.phaseEpoch,
   });
+  synchronizePendingSpeechEvidence(next);
   next.revision++;
   return done(next, [{ kind: 'turn.speech_queued', actorId, targetId: npc.id, mapId: npc.mapId }]);
 }
@@ -557,6 +549,7 @@ export function markTurnSpeechResolved(state: GameState, id: string, fence: Turn
   next.turnController!.deferredSpeech = next.turnController!.deferredSpeech.filter(
     (s) => s.id !== id,
   );
+  synchronizePendingSpeechEvidence(next);
   next.revision++;
   return done(next, [{ kind: 'turn.speech_resolved' }]);
 }
@@ -686,7 +679,7 @@ export function applyWorldTurnAction(
     const contactError = contactGate(state, npcId, action);
     if (contactError) return fail(state, contactError);
     const target = state.entities[action.targetId!];
-    if (target.kind === 'player' && turn.resources[target.id]?.reaction)
+    if (target.kind === 'player' && turn.actorOrder.includes(target.id))
       return beginTurnReaction(
         state,
         {
@@ -762,6 +755,7 @@ export function finishWorldPhase(state: GameState, fence: TurnFence): GameResult
   t.worldActions = 0;
   t.worldNpcActions = {};
   delete t.worldActorIds;
+  synchronizePendingSpeechEvidence(next);
   next.revision++;
   return done(next, [{ kind: 'turn.round_started', actorId: t.activeActorId }]);
 }
@@ -818,6 +812,7 @@ export function removeTurnParticipant(state: GameState, actorId: string): GameRe
     }
   }
   turn.phaseEpoch++;
+  synchronizePendingSpeechEvidence(next);
   next.revision++;
   return done(next, [{ kind: 'turn.participant_removed', actorId }]);
 }

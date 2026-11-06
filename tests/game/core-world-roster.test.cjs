@@ -123,7 +123,7 @@ test('world policy leaves off-map perception, promise deadlines and cognition un
   );
 });
 
-test('speech fan-out reaches over 32 admitted listeners while distinct utterances remain capped', () => {
+test('speech fan-out reaches over 32 admitted listeners without a per-round utterance quota', () => {
   let { s, ids } = fixture();
   s = g.finishWorldPhase(s, fence(s)).state;
   s.turnController.ruleset.maxQueuedSpeech = 1;
@@ -178,7 +178,7 @@ test('speech fan-out reaches over 32 admitted listeners while distinct utterance
       },
       fence(s),
     ).error,
-    'RATE_LIMITED',
+    undefined,
   );
 });
 

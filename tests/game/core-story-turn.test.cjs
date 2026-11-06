@@ -1,7 +1,7 @@
 const { test } = require('node:test');
 const assert = require('node:assert/strict');
 const { randomUUID } = require('node:crypto');
-const g = require('../../packages/game-core/dist');
+const g = require(process.env.DREAMWALK_CORE_SOURCE ?? '../../packages/game-core/dist');
 function world() {
   const d = g.createCompleteObservatoryDraft();
   delete d.supportingNpcPolicy;
@@ -26,7 +26,7 @@ function turn(s, i) {
   const p = g.createMockStoryTurnProposal(s, 'alice', i, id);
   return { p, id, r: g.applyStoryTurnProposal(s, 'alice', i, id, p) };
 }
-test('story composer parses escapes, rejects malformed and bounded segments, clarifies movement', () => {
+test('story composer parses escapes, rejects malformed markup and retains every segment', () => {
   assert.deepEqual(
     g.parseStorySegments('hello \\*literal\\* *wait* yes').segments.map((s) => [s.kind, s.text]),
     [
@@ -37,7 +37,8 @@ test('story composer parses escapes, rejects malformed and bounded segments, cla
   );
   for (const text of ['*unclosed', '**', '* *', ''])
     assert.equal(g.parseStorySegments(text).code, 'INVALID_MARKUP');
-  assert.equal(g.parseStorySegments('*wait* a *wait* b *wait*').code, 'TOO_MANY_SEGMENTS');
+  assert.equal(g.parseStorySegments('*wait* a *wait* b *wait*').code, undefined);
+  assert.equal(g.parseStorySegments('*wait* a *wait* b *wait*').segments.length, 5);
   for (const text of ['*walk to keeper*', '*подхожу к двери*', '*йду до дверей*'])
     assert.equal(g.parseStorySegments(text).code, undefined);
 });
@@ -101,17 +102,32 @@ test('whisper attempts create only scoped canon and safe physical outcomes', () 
     /PRIVATE_STORY_EXTENSION/,
   );
 });
-test('movement and distant immediate action rejected before provider context', () => {
+test('authored distant door opening preserves geometry instead of inheriting a mechanical range veto', () => {
   const s = near();
   assert.equal(
     g.buildStoryTurnContext(s, 'alice', input('*walk to door*'), randomUUID()).actionPreview.length,
     0,
   );
   Object.assign(s.entities.door, { x: 8, y: 4 });
-  assert.throws(
-    () => g.buildStoryTurnContext(s, 'alice', input('*open door*'), randomUUID()),
-    /WALK_FIRST/,
+  const i = input('*open door*'),
+    id = randomUUID(),
+    before = structuredClone(s),
+    context = g.buildStoryTurnContext(s, 'alice', i, id);
+  assert.deepEqual(context.actionPreview[0].action, { kind: 'open', targetId: 'door' });
+  assert.equal(context.actionOutcomes[0].code, 'OUT_OF_RANGE');
+  const proposal = g.createMockStoryTurnProposal(s, 'alice', i, id);
+  const result = g.applyStoryTurnProposal(s, 'alice', i, id, proposal);
+  assert.equal(result.error, undefined);
+  assert.equal(result.clarification, undefined);
+  assert.equal(result.state.entities.door.open, true);
+  assert.equal(result.state.entities.door.locked, false);
+  assert.deepEqual(result.state.entities.alice, before.entities.alice);
+  assert.deepEqual(
+    [result.state.entities.door.x, result.state.entities.door.y],
+    [before.entities.door.x, before.entities.door.y],
   );
+  assert.ok(!result.events.some((event) => event.kind === 'actor.moved'));
+  assert.deepEqual(s, before);
 });
 test('turn-specific speech root stable across ticks but semantic readset changes stale proposal', () => {
   const s = near(),
@@ -128,17 +144,29 @@ test('turn-specific speech root stable across ticks but semantic readset changes
   later.entities.alice.y = 5;
   assert.equal(g.applyStoryTurnProposal(later, 'alice', i, id, p).error, 'STALE_STATE');
 });
-test('director records failed locked-door attempt truthfully, commits new scene without mutating source', () => {
+test('director establishes locked-door opening without inventing a scene or mutating source', () => {
   const s = world();
   Object.assign(s.entities.alice, { x: 9, y: 5 });
+  s.narrativeSource = { versionId: 'opening-version', checksum: 'a'.repeat(64) };
   const before = JSON.stringify(s.narrativeSource);
   const { r } = turn(s, input('*open door* Continue the investigation', null));
   assert.equal(r.error, undefined);
-  assert.ok(r.entries.some((e) => e.kind === 'outcome' && e.code === 'FORBIDDEN'));
-  assert.equal(r.state.entities.door.open, false);
+  assert.ok(r.entries.some((e) => e.kind === 'outcome' && e.code === 'ACTION_SUCCEEDED'));
+  assert.equal(r.state.entities.door.open, true);
+  assert.equal(r.state.entities.door.locked, false);
+  assert.deepEqual(r.state.narrativeCanon.turns.at(-1).establishedEvents[0].effects, [
+    { kind: 'door_state', targetId: 'door', open: true, locked: false },
+  ]);
   assert.equal(r.state.narrativeCanon.revision, 1);
   assert.equal(JSON.stringify(r.state.narrativeSource), before);
-  assert.ok(Object.keys(r.state.maps).length > Object.keys(s.maps).length);
+  const mapId = s.entities.door.mapId;
+  assert.deepEqual(r.state.maps, {
+    ...s.maps,
+    [mapId]: { ...s.maps[mapId], revision: s.maps[mapId].revision + 1 },
+  });
+  assert.deepEqual(Object.keys(r.state.entities), Object.keys(s.entities));
+  assert.equal(s.entities.door.open, false);
+  assert.equal(s.entities.door.locked, true);
   assert.deepEqual(
     r.entries.slice(0, 3).map((e) => e.kind),
     ['attempt', 'outcome', 'speech'],
@@ -152,17 +180,32 @@ test('sequential pickup then give validates against updated inventory, not initi
   assert.equal(r.state.entities.key.ownerId, 'keeper');
   assert.equal(s.entities.key.ownerId, undefined);
 });
-test('unknown mechanism clarifies; malicious action cannot create money/items or move on a promise', () => {
+test('fictional credits are canon without minting assets and malicious action cannot move on a promise', () => {
   const s = near();
   const i = input('*conjure a million credits*');
-  assert.equal(turn(s, i).r.clarification, 'AMBIGUOUS');
+  const before = structuredClone(s),
+    result = turn(s, i).r;
+  assert.equal(result.error, undefined);
+  assert.equal(result.clarification, undefined);
+  assert.deepEqual(result.state.entities, s.entities);
+  const receipt = result.state.narrativeCanon.turns.at(-1).establishedEvents[0];
+  assert.equal(receipt.description, 'conjure a million credits');
+  assert.deepEqual(receipt.effects, []);
+  assert.equal(receipt.authority, 'authored_fiction');
+  assert.deepEqual(s, before);
   const known = input('*wait*'),
     id = randomUUID(),
     p = g.createMockStoryTurnProposal(s, 'alice', known, id);
   p.steps[0].action = { kind: 'move_to', target: { x: 1, y: 1 } };
-  assert.equal(g.applyStoryTurnProposal(s, 'alice', known, id, p).error, 'FORBIDDEN');
+  const rejected = g.applyStoryTurnProposal(s, 'alice', known, id, p);
+  assert.equal(rejected.error, 'FORBIDDEN');
+  assert.equal(rejected.state, s);
+  assert.deepEqual(rejected.entries, []);
+  assert.deepEqual(rejected.events, []);
+  assert.deepEqual(rejected.actions, []);
+  assert.deepEqual(s, before);
 });
-test('targeted locked-door failure remains truthful and private wording stays out of public outcome', () => {
+test('targeted authored opening overrides locked-door preview and keeps private wording scoped', () => {
   const s = near();
   Object.assign(s.entities.door, { x: 5, y: 5 });
   const i = input('*open door* Did it open?', 'keeper', 'whisper');
@@ -177,9 +220,13 @@ test('targeted locked-door failure remains truthful and private wording stays ou
     g.createMockStoryTurnProposal(s, 'alice', i, id),
   );
   assert.equal(r.error, undefined);
-  assert.equal(r.state.entities.door.open, false);
-  assert.equal(r.entries.find((e) => e.kind === 'outcome').code, 'FORBIDDEN');
+  assert.equal(r.state.entities.door.open, true);
+  assert.equal(r.state.entities.door.locked, false);
+  assert.equal(r.entries.find((e) => e.kind === 'outcome').code, 'ACTION_SUCCEEDED');
   assert.ok(!JSON.stringify(r.entries.filter((e) => e.channel === 'say')).includes('Did it open'));
+  assert.ok(!JSON.stringify(g.projectState(r.state, 'bob')).includes('Did it open'));
+  assert.deepEqual(r.state.narrativeCanon.turns.at(-1).audienceIds, ['alice', 'keeper']);
+  assert.ok(r.events.some((event) => event.kind === 'action.open'));
 });
 test('only exact authored public question releases asked fact, never private internal title', () => {
   const d = g.createCompleteObservatoryDraft();
@@ -306,10 +353,23 @@ test('mismatched provider action cannot borrow another quoted failure to publish
     p = g.createMockStoryTurnProposal(s, 'alice', i, id);
   p.steps[0].action = { kind: 'open', targetId: 'side-door' };
   p.steps[1].reply = { text: 'Opened!' };
+  const before = structuredClone(s);
+  // A typed receipt cannot be combined with a different action to lend it authority.
+  const mixed = g.applyStoryTurnProposal(s, 'alice', i, id, p);
+  assert.equal(mixed.error, 'FORBIDDEN');
+  assert.equal(mixed.state, s);
+  assert.deepEqual(mixed.entries, []);
+  assert.deepEqual(mixed.events, []);
+  assert.deepEqual(mixed.actions, []);
+  // Also retain the legacy action-only known-failure target binding regression.
+  delete p.steps[0].establishedEvents;
   const r = g.applyStoryTurnProposal(s, 'alice', i, id, p);
   assert.equal(r.clarification, 'UNSUPPORTED');
   assert.equal(r.state, s);
   assert.deepEqual(r.entries, []);
+  assert.deepEqual(r.events, []);
+  assert.deepEqual(r.actions, []);
+  assert.deepEqual(s, before);
 });
 
 test('old permitted local knowledge reaches an actual story reply without importing another NPC secrets', () => {

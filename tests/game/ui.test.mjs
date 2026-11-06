@@ -550,7 +550,7 @@ test('every browser new-campaign launch explicitly requests turns, never realtim
   ]);
 });
 
-test('Studio turn rules have no off switch and preserve existing drafts until an explicit edit', async () => {
+test('Studio exposes physical rules without player quotas and preserves legacy drafts until an explicit edit', async () => {
   const source = await readFile(
     new URL('../../apps/web/components/studio/turn-ruleset-editor.tsx', import.meta.url),
     'utf8',
@@ -595,16 +595,24 @@ test('Studio turn rules have no off switch and preserve existing drafts until an
     const html = renderToStaticMarkup(tree);
     assert.doesNotMatch(html, /type="checkbox"|type="radio"|<select/);
     const inputs = descendants(tree).filter((node) => node.type === 'input');
-    assert.equal(inputs.length, 7);
+    assert.equal(inputs.length, 3);
+    assert.deepEqual(
+      inputs.map((input) => input.props.value),
+      ['vitality', 'hitDamage', 'pushDistance'].map((key) => (value ?? defaults)[key]),
+    );
+    assert.doesNotMatch(
+      html,
+      /movementSetting|mainActionsSetting|additionalActionsSetting|reactionsSetting/,
+    );
     assert.ok(inputs.every((node) => node.props.type === 'number'));
-    assert.equal(inputs[0].props.value, (value ?? defaults).movement);
+    assert.equal(inputs[0].props.value, (value ?? defaults).vitality);
     for (const input of inputs) {
       input.props.onChange({ target: { value: String(input.props.max + 1) } });
       input.props.onChange({ target: { value: 'invalid' } });
     }
     assert.deepEqual(changes, []);
     inputs[0].props.onChange({ target: { value: '12' } });
-    assert.deepEqual(changes, [{ ...(value ?? defaults), movement: 12 }]);
+    assert.deepEqual(changes, [{ ...(value ?? defaults), vitality: 12 }]);
     assert.deepEqual(value, saved);
   }
   const preview = module.exports.TurnRulesetEditor({

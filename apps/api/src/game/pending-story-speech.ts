@@ -5,18 +5,19 @@ import {
   applyNpcSpeech,
   recordNpcEvents,
   npcReplyObservation,
+  synchronizePendingSpeechEvidence,
 } from '@dreamwalk/game-core';
 const sourceSchema = z
   .object({
     actorId: z.string(),
     text: z.string().min(1).max(1000),
     channel: z.enum(['say', 'whisper']),
-    identity: z.object({ turnId: z.uuid(), segmentIndex: z.number().int().min(0).max(5) }).strict(),
+    identity: z.object({ turnId: z.uuid(), segmentIndex: z.number().int().nonnegative() }).strict(),
   })
   .strict();
 export const pendingStorySpeechSchema = z
   .object({
-    sources: z.array(sourceSchema).min(1).max(6),
+    sources: z.array(sourceSchema).min(1),
     reference: deferredTurnSpeechSchema
       .extend({
         actorId: z.string(),
@@ -89,6 +90,7 @@ export function settlePendingStorySpeech(state: GameState, turnId: string): Game
     delete admitted.pendingStoryTurnId;
     return [admitted];
   });
+  synchronizePendingSpeechEvidence(next);
   next.revision++;
   return next;
 }

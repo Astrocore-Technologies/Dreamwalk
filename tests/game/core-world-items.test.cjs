@@ -101,12 +101,12 @@ test('generic NPC stock becomes visible surface items; eat/take preserves identi
   assert.equal(s.entities['item-dinner-1'].ownerId, 'alice');
   assert.deepEqual(s.entities.alice.inventory, ['item-dinner-1']);
   assert.equal(g.projectState(s, 'alice').inventory[0].label, 'Cup');
-  assert.equal(s.turnController.resources.alice.main, 0);
-  assert.equal(s.turnController.resources.alice.additional, 0);
+  assert.equal(s.turnController.resources.alice.main, 1);
+  assert.equal(s.turnController.resources.alice.additional, 1);
   assert.equal(
     g.applyTurnAction(s, 'alice', { kind: 'consume', targetId: 'item-dinner-0' }, g.turnFence(s))
       .error,
-    'ROUND_LOCKED',
+    'INVALID_ACTION',
   );
   assert.equal(s.entities['item-dinner-0'], undefined);
 });
@@ -256,7 +256,7 @@ test('text consume and map consume share one main-action reducer in ru/en/uk', (
     assert.ok(proposal, text);
     assert.deepEqual(g.confirmPlayerTextIntent(s, 'alice', proposal, true), click);
   }
-  assert.equal(click.state.turnController.resources.alice.main, 0);
+  assert.equal(click.state.turnController.resources.alice.main, 1);
   assert.equal(click.state.entities.alice.vitality, 4);
 });
 test('text consume can use an owned inventory item but cannot duplicate or bypass a stale target', () => {

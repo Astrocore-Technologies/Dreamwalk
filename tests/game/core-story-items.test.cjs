@@ -118,7 +118,7 @@ test('new ordinary RP prop commits inventory, owner, canon and witnessed pickup 
   assert.ok(replay.error);
   assert.equal(r.state.entities.alice.inventory.length, 1);
 });
-test('world-phase explicit pickup consumes only the normal remaining item-action resource', () => {
+test('world-phase explicit pickup preserves legacy resources', () => {
   const state = world(true),
     p = proposal(state, '*положил синий платок себе в карман*'),
     r = p.apply();
@@ -126,7 +126,7 @@ test('world-phase explicit pickup consumes only the normal remaining item-action
   assert.equal(r.clarification, undefined);
   assert.equal(
     r.state.turnController.resources.alice.additional,
-    state.turnController.resources.alice.additional - 1,
+    state.turnController.resources.alice.additional,
   );
   assert.equal(
     r.state.turnController.resources.alice.movement,
@@ -134,8 +134,8 @@ test('world-phase explicit pickup consumes only the normal remaining item-action
   );
   assert.equal(r.state.turnController.phase, 'world');
 });
-test('capacity, exhausted action resource and collisions never leave fictional success or orphan props', () => {
-  for (const blocked of ['capacity', 'budget', 'duplicate']) {
+test('capacity and collisions never leave fictional success or orphan props', () => {
+  for (const blocked of ['capacity', 'duplicate']) {
     const state = world(true);
     if (blocked === 'capacity') {
       state.worldItemRules = {
@@ -147,7 +147,6 @@ test('capacity, exhausted action resource and collisions never leave fictional s
       state.entities.alice.inventory = ['token'];
       state.entities.token.ownerId = 'alice';
     }
-    if (blocked === 'budget') state.turnController.resources.alice.additional = 0;
     if (blocked === 'duplicate')
       Object.assign(state.entities.key, { label: 'синий платок', x: 5, y: 5 });
     const p = proposal(state, '*положил синий платок себе в карман*'),

@@ -1,10 +1,10 @@
 'use client';
 import { useState, type FormEvent } from 'react';
 import {
+  DIRECTOR_BEHAVIOR_MAX_LENGTH,
   DIRECTOR_STYLE_PRESETS,
   type DirectorCatalog,
   type DirectorProfile,
-  type DirectorStyle,
 } from '@dreamwalk/contracts/dist/director-style';
 import { api, ApiError, errorMessage, useClient, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
@@ -46,13 +46,6 @@ function DirectorForm({ initial, reload }: { initial: DirectorCatalog; reload: (
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState('');
   const draft = profiles.find((profile) => profile.id === editingId)!;
-  const selected =
-    Object.entries(DIRECTOR_STYLE_PRESETS).find(
-      ([, preset]) =>
-        preset.style === draft.style &&
-        preset.pacing === draft.pacing &&
-        preset.initiative === draft.initiative,
-    )?.[0] ?? 'custom';
   const changed =
     defaultProfileId !== initial.defaultProfileId ||
     JSON.stringify(profiles) !== JSON.stringify(initial.profiles);
@@ -72,6 +65,7 @@ function DirectorForm({ initial, reload }: { initial: DirectorCatalog; reload: (
         id,
         name: t('Новый ведущий'),
         description: '',
+        behaviorInstructions: '',
         enabled: true,
         ...DIRECTOR_STYLE_PRESETS.coauthor,
       },
@@ -93,6 +87,9 @@ function DirectorForm({ initial, reload }: { initial: DirectorCatalog; reload: (
             ...profile,
             name: profile.name.trim(),
             description: profile.description.trim(),
+            ...(profile.behaviorInstructions === undefined
+              ? {}
+              : { behaviorInstructions: profile.behaviorInstructions.trim() }),
           })),
         }),
       });
@@ -187,67 +184,26 @@ function DirectorForm({ initial, reload }: { initial: DirectorCatalog; reload: (
           'Скрытый ведущий остаётся в существующих прохождениях. Чтобы скрыть ведущего по умолчанию, сначала выбери другого.',
         )}
       </small>
-      <Field label={t('Тип ведущего')}>
-        <Select
-          value={selected}
+      <Field
+        label={t('Поведение ИИ-ведущего')}
+        hint={t(
+          'Опиши своими словами манеру, темп и инициативу ведущего. Пустое поле использует базовый стиль профиля.',
+        )}
+      >
+        <Textarea
+          rows={6}
+          maxLength={DIRECTOR_BEHAVIOR_MAX_LENGTH}
+          value={draft.behaviorInstructions ?? ''}
+          placeholder={t(
+            'Например: пиши живо и кратко, поддерживай идеи игрока и предлагай зацепку, когда история замедляется.',
+          )}
           disabled={busy}
-          onChange={(event) => {
-            const preset =
-              DIRECTOR_STYLE_PRESETS[event.target.value as keyof typeof DIRECTOR_STYLE_PRESETS];
-            if (preset) edit(preset);
-          }}
-        >
-          <option value="coauthor">{t('Соавтор — сбалансированный')}</option>
-          <option value="storyteller">{t('Рассказчик — неспешный')}</option>
-          <option value="director">{t('Режиссёр — инициативный')}</option>
-          <option value="custom" disabled>
-            {t('Свой вариант')}
-          </option>
-        </Select>
+          onChange={(event) => edit({ behaviorInstructions: event.target.value })}
+        />
       </Field>
-      <details>
-        <summary>{t('Настроить подачу')}</summary>
-        <div className="stack">
-          <Field label={t('Манера повествования')}>
-            <Select
-              value={draft.style}
-              disabled={busy}
-              onChange={(event) => edit({ style: event.target.value as DirectorStyle['style'] })}
-            >
-              <option value="natural">{t('Естественная')}</option>
-              <option value="cinematic">{t('Кинематографичная')}</option>
-              <option value="atmospheric">{t('Атмосферная')}</option>
-            </Select>
-          </Field>
-          <Field label={t('Темп истории')}>
-            <Select
-              value={draft.pacing}
-              disabled={busy}
-              onChange={(event) => edit({ pacing: event.target.value as DirectorStyle['pacing'] })}
-            >
-              <option value="deliberate">{t('Неспешный')}</option>
-              <option value="balanced">{t('Размеренный')}</option>
-              <option value="brisk">{t('Динамичный')}</option>
-            </Select>
-          </Field>
-          <Field label={t('Инициатива ведущего')}>
-            <Select
-              value={draft.initiative}
-              disabled={busy}
-              onChange={(event) =>
-                edit({ initiative: event.target.value as DirectorStyle['initiative'] })
-              }
-            >
-              <option value="reactive">{t('Следует за игроком')}</option>
-              <option value="balanced">{t('Предлагает зацепки по ситуации')}</option>
-              <option value="proactive">{t('Активно предлагает зацепки')}</option>
-            </Select>
-          </Field>
-        </div>
-      </details>
       <p className="muted">
         {t(
-          'Ведущий не решает за игрока, не раскрывает тайны и не обходит правила действий. Инициатива не запускает дополнительные генерации. Уже подготовленные ответы сохраняют прежний стиль.',
+          'Инструкция меняет поведение ведущего, но не голоса NPC, права доступа или оплату. Она не запускает дополнительные генерации. Уже подготовленные ответы сохраняют прежнюю инструкцию.',
         )}
       </p>
       <ErrorBox message={error} />

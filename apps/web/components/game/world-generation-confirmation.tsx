@@ -149,7 +149,6 @@ export function WorldGenerationConfirmation({
   const pricingCurrent =
     pricedScope === currentPricingScope && !error && !membershipError && !membershipPending;
   const forecast = pricingCurrent ? status?.forecast : null;
-  const availableFunding = pricingCurrent ? status?.availableFunding : null;
   const baseEstimate = forecast?.baseEstimatedSparkSubunits ?? forecast?.estimatedSparkSubunits;
   const optionalRequests = forecast?.optionalAutonomousSpeechRequests ?? 0;
   const blockedCode = status?.ordinary?.code;
@@ -173,15 +172,6 @@ export function WorldGenerationConfirmation({
     <div data-testid="world-generation-confirmation">
       <ErrorBox message={membershipError ? h('worldMembersError') : error} />
       {membershipPending && <p role="status">{h('worldCheckingOwner')}</p>}
-      <p data-testid="world-available-funding">
-        {availableFunding
-          ? h('worldAvailableFunding', {
-              sparks: formatSparkSubunits(availableFunding.sparksSubunits, locale),
-              dreams: formatSparkSubunits(availableFunding.dreamsSubunits, locale),
-              total: formatSparkSubunits(availableFunding.totalSubunits, locale),
-            })
-          : h('worldFundingUnavailable')}
-      </p>
       {status?.unknown ? (
         <p role="status">{h('worldCostUnresolved')}</p>
       ) : status?.pending ? (
@@ -218,7 +208,6 @@ export function WorldGenerationConfirmation({
         <p role="status">{h('worldPending')}</p>
       ) : phase !== 'world' || status?.available ? (
         <div data-testid="world-cost-forecast">
-          <p>{h('worldCostForecastHint')}</p>
           <p role="status">
             {baseEstimate != null
               ? h('worldCostForecast', { amount: formatSparkSubunits(baseEstimate, locale) })

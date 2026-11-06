@@ -103,9 +103,8 @@ export function MapActions({
         const unavailable = npcUnavailable(e);
         const lifeState = publicLifeState(e);
         const near = !!own && hasPosition(own) && hasPosition(e) && footprintDistance(own, e) <= 1;
-        const main = disabled || !near || (!!projection.turn && projection.turn.resources.main < 1);
-        const additional =
-          disabled || !near || (!!projection.turn && projection.turn.resources.additional < 1);
+        const main = disabled || !near;
+        const additional = disabled || !near;
         return (
           <section key={e.id} data-map-target={e.id}>
             <strong>{e.label ?? e.id}</strong>
@@ -268,7 +267,7 @@ export function InventoryPanel({
             {e.item?.edible && (
               <button
                 type="button"
-                disabled={disabled || (!!projection.turn && projection.turn.resources.main < 1)}
+                disabled={disabled}
                 onClick={() => onAction({ kind: 'consume', targetId: e.id })}
               >
                 {text('eat')}

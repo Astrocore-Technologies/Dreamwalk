@@ -91,6 +91,7 @@ try {
     // Travel deliberately retains an unknown native image liability under a synthetic tariff.
     'integration-location-travel.test.mjs',
     'integration-private-story-routing.test.mjs',
+    'integration-established-roleplay.test.mjs',
   ];
   if (!process.env.GAME_TEST_FILE)
     for (const ownerFile of isolatedOwnerFiles) {

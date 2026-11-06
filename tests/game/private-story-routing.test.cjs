@@ -580,7 +580,7 @@ test('mixed semantic then pickup stays uncommitted locally and resolves witnesse
     assert.equal(pickup.length, deathFirst ? 0 : 1);
     assert.equal(
       r.state.turnController.resources.alice.additional,
-      ready.turnController.resources.alice.additional - 1,
+      ready.turnController.resources.alice.additional,
     );
     assert.equal(r.state.turnController.phase, 'world');
   }
@@ -786,7 +786,7 @@ test('conditional voices cannot unlock trusted facts through a hypothetical earl
     false,
   );
 });
-test('deferred player contact pays the player budget after reaction and resumes world', () => {
+test('deferred player contact preserves reply authority and resumes world without a resource charge', () => {
   const s = world();
   Object.assign(s.entities.bob, { x: 4, y: 4 });
   const p = proposal(s, { text: '*I lower my hand toward Orin* *hit bob*', effect: 'blocked' });
@@ -800,7 +800,7 @@ test('deferred player contact pays the player budget after reaction and resumes 
   assert.equal(done.state.turnController.phase, 'world');
   assert.equal(
     done.state.turnController.resources.alice.main,
-    s.turnController.resources.alice.main - 1,
+    s.turnController.resources.alice.main,
   );
   assert.equal(done.state.turnController.worldActions, s.turnController.worldActions);
   assert.deepEqual(done.state.turnController.worldNpcActions, s.turnController.worldNpcActions);
@@ -882,7 +882,7 @@ test('typed attempt plus speech keeps its director route through world reconstru
       assert.equal(r.error, undefined);
       assert.equal(
         r.state.turnController.resources.alice.main,
-        ready.turnController.resources.alice.main - 1,
+        ready.turnController.resources.alice.main,
       );
       assert.equal(r.state.npcUtterances.filter((u) => u.text === 'Hello').length, 1);
     }
@@ -917,5 +917,127 @@ test('mixed existing travel remains pending locally until the ordered director r
   assert.deepEqual(
     context.actionPreview.map((entry) => entry.action.kind),
     ['travel', 'pick_up'],
+  );
+});
+
+test('ordered pending area whisper retains its exact source through pruning and reload, then clears on cancellation', () => {
+  const x = pendingCase('*I lower my hand* PRIVATE_PENDING_SOURCE', 'blocked');
+  let state = JSON.parse(JSON.stringify(x.after));
+  const pending = x.posted.state.turnController.deferredSpeech.find(
+    (entry) => entry.id === x.request.id,
+  );
+  assert.ok(
+    x.posted.state.npcBrains.keeper.living.pendingSpeechObservationIds.includes(
+      pending.utteranceId,
+    ),
+  );
+  assert.equal(
+    g.npcReplyObservation(x.posted.state, 'alice', 'keeper', pending.utteranceId),
+    undefined,
+    'retention cannot admit uncommitted words',
+  );
+  const ref = state.turnController.deferredSpeech.find((entry) => entry.id === x.request.id);
+  assert.ok(ref);
+  assert.ok(state.npcBrains.keeper.living.pendingSpeechObservationIds.includes(ref.utteranceId));
+  for (let i = 0; i < 130; i++) {
+    const result = g.applyNpcSpeech(
+      state,
+      'alice',
+      'keeper',
+      { channel: 'whisper', text: `Later private observation ${i}` },
+      { suppressReply: true, identity: { turnId: randomUUID(), segmentIndex: 0 } },
+    );
+    assert.equal(result.error, undefined);
+    state = result.state;
+  }
+  state = JSON.parse(JSON.stringify(state));
+  assert.ok(g.npcReplyObservation(state, 'alice', 'keeper', ref.utteranceId));
+  assert.doesNotMatch(
+    JSON.stringify(g.projectState(state, 'bob')),
+    /PRIVATE_PENDING_SOURCE|pendingSpeechObservationIds/,
+  );
+  const cancelled = structuredClone(state);
+  cancelled.turnController.deferredSpeech.find((entry) => entry.id === ref.id).pendingStoryTurnId =
+    x.p.id;
+  cancelled.entities.keeper.lifeState = 'dead';
+  cancelled.entities.keeper.vitality = 0;
+  const settled = settlePendingStorySpeech(cancelled, x.p.id);
+  assert.equal(
+    settled.turnController.deferredSpeech.some((entry) => entry.id === ref.id),
+    false,
+  );
+  assert.equal(settled.npcBrains.keeper.living.pendingSpeechObservationIds, undefined);
+  assert.strictEqual(settlePendingStorySpeech(settled, x.p.id), settled);
+});
+
+test('more than 128 mixed RP speech sources survive ordered world admission without gaining early knowledge', () => {
+  const state = world(false);
+  Object.assign(state.entities.bob, { x: 20, y: 20 });
+  const id = randomUUID();
+  const input = {
+    operationId: randomUUID(),
+    text: Array.from({ length: 130 }, () => '*g* h').join(' '),
+    channel: 'whisper',
+    replyLocale: 'en',
+    expectedCanonRevision: 0,
+    turnFence: g.turnFence(state),
+  };
+  const game = Object.create(GameService.prototype);
+  game.ai = { contextBudgetBytes: () => 128000 };
+  const runtime = Object.create(StoryTurnRuntime.prototype);
+  runtime.port = { prepareAreaTurnSpeech: game.prepareAreaTurnSpeech.bind(game) };
+  const posted = runtime.simulateTurnPost(state, 'alice', input, id, 'owner');
+  const refs = posted.state.turnController.deferredSpeech.filter(
+    (ref) => ref.recipientId === 'keeper',
+  );
+  assert.equal(refs.length, 130);
+  for (const ref of refs)
+    assert.equal(
+      g.npcReplyObservation(posted.state, 'alice', 'keeper', ref.utteranceId),
+      undefined,
+    );
+  let ready = g.endPlayerTurn(posted.state, 'alice', g.turnFence(posted.state)).state;
+  ready = g.endPlayerTurn(ready, 'bob', g.turnFence(ready)).state;
+  const admittedInput = { ...input, text: posted.directorText, turnFence: g.turnFence(ready) };
+  const context = g.buildStoryTurnContext(ready, 'alice', admittedInput, id);
+  const proposal = {
+    turnId: id,
+    contextHash: context.contextHash,
+    status: 'ready',
+    code: null,
+    steps: context.segments.map((segment) => ({
+      segmentIndex: segment.index,
+      action: null,
+      reply: null,
+      establishedEvents:
+        segment.kind === 'attempt'
+          ? [{ description: 'A gesture.', entityIds: [], effects: [] }]
+          : [],
+    })),
+    narrative: {
+      narration: 'The gestures occurred in order.',
+      newScene: null,
+      newNpc: null,
+      newItem: null,
+      evidenceIds: [],
+    },
+  };
+  const applied = g.applyStoryTurnProposal(ready, 'alice', admittedInput, id, proposal, {
+    sourceSpeechSegments: g
+      .parseStorySegments(input.text)
+      .segments.filter((segment) => segment.kind === 'speech'),
+  });
+  assert.equal(applied.error, undefined);
+  const restored = JSON.parse(JSON.stringify(settlePendingStorySpeech(applied.state, id)));
+  assert.equal(
+    restored.turnController.deferredSpeech.filter((ref) => ref.recipientId === 'keeper').length,
+    130,
+  );
+  for (const ref of refs)
+    assert.ok(g.npcReplyObservation(restored, 'alice', 'keeper', ref.utteranceId), ref.utteranceId);
+  assert.equal(g.gameProjectionSchema.safeParse(g.projectState(restored, 'alice')).success, true);
+  assert.doesNotMatch(
+    JSON.stringify(g.projectState(restored, 'bob')),
+    /pendingSpeechObservationIds/,
   );
 });

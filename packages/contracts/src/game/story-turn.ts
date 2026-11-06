@@ -1,3 +1,4 @@
+import { establishedRoleplayEventSchema } from './established-roleplay';
 import type { CurrencyFunding } from '../sparks';
 import { turnFenceSchema } from './turns';
 import { z } from 'zod';
@@ -23,7 +24,7 @@ export const storyTurnInputSchema = z
 export type StoryTurnInput = z.infer<typeof storyTurnInputSchema>;
 export const storySegmentSchema = z
   .object({
-    index: z.number().int().min(0).max(5),
+    index: z.number().int().nonnegative(),
     kind: z.enum(['attempt', 'speech']),
     text: z.string().min(1).max(1000),
   })
@@ -57,7 +58,7 @@ export const storyActionSchema = narrativeActionSchema
 /** Semantic interpretation of the player's current departure, never an already completed journey. */
 export const storyTravelIntentSchema = z
   .object({
-    segmentIndex: z.number().int().min(0).max(5),
+    segmentIndex: z.number().int().nonnegative(),
     destinationName: z
       .string()
       .trim()
@@ -85,46 +86,46 @@ export const storyTurnProposalSchema = z
     status: z.enum(['ready', 'clarification']),
     travelIntent: storyTravelIntentSchema.nullable().optional(),
     code: storyClarificationSchema.nullable(),
-    steps: z
-      .array(
-        z
-          .object({
-            segmentIndex: z.number().int().min(0).max(5),
-            action: storyActionSchema.nullable(),
-            narrativeImpact: narrativeImpactSchema.nullable().optional(),
-            sceneEncounter: z.object({ npcId: id }).strict().optional(),
-            replyNpcId: id.nullable().optional(),
-            replyContextHash: z.string().min(1).max(160).nullable().optional(),
-            reply: z
-              .union([
-                z
-                  .object({
-                    text: z.string().trim().min(1).max(1000),
-                    companionIntent: npcCompanionIntentSchema.optional(),
-                    actionIntent: npcActionIntentSchema.optional(),
-                  })
-                  .strict(),
-                z.object({ code: z.literal('acknowledged') }).strict(),
-              ])
-              .nullable(),
-          })
-          .strict()
-          .superRefine((step, ctx) => {
-            if (
-              step.sceneEncounter &&
-              (step.action ||
-                step.narrativeImpact ||
-                step.reply ||
-                step.replyNpcId ||
-                step.replyContextHash)
-            )
-              ctx.addIssue({
-                code: 'custom',
-                message: 'Scene encounter cannot be combined with another step effect',
-              });
-          }),
-      )
-      .max(6),
+    steps: z.array(
+      z
+        .object({
+          segmentIndex: z.number().int().nonnegative(),
+          action: storyActionSchema.nullable(),
+          narrativeImpact: narrativeImpactSchema.nullable().optional(),
+          establishedEvents: z.array(establishedRoleplayEventSchema).optional(),
+          sceneEncounter: z.object({ npcId: id }).strict().optional(),
+          replyNpcId: id.nullable().optional(),
+          replyContextHash: z.string().min(1).max(160).nullable().optional(),
+          reply: z
+            .union([
+              z
+                .object({
+                  text: z.string().trim().min(1).max(1000),
+                  companionIntent: npcCompanionIntentSchema.optional(),
+                  actionIntent: npcActionIntentSchema.optional(),
+                })
+                .strict(),
+              z.object({ code: z.literal('acknowledged') }).strict(),
+            ])
+            .nullable(),
+        })
+        .strict()
+        .superRefine((step, ctx) => {
+          if (
+            step.sceneEncounter &&
+            (step.action ||
+              step.narrativeImpact ||
+              step.establishedEvents?.length ||
+              step.reply ||
+              step.replyNpcId ||
+              step.replyContextHash)
+          )
+            ctx.addIssue({
+              code: 'custom',
+              message: 'Scene encounter cannot be combined with another step effect',
+            });
+        }),
+    ),
     narrative: z
       .object({
         narration: z.string().trim().min(1).max(2000),

@@ -346,7 +346,7 @@ test('mixed existing travel previews and commits destination pickup and speech i
   );
   assert.equal(
     done.state.turnController.resources.alice.additional,
-    s.turnController.resources.alice.additional - 1,
+    s.turnController.resources.alice.additional,
   );
   assert.deepEqual(done.state.entities.bob, s.entities.bob);
   assert.ok(

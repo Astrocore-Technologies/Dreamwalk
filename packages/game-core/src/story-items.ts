@@ -9,7 +9,6 @@ import {
   type StoryTurnProposal,
 } from '@dreamwalk/contracts';
 import { applyUnbudgetedAction, visible } from './index';
-import { turnActionCost } from './turns';
 
 const normalize = (text: string) =>
   text.normalize('NFKC').toLocaleLowerCase().replace(/\s+/gu, ' ').trim();
@@ -164,7 +163,7 @@ export function materializeStoryItem(
 }
 
 /** Resolve the current explicit RP pickup, including a deferred same-round world reply.
- * Normal visibility, ownership, capacity and action budgets still apply. */
+ * Normal visibility, ownership, capacity and participant admission still apply. */
 export function applyStoryPickup(
   state: GameState,
   actorId: string,
@@ -187,7 +186,8 @@ export function applyStoryPickup(
   const turn = state.turnController;
   if (
     turn &&
-    (turn.phase !== 'world' ||
+    (!turn.actorOrder.includes(actorId) ||
+      turn.phase !== 'world' ||
       turn.pendingResolution ||
       !input.turnFence ||
       input.turnFence.roundId !== turn.roundId ||
@@ -199,15 +199,9 @@ export function applyStoryPickup(
   if (!hasPosition(actor) || !hasPosition(item)) return fail(state, 'WRONG_MODE');
   if (item.ownerId || !visible(state, actor, item)) return fail(state, 'TARGET_UNAVAILABLE');
   if (footprintDistance(actor, item) > 1) return fail(state, 'OUT_OF_RANGE');
-  const action: GameAction = { kind: 'pick_up', targetId: itemId },
-    cost = turnActionCost(action);
-  if (turn && cost && (turn.resources[actorId]?.[cost] ?? 0) <= 0)
-    return fail(state, 'ROUND_LOCKED');
+  const action: GameAction = { kind: 'pick_up', targetId: itemId };
   const result = applyUnbudgetedAction(state, actorId, action);
   if (result.error) return result;
-  if (turn && cost) {
-    result.state.turnController!.resources[actorId][cost]--;
-    result.state.tick++;
-  }
+  if (turn) result.state.tick++;
   return result;
 }

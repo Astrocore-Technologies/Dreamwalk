@@ -193,10 +193,15 @@ test('sequential turns retain two area posts, freeze NPCs, and reply only after 
     await expect(guest.getByText('Подключено', { exact: true })).toBeVisible();
     const panel = owner.getByRole('region', { name: 'Ход приключения', exact: true });
     await expect(panel.getByRole('heading', { name: 'Твой ход', exact: true })).toBeVisible();
+    await expect(panel.locator('dl, dd')).toHaveCount(0);
+    await expect(owner.getByTestId('world-available-funding')).toHaveCount(0);
+    await expect(
+      owner.getByText('Оценка по текущему контексту, без анализа карты.', { exact: false }),
+    ).toHaveCount(0);
     await clickCell(owner, 3, 3);
     await expect(owner.getByTestId('game-position')).toHaveAttribute('data-x', '3');
     const moved = await snapshot(owner, id);
-    expect(moved.turn?.resources.movement).toBe(5);
+    expect(moved.turn?.resources.movement).toBe(6);
     await expect
       .poll(async () =>
         Number(
@@ -226,7 +231,7 @@ test('sequential turns retain two area posts, freeze NPCs, and reply only after 
     await owner.reload();
     await expect(owner.getByText('Подключено', { exact: true })).toBeVisible();
     const restored = await snapshot(owner, id);
-    expect(restored.turn?.resources.movement).toBe(5);
+    expect(restored.turn?.resources.movement).toBe(6);
     expect(restored.turn?.pendingNpcReplies).toHaveLength(2);
     for (const npc of ['mira', 'borin'])
       expect(restored.entities.find((e) => e.id === npc)).toMatchObject({
@@ -288,9 +293,9 @@ test('sequential turns retain two area posts, freeze NPCs, and reply only after 
     await guest.screenshot({ path: test.info().outputPath('turns-reaction.png'), fullPage: false });
     await guest.getByRole('button', { name: 'Защититься', exact: true }).click();
     await expect.poll(async () => (await snapshot(owner, id)).turn?.phase).toBe('player');
-    expect((await snapshot(owner, id)).turn?.resources.main).toBe(0);
+    expect((await snapshot(owner, id)).turn?.resources.main).toBe(1);
     const defended = await snapshot(guest, id);
-    expect(defended.turn?.resources.reaction).toBe(0);
+    expect(defended.turn?.resources.reaction).toBe(1);
     const beforePosition = guestBefore.entities.find((e) => e.id === guestActor)!;
     expect(defended.entities.find((e) => e.id === guestActor)).toMatchObject({
       x: beforePosition.x,

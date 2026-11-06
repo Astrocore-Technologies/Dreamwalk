@@ -42,3 +42,21 @@ test('taxonomy table retains translations, aliases, historical values and revisi
   const copy = await read('apps/web/components/studio/admin-tool-copy.ts');
   for (const locale of ['ru', 'uk', 'en']) assert.match(copy, new RegExp(`${locale}: \\{`));
 });
+
+test('director editing uses separate public description and bounded behavior instead of preset controls', async () => {
+  const source = await read('apps/web/components/studio/admin-director.tsx');
+  assert.equal((source.match(/<Select\b/g) || []).length, 1, 'only profile selection remains');
+  assert.equal(
+    (source.match(/<Textarea\b/g) || []).length,
+    2,
+    'public description and AI behavior stay distinct',
+  );
+  assert.match(source, /value=\{draft\.description\}/);
+  assert.match(source, /value=\{draft\.behaviorInstructions \?\? ''\}/);
+  assert.match(source, /maxLength=\{DIRECTOR_BEHAVIOR_MAX_LENGTH\}/);
+  assert.match(source, /expectedRevision: initial\.revision/);
+  assert.doesNotMatch(
+    source,
+    /<details>|draft\.style|draft\.pacing|draft\.initiative|Тип ведущего/,
+  );
+});

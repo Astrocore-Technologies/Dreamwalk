@@ -7,7 +7,8 @@ const id = z
   .regex(/^[\w-]+$/)
   .refine((v) => !(v in Object.prototype));
 const counter = z.number().int().nonnegative().safe();
-/** A small Dreamwalk preset, not an implementation of a D&D edition. */
+/** Legacy resource fields remain readable in pinned saves. Player RP no longer spends them.
+ * World-work bounds and contact effects are independent of these player counters. */
 export const turnRulesSchema = z
   .object({
     id: z.literal('dreamwalk-base').default('dreamwalk-base'),
@@ -111,7 +112,7 @@ export const turnProjectionSchema = z
     ownTurn: z.boolean(),
     pendingResolution: z.boolean(),
     pendingNpcReplies: z.array(
-      z.object({ npcId: id, count: z.number().int().positive().max(64) }).strict(),
+      z.object({ npcId: id, count: z.number().int().positive().safe() }).strict(),
     ),
     reaction: z
       .object({
@@ -135,7 +136,7 @@ export const movementTraceSchema = z
           .strict(),
       )
       .min(1)
-      .max(33),
+      .max(4096),
   })
   .strict();
 export const actorFeedbackSchema = z

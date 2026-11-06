@@ -190,7 +190,7 @@ async function fixture(owner, guest) {
   return campaignId;
 }
 await test(
-  'sequential turns preserve immediate mechanics, deferred ordered NPC dialogue and durable budgets',
+  'sequential turns preserve free player actions, deferred ordered NPC dialogue and durable work fences',
   { timeout: 120000 },
   async (t) => {
     try {
@@ -213,7 +213,7 @@ await test(
         },
       );
       await t.test(
-        'walking is immediately committed, bounded and shares durable receipt sequence',
+        'walking is immediately committed, geometry-checked and shares durable receipt sequence',
         async () => {
           const before = await snapshot(owner, id),
             a = actor(before);
@@ -228,7 +228,7 @@ await test(
           const moved = await owner.request(path(id, 'move'), body);
           assert.equal(moved.status, 'committed');
           assert.deepEqual([actor(moved).x, actor(moved).y], [3, 3]);
-          assert.equal(moved.projection.turn.resources.movement, 10);
+          assert.equal(moved.projection.turn.resources.movement, 12);
           assert.deepEqual(await owner.request(path(id, 'move'), body), moved);
           assert.equal((await state(id)).entities[before.projection.actorId].x, 3);
           const other = (await snapshot(guest, id)).projection;
@@ -309,7 +309,7 @@ await test(
         },
       );
       await t.test(
-        'click and text use one additional-action budget and failed attempts never claim success',
+        'click and text allow multiple actions while invalid targets never claim success',
         async () => {
           let p = (await snapshot(owner, id)).projection;
           const take = await command(
@@ -318,7 +318,8 @@ await test(
             input(p, 'action', { action: { kind: 'pick_up', targetId: 'first-token' } }),
           );
           assert.equal(take.status, 'committed');
-          assert.equal(take.projection.turn.resources.additional, 0);
+          assert.equal(take.projection.turn.resources.additional, 1);
+          await move(owner, id, { x: 4, y: 2 });
           const attempt = await post(owner, id, '*take second-token*');
           assert.equal(attempt.receipt.status, 'committed');
           const feed = await owner.request(path(id, 'turns/feed'));
@@ -327,10 +328,11 @@ await test(
               (e) =>
                 e.turnId === attempt.receipt.id &&
                 e.kind === 'outcome' &&
-                e.code === 'ROUND_LOCKED',
+                e.code === 'ACTION_SUCCEEDED',
             ),
           );
-          assert.equal((await state(id)).entities['second-token'].ownerId, undefined);
+          assert.equal((await state(id)).entities['second-token'].ownerId, take.projection.actorId);
+          await move(owner, id, { x: 4, y: 4 });
           p = (await snapshot(owner, id)).projection;
           const bad = await command(
             owner,
@@ -436,7 +438,7 @@ await test(
         },
       );
       await t.test(
-        'player reactions persist and duplicate attacks do not double consume resources',
+        'player reactions persist and duplicate attacks cannot repeat effects',
         async () => {
           const fight = await fixture(owner, guest),
             p = (await snapshot(owner, fight)).projection;
@@ -458,12 +460,12 @@ await test(
             input(react, 'turn.reaction', { decision: 'defend' }),
           );
           assert.equal(defense.status, 'committed');
-          assert.equal(defense.projection.turn.resources.reaction, 0);
+          assert.equal(defense.projection.turn.resources.reaction, 1);
           const resolved = (await snapshot(owner, fight)).projection;
           assert.equal(resolved.turn.phase, 'player');
-          assert.equal(resolved.turn.resources.main, 0);
+          assert.equal(resolved.turn.resources.main, 1);
           await command(owner, fight, hit);
-          assert.equal((await snapshot(owner, fight)).projection.turn.resources.main, 0);
+          assert.equal((await snapshot(owner, fight)).projection.turn.resources.main, 1);
         },
       );
       await t.test(
@@ -670,6 +672,32 @@ await test(
             1,
           );
           assert.ok((await state(storyWorld)).narrativeCanon.turns.length > 0);
+        },
+      );
+      await t.test(
+        'legacy campaigns beyond 1024 historical posts can continue and replay without another job',
+        async () => {
+          const longCampaign = await fixture(owner, guest);
+          const before = (await snapshot(owner, longCampaign)).projection;
+          await db.query(
+            `INSERT INTO game_story_turns(id,campaign_id,requester_user_id,actor_id,operation_id,request_hash,input,segments,context,status)
+           SELECT gen_random_uuid(),$1,$2,$3,gen_random_uuid(),'legacy-free-rp-fixture','{}','[]','{}','failed'
+           FROM generate_series(1,1024)`,
+            [longCampaign, owner.user.id, before.actorId],
+          );
+          const result = await post(owner, longCampaign, '*wait*');
+          assert.equal(result.receipt.status, 'committed');
+          const replay = await owner.request(path(longCampaign, 'turns'), result.submitted);
+          assert.equal(replay.id, result.receipt.id);
+          const counts = (
+            await db.query(
+              `SELECT (SELECT count(*)::int FROM game_story_turns WHERE campaign_id=$1) AS turns,
+            (SELECT count(*)::int FROM npc_ai_jobs WHERE campaign_id=$1) AS jobs`,
+              [longCampaign],
+            )
+          ).rows[0];
+          assert.equal(counts.turns, 1025);
+          assert.equal(counts.jobs, 0);
         },
       );
     } finally {

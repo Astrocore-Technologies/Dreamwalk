@@ -354,7 +354,7 @@ test('two accepted companions keep witnessed routes and follow later with normal
   assert.equal(crossed.error, undefined);
   assert.equal(
     crossed.state.turnController.resources.player.additional,
-    s.turnController.resources.player.additional - 1,
+    s.turnController.resources.player.additional,
   );
   assert.equal(
     crossed.state.turnController.resources.player.movement,
