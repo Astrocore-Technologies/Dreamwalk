@@ -87,7 +87,7 @@ for (const turnBased of [false, true])
     assert.equal(Object.keys(r.state.entities).length, Object.keys(state.entities).length);
     assert.equal(r.events.filter((e) => e.kind === 'item.placed').length, 1);
     if (turnBased) {
-      assert.equal(r.state.turnController.resources.alice.additional, 0);
+      assert.equal(r.state.turnController.resources.alice.additional, 1);
       assert.equal(r.state.turnController.phase, 'world');
     }
     assert.equal(r.entries.at(-1).text, p.body.narrative.narration);
@@ -308,7 +308,7 @@ test('a post-drop stale advisory reply is omitted without losing source speech o
   assert.doesNotMatch(JSON.stringify(r.state.npcUtterances), /private inventory/);
 });
 
-test('an independently requested drop then pickup resolves in order when both resources remain', () => {
+test('an independently requested drop then pickup resolves in order without spending player resources', () => {
   const state = world(true);
   state.turnController.ruleset.additional = 2;
   state.turnController.resources.alice.additional = 2;
@@ -322,12 +322,15 @@ test('an independently requested drop then pickup resolves in order when both re
   assert.equal(r.state.entities.key.ownerId, 'alice');
   assert.deepEqual(r.state.entities.alice.inventory, ['key']);
   assert.equal(r.events.filter((e) => e.kind === 'item.placed').length, 1);
-  assert.equal(r.state.turnController.resources.alice.additional, 0);
+  assert.equal(r.state.turnController.resources.alice.additional, 2);
   assert.equal(r.entries.at(-1).text, p.body.narrative.narration);
 });
 
 test('failure of a later pickup rolls back an earlier drop without success narration', () => {
   const state = world(true);
+  state.worldItemRules = { ...state.worldItemRules, inventoryCapacity: 1 };
+  state.entities.spare = { ...structuredClone(state.entities.key), id: 'spare' };
+  state.entities.alice.inventory.push('spare');
   assertRejected(
     state,
     proposal(state, '*I lower the brass key onto the floor* *I pick up the brass key*', [

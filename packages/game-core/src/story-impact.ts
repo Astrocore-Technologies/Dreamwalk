@@ -110,10 +110,11 @@ export function applyStoryImpact(
   )
     return reject('FORBIDDEN');
   const impact = parsed.data;
-  if (turn.impact)
-    return turn.impact.targetId === impact.targetId &&
-      turn.impact.effect === impact.effect &&
-      turn.impact.segmentIndex === segmentIndex
+  const previous = (turn.impacts ?? (turn.impact ? [turn.impact] : [])).find(
+    (entry) => entry.segmentIndex === segmentIndex,
+  );
+  if (previous)
+    return previous.targetId === impact.targetId && previous.effect === impact.effect
       ? { state, events: [] }
       : reject('STALE_STATE');
   const target = storyImpactContext(state, actorId).find(
@@ -159,6 +160,11 @@ export function applyStoryImpact(
     vitalityBefore: target.vitality,
     vitalityAfter,
   };
+  const admittedTurn = next.narrativeCanon!.turns.find((entry) => entry.id === turnId)!;
+  admittedTurn.impacts = [
+    ...(turn.impacts ?? (turn.impact ? [turn.impact] : [])),
+    admittedTurn.impact!,
+  ];
   next.revision++;
   next.tick++;
   const events: GameResult['events'] = [];

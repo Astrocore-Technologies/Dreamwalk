@@ -37,12 +37,12 @@ test('turn mode is explicit, versioned, strictly projected and does not silently
   assert.equal(g.turnRulesSchema.safeParse({ script: 'arbitrary executable code' }).success, false);
 });
 
-test('committed turn movement validates every step, spends actual distance and exposes no future/historical foreign path', () => {
+test('committed turn movement validates every step without a distance budget or foreign path leak', () => {
   const s = fixture({ movement: 6 });
   const result = g.applyTurnMove(s, 'alice', { x: 5, y: 3 }, fence(s));
   assert.equal(result.error, undefined);
   assert.equal(result.state.entities.alice.x, 5);
-  assert.equal(result.state.turnController.resources.alice.movement, 3);
+  assert.equal(result.state.turnController.resources.alice.movement, 6);
   assert.deepEqual(result.state.entities.alice.movementTrace.points, [
     { x: 2, y: 3 },
     { x: 3, y: 3 },
@@ -54,8 +54,11 @@ test('committed turn movement validates every step, spends actual distance and e
     g.projectState(result.state, 'bob').entities.find((e) => e.id === 'alice').movementTrace,
     undefined,
   );
-  const invalid = g.applyTurnMove(result.state, 'alice', { x: 10, y: 3 }, fence(result.state));
-  assert.equal(invalid.error, 'OUT_OF_RANGE');
+  const continued = g.applyTurnMove(result.state, 'alice', { x: 10, y: 3 }, fence(result.state));
+  assert.equal(continued.error, undefined);
+  assert.equal(continued.state.entities.alice.x, 10);
+  const invalid = g.applyTurnMove(result.state, 'alice', { x: 64, y: 3 }, fence(result.state));
+  assert.equal(invalid.error, 'PATH_BLOCKED');
   assert.strictEqual(invalid.state, result.state);
   assert.equal(
     g.applyTurnMove(result.state, 'bob', { x: 3, y: 4 }, fence(result.state)).error,
@@ -82,7 +85,7 @@ test('wall clock tick, living routines and old queued plans are inert while a pl
   assert.equal(g.applyWorldTurnAction(s, 'keeper', { kind: 'wait' }, fence(s)).error, 'WRONG_MODE');
 });
 
-test('click and interpreted text use the same resource reducer; invalid targets cost nothing', () => {
+test('click and interpreted text share authority and do not spend player resources', () => {
   const s = fixture();
   Object.assign(s.entities.keeper, { x: 3, y: 3 });
   const action = g.parsePlayerTextAction(s, 'alice', 'push keeper');
@@ -93,12 +96,12 @@ test('click and interpreted text use the same resource reducer; invalid targets 
   const text = g.confirmPlayerTextIntent(s, 'alice', proposal, true);
   assert.deepEqual(text, click);
   assert.equal(click.state.entities.keeper.x, 4);
-  assert.equal(click.state.turnController.resources.alice.main, 0);
+  assert.equal(click.state.turnController.resources.alice.main, 1);
   assert.equal(click.state.entities.keeper.feedback.kind, 'push');
   assert.equal(
     g.applyTurnAction(click.state, 'alice', { kind: 'hit', targetId: 'keeper' }, fence(click.state))
       .error,
-    'ROUND_LOCKED',
+    'OUT_OF_RANGE',
   );
   const invalid = g.applyTurnAction(s, 'alice', { kind: 'hit', targetId: 'missing' }, fence(s));
   assert.equal(invalid.error, 'TARGET_UNAVAILABLE');
@@ -106,18 +109,18 @@ test('click and interpreted text use the same resource reducer; invalid targets 
   assert.equal(s.turnController.resources.alice.main, 1);
 });
 
-test('a valid blocked push consumes main action, but cannot move someone through collision', () => {
+test('a valid blocked push does not consume player actions or move someone through collision', () => {
   const s = fixture();
   Object.assign(s.entities.keeper, { x: 3, y: 3 });
   s.maps.courtyard.blocked.push({ x: 4, y: 3 });
   const r = g.applyTurnAction(s, 'alice', { kind: 'push', targetId: 'keeper' }, fence(s));
   assert.equal(r.error, undefined);
   assert.equal(r.state.entities.keeper.x, 3);
-  assert.equal(r.state.turnController.resources.alice.main, 0);
+  assert.equal(r.state.turnController.resources.alice.main, 1);
   assert.equal(r.events[0].kind, 'action.push_blocked');
 });
 
-test('player reaction interrupts durably, uses a bounded budget and returns to the original actor', () => {
+test('player reaction interrupts durably without a consumable quota and returns to the original actor', () => {
   const s = fixture();
   Object.assign(s.entities.bob, { x: 3, y: 3 });
   const pending = g.applyTurnAction(s, 'alice', { kind: 'hit', targetId: 'bob' }, fence(s));
@@ -146,8 +149,8 @@ test('player reaction interrupts durably, uses a bounded budget and returns to t
   assert.equal(reply.state.entities.bob.vitality, 6);
   assert.equal(reply.state.turnController.phase, 'player');
   assert.equal(reply.state.turnController.activeActorId, 'alice');
-  assert.equal(reply.state.turnController.resources.alice.main, 0);
-  assert.equal(reply.state.turnController.resources.bob.reaction, 0);
+  assert.equal(reply.state.turnController.resources.alice.main, 1);
+  assert.equal(reply.state.turnController.resources.bob.reaction, 1);
   assert.equal(reply.state.turnController.pendingResolution, undefined);
   assert.equal(
     g.resolveTurnReaction(reply.state, 'bob', 'defend', fence(saved)).error,
@@ -382,15 +385,15 @@ test('AI physical proposals are admitted only in the new world phase and still o
   );
 });
 
-test('legacy reducer entrypoints cannot bypass opt-in shared budgets or world phase', () => {
+test('legacy reducer entrypoints preserve authority and finite world work without player budgets', () => {
   const s = fixture();
   Object.assign(s.entities.keeper, { x: 3, y: 3 });
   const first = g.applyAction(s, 'alice', { kind: 'hit', targetId: 'keeper' });
   assert.equal(first.error, undefined);
-  assert.equal(first.state.turnController.resources.alice.main, 0);
+  assert.equal(first.state.turnController.resources.alice.main, 1);
   assert.equal(
     g.applyAction(first.state, 'alice', { kind: 'push', targetId: 'keeper' }).error,
-    'ROUND_LOCKED',
+    undefined,
   );
   assert.equal(g.applyAction(s, 'bob', { kind: 'wait' }).error, 'WRONG_MODE');
   assert.equal(g.applyAction(s, 'keeper', { kind: 'wait' }).error, 'WRONG_MODE');
@@ -427,7 +430,7 @@ test('world NPC contact pauses for player defense then resumes the finite world 
   assert.equal(defended.state.turnController.phase, 'world');
   assert.equal(defended.state.turnController.activeActorId, null);
   assert.equal(defended.state.entities.alice.vitality, 6);
-  assert.equal(defended.state.turnController.resources.alice.reaction, 0);
+  assert.equal(defended.state.turnController.resources.alice.reaction, 1);
   assert.equal(defended.state.turnController.worldActions, 1);
   assert.equal(defended.state.turnController.worldNpcActions.keeper, 1);
   assert.equal(

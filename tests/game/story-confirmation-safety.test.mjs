@@ -868,7 +868,7 @@ test('ordinary world status never mounts consent or makes writes, including acro
   ui.render({ campaignId: 'campaign', scope: 'round-22', disabled: false, access: 'owner' });
   await ui.flush();
   assert.equal(ui.elements('reply-confirmation').length, 0);
-  assert.equal(ui.has('worldCostForecastHint'), true, 'base estimate explains its limited scope');
+  assert.equal(ui.has('worldCostForecastHint'), false, 'verbose financial paragraph was removed');
   assert.match(ui.text(), /worldCostForecast:/);
   ui.expire();
   await ui.flush();
@@ -1804,16 +1804,8 @@ for (const locale of ['ru', 'en', 'uk']) {
       ),
       true,
     );
-    assert.equal(
-      ui.has(
-        `worldAvailableFunding:${JSON.stringify({
-          sparks: formatSparkSubunits('10000', locale),
-          dreams: formatSparkSubunits('15000', locale),
-          total: formatSparkSubunits('25000', locale),
-        })}`,
-      ),
-      true,
-    );
+    assert.equal(ui.has('worldAvailableFunding'), false);
+    assert.doesNotMatch(ui.text(), /worldAvailableFunding:|worldCostForecastHint/);
     const details = ui.elements('details');
     assert.equal(details.length, 1);
     assert.equal(details[0].props.open, undefined, 'technical ceiling is closed by default');
@@ -1854,8 +1846,8 @@ for (const locale of ['ru', 'en', 'uk']) {
     );
     assert.equal(
       ui.has('worldFundingUnavailable'),
-      true,
-      'unavailable funding is not shown as zero',
+      false,
+      'the removed funding paragraph is not reintroduced as a fallback',
     );
     assert.equal(ui.elements('reply-confirmation').length, 0);
     ui.unmount();
@@ -1871,14 +1863,15 @@ test('pricing and available funds are hidden after failed or unverified reads wi
   const initial = roundCostProps();
   ui.render(initial);
   await ui.flush();
-  assert.match(ui.text(), /worldAvailableFunding:/);
+  assert.match(ui.text(), /worldCostForecast:/);
+  assert.doesNotMatch(ui.text(), /worldAvailableFunding:/);
   for (const membership of [{ membershipPending: true }, { membershipError: true }]) {
     ui.render({ ...initial, ...membership });
     assert.doesNotMatch(
       ui.text(),
       /worldAvailableFunding:|worldCostForecast:|worldOptionalSpeechForecast:|worldOptionalSpeechAllowance:/,
     );
-    assert.equal(ui.has('worldFundingUnavailable'), true);
+    assert.equal(ui.has('worldFundingUnavailable'), false);
   }
   ui.render(initial);
   failed = true;
@@ -1888,7 +1881,7 @@ test('pricing and available funds are hidden after failed or unverified reads wi
     ui.text(),
     /worldAvailableFunding:|worldCostForecast:|worldOptionalSpeechForecast:|worldOptionalSpeechAllowance:/,
   );
-  assert.equal(ui.has('worldFundingUnavailable'), true);
+  assert.equal(ui.has('worldFundingUnavailable'), false);
   assert.equal(ui.elements('reply-confirmation').length, 0);
   ui.unmount();
 });
@@ -1908,7 +1901,8 @@ for (const interruption of ['campaign', 'access', 'scope']) {
     const initial = roundCostProps();
     ui.render(initial);
     await ui.flush();
-    assert.match(ui.text(), /worldAvailableFunding:/);
+    assert.match(ui.text(), /worldCostForecast:/);
+    assert.doesNotMatch(ui.text(), /worldAvailableFunding:/);
     ui.expire();
     const other =
       interruption === 'campaign'
@@ -1923,7 +1917,7 @@ for (const interruption of ['campaign', 'access', 'scope']) {
     finishOld(roundCostStatus());
     await ui.flush();
     assert.doesNotMatch(ui.text(), /worldAvailableFunding:|worldCostForecast:/);
-    assert.equal(ui.has('worldFundingUnavailable'), true);
+    assert.equal(ui.has('worldFundingUnavailable'), false);
     assert.ok(calls.every((args) => args.length === 1));
     ui.unmount();
   });

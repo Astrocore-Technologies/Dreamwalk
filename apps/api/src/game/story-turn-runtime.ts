@@ -43,8 +43,8 @@ import {
   recordNpcEvents,
   parsePlayerTextAction,
   storyContactOutcomeCode,
-  isNpcStoryContact,
   storyTurnMode,
+  synchronizePendingSpeechEvidence,
   storyPrivateAudience,
   storyImpactContext,
   turnFence,
@@ -483,14 +483,9 @@ export class StoryTurnRuntime {
       parsed.segments.some((segment) => segment.kind === 'attempt');
     // A deferred semantic beat owns the whole ordered attempt sequence. Applying a
     // later pickup/travel now would change witnesses or visibility before that beat.
-    const deferAllAttempts =
-      directorOwned &&
-      (parsed.segments.some((segment) => segment.kind === 'speech') ||
-        parsed.segments.some((segment) => {
-          if (segment.kind !== 'attempt') return false;
-          const action = parsePlayerTextAction(state, actorId, segment.text, aliases);
-          return !action || isNpcStoryContact(state, action);
-        }));
+    // A semantic director owns the complete ordered RP post. A parser preview
+    // must not permanently reject a declared result before it reaches coauthoring.
+    const deferAllAttempts = directorOwned && !!turn;
     const privateAudience = storyPrivateAudience(actorId, input);
     const areaWhisper = directorOwned && input.channel === 'whisper' && !input.targetNpcId;
     if (
@@ -673,6 +668,9 @@ export class StoryTurnRuntime {
           });
         }
         next.turnController!.nextSpeechSequence = preview.state.turnController!.nextSpeechSequence;
+        // Retention only: future sources still need ordered audience admission.
+        // Protect early sources while a long mixed post is resolved segment by segment.
+        synchronizePendingSpeechEvidence(next);
         if (preview.requests.length) next.revision++;
         entries.push({
           ordinal: entries.length,
@@ -1189,15 +1187,6 @@ export class StoryTurnRuntime {
           return old.quote_result;
         }
         await assertPresentationAliasAuthority(c, id, a.user.id, a.actorId, aliases, input.text);
-        const count = Number(
-          (
-            await c.query(
-              'SELECT count(*) AS n FROM game_story_turns WHERE campaign_id=$1 AND requester_user_id=$2',
-              [id, a.user.id],
-            )
-          ).rows[0].n,
-        );
-        if (count >= 1024) fail(429, 'TURN_LIMIT', 'TURN_LIMIT');
         const turnId = runtimeQuoteIdentity(`turn:${id}:${a.user.id}:${input.operationId}`);
         let context!: ReturnType<typeof buildStoryTurnContext>;
         try {

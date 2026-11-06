@@ -283,7 +283,7 @@ await test(
         },
       );
       await t.test(
-        'reconnect gets EndTurn resources, immediate bounded walking and no idle NPC progression',
+        'reconnect gets EndTurn resources, immediate free walking and no idle NPC progression',
         async () => {
           await startApi();
           const snap = await snapshot(owner, legacyId),
@@ -305,7 +305,7 @@ await test(
           });
           assert.equal(response.status, 'committed');
           assert.equal(actor(response).x, a.x + 1);
-          assert.equal(response.projection.turn.resources.movement, p.turn.resources.movement - 1);
+          assert.equal(response.projection.turn.resources.movement, p.turn.resources.movement);
           const saved = await read(legacyId);
           await delay(350);
           await snapshot(owner, legacyId);
@@ -317,13 +317,13 @@ await test(
           await transaction((c) => convertSavedCampaignToTurns(c, input));
           assert.equal(
             (await snapshot(owner, legacyId)).projection.turn.resources.movement,
-            p.turn.resources.movement - 1,
+            p.turn.resources.movement,
           );
           await stopApi();
           await startApi();
           assert.equal(
             (await snapshot(owner, legacyId)).projection.turn.resources.movement,
-            p.turn.resources.movement - 1,
+            p.turn.resources.movement,
           );
         },
       );

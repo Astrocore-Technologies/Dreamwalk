@@ -33,9 +33,6 @@ export function TurnControls({
     >
       <header>
         <div>
-          <span className={styles.kicker}>
-            {text('round')} {turn.roundNumber}
-          </span>
           <h2>
             {turn.phase === 'world'
               ? text('world')
@@ -62,28 +59,6 @@ export function TurnControls({
           {text('worldWaiting')}
         </p>
       )}
-      <details className={styles.turnDetails}>
-        <summary>{text('label')}</summary>
-        <dl className={styles.turnResources}>
-          {(['movement', 'main', 'additional', 'reaction'] as const).map((key) => (
-            <div key={key}>
-              <dt>{text(key === 'reaction' ? 'reactionResource' : key)}</dt>
-              <dd>{turn.resources[key]}</dd>
-            </div>
-          ))}
-        </dl>
-        <p className={styles.turnHint}>
-          {turn.pendingResolution
-            ? text('resolving')
-            : turn.phase === 'world'
-              ? text('worldPending')
-              : turn.phase === 'reaction'
-                ? text('reactionHint')
-                : turn.ownTurn
-                  ? text('frozen')
-                  : text('waiting')}
-        </p>
-      </details>
       {canReact && (
         <div className={styles.actions}>
           <Button type="button" disabled={!connected || busy} onClick={() => onReaction('defend')}>

@@ -9,6 +9,24 @@ export function redactNarrativeContent(value) {
     for (const turn of value.narrativeCanon.turns ?? []) {
       turn.narration = '[Narrative text removed after account erasure]';
       turn.evidenceIds = [];
+      for (const event of turn.establishedEvents ?? []) {
+        event.description = '[Established event text removed after account erasure]';
+        const propAliases = new Map(
+          (event.effects ?? []).flatMap((effect, index) =>
+            effect.kind === 'create_prop'
+              ? [[effect.ref, `${event.id ?? 'erased-rp'}-${index}`]]
+              : [],
+          ),
+        );
+        for (const effect of event.effects ?? [])
+          for (const key of ['ref', 'targetId', 'itemId', 'recipientId'])
+            if (propAliases.has(effect[key])) effect[key] = propAliases.get(effect[key]);
+        for (const effect of event.effects ?? []) {
+          if (effect.kind === 'public_condition' || effect.kind === 'create_prop')
+            effect.description = '[Removed]';
+          if (effect.kind === 'create_prop') effect.name = 'Unrecorded object';
+        }
+      }
       if (turn.introducedScene) {
         turn.introducedScene.name = 'Unrecorded place';
         turn.introducedScene.description = '[Removed]';
@@ -35,10 +53,15 @@ export function redactNarrativeContent(value) {
     value.label = 'Unrecorded place';
     delete value.labelTranslations;
   }
-  if (typeof value.id === 'string' && value.id.startsWith('prop-') && value.kind === 'item') {
+  if (
+    typeof value.id === 'string' &&
+    (value.id.startsWith('prop-') || value.id.startsWith('rp-')) &&
+    value.kind === 'item'
+  ) {
     value.label = 'Unrecorded object';
     delete value.labelTranslations;
   }
+  if ('publicCondition' in value) delete value.publicCondition;
   if (value.supportingNpc?.generated) {
     value.label = 'Resident';
     delete value.labelTranslations;

@@ -26,7 +26,11 @@ const { createOwnerImageRuntime } = require('../../apps/api/dist/image-generatio
 const { estimateTextRequest } = require('../../apps/api/dist/generation/estimates.js');
 const { canonical } = require('../../apps/api/dist/ai/context.js');
 const { activateReleaseDeployment } = require('../images/release-deployment-fixture.cjs');
-const { endPlayerTurn, turnFence } = require('../../packages/game-core/dist');
+const {
+  endPlayerTurn,
+  turnFence,
+  buildNarrativeContext,
+} = require('../../packages/game-core/dist');
 const { ApiException } = require('../../apps/api/dist/errors.js');
 const { SparksAccounting } = require('../../apps/api/dist/generation/sparks-accounting.js');
 const {
@@ -127,14 +131,30 @@ await test(
                 };
                 proposal.steps = proposal.steps.map((step) => ({
                   ...step,
-                  action:
-                    step.segmentIndex === 0 ? { kind: 'pick_up', targetId: 'new_item' } : null,
+                  action: null,
+                  establishedEvents:
+                    step.segmentIndex === 0
+                      ? [
+                          {
+                            description: 'The notebook is pocketed.',
+                            entityIds: [],
+                            effects: [
+                              {
+                                kind: 'create_prop',
+                                ref: 'notebook',
+                                name: 'notebook',
+                                description: 'An ordinary pocket notebook.',
+                              },
+                            ],
+                          },
+                        ]
+                      : step.establishedEvents,
                 }));
                 proposal.narrative = {
                   narration: 'The notebook is pocketed. The traveler sets off toward the cafe.',
                   newScene: null,
                   newNpc: null,
-                  newItem: { name: 'notebook', description: 'An ordinary pocket notebook.' },
+                  newItem: null,
                   evidenceIds: [],
                 };
               }
@@ -783,14 +803,27 @@ await test(
         async () => {
           const id = ids[2],
             live = await setup(id);
-          live.state.narrativeConstraints = {
-            ...live.state.narrativeConstraints,
-            allowNewScenes: false,
-          };
+          // Autonomous creation flags no longer veto explicit player RP. Make
+          // the exit genuinely impossible: no free, reachable connection cell.
+          const originMap = live.state.maps[live.state.entities[actor].mapId];
+          originMap.blocked = Array.from({ length: originMap.height }, (_, y) =>
+            Array.from({ length: originMap.width }, (_, x) => ({ x, y })),
+          )
+            .flat()
+            .filter(
+              (point) =>
+                point.x !== live.state.entities[actor].x ||
+                point.y !== live.state.entities[actor].y,
+            );
+          assert.deepEqual(
+            buildNarrativeContext(live.state, actor, 'Unavailable Cafe', 'en', undefined, true)
+              .availableConnections,
+            [],
+          );
           await game.persist(id, live, live.state, 'test.travel.closed');
           const turn = await post(id, live, '*I go to Unavailable Cafe*');
           await end(id, live);
-          const before = imageCalls;
+          const before = [textCalls, imageCalls];
           await quote(id);
           const row = (
             await db.query(
@@ -799,7 +832,19 @@ await test(
             )
           ).rows[0];
           assert.equal(row.status, 'failed');
-          assert.equal(imageCalls, before);
+          assert.equal(row.result_code, 'PATH_BLOCKED');
+          assert.deepEqual([textCalls, imageCalls], before);
+          await game.processDecisionRequests(id, live);
+          assert.equal(
+            (
+              await db.query(
+                "SELECT count(*)::int n FROM game_npc_decision_requests WHERE id=$1 AND status IN ('queued','running')",
+                [turn.id],
+              )
+            ).rows[0].n,
+            0,
+          );
+          assert.deepEqual([textCalls, imageCalls], before);
         },
       );
       await t.test(
@@ -899,7 +944,7 @@ await test(
           textOutcome = 'success';
           assert.equal(imageCalls, imageBefore, 'ordinary End turn cannot create an image');
           assert.equal(live.state.entities[actor].mapId, before.entities[actor].mapId);
-          assert.deepEqual(live.state.entities[actor].inventory, [`prop-${turn.id}`]);
+          assert.deepEqual(live.state.entities[actor].inventory, [`rp-${turn.id}-0-0-0`]);
           const children = (
             await db.query(
               "SELECT * FROM game_story_turns WHERE campaign_id=$1 AND context->>'semanticTravelSourceTurnId'=$2",
@@ -944,7 +989,7 @@ await test(
           const restarted = game.live.get(id);
           await drain(id, restarted);
           assert.equal(restarted.state.entities[actor].mapId, `scene-${child.id}`);
-          assert.deepEqual(restarted.state.entities[actor].inventory, [`prop-${turn.id}`]);
+          assert.deepEqual(restarted.state.entities[actor].inventory, [`rp-${turn.id}-0-0-0`]);
           assert.equal(restarted.state.maps[`scene-${child.id}`].label, 'Coffee and Silence');
           assert.equal(
             (

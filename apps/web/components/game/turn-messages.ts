@@ -9,9 +9,9 @@ export const turnMessages = {
     'Персонаж не може говорити чи діяти.',
   ],
   worldWaiting: [
-    'Мир разрешает ответы и действия. Если нужна генерация, проверьте её подтверждение под полем истории.',
-    'The world is resolving replies and actions. If generation needs confirmation, review it below the story input.',
-    'Світ завершує відповіді та дії. Якщо генерація потребує підтвердження, перевірте його під полем історії.',
+    'Мир готовит ответы и продолжение истории.',
+    'The world is preparing replies and the next part of the story.',
+    'Світ готує відповіді та продовження історії.',
   ],
   localInput: ['Действия хода · бесплатно', 'Turn actions · free', 'Дії ходу · безкоштовно'],
   lobbyIntro: [
@@ -20,9 +20,9 @@ export const turnMessages = {
     'Покрокова історія: ходи сценою, говори з кількома NPC, а потім передай хід світу.',
   ],
   locked: [
-    'Действие недоступно в этой фазе или ресурс хода исчерпан.',
-    'This action is unavailable in this phase or its turn resource is exhausted.',
-    'Дія недоступна в цій фазі або ресурс ходу вичерпано.',
+    'Действие недоступно, пока завершается текущий этап истории.',
+    'This action is unavailable while the current story phase is resolving.',
+    'Дія недоступна, поки завершується поточний етап історії.',
   ],
   observedHarm: [
     'Замечена физическая попытка',

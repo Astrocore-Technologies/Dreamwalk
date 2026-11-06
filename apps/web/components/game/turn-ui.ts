@@ -1,7 +1,7 @@
 import type { GamePoint, GameProjection } from '@dreamwalk/contracts';
 import { isSpatialRecoveryRequired } from './spatial-recovery';
 
-/** Presentation fence only. Server authorization and resource costs remain authoritative. */
+/** Presentation fence only. Server authorization and phase fences remain authoritative. */
 export function projectionTurnFence(projection: GameProjection | null | undefined) {
   const turn = projection?.turn;
   return turn
@@ -16,7 +16,9 @@ export function playerControlsAvailable(projection: GameProjection | null | unde
 /** Animate only an already-committed, server-supplied path. Never advances canonical positions. */
 export function committedPathSample(points: readonly GamePoint[], elapsed: number, stepMs = 130) {
   if (!points.length) return null;
-  const progress = Math.max(0, elapsed) / Math.max(1, stepMs);
+  // A long legal path is not a minutes-long animation or a straight-line teleport.
+  const duration = Math.min(Math.max(1, stepMs), 1800 / Math.max(1, points.length - 1));
+  const progress = Math.max(0, elapsed) / duration;
   const index = Math.min(points.length - 1, Math.floor(progress));
   const from = points[index],
     to = points[Math.min(points.length - 1, index + 1)];

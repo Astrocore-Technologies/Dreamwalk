@@ -14,11 +14,17 @@ import { forecastWorldRound } from './round-cost-forecast';
 import { autonomousSpeechForecastContexts } from './autonomous-speech-forecast';
 import { readRoundFundingAvailability } from './round-funding-availability';
 import { stampNpcThoughtAudience, projectNpcInnerThought } from './npc-thought-access';
+import { orderedTurnRequestsSql } from './turn-request-order';
 import {
   campaignDirectorUpdateSchema,
   directorProfileIdSchema,
 } from '@dreamwalk/contracts/dist/director-style';
-import { readDirectorCatalog, directorProfile, transactionQueries } from '../ai/director-style';
+import {
+  readDirectorCatalog,
+  directorProfile,
+  publicDirectorProfile,
+  transactionQueries,
+} from '../ai/director-style';
 import { WorldGenerationBatch } from './world-generation-batch';
 import { NarrativeCorrections } from './narrative-corrections';
 import { npcPublicReplySchema, footprintDistance, hasPosition } from '@dreamwalk/contracts';
@@ -545,7 +551,10 @@ export class GameService implements OnModuleDestroy {
   }
   async directors() {
     const catalog = await readDirectorCatalog(this.db);
-    return { ...catalog, profiles: catalog.profiles.filter((profile) => profile.enabled) };
+    return {
+      ...catalog,
+      profiles: catalog.profiles.filter((profile) => profile.enabled).map(publicDirectorProfile),
+    };
   }
   async director(req: Request, id: string, body?: unknown) {
     const input = body === undefined ? undefined : campaignDirectorUpdateSchema.parse(body);
@@ -590,7 +599,7 @@ export class GameService implements OnModuleDestroy {
         return {
           profileId: row.director_profile_id,
           revision: Number(row.director_revision),
-          profile: directorProfile(catalog, row.director_profile_id),
+          profile: publicDirectorProfile(directorProfile(catalog, row.director_profile_id)),
           canChange: row.owner_id === access.user.id,
         };
       });
@@ -2259,10 +2268,10 @@ export class GameService implements OnModuleDestroy {
     if (live.state.turnController && live.state.turnController.phase !== 'world') return;
     await this.story.reconcileTerminalTravel(id);
     await this.reconcileIntents(id, live.state.tick);
-    const requests = await this.db.query(
-      "SELECT * FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' ORDER BY CASE WHEN purpose='plan' AND context ? 'worldRoundDecision' THEN 0 WHEN purpose='story_turn' AND context ? 'travelSceneSpec' THEN 1 WHEN purpose='story_turn' AND context->>'generationPolicy'='world-batch-v1' THEN 2 ELSE 3 END,CASE WHEN context ? 'turnOrder' THEN (context->>'turnOrder')::bigint ELSE 9223372036854775807 END,created_at,id LIMIT 8",
-      [id],
-    );
+    const requests = await this.db.query(orderedTurnRequestsSql, [
+      id,
+      live.state.turnController?.roundId ?? null,
+    ]);
     for (let r of requests) {
       if (typeof r.context.awaitStoryDirector === 'string') {
         const director = await this.db.query(
@@ -3551,15 +3560,6 @@ export class GameService implements OnModuleDestroy {
         command.npcId &&
         next.rulesetVersion === 'hybrid-v3'
       ) {
-        const queued = Number(
-          (
-            await this.db.query(
-              "SELECT count(*) FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued'",
-              [id],
-            )
-          )[0].count,
-        );
-        if (queued >= 16) fail(429, 'RATE_LIMITED', 'RATE_LIMITED');
         const replyToObservationId = admittedNpcSpeechObservationId(
           next,
           a.actorId,

@@ -96,7 +96,7 @@ test('location-only whisper excludes even an established bystander and private a
       .every((e) => !e.audienceIds.includes('bob')),
   );
 });
-test('unplaced physical intentions remain attributed attempts without fabricated completion', () => {
+test('location-only authored movement is canon without invented coordinates or witnessed movement', () => {
   const state = scene();
   const { result } = apply(state, input('*walk to keeper*', null));
   assert.equal(result.error, undefined);
@@ -109,13 +109,24 @@ test('unplaced physical intentions remain attributed attempts without fabricated
   assert.equal(result.state.entities.alice.x, undefined);
   assert.equal(result.state.entities.alice.path, undefined);
   assert.ok(!result.events.some((e) => e.kind === 'actor.moved'));
-  assert.ok(!result.entries.some((e) => e.code === 'ACTION_SUCCEEDED'));
+  assert.ok(result.entries.some((e) => e.code === 'ACTION_SUCCEEDED'));
+  const receipt = result.state.narrativeCanon.turns.at(-1).establishedEvents[0];
+  assert.equal(receipt.description, 'walk to keeper');
+  assert.equal(receipt.authority, 'authored_fiction');
+  assert.deepEqual(receipt.effects, []);
+  assert.ok(
+    !result.state.npcBrains.keeper.living.observations.some(
+      (o) => o.confidence === 'witnessed' && o.text?.includes('walk to keeper'),
+    ),
+  );
 });
 test('location-only semantic lifecycle is admitted, remembered, outsider-safe and replay-safe', () => {
   const state = scene(),
     i = input('*I knock keeper unconscious*', null),
     id = randomUUID();
   const proposal = g.createMockStoryTurnProposal(state, 'alice', i, id);
+  // Exercise the legacy impact path, not an incompatible simultaneous established event.
+  delete proposal.steps[0].establishedEvents;
   proposal.steps[0].narrativeImpact = { targetId: 'keeper', effect: 'unconscious' };
   proposal.narrative.narration = 'The keeper loses consciousness.';
   const result = g.applyStoryTurnProposal(state, 'alice', i, id, proposal);
@@ -395,6 +406,8 @@ function encounterProposal(state, text = '*I look for someone to speak with*') {
     id = randomUUID();
   const context = g.buildStoryTurnContext(state, 'alice', i, id);
   const proposal = g.createMockStoryTurnProposal(state, 'alice', i, id);
+  // The legacy encounter has its own typed receipt and cannot also establish generic RP.
+  delete proposal.steps[0].establishedEvents;
   proposal.steps[0].sceneEncounter = {
     npcId: context.sceneEncounterPolicy?.candidates[0]?.npcId ?? 'not-eligible',
   };

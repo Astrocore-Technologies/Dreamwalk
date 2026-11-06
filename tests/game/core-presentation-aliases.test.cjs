@@ -602,3 +602,92 @@ test('released visible doors resolve EN/UK open and close without renaming or by
       }
     }
 });
+
+for (const locale of ['en', 'uk']) {
+  for (const kind of ['item_custody', 'item_placement', 'item_consumed']) {
+    test(`typed established ${kind} admits a named carried released alias (${locale})`, () => {
+      const state = world();
+      carry(state);
+      const evidence = aliases(state, locale, ['item']);
+      const label = evidence.entries[0].text;
+      const request = input(state, `*${label} changed hands or position.*`, locale);
+      const context = g.buildStoryTurnContext(state, 'alice', request, turnId, evidence);
+      assert.ok(context.establishedRoleplay.entities.some((entity) => entity.id === 'key'));
+      const effect =
+        kind === 'item_custody'
+          ? { kind, itemId: 'key', recipientId: 'keeper' }
+          : kind === 'item_placement'
+            ? { kind, itemId: 'key', point: { x: 5, y: 5 }, surfaceId: null }
+            : { kind, itemId: 'key' };
+      const body = proposal(state, request, evidence, null);
+      body.steps[0].establishedEvents = [
+        { description: `${label} changed.`, entityIds: ['key'], effects: [effect] },
+      ];
+      const before = structuredClone(state);
+      const result = g.applyStoryTurnProposal(state, 'alice', request, turnId, body, {
+        presentationAliases: evidence,
+      });
+      assert.equal(result.error, undefined);
+      assert.deepEqual(state, before);
+      if (kind === 'item_custody') assert.equal(result.state.entities.key.ownerId, 'keeper');
+      else if (kind === 'item_placement')
+        assert.equal(result.state.entities.key.ownerId, undefined);
+      else assert.equal(result.state.entities.key, undefined);
+      if (result.state.entities.key)
+        assert.equal(result.state.entities.key.label, before.entities.key.label);
+      assert.ok(g.applyStoryTurnProposal(state, 'alice', request, turnId, body).error);
+    });
+  }
+}
+
+test('established alias references never authorize unmentioned, foreign, stale or hidden inventory', () => {
+  const state = world();
+  carry(state);
+  const evidence = aliases(state, 'en', ['item']);
+  for (const text of ['*I waited.*', '*The Brass passerby waited.*']) {
+    const request = input(state, text);
+    const context = g.buildStoryTurnContext(state, 'alice', request, turnId, evidence);
+    assert.ok(!context.establishedRoleplay.entities.some((entity) => entity.id === 'key'));
+    const body = proposal(state, request, evidence, null);
+    body.steps[0].establishedEvents = [
+      {
+        description: 'The item moved.',
+        entityIds: ['key'],
+        effects: [{ kind: 'item_custody', itemId: 'key', recipientId: 'keeper' }],
+      },
+    ];
+    assert.ok(
+      g.applyStoryTurnProposal(state, 'alice', request, turnId, body, {
+        presentationAliases: evidence,
+      }).error,
+    );
+  }
+  const request = input(state, '*Brass pass changed hands.*');
+  const body = proposal(state, request, evidence, null);
+  body.steps[0].establishedEvents = [
+    {
+      description: 'The item moved.',
+      entityIds: ['key'],
+      effects: [{ kind: 'item_custody', itemId: 'key', recipientId: 'keeper' }],
+    },
+  ];
+  for (const change of ['foreign', 'hidden', 'stale', 'unready']) {
+    const next = structuredClone(state),
+      invalid = structuredClone(evidence);
+    if (change === 'foreign' || change === 'hidden') {
+      next.entities.alice.inventory = [];
+      next.entities.key.ownerId = change === 'foreign' ? 'bob' : 'keeper';
+      next.entities[next.entities.key.ownerId].inventory = ['key'];
+    } else if (change === 'stale') next.entities.key.label = 'Changed source';
+    else invalid.entries[0].translationKey = '';
+    assert.throws(
+      () => g.buildStoryTurnContext(next, 'alice', request, turnId, invalid),
+      /INVALID_PRESENTATION_ALIASES/,
+    );
+    assert.ok(
+      g.applyStoryTurnProposal(next, 'alice', request, turnId, body, {
+        presentationAliases: invalid,
+      }).error,
+    );
+  }
+});

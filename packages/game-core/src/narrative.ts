@@ -123,6 +123,7 @@ export function buildNarrativeContext(
   text: string,
   replyLocale: Locale = 'en',
   audienceIds?: string[],
+  playerAuthoredRoleplay = false,
 ) {
   if (audienceIds !== undefined && !validNarrativeAudience(state, actorId, audienceIds))
     throw new Error('FORBIDDEN');
@@ -163,7 +164,28 @@ export function buildNarrativeContext(
     sourceVersion: state.narrativeSource ? { ...state.narrativeSource } : null,
     intent: text,
     canonRevision: canon?.revision ?? 0,
-    constraints,
+    constraints: {
+      ...(!playerAuthoredRoleplay
+        ? {
+            maxScenes: constraints.maxScenes,
+            maxSupportingNpcs: constraints.maxSupportingNpcs,
+            maxTurns: constraints.maxTurns,
+          }
+        : {}),
+      allowNewScenes: playerAuthoredRoleplay || constraints.allowNewScenes,
+      allowNewNpcs: playerAuthoredRoleplay || constraints.allowNewNpcs,
+      protectedFacts: constraints.protectedFacts,
+      forbiddenRoles: constraints.forbiddenRoles,
+    },
+    ...(playerAuthoredRoleplay
+      ? {
+          explicitPlayerCreation: true,
+          autonomousAuthoring: {
+            allowNewScenes: constraints.allowNewScenes,
+            allowNewNpcs: constraints.allowNewNpcs,
+          },
+        }
+      : {}),
     currentScene: actor
       ? {
           id: actor.mapId,
@@ -213,23 +235,48 @@ export function buildNarrativeContext(
             .sort((a, b) => a.id.localeCompare(b.id))
         : [],
     confirmedTurnsPolicy:
-      'These are historical turns, not the status of the current attempt. Preserve past events without treating an earlier failure, pending claim or custody description as a current outcome. Current state and current admitted effects take precedence; old evidence IDs support historical continuity only.',
+      'These are historical turns, not the status of the current attempt. Preserve past events without treating an earlier failure, pending claim or custody description as a current outcome. Descriptions are established ordinary fiction, not witnessed physical evidence or authority over another player. Only typed effects and current tracked state establish mechanical outcomes. Current state and current admitted effects take precedence; old evidence IDs support historical continuity only.',
     confirmedTurns: accessibleTurns.slice(-16).map((t) => ({
       id: t.id,
       tick: t.tick,
       narration: t.narration,
       ...(t.impact ? { impact: t.impact } : {}),
+      ...(t.impacts ? { impacts: t.impacts } : {}),
+      ...(t.establishedEvents
+        ? {
+            establishedEvents: t.establishedEvents
+              .filter((event) =>
+                (
+                  audience ??
+                  Object.values(state.entities)
+                    .filter((entity) => entity.kind === 'player')
+                    .map((entity) => entity.id)
+                ).every((id) => event.audienceIds.includes(id)),
+              )
+              .map(({ description, segmentIndex, eventIndex }) => ({
+                description,
+                segmentIndex,
+                eventIndex,
+                authority: 'authored_fiction' as const,
+              })),
+          }
+        : {}),
       introducedScene: t.introducedScene,
       introducedNpc: t.introducedNpc,
       introducedItem: t.introducedItem,
     })),
-    remainingScenes: Math.max(0, constraints.maxScenes - Object.keys(state.maps).length),
-    remainingNpcs: Math.max(
-      0,
-      constraints.maxSupportingNpcs -
-        Object.values(state.entities).filter((e) => e.supportingNpc?.generated).length,
-    ),
-    remainingTurns: Math.max(0, constraints.maxTurns - (canon?.turns.length ?? 0)),
+    ...(!playerAuthoredRoleplay
+      ? {
+          remainingScenes: Math.max(0, constraints.maxScenes - Object.keys(state.maps).length),
+          remainingNpcs: Math.max(
+            0,
+            constraints.maxSupportingNpcs -
+              Object.values(state.entities).filter((entity) => entity.supportingNpc?.generated)
+                .length,
+          ),
+          remainingTurns: Math.max(0, constraints.maxTurns - (canon?.turns.length ?? 0)),
+        }
+      : {}),
     evidenceIds: accessibleTurns.map((t) => t.id).slice(-16),
     supportedActions: [
       'inspect',
@@ -243,10 +290,10 @@ export function buildNarrativeContext(
     ],
     narrativePolicy:
       audienceIds !== undefined
-        ? 'Private story for the server-stamped audience only. Use only canon accessible to every recipient. Player intent and narrative flavor are not authoritative facts. Do not reveal NPC secrets or use unsupported mechanics. No new scenes or NPCs. New content may extend, never retroactively replace, confirmed canon.'
+        ? 'Private story for the server-stamped audience only. Use only canon accessible to every recipient. Current player-authored RP events can establish fictional canon through typed admission; quotations and reported speech remain attributed claims. Do not reveal NPC secrets or use unsupported mechanics. No new scenes or NPCs. Current authored RP may change the fictional situation; keep event provenance and coherent current state.'
         : audience
-          ? 'Story for the current server-stamped encounter audience only. Use only shared canon accessible to every recipient. Do not reveal private whispers or NPC secrets, invent completed physical outcomes, or claim unseen participants know these events. New content may extend confirmed canon.'
-          : 'Shared campaign story only. Player intent and narrative flavor are not authoritative facts. Do not use private whispers, NPC secrets or unsupported mechanics. New content may extend, never retroactively replace, confirmed canon.',
+          ? 'Story for the current server-stamped encounter audience only. Use only shared canon accessible to every recipient. Accept current player-authored RP outcomes through typed admission. Do not reveal private whispers or NPC secrets, or claim unseen participants know these events. New content may extend confirmed canon.'
+          : 'Shared campaign story only. Current player-authored RP events can establish fictional canon through typed admission; quotations and reported speech remain attributed claims. Do not use private whispers, NPC secrets or unsupported mechanics. Current authored RP may change the fictional situation; keep event provenance and coherent current state.',
   };
   const semantic = {
     ...context,
@@ -286,6 +333,7 @@ export function applyNarrativeProposal(
   intent: string,
   replyLocale: Locale = 'en',
   audienceIds?: string[],
+  establishedRoleplay = false,
 ): GameResult {
   const parsed = narrativeProposalSchema.safeParse(input);
   if (!parsed.success) return error(state, 'INVALID_ACTION');
@@ -311,14 +359,21 @@ export function applyNarrativeProposal(
   const actor = state.entities[actorId];
   if (actor?.kind !== 'player' || state.rulesetVersion !== 'hybrid-v3')
     return error(state, 'FORBIDDEN');
-  if (actor.encounterId) return error(state, 'WRONG_MODE');
+  if (actor.encounterId && !establishedRoleplay) return error(state, 'WRONG_MODE');
   if (typeof intent !== 'string' || !intent.trim() || intent.length > 2000)
     return error(state, 'INVALID_ACTION');
   if (audienceIds !== undefined && (p.newScene || p.newNpc)) return error(state, 'FORBIDDEN');
-  const context = buildNarrativeContext(state, actorId, intent, replyLocale, audienceIds),
+  const context = buildNarrativeContext(
+      state,
+      actorId,
+      intent,
+      replyLocale,
+      audienceIds,
+      establishedRoleplay,
+    ),
     constraints = policy(state);
   if (context.contextHash !== p.contextHash) return error(state, 'STALE_STATE');
-  if (!context.remainingTurns) return error(state, 'RATE_LIMITED');
+  if (!establishedRoleplay && !context.remainingTurns) return error(state, 'RATE_LIMITED');
   if (
     new Set(p.evidenceIds).size !== p.evidenceIds.length ||
     p.evidenceIds.some((id) => !context.evidenceIds.includes(id))
@@ -330,8 +385,11 @@ export function applyNarrativeProposal(
   const events: GameResult['events'] = [];
   if (p.newScene) {
     const scene = p.newScene;
-    if (!constraints.allowNewScenes) return error(state, 'FORBIDDEN');
-    if (!context.remainingScenes || next.maps[actor.mapId].exits.length >= 32)
+    if (!constraints.allowNewScenes && !establishedRoleplay) return error(state, 'FORBIDDEN');
+    if (
+      (!establishedRoleplay && !context.remainingScenes) ||
+      next.maps[actor.mapId].exits.length >= 32
+    )
       return error(state, 'RATE_LIMITED');
     if (
       scene.connection.fromMapId !== actor.mapId ||
@@ -416,8 +474,8 @@ export function applyNarrativeProposal(
   }
   if (p.newNpc) {
     const n = p.newNpc;
-    if (!constraints.allowNewNpcs) return error(state, 'FORBIDDEN');
-    if (!context.remainingNpcs) return error(state, 'RATE_LIMITED');
+    if (!constraints.allowNewNpcs && !establishedRoleplay) return error(state, 'FORBIDDEN');
+    if (!establishedRoleplay && !context.remainingNpcs) return error(state, 'RATE_LIMITED');
     const reserved = Object.values(state.entities).flatMap((e) => [
       e.id,
       e.label ?? '',
@@ -576,26 +634,32 @@ export function createMockNarrativeProposal(
   turnId: string,
   replyLocale: Locale = 'en',
   audienceIds?: string[],
+  playerAuthoredRoleplay = false,
 ): NarrativeProposal | null {
-  const c = buildNarrativeContext(state, actorId, text, replyLocale, audienceIds);
-  if (!c.currentScene || !c.remainingTurns) return null;
-  if (!hasPosition(state.entities[actorId]))
+  const c = buildNarrativeContext(
+    state,
+    actorId,
+    text,
+    replyLocale,
+    audienceIds,
+    playerAuthoredRoleplay,
+  );
+  if (!c.currentScene || (!playerAuthoredRoleplay && !c.remainingTurns)) return null;
+  if (!hasPosition(state.entities[actorId]) || !c.availableConnections.length)
     return {
       turnId,
       contextHash: c.contextHash,
-      narration: {
-        en: 'The character expresses an intention; its physical outcome is not yet established.',
-        ru: 'Персонаж выражает намерение; его физический результат пока не установлен.',
-        uk: 'Персонаж висловлює намір; його фізичний результат поки не встановлено.',
-      }[c.replyLocale],
+      narration: text.replace(/\*/gu, '').trim(),
       newScene: null,
       newNpc: null,
       actions: [],
       evidenceIds: c.evidenceIds.slice(-1),
     };
-  if (!c.availableConnections.length) return null;
   const next = (state.narrativeCanon?.revision ?? 0) + 1,
-    extend = !audienceIds && c.constraints.allowNewScenes && c.remainingScenes > 0;
+    extend =
+      !audienceIds &&
+      c.constraints.allowNewScenes &&
+      (playerAuthoredRoleplay || !!c.remainingScenes);
   const copy = {
     en: {
       name: 'Mira',
@@ -659,7 +723,7 @@ export function createMockNarrativeProposal(
     narration: extend ? copy.discovery(newScene!.name) : copy.pause,
     newScene,
     newNpc:
-      extend && c.constraints.allowNewNpcs && c.remainingNpcs > 0
+      extend && c.constraints.allowNewNpcs && (playerAuthoredRoleplay || !!c.remainingNpcs)
         ? {
             name,
             roleLabel: copy.role,

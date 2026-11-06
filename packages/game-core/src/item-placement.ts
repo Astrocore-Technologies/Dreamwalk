@@ -47,8 +47,7 @@ function dropContext(state: GameState, actorId: string, itemId: string) {
       !turn.actorOrder.includes(actorId)
     )
       return { error: 'WRONG_MODE' as const };
-    if (turn.pendingResolution || turn.reaction || (turn.resources[actorId]?.additional ?? 0) <= 0)
-      return { error: 'ROUND_LOCKED' as const };
+    if (turn.pendingResolution || turn.reaction) return { error: 'ROUND_LOCKED' as const };
   }
   const encounters = Object.values(state.encounters).filter(
     (encounter) => encounter.phase === 'planning' && encounter.mapId === actor.mapId,

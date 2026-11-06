@@ -4,8 +4,8 @@ import { applyAction } from './index';
 import { applyTurnAction, matchesTurnFence } from './turns';
 
 /** Finish an already submitted, ordered player attempt during its director phase.
- * This is the ordinary reducer with the original player's remaining resources,
- * not another world-NPC action or a general budget bypass. */
+ * This is the ordinary reducer with the original player's authority,
+ * not another world-NPC action or a financial/authorization bypass. */
 export function applyStoryOrderedAction(
   state: GameState,
   actorId: string,

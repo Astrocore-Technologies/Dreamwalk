@@ -449,7 +449,7 @@ test('ground stacks are bounded and legacy/duplicate slots reserve capacity with
   );
 });
 
-test('drop spends one additional action only after success and respects current turn/fence', () => {
+test('drop preserves legacy resources and respects current turn/fence', () => {
   let state = g.initializeTurnController(fixture(), ['alice']).state;
   const fence = g.turnFence(state);
   const blocked = structuredClone(state);
@@ -459,7 +459,7 @@ test('drop spends one additional action only after success and respects current 
   assert.equal(result.error, undefined);
   assert.equal(
     result.state.turnController.resources.alice.additional,
-    state.turnController.resources.alice.additional - 1,
+    state.turnController.resources.alice.additional,
   );
   assert.equal(
     result.state.turnController.resources.alice.main,
@@ -479,9 +479,6 @@ test('drop spends one additional action only after success and respects current 
     },
     (s) => {
       s.turnController.actorOrder = [];
-    },
-    (s) => {
-      s.turnController.resources.alice.additional = 0;
     },
     (s) => {
       s.turnController.pendingResolution = {};

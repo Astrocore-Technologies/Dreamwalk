@@ -801,7 +801,7 @@ await test(
         },
       );
       await t.test(
-        'failed inferred action clarifies atomically; known failed attempt is an explicit outcome, never success',
+        'legacy failed actions stay failed while typed authored door effects commit atomically',
         async () => {
           const id = ids[12],
             live = await prepare(id);
@@ -827,12 +827,36 @@ await test(
           assert.ok(
             known.p.request.context.actionOutcomes.some((o) => o.code !== 'ACTION_SUCCEEDED'),
           );
-          assert.equal((await complete(id, known)).status, 'committed');
+          const legacy = inferredDirectorProposal(
+            known,
+            { kind: 'open', targetId: 'door' },
+            'The door remains locked.',
+            'The locked door does not open.',
+          );
+          assert.equal((await complete(id, known, legacy)).status, 'committed');
           const outcome = (await feed(id)).entries.find(
             (e) => e.turnId === known.id && e.kind === 'outcome',
           );
           assert.notEqual(outcome.code, 'ACTION_SUCCEEDED');
           assert.equal(live.state.entities.door.locked, true);
+          const authored = await queued(id, await quoted(id, input(id, '*open door* Hello')));
+          const effect =
+            authored.p.request.context.mockProposal.steps[0].establishedEvents[0].effects[0];
+          assert.deepEqual(effect, {
+            kind: 'door_state',
+            targetId: 'door',
+            open: true,
+            locked: false,
+          });
+          assert.equal((await complete(id, authored)).status, 'committed');
+          assert.equal(live.state.entities.door.open, true);
+          assert.equal(live.state.entities.door.locked, false);
+          assert.equal(
+            (await feed(id)).entries.find(
+              (entry) => entry.turnId === authored.id && entry.kind === 'outcome',
+            ).code,
+            'ACTION_SUCCEEDED',
+          );
         },
       );
       await t.test(

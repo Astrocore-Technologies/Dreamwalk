@@ -273,6 +273,7 @@ function notice(
 }
 function prune(memory: LivingNpcMemory) {
   const protectedIds = new Set([
+    ...(memory.pendingSpeechObservationIds ?? []),
     ...memory.observations
       .filter(
         (o) =>
@@ -789,7 +790,8 @@ export function applyNpcSpeech(
     return result(state, [], 'INVALID_ACTION');
   if (
     !speaker ||
-    !isActorConscious(speaker) ||
+    (!isActorConscious(speaker) &&
+      !(options.presentationKind === 'attempt' && options.suppressReply && options.identity)) ||
     speaker.kind !== 'player' ||
     (npcId !== undefined &&
       (npc?.kind !== 'npc' || !isActorConscious(npc) || !state.npcBrains?.[npcId]?.living))
@@ -797,13 +799,16 @@ export function applyNpcSpeech(
     return result(state, [], 'TARGET_UNAVAILABLE');
   if (npc && !canNpcHear(state, npc, speaker, npcSpeechHearingRange(p.data)))
     return result(state, [], 'OUT_OF_RANGE');
-  if (speaker.encounterId || npc?.encounterId) return result(state, [], 'WRONG_MODE');
+  if (
+    (speaker.encounterId || npc?.encounterId) &&
+    !(options.presentationKind === 'attempt' && options.suppressReply && options.identity)
+  )
+    return result(state, [], 'WRONG_MODE');
   if (
     options.identity &&
     (!/^[0-9a-f-]{36}$/i.test(options.identity.turnId) ||
-      !Number.isInteger(options.identity.segmentIndex) ||
-      options.identity.segmentIndex < 0 ||
-      options.identity.segmentIndex > 5)
+      !Number.isSafeInteger(options.identity.segmentIndex) ||
+      options.identity.segmentIndex < 0)
   )
     return result(state, [], 'INVALID_ACTION');
   const claim = p.data.claim;

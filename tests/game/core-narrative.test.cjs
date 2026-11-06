@@ -145,7 +145,7 @@ test('tick and irrelevant routine movement do not stale director; canon and actu
   assert.ok(g.applyNarrativeProposal(occupied, 'alice', p, 'Investigate the signal').error);
   assert.equal(g.applyNarrativeProposal(s, 'alice', p, 'different intent').error, 'STALE_STATE');
 });
-test('pinned constraints and configurable caps cannot be bypassed by narration', () => {
+test('standalone director preserves pinned feature, role and scene capacity constraints', () => {
   const s = world();
   s.narrativeConstraints = {
     allowNewScenes: false,

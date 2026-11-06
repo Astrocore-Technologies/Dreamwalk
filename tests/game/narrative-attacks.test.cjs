@@ -81,7 +81,7 @@ test('explicit multilingual self attempts bind only one currently visible target
   assert.equal(g.parsePlayerTextAction(state, 'alice', 'hit Orin'), null);
 });
 
-test('typed contact uses the budgeted reducer while NPC prose remains semantic', () => {
+test('typed contact preserves free player resources while NPC prose remains semantic', () => {
   const state = world(),
     result = g.applyTurnAction(
       state,
@@ -91,7 +91,10 @@ test('typed contact uses the budgeted reducer while NPC prose remains semantic',
     );
   assert.equal(result.error, undefined);
   assert.equal(result.state.entities.keeper.vitality, state.entities.keeper.vitality - 1);
-  assert.equal(result.state.turnController.resources.alice.main, 0);
+  assert.deepEqual(
+    result.state.turnController.resources.alice,
+    state.turnController.resources.alice,
+  );
   const prose = post(state, '*I hit Orin in the face* *look around*');
   assert.equal(prose.state.entities.keeper.vitality, state.entities.keeper.vitality);
   assert.deepEqual(prose.committedAttackOutcomes, []);
@@ -110,9 +113,21 @@ test('failed contact and pending player reaction do not claim completed injury',
   assert.equal(distant.error, 'OUT_OF_RANGE');
   assert.deepEqual(distant.state.entities.keeper, state.entities.keeper);
   Object.assign(state.entities.bob, { x: 5, y: 3 });
-  const pending = post(state, '*hit bob*');
-  assert.equal(pending.committedAttackOutcomes[0].code, 'ACTION_PENDING');
+  const deferred = post(state, '*hit bob*');
+  assert.deepEqual(deferred.committedAttackOutcomes, []);
+  assert.equal(
+    deferred.entries.some((entry) => entry.kind === 'outcome'),
+    false,
+  );
+  assert.equal(deferred.state.entities.bob.vitality, state.entities.bob.vitality);
+  const ready = worldPhase(deferred.state),
+    request = input(ready, '*hit bob*'),
+    turnId = randomUUID();
+  const proposal = g.createMockStoryTurnProposal(ready, 'alice', request, turnId);
+  const pending = g.applyStoryTurnProposal(ready, 'alice', request, turnId, proposal);
+  assert.equal(pending.error, undefined);
   assert.equal(pending.entries.find((entry) => entry.kind === 'outcome').code, 'ACTION_PENDING');
+  assert.equal(pending.state.turnController.phase, 'reaction');
   assert.equal(pending.state.entities.bob.vitality, state.entities.bob.vitality);
 });
 
@@ -167,7 +182,10 @@ test('semantic director admits a fictional shot without command keywords or trac
   assert.equal(result.state.entities.keeper.vitality, before.entities.keeper.vitality - 1);
   assert.deepEqual(result.state.entities.alice.inventory, before.entities.alice.inventory);
   assert.deepEqual(Object.keys(result.state.entities), Object.keys(before.entities));
-  assert.equal(result.state.turnController.resources.alice.main, 0);
+  assert.deepEqual(
+    result.state.turnController.resources.alice,
+    state.turnController.resources.alice,
+  );
   assert.ok(
     result.state.npcBrains.keeper.living.observations.some((entry) => entry.kind === 'harmed'),
   );
@@ -262,7 +280,16 @@ test('semantic impacts reject players, self, hidden/missing targets, speech and 
   speech.proposal.steps[0].narrativeImpact = { targetId: 'keeper', effect: 'harm' };
   assert.equal(applySemantic(state, speech).error, 'FORBIDDEN');
   const double = semanticProposal(state, '*A shot rings out toward Orin* *Another shot follows*');
-  assert.equal(applySemantic(state, double).error, 'FORBIDDEN');
+  const twice = applySemantic(state, double);
+  assert.equal(twice.error, undefined);
+  assert.equal(twice.state.entities.keeper.vitality, state.entities.keeper.vitality - 2);
+  assert.equal(twice.events.filter((event) => event.kind === 'action.hit').length, 2);
+  const duplicateSegment = structuredClone(double);
+  duplicateSegment.proposal.steps[1].segmentIndex = 0;
+  const rejectedDuplicate = applySemantic(state, duplicateSegment);
+  assert.ok(rejectedDuplicate.error);
+  assert.strictEqual(rejectedDuplicate.state, state);
+  assert.deepEqual(rejectedDuplicate.events, []);
   const matched = semanticProposal(state, '*hit bob*');
   assert.equal(
     applySemantic(state, matched).error,
@@ -321,10 +348,16 @@ test('deferred forecast keeps ordered mechanical attempts uncommitted until dire
     'story_turn',
     request.context,
   );
-  assert.match(body, /results already persisted earlier in this turn/);
+  assert.match(
+    body,
+    /Already persisted effects and pending other-player reactions must not be repeated or overridden/,
+  );
   assert.match(body, /narrativeImpactPolicy/);
-  assert.match(body, /death for a fatal outcome/);
-  assert.match(body, /without command keywords or a tracked weapon item/);
+  assert.match(body, /death is explicit/);
+  assert.match(
+    body,
+    /Compatibility impact uses the listed target and allowedEffects for this segment/,
+  );
   assert.match(body, /ACTION_PENDING/);
 });
 
@@ -336,7 +369,8 @@ test('semantic impact survives the strict provider schema and normalization with
   delete answer.contextHash;
   answer.steps[0].replyNpcId = null;
   answer.steps[0].replyContextHash = null;
-  let calls = 0;
+  let calls = 0,
+    sentBody;
   const provider = new OpenAiNpcProvider(
     {
       enabled: true,
@@ -352,9 +386,7 @@ test('semantic impact survives the strict provider schema and normalization with
     async (_url, init) => {
       calls++;
       const body = JSON.parse(init.body);
-      assert.ok(body.text.format.schema.properties.steps.items.properties.narrativeImpact);
-      assert.match(body.instructions, /negation, hypothetical, NPC order/);
-      assert.match(body.instructions, /zero vitality causes unconsciousness/);
+      sentBody = body;
       return new Response(
         JSON.stringify({
           id: 'fixture',
@@ -376,6 +408,20 @@ test('semantic impact survives the strict provider schema and normalization with
     signal: new AbortController().signal,
     maxCostMicros: 100,
   });
+  assert.ok(sentBody);
+  const objectStep = sentBody.text.format.schema.properties.steps.items.anyOf.find(
+    (entry) => entry.type === 'object',
+  );
+  assert.ok(objectStep.properties.narrativeImpact);
+  assert.ok(objectStep.properties.establishedEvents);
+  assert.match(
+    sentBody.instructions,
+    /Questions, negation, hypotheses, quoted dialogue, historical reports and instructions to another player do not establish a current outcome/,
+  );
+  assert.match(
+    JSON.parse(sentBody.input).context.narrativeImpactPolicy.instructions,
+    /Harm at zero vitality causes unconsciousness/,
+  );
   assert.equal(result.failureCode, undefined);
   assert.equal(calls, 1);
   assert.deepEqual(result.proposal.steps[0].narrativeImpact, {

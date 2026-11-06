@@ -1,11 +1,14 @@
 import { z } from 'zod';
 
-/** Presentation only. No arbitrary prompts, authority, budgets, or actor permissions. */
+/** Narrator guidance never changes account permissions, budgets, or player control. */
+export const DIRECTOR_BEHAVIOR_MAX_LENGTH = 4000;
 export const directorStyleSchema = z
   .object({
     style: z.enum(['natural', 'cinematic', 'atmospheric']),
     pacing: z.enum(['deliberate', 'balanced', 'brisk']),
     initiative: z.enum(['reactive', 'balanced', 'proactive']),
+    // Optional without a default: frozen pre-field contexts retain their exact shape.
+    behaviorInstructions: z.string().trim().max(DIRECTOR_BEHAVIOR_MAX_LENGTH).optional(),
   })
   .strict();
 export type DirectorStyle = z.infer<typeof directorStyleSchema>;
@@ -98,6 +101,9 @@ export function defaultDirectorCatalog(
         style: style.style,
         pacing: style.pacing,
         initiative: style.initiative,
+        ...(style.behaviorInstructions === undefined
+          ? {}
+          : { behaviorInstructions: style.behaviorInstructions }),
       },
       {
         id: 'storyteller',

@@ -319,7 +319,7 @@ function deferredFixture(text) {
   f.proposal.steps = [{ segmentIndex: 0, action: { kind: 'wait' }, reply: null }];
   return f;
 }
-test('deferred director admits an exact parsed wait with its original player budget once', () => {
+test('deferred director admits an exact parsed wait once without consuming player resources', () => {
   const f = deferredFixture('*wait*');
   assert.deepEqual(f.context.actionPreview[0].action, { kind: 'wait' });
   const resources = structuredClone(f.state.turnController.resources),
@@ -327,7 +327,7 @@ test('deferred director admits an exact parsed wait with its original player bud
   const result = apply(f);
   assert.equal(result.error, undefined);
   assert.equal(result.clarification, undefined);
-  assert.equal(result.state.turnController.resources.alice.main, resources.alice.main - 1);
+  assert.equal(result.state.turnController.resources.alice.main, resources.alice.main);
   assert.deepEqual(result.state.turnController.resources.bob, resources.bob);
   assert.equal(result.state.turnController.phase, 'world');
   assert.equal(result.state.turnController.worldActions, f.state.turnController.worldActions);
@@ -336,7 +336,7 @@ test('deferred director admits an exact parsed wait with its original player bud
   const replay = g.applyStoryTurnProposal(result.state, 'alice', f.input, f.turnId, f.proposal);
   assert.ok(replay.error);
   assert.strictEqual(replay.state, result.state);
-  assert.equal(replay.state.turnController.resources.alice.main, resources.alice.main - 1);
+  assert.equal(replay.state.turnController.resources.alice.main, resources.alice.main);
 });
 test('deferred director cannot invent a mechanical wait absent from the current parsed preview', () => {
   const f = deferredFixture('*pauses thoughtfully*');

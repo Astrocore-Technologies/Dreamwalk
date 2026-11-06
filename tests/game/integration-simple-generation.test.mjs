@@ -775,27 +775,56 @@ await test(
           assert.equal((await wallet()).held_subunits, '0');
         },
       );
-      await t.test('known mechanical door action still uses authoritative validation', async () => {
-        const id = ids[15],
-          live = await setup(id);
-        const door = live.state.entities.door;
-        Object.assign(live.state.entities[actorId], {
-          x: door.x - 1,
-          y: door.y,
-          mapId: door.mapId,
-        });
-        door.locked = false;
-        door.open = false;
-        await game.persist(id, live, live.state, 'test.validated-door');
-        const body = { ...input(live, false), text: '*open door*' },
-          q = await game.storyQuote(req, id, body);
-        assert.equal(q.status, 'quoted', q.code);
-        assert.equal(q.actionPreview[0].action.kind, 'open');
-        assert.equal(live.state.entities.door.open, false);
-        await submit(id, body, q);
-        assert.equal(live.state.entities.door.open, true);
-        assert.equal((await requests(id)).length, 0);
-      });
+      await t.test(
+        'known door RP is deferred until exact world consent and commits typed state once',
+        async () => {
+          const id = ids[15],
+            live = await setup(id);
+          const door = live.state.entities.door;
+          Object.assign(live.state.entities[actorId], {
+            x: door.x - 1,
+            y: door.y,
+            mapId: door.mapId,
+          });
+          door.locked = false;
+          door.open = false;
+          await game.persist(id, live, live.state, 'test.validated-door');
+          const body = { ...input(live, false), text: '*open door*' },
+            q = await game.storyQuote(req, id, body);
+          assert.equal(q.status, 'quoted', q.code);
+          assert.deepEqual(q.actionPreview, []);
+          assert.equal(live.state.entities.door.open, false);
+          const beforeCalls = calls;
+          const receipt = await submit(id, body, q);
+          assert.equal(live.state.entities.door.open, false);
+          assert.equal(calls, beforeCalls);
+          const deferred = (await requests(id)).find((entry) => entry.purpose === 'story_turn');
+          assert.ok(deferred);
+          assert.equal(deferred.job_id, null);
+          await world(id, live);
+          assert.equal(live.state.entities.door.open, true);
+          const admitted = (await requests(id)).find((entry) => entry.id === deferred.id);
+          assert.ok(admitted.job_id);
+          assert.equal(
+            (await db.query('SELECT status FROM npc_ai_jobs WHERE id=$1', [admitted.job_id]))
+              .rows[0].status,
+            'committed',
+          );
+          const callsAfter = calls;
+          const settledWallet = await wallet();
+          const replay = await submit(id, body, q);
+          assert.equal(replay.id, receipt.id);
+          assert.equal(replay.jobStatus, 'committed');
+          assert.deepEqual(await submit(id, body, q), replay);
+          assert.deepEqual(await wallet(), settledWallet);
+          assert.equal(calls, callsAfter);
+          assert.equal(live.state.entities.door.open, true);
+          assert.equal(
+            (await requests(id)).filter((entry) => entry.purpose === 'story_turn').length,
+            1,
+          );
+        },
+      );
     } finally {
       await game?.onModuleDestroy();
       await stopApi();

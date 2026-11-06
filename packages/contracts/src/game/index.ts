@@ -1,3 +1,4 @@
+export * from './established-roleplay';
 import { tokenSizeSchema, footprintCells, hasPosition, type TokenSize } from './battlemap';
 export * from './battlemap';
 import { npcPlaceholderSchema, type NpcPlaceholder } from './npc-placeholder';
@@ -246,6 +247,7 @@ export interface GameEntityBase {
   mapId: string;
   revision: number;
   ownerId?: string;
+  publicCondition?: string;
   locked?: boolean;
   open?: boolean;
   keyId?: string;
@@ -275,7 +277,7 @@ export const scenePresenceSchema = z
         z
           .object({
             id: gameIdSchema,
-            participantIds: z.array(gameIdSchema).max(128),
+            participantIds: z.array(gameIdSchema),
             evidence: z
               .object({
                 kind: z.enum(['authored_scene', 'accepted_story_plan', 'committed_event']),
@@ -699,6 +701,7 @@ export const gamePublicEntitySchema = z
     y: z.number().int().min(0).max(63).optional(),
     revision: z.number().int().nonnegative(),
     ownerId: gameIdSchema.optional(),
+    publicCondition: z.string().max(500).optional(),
     locked: z.boolean().optional(),
     open: z.boolean().optional(),
     keyId: gameIdSchema.optional(),
@@ -780,10 +783,9 @@ export const gameProjectionSchema = z
           })
           .strict(),
       )
-      .max(32)
       .optional(),
-    entities: z.array(gamePublicEntitySchema).min(1).max(512),
-    inventory: z.array(gamePublicEntitySchema).max(128),
+    entities: z.array(gamePublicEntitySchema).min(1),
+    inventory: z.array(gamePublicEntitySchema),
     encounter: gamePublicEncounterSchema.optional(),
     npcUtterances: z.array(npcUtteranceSchema).max(32).optional(),
     npcFactTopics: z
@@ -792,7 +794,6 @@ export const gameProjectionSchema = z
           .object({ npcId: gameIdSchema, id: z.string().max(100), title: z.string().max(120) })
           .strict(),
       )
-      .max(128)
       .optional(),
     npcNotices: z.array(npcNoticeSchema).max(32).optional(),
     npcObligations: z

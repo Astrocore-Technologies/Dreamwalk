@@ -34,6 +34,7 @@ await test(
         id: randomUUID(),
         name: 'Quiet detective',
         description: 'Questions and small clues.',
+        behaviorInstructions: 'PRIVATE_BEHAVIOR: follow player ideas and use quiet suspense.',
         enabled: true,
         style: 'natural',
         pacing: 'deliberate',
@@ -52,13 +53,30 @@ await test(
           'PATCH',
           403,
         );
-        await update([...catalog.profiles, custom]);
+        await update([
+          ...catalog.profiles.map((profile) =>
+            profile.id === 'storyteller'
+              ? {
+                  ...profile,
+                  behaviorInstructions: 'FROZEN_BEHAVIOR: give this exchange room to breathe.',
+                }
+              : profile,
+          ),
+          custom,
+        ]);
+        assert.equal(
+          catalog.profiles.find((profile) => profile.id === custom.id).behaviorInstructions,
+          custom.behaviorInstructions,
+        );
+        const publicCatalog = await guest.request('/game/directors');
+        assert.equal(JSON.stringify(publicCatalog).includes('PRIVATE_BEHAVIOR'), false);
+        assert.ok(publicCatalog.profiles.every((profile) => !('behaviorInstructions' in profile)));
         assert.ok(
           (await guest.request('/game/directors')).profiles.some((p) => p.id === custom.id),
         );
       });
       await t.test(
-        'rejects prompts, duplicate IDs, empty catalogs and disabled defaults',
+        'rejects unknown fields, oversized guidance, duplicate IDs and disabled defaults',
         async () => {
           const valid = {
             expectedRevision: catalog.revision,
@@ -71,6 +89,13 @@ await test(
             { profiles: [...catalog.profiles, custom] },
             { profiles: catalog.profiles.map((p) => ({ ...p, enabled: false })) },
             { profiles: catalog.profiles.map((p) => ({ ...p, initiative: 'unlimited' })) },
+            {
+              profiles: catalog.profiles.map((p) => ({
+                ...p,
+                behaviorInstructions: 'x'.repeat(4001),
+              })),
+            },
+            { profiles: catalog.profiles.map((p) => ({ ...p, behaviorInstructions: 12 })) },
             { expectedRevision: -1 },
           ])
             await admin.request('/admin/directors', { ...valid, ...change }, 'PATCH', 400);
@@ -127,7 +152,9 @@ await test(
       await t.test(
         'two playthroughs persist independent choices and authorize shared changes',
         async () => {
-          assert.equal((await owner.request(route(a))).profileId, custom.id);
+          const selectedCustom = await owner.request(route(a));
+          assert.equal(selectedCustom.profileId, custom.id);
+          assert.equal('behaviorInstructions' in selectedCustom.profile, false);
           assert.equal((await owner.request(route(b))).profileId, 'director');
           await stranger.request(route(a), undefined, 'GET', 403);
           await owner.request(`/game/campaigns/${a}/invitations`, { username: member.handle });
@@ -185,6 +212,10 @@ await test(
           frozen = await context(quoted.turnId);
           assert.equal(frozen.directorProfileId, 'storyteller');
           assert.equal(frozen.directorStyle.style, 'atmospheric');
+          assert.equal(
+            frozen.directorStyle.behaviorInstructions,
+            'FROZEN_BEHAVIOR: give this exchange room to breathe.',
+          );
           assert.equal(frozen.directorSelectionRevision, 2);
         },
       );
@@ -193,7 +224,20 @@ await test(
         async () => {
           await owner.request(route(a), { profileId: custom.id, expectedRevision: 2 });
           await update(
-            catalog.profiles.map((p) => (p.id === custom.id ? { ...p, style: 'cinematic' } : p)),
+            catalog.profiles.map((p) =>
+              p.id === custom.id
+                ? {
+                    ...p,
+                    style: 'cinematic',
+                    behaviorInstructions: 'UPDATED_BEHAVIOR: concise and vivid narration.',
+                  }
+                : p.id === 'storyteller'
+                  ? {
+                      ...p,
+                      behaviorInstructions: 'A later edit must not change the existing quote.',
+                    }
+                  : p,
+            ),
           );
           assert.deepEqual(await owner.request(quoteRoute, quoteInput), quoted);
           assert.deepEqual(await context(quoted.turnId), frozen);
@@ -204,6 +248,10 @@ await test(
           const current = await context(next.turnId);
           assert.equal(current.directorProfileId, custom.id);
           assert.equal(current.directorStyle.style, 'cinematic');
+          assert.equal(
+            current.directorStyle.behaviorInstructions,
+            'UPDATED_BEHAVIOR: concise and vivid narration.',
+          );
           assert.equal(current.directorStyle.revision, catalog.revision);
           assert.equal(current.directorSelectionRevision, 3);
           assert.equal(

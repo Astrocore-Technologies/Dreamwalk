@@ -430,7 +430,7 @@ test('consume is admitted by intent, narrative and story provider contracts', ()
   );
 });
 
-test('the actual turn-based story post and intent context expose consume with the same budget', () => {
+test('turn-based RP defers consumption until typed admission while direct consume retains item mechanics', () => {
   const { StoryTurnRuntime } = require('../../apps/api/dist/game/story-turn-runtime');
   const p = structuredClone(plan);
   Object.assign(p.items[0], { edible: true, restoreVitality: 1, visual: 'food' });
@@ -464,16 +464,83 @@ test('the actual turn-based story post and intent context expose consume with th
   const preview = g.buildStoryTurnContext(s, 'alice', input, turnId);
   assert.equal(preview.actionPreview[0].action.kind, 'consume');
   const result = runtime.simulateTurnPost(s, 'alice', input, turnId, 'synthetic-owner');
-  assert.deepEqual(
-    result.actions.map((a) => a.action.kind),
-    ['consume'],
-  );
-  assert.equal(result.state.entities['item-text-story-0'], undefined);
-  assert.deepEqual(result.state.entities.alice.inventory, []);
-  assert.equal(result.state.turnController.resources.alice.main, 0);
-  assert.equal(result.state.entities.alice.vitality, 4);
+  assert.deepEqual(result.actions, []);
+  assert.deepEqual(result.state.entities.alice, s.entities.alice);
+  assert.deepEqual(result.state.entities['item-text-story-0'], s.entities['item-text-story-0']);
   assert.equal(result.requests.length, 0);
-  assert.ok(
-    result.state.npcBrains[npc].living.observations.some((o) => o.kind === 'item_consumed'),
-  );
+  assert.equal(result.directorText, input.text);
+  assert.deepEqual(result.entries[0].audienceIds, ['alice']);
+  assert.deepEqual(result.state.npcBrains, s.npcBrains);
+
+  // The parser is still a preview. Only the admitted typed event changes custody.
+  const world = g.endPlayerTurn(result.state, 'alice', g.turnFence(result.state));
+  assert.equal(world.error, undefined);
+  const admittedInput = { ...input, turnFence: g.turnFence(world.state) };
+  const context = g.buildStoryTurnContext(world.state, 'alice', admittedInput, turnId);
+  const proposal = {
+    turnId,
+    contextHash: context.contextHash,
+    status: 'ready',
+    code: null,
+    steps: [
+      {
+        segmentIndex: 0,
+        action: null,
+        reply: null,
+        establishedEvents: [
+          {
+            description: 'Alice ate Battery.',
+            entityIds: ['item-text-story-0'],
+            effects: [{ kind: 'item_consumed', itemId: 'item-text-story-0' }],
+          },
+        ],
+      },
+    ],
+    narrative: { narration: 'Alice ate Battery.', newScene: null, newNpc: null, evidenceIds: [] },
+  };
+  const before = structuredClone(world.state);
+  const stale = g.applyStoryTurnProposal(world.state, 'alice', admittedInput, turnId, {
+    ...proposal,
+    contextHash: '0'.repeat(64),
+  });
+  assert.equal(stale.error, 'STALE_STATE');
+  assert.deepEqual(stale.state, before);
+  assert.deepEqual(stale.events, []);
+  const admitted = g.applyStoryTurnProposal(world.state, 'alice', admittedInput, turnId, proposal);
+  assert.equal(admitted.error, undefined);
+  assert.deepEqual(world.state, before);
+  assert.equal(admitted.state.entities['item-text-story-0'], undefined);
+  assert.deepEqual(admitted.state.entities.alice.inventory, []);
+  assert.deepEqual(admitted.state.turnController.resources, before.turnController.resources);
+  // Item consumption does not invent an additional authored healing outcome.
+  assert.equal(admitted.state.entities.alice.vitality, 3);
+  assert.equal(admitted.events.filter((event) => event.kind === 'item.consumed').length, 1);
+  const replay = g.applyStoryTurnProposal(admitted.state, 'alice', admittedInput, turnId, proposal);
+  assert.equal(replay.error, undefined);
+  assert.deepEqual(replay.state, admitted.state);
+  assert.deepEqual(replay.events, []);
+  const invalid = structuredClone(proposal);
+  invalid.steps[0].establishedEvents[0].effects.push({
+    kind: 'item_consumed',
+    itemId: 'item-text-story-0',
+  });
+  const rejected = g.applyStoryTurnProposal(world.state, 'alice', admittedInput, turnId, invalid);
+  assert.ok(rejected.error);
+  assert.deepEqual(rejected.state, before);
+  assert.deepEqual(rejected.events, []);
+
+  // Direct mechanical consume still heals and creates the witnessed item memory.
+  const direct = g.applyTurnAction(s, 'alice', preview.actionPreview[0].action, g.turnFence(s));
+  assert.equal(direct.error, undefined);
+  assert.equal(direct.state.entities['item-text-story-0'], undefined);
+  assert.deepEqual(direct.state.entities.alice.inventory, []);
+  assert.deepEqual(direct.state.turnController.resources, s.turnController.resources);
+  assert.equal(direct.state.entities.alice.vitality, 4);
+  const observed = g.recordNpcEvents(s, direct.state, direct.events, 'consume-once').state;
+  const repeated = g.recordNpcEvents(s, observed, direct.events, 'consume-once').state;
+  for (const state of [observed, repeated])
+    assert.equal(
+      state.npcBrains[npc].living.observations.filter((o) => o.kind === 'item_consumed').length,
+      1,
+    );
 });

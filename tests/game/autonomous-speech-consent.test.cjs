@@ -434,7 +434,7 @@ test('new UI sends bounded consent once and never prompts for uncovered autonomo
   assert.match(page, /ordinarySpeechPolicy: 'bounded-npc-speech-v1'/);
   assert.doesNotMatch(world, /status\.communicationConsentRequired|status\.pendingSpeechIds/);
   assert.match(world, /worldSpeechSkipLegacy/);
-  assert.match(world, /worldCostForecastHint/);
+  assert.doesNotMatch(world, /h\('worldCostForecastHint'\)/);
   assert.match(world, /baseEstimatedSparkSubunits/);
   assert.match(confirm, /autonomousSpeechPolicyHash: quote\.autonomousSpeechPolicyHash/);
   assert.match(confirm, /declineSpeech \? 'declineSpeech'/);

@@ -145,3 +145,12 @@ test('author and moderator previews label every lifecycle observation in all UI 
   );
   assert.match(moderator, /import \{ observationLabels \} from '.\/living-npc-preview'/);
 });
+
+test('long committed paths finish promptly without replacing their geometry by a straight line', () => {
+  const path = Array.from({ length: 61 }, (_, i) => ({
+    x: i <= 30 ? i : 30,
+    y: i <= 30 ? 0 : i - 30,
+  }));
+  assert.deepEqual(committedPathSample(path, 900), { x: 30, y: 0, moving: true, direction: 0 });
+  assert.deepEqual(committedPathSample(path, 1800), { x: 30, y: 30, moving: false, direction: 0 });
+});

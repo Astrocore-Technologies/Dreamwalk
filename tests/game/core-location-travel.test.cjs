@@ -204,55 +204,81 @@ test('travel resolves the same authored destination by localized public labels',
   assert.equal(g.resolveTravelRequest(s, 'иду на Старая крыша').mapId, map.id);
   assert.equal(g.resolveTravelRequest(s, 'go to Old Roof').mapId, map.id);
 });
-test('semantic mixed RP commits its item once and stages a missing destination without a regex or fake arrival', () => {
-  const s = world(true);
-  s.turnController.phase = 'world';
-  s.turnController.activeActorId = null;
-  const i = {
-    ...input(
-      '*pick up notebook* *Собравшись с мыслями, парень выбрал следующим пристанищем Синий салон*',
-    ),
-    turnFence: g.turnFence(s),
-  };
-  const id = randomUUID();
-  const context = g.buildStoryTurnContext(s, 'alice', i, id);
-  assert.deepEqual(context.travelRequests, []);
-  const intent = {
-    segmentIndex: 1,
-    destinationName: 'Синий салон',
-    description: 'Тихий салон с витражами в духе этого города.',
-    template: 'room',
-  };
-  const proposal = {
-    turnId: id,
-    contextHash: context.contextHash,
-    status: 'ready',
-    code: null,
-    travelIntent: intent,
-    steps: [
-      { segmentIndex: 0, action: { kind: 'pick_up', targetId: 'new_item' }, reply: null },
-      { segmentIndex: 1, action: null, reply: null },
-    ],
-    narrative: {
-      narration: 'Блокнот в кармане. Герой направляется к салону.',
-      newItem: { name: 'notebook', description: 'A plain pocket notebook.' },
-      newScene: null,
-      newNpc: null,
-      evidenceIds: [],
-    },
-  };
-  const r = g.applyStoryTurnProposal(s, 'alice', i, id, proposal);
-  assert.equal(r.error, undefined);
-  assert.equal(r.clarification, undefined);
-  assert.deepEqual(r.pendingTravel, intent);
-  assert.deepEqual(r.state.entities.alice.inventory, [`prop-${id}`]);
-  assert.equal(r.state.entities.alice.mapId, s.entities.alice.mapId);
-  assert.equal(Object.keys(r.state.maps).length, Object.keys(s.maps).length);
-  assert.equal(r.state.narrativeCanon.turns.length, 1);
-  const replay = g.applyStoryTurnProposal(r.state, 'alice', i, id, proposal);
-  assert.ok(replay.error);
-  assert.equal(replay.state.entities.alice.inventory.length, 1);
-});
+for (const typed of [false, true])
+  test(`semantic mixed RP commits its item once and stages a missing destination, typed=${typed}`, () => {
+    const s = world(true);
+    s.turnController.phase = 'world';
+    s.turnController.activeActorId = null;
+    const i = {
+      ...input(
+        '*pick up notebook* *Собравшись с мыслями, парень выбрал следующим пристанищем Синий салон*',
+      ),
+      turnFence: g.turnFence(s),
+    };
+    const id = randomUUID();
+    const context = g.buildStoryTurnContext(s, 'alice', i, id);
+    assert.deepEqual(context.travelRequests, []);
+    const intent = {
+      segmentIndex: 1,
+      destinationName: 'Синий салон',
+      description: 'Тихий салон с витражами в духе этого города.',
+      template: 'room',
+    };
+    const proposal = {
+      turnId: id,
+      contextHash: context.contextHash,
+      status: 'ready',
+      code: null,
+      travelIntent: intent,
+      steps: [
+        { segmentIndex: 0, action: { kind: 'pick_up', targetId: 'new_item' }, reply: null },
+        { segmentIndex: 1, action: null, reply: null },
+      ],
+      narrative: {
+        narration: 'Блокнот в кармане. Герой направляется к салону.',
+        newItem: { name: 'notebook', description: 'A plain pocket notebook.' },
+        newScene: null,
+        newNpc: null,
+        evidenceIds: [],
+      },
+    };
+    if (typed) {
+      proposal.steps[0].action = null;
+      proposal.steps[0].establishedEvents = [
+        {
+          description: 'The notebook is pocketed.',
+          entityIds: [],
+          effects: [
+            {
+              kind: 'create_prop',
+              ref: 'notebook',
+              name: 'notebook',
+              description: 'A plain pocket notebook.',
+            },
+          ],
+        },
+      ];
+      proposal.steps[1].establishedEvents = [
+        { description: 'The traveler sets off toward the salon.', entityIds: [], effects: [] },
+      ];
+      proposal.narrative.newItem = null;
+    }
+    const r = g.applyStoryTurnProposal(s, 'alice', i, id, proposal);
+    assert.equal(r.error, undefined);
+    assert.equal(r.clarification, undefined);
+    assert.deepEqual(r.pendingTravel, intent);
+    assert.deepEqual(r.state.entities.alice.inventory, [typed ? `rp-${id}-0-0-0` : `prop-${id}`]);
+    assert.equal(r.state.entities.alice.mapId, s.entities.alice.mapId);
+    assert.equal(Object.keys(r.state.maps).length, Object.keys(s.maps).length);
+    assert.equal(r.state.narrativeCanon.turns.length, 1);
+    const replay = g.applyStoryTurnProposal(r.state, 'alice', i, id, proposal);
+    if (typed) {
+      assert.equal(replay.error, undefined);
+      assert.deepEqual(replay.state, r.state, 'typed replay returns unchanged committed state');
+      assert.deepEqual(replay.events, []);
+    } else assert.ok(replay.error);
+    assert.equal(replay.state.entities.alice.inventory.length, 1);
+  });
 test('semantic existing destination uses catalog resolution and never moves another player', () => {
   const s = world(true);
   s.turnController.phase = 'world';
@@ -346,7 +372,7 @@ test('mixed existing travel previews and commits destination pickup and speech i
   );
   assert.equal(
     done.state.turnController.resources.alice.additional,
-    s.turnController.resources.alice.additional - 1,
+    s.turnController.resources.alice.additional,
   );
   assert.deepEqual(done.state.entities.bob, s.entities.bob);
   assert.ok(
@@ -456,4 +482,24 @@ test('travel then impact cannot use initial visibility to affect a character lef
   assert.equal(rejected.error, 'FORBIDDEN');
   assert.strictEqual(rejected.state, s);
   assert.equal(rejected.pendingTravel, undefined);
+});
+
+test('authored new-scene travel still requires a free reachable connection cell', () => {
+  const state = world(true),
+    actor = state.entities.alice,
+    map = state.maps[actor.mapId];
+  assert.ok(
+    g.buildNarrativeContext(state, 'alice', 'Unavailable Cafe', 'en', undefined, true)
+      .availableConnections.length,
+  );
+  map.blocked = Array.from({ length: map.height }, (_, y) =>
+    Array.from({ length: map.width }, (_, x) => ({ x, y })),
+  )
+    .flat()
+    .filter((p) => p.x !== actor.x || p.y !== actor.y);
+  assert.deepEqual(
+    g.buildNarrativeContext(state, 'alice', 'Unavailable Cafe', 'en', undefined, true)
+      .availableConnections,
+    [],
+  );
 });
