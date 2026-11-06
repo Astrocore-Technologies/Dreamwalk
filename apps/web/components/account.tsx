@@ -434,7 +434,9 @@ export function AccountPage({ path }: { path: string }) {
       <PageHeading
         eyebrow={tr('ТВОЁ ПРОСТРАНСТВО')}
         title={tr('Настроить под себя')}
-        description={tr('Имя, привычки и границы. Здесь всё по-твоему.')}
+        description={
+          tab === 'profile' ? tr('Имя, привычки и границы. Здесь всё по-твоему.') : undefined
+        }
       />
       <Tabs
         items={(
@@ -471,7 +473,7 @@ function ProfileForm() {
     [error, setError] = useState('');
   return (
     <div className="account-layout">
-      <Panel>
+      <Panel className="account-profile-panel">
         <h2>{tr('Так тебя увидят другие')}</h2>
         <form
           method="post"
@@ -612,17 +614,27 @@ function SettingsForm({ privacy }: { privacy: boolean }) {
                 checked={settings.profilePublic}
                 onChange={(v) => change('profilePublic', v)}
               />
-              <Field label={tr('Видимость нового контента')}>
-                <Select
-                  value={settings.defaultVisibility}
-                  onChange={(e) =>
-                    change('defaultVisibility', e.target.value as Settings['defaultVisibility'])
-                  }
-                >
-                  <option value="private">{tr('Приватно: только по приглашению')}</option>
-                  <option value="public">{tr('Публично после модерации')}</option>
-                </Select>
-              </Field>
+              <div className="account-visibility-field">
+                <Field label={tr('Видимость нового контента')}>
+                  <Select
+                    aria-describedby="account-visibility-description"
+                    value={settings.defaultVisibility}
+                    onChange={(e) =>
+                      change('defaultVisibility', e.target.value as Settings['defaultVisibility'])
+                    }
+                  >
+                    <option value="private">{tr('Приватно')}</option>
+                    <option value="public">{tr('Публично')}</option>
+                  </Select>
+                </Field>
+                <p id="account-visibility-description">
+                  {tr(
+                    settings.defaultVisibility === 'private'
+                      ? 'Приватно: только по приглашению'
+                      : 'Публично после модерации',
+                  )}
+                </p>
+              </div>
               <div className="notice">
                 {tr(
                   'Новые приключения не попадут в каталог без твоей отправки на модерацию и проверки командой.',
@@ -672,44 +684,48 @@ function SettingsForm({ privacy }: { privacy: boolean }) {
                   </Select>
                 </Field>
               </div>
-              <Toggle
-                label={tr('Меньше анимации')}
-                description={tr('Спокойные переходы и минимум движения.')}
-                checked={settings.reducedMotion}
-                onChange={(v) => change('reducedMotion', v)}
-              />
-              <Toggle
-                label={tr('Системные уведомления')}
-                checked={settings.notifications}
-                onChange={(v) => change('notifications', v)}
-              />
-              <Toggle
-                label={tr('Письма на email')}
-                description={tr('Предпочтение сохраняется. Почтовая доставка пока не подключена.')}
-                checked={settings.emailNotifications}
-                onChange={(v) => change('emailNotifications', v)}
-              />
-              <Toggle
-                label={tr('Уведомлять о публикациях')}
-                checked={settings.publicationNotifications}
-                onChange={(v) => change('publicationNotifications', v)}
-              />
-              <Toggle
-                label={tr('Уведомлять о жалобах')}
-                checked={settings.reportNotifications}
-                onChange={(v) => change('reportNotifications', v)}
-              />
-              <Toggle
-                label={tr('Показывать подсказки о стоимости')}
-                checked={settings.costHints}
-                onChange={(v) => change('costHints', v)}
-              />
-              <Toggle
-                label={tr('Подтверждать дорогие действия')}
-                description={tr('Настройка для будущей игры. Сейчас платные действия отключены.')}
-                checked={settings.confirmExpensive}
-                onChange={(v) => change('confirmExpensive', v)}
-              />
+              <div className="account-preference-toggles">
+                <Toggle
+                  label={tr('Меньше анимации')}
+                  description={tr('Спокойные переходы и минимум движения.')}
+                  checked={settings.reducedMotion}
+                  onChange={(v) => change('reducedMotion', v)}
+                />
+                <Toggle
+                  label={tr('Системные уведомления')}
+                  checked={settings.notifications}
+                  onChange={(v) => change('notifications', v)}
+                />
+                <Toggle
+                  label={tr('Письма на email')}
+                  description={tr(
+                    'Предпочтение сохраняется. Почтовая доставка пока не подключена.',
+                  )}
+                  checked={settings.emailNotifications}
+                  onChange={(v) => change('emailNotifications', v)}
+                />
+                <Toggle
+                  label={tr('Уведомлять о публикациях')}
+                  checked={settings.publicationNotifications}
+                  onChange={(v) => change('publicationNotifications', v)}
+                />
+                <Toggle
+                  label={tr('Уведомлять о жалобах')}
+                  checked={settings.reportNotifications}
+                  onChange={(v) => change('reportNotifications', v)}
+                />
+                <Toggle
+                  label={tr('Показывать подсказки о стоимости')}
+                  checked={settings.costHints}
+                  onChange={(v) => change('costHints', v)}
+                />
+                <Toggle
+                  label={tr('Подтверждать дорогие действия')}
+                  description={tr('Настройка для будущей игры. Сейчас платные действия отключены.')}
+                  checked={settings.confirmExpensive}
+                  onChange={(v) => change('confirmExpensive', v)}
+                />
+              </div>
             </>
           )}
           <ErrorBox message={error} />
@@ -734,8 +750,12 @@ function SettingsForm({ privacy }: { privacy: boolean }) {
             <Download aria-hidden="true" size={30} />
             <AccountExports />
           </div>
-          <div className="row account-delete-row">
+          <div className="account-delete-row">
             <Trash2 aria-hidden="true" size={30} />
+            <div className="account-data-copy">
+              <h3>{tr('Удалить аккаунт')}</h3>
+              <p className="muted">{tr('Вход будет закрыт, личные данные будут обезличены.')}</p>
+            </div>
             <Button variant="danger" onClick={() => setDeleting(true)}>
               {tr('Удалить аккаунт')}
             </Button>
@@ -818,7 +838,7 @@ function SecurityForm() {
   return (
     <div className="account-layout account-security-layout">
       <EmailVerification />
-      <Panel>
+      <Panel className="account-password-panel">
         <h2>
           <Fingerprint size={22} />
           {tr('Сменить пароль')}
@@ -845,29 +865,13 @@ function SecurityForm() {
             }
           }}
         >
-          <Field label={tr('Текущий пароль')}>
-            <Input
-              type="password"
-              name="currentPassword"
-              autoComplete="current-password"
-              required
-            />
-          </Field>
-          <Field label={tr('Новый пароль')}>
-            <Input
-              type="password"
-              name="newPassword"
-              minLength={10}
-              maxLength={128}
-              autoComplete="new-password"
-              required
-            />
-          </Field>
+          <AccountPasswordField name="currentPassword" />
+          <AccountPasswordField name="newPassword" />
           <ErrorBox message={error} />
           <Button busy={busy}>{tr('Изменить пароль')}</Button>
         </form>
       </Panel>
-      <Panel>
+      <Panel className="account-session-panel">
         <h2>
           <ShieldCheck size={22} />
           {tr('Активные сессии')}
@@ -877,40 +881,77 @@ function SecurityForm() {
         {sessions.loading ? (
           <Loading />
         ) : (
-          sessions.data?.map((s) => (
-            <div className="session-row" key={s.id}>
-              <Laptop size={24} />
-              <div>
-                <strong>{s.current ? tr('Это устройство') : tr('Браузер')}</strong>
-                <small title={s.userAgent}>{sessionDeviceLabel(s.userAgent)}</small>
-                <small>
-                  {tr('Последняя активность: {date}', {
-                    date: date(s.lastSeenAt),
-                  })}
-                </small>
+          <div className="account-session-list">
+            {sessions.data?.map((s) => (
+              <div className="session-row" key={s.id} data-current={s.current}>
+                <Laptop size={30} aria-hidden="true" />
+                <div>
+                  <strong>{s.current ? tr('Это устройство') : tr('Браузер')}</strong>
+                  <small title={s.userAgent}>{sessionDeviceLabel(s.userAgent)}</small>
+                  <small>
+                    {tr('Последняя активность: {date}', {
+                      date: date(s.lastSeenAt),
+                    })}
+                  </small>
+                </div>
+                <Button
+                  variant="ghost"
+                  onClick={async () => {
+                    try {
+                      await api(`/account/sessions/${s.id}`, {
+                        method: 'DELETE',
+                        body: '{}',
+                      });
+                      sessions.reload();
+                      await refresh();
+                      toast(tr('Сессия завершена'));
+                    } catch (e) {
+                      toast(errorMessage(e));
+                    }
+                  }}
+                >
+                  {tr('Завершить')}
+                </Button>
               </div>
-              <Button
-                variant="ghost"
-                onClick={async () => {
-                  try {
-                    await api(`/account/sessions/${s.id}`, {
-                      method: 'DELETE',
-                      body: '{}',
-                    });
-                    sessions.reload();
-                    await refresh();
-                    toast(tr('Сессия завершена'));
-                  } catch (e) {
-                    toast(errorMessage(e));
-                  }
-                }}
-              >
-                {tr('Завершить')}
-              </Button>
-            </div>
-          ))
+            ))}
+          </div>
         )}
       </Panel>
+    </div>
+  );
+}
+
+function AccountPasswordField({ name }: { name: 'currentPassword' | 'newPassword' }) {
+  const { t: tr } = useT();
+  const [visible, setVisible] = useState(false);
+  const current = name === 'currentPassword';
+  const id = current ? 'account-current-password' : 'account-new-password';
+  const label = current ? tr('Текущий пароль') : tr('Новый пароль');
+  return (
+    <div className="field account-password-field">
+      <label htmlFor={id}>{label}</label>
+      <div className="account-password-input">
+        <LockKeyhole size={22} aria-hidden="true" />
+        <Input
+          id={id}
+          name={name}
+          type={visible ? 'text' : 'password'}
+          autoComplete={current ? 'current-password' : 'new-password'}
+          required
+          minLength={current ? undefined : 10}
+          maxLength={current ? undefined : 128}
+        />
+        <button
+          type="button"
+          className="account-password-toggle"
+          aria-label={visible ? tr('Скрыть пароль') : tr('Показать пароль')}
+          aria-pressed={visible}
+          aria-controls={id}
+          onClick={() => setVisible((value) => !value)}
+        >
+          {visible ? <EyeOff size={22} aria-hidden="true" /> : <Eye size={22} aria-hidden="true" />}
+        </button>
+      </div>
     </div>
   );
 }

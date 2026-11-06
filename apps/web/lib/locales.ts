@@ -504,6 +504,16 @@ const messages: Record<string, Record<Locale, string>> = {
     en: 'Private world',
     uk: 'Приватний світ',
   },
+  Приватно: {
+    ru: 'Приватно',
+    en: 'Private',
+    uk: 'Приватно',
+  },
+  Публично: {
+    ru: 'Публично',
+    en: 'Public',
+    uk: 'Публічно',
+  },
   'Приватно: только по приглашению': {
     ru: 'Приватно: только по приглашению',
     en: 'Private: invitation only',
@@ -1659,6 +1669,16 @@ const messages: Record<string, Record<Locale, string>> = {
     ru: 'Сохранить настройки',
     en: 'Save preferences',
     uk: 'Зберегти налаштування',
+  },
+  'Экспорт данных': {
+    ru: 'Экспорт данных',
+    uk: 'Експорт даних',
+    en: 'Data export',
+  },
+  'Вход будет закрыт, личные данные будут обезличены.': {
+    ru: 'Вход будет закрыт, личные данные будут обезличены.',
+    uk: 'Вхід буде закрито, особисті дані буде знеособлено.',
+    en: 'Sign-in will be disabled and personal data will be anonymized.',
   },
   'Управление данными': {
     ru: 'Управление данными',
