@@ -256,8 +256,28 @@ test('owner switch disposes an in-flight confirmation before POST and isolates s
     });
   const waiting = c.confirm();
   c.dispose();
-  release();
+  const nextOwner = randomUUID();
+  let nextState;
+  const replacement = new KnownSettlementController({
+    ...f.input,
+    ownerId: nextOwner,
+    read: async () => {
+      throw new Error('not owner');
+    },
+    changed: (state) => {
+      nextState = state;
+    },
+  });
+  await replacement.refresh();
+  assert.equal(nextState.error, 'unavailable');
+  assert.equal(nextState.quote, null);
+  release(); // A valid old-owner quote arrives only after its controller was disposed.
   await waiting;
+  await replacement.confirm();
+  assert.notEqual(
+    authoringSettlementScope(nextOwner, f.input.jobId).storageKey,
+    authoringSettlementScope(f.input.ownerId, f.input.jobId).storageKey,
+  );
   assert.equal(f.posts.length, 0);
   assert.equal(f.values.size, 0);
 });

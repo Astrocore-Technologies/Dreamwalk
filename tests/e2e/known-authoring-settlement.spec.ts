@@ -1,6 +1,7 @@
 import { test, expect, type Page } from '@playwright/test';
 import { authoringSettlementMessages as settlementMessages } from '../../apps/web/components/visual-authoring/owner-authoring-settlement-messages';
 import { randomUUID } from 'node:crypto';
+import { settingsSchema, type Locale, type User } from '@dreamwalk/contracts';
 
 // All API traffic is intercepted. No real authoring job, provider or balance is changed.
 const ownerId = randomUUID(),
@@ -9,6 +10,21 @@ const ownerId = randomUUID(),
   holdId = randomUUID(),
   buildId = randomUUID();
 const path = `/studio/gameplay/${storyId}`;
+function syntheticOwner(id: string, locale: Locale): User {
+  return {
+    id,
+    name: 'Synthetic owner',
+    handle: 'synthetic',
+    email: 'synthetic@example.invalid',
+    emailVerified: true,
+    bio: '',
+    avatarAssetId: null,
+    role: 'user',
+    onboarded: true,
+    settings: settingsSchema.parse({ language: locale, theme: 'dark', reducedMotion: true }),
+    createdAt: '2026-11-06T00:00:00.000Z',
+  };
+}
 async function fixture(
   page: Page,
   locale: 'en' | 'ru' | 'uk',
@@ -59,14 +75,7 @@ async function fixture(
     if (endpoint.endsWith('/auth/me'))
       return route.fulfill({
         json: {
-          user: {
-            id: currentOwner,
-            name: 'Synthetic owner',
-            handle: 'synthetic',
-            role: 'user',
-            onboarded: true,
-            settings: { language: locale, theme: 'dark', reducedMotion: true },
-          },
+          user: syntheticOwner(currentOwner, locale),
         },
       });
     if (endpoint.endsWith('/sparks/wallet'))
@@ -117,12 +126,15 @@ async function fixture(
         if (loss) return route.abort('failed');
         return route.fulfill({ json: quote() });
       }
+      // An in-flight response belongs to the identity at request time. The old
+      // valid quote must be discarded after remount, not rescued by a later 404.
+      const requestOwner = currentOwner;
       const response = quote();
       if (gate) {
         blockedReads++;
         await gate;
       }
-      if (currentOwner !== ownerId)
+      if (requestOwner !== ownerId)
         return route.fulfill({ status: 404, json: { code: 'NOT_FOUND' } });
       if (options.unavailable && !settled)
         return route.fulfill({ status: 409, json: { code: 'AUTHORING_SETTLEMENT_UNAVAILABLE' } });
@@ -144,7 +156,7 @@ async function fixture(
     },
     switchOwner: () => {
       currentOwner = randomUUID();
-      return currentOwner;
+      return syntheticOwner(currentOwner, locale);
     },
     blockRead: () => {
       gate = new Promise<void>((resolve) => {
@@ -349,6 +361,8 @@ test('legacy storage failure blocks the charge, while automatic polling does not
   expect(f.writes).toHaveLength(0);
 });
 test('owner switch during the confirmation re-read discards the old action', async ({ page }) => {
+  const pageErrors: string[] = [];
+  page.on('pageerror', (error) => pageErrors.push(error.message));
   const f = await fixture(page, 'en', { mode: 'legacy_confirmation' });
   await page.goto(path);
   const form = page.getByTestId('owner-authoring-settlement');
@@ -359,23 +373,19 @@ test('owner switch during the confirmation re-read discards the old action', asy
   await form.getByRole('button', { name: settlementMessages.en.confirm, exact: true }).click();
   await expect.poll(f.blockedReads).toBeGreaterThan(0);
   const nextOwner = f.switchOwner();
-  await page.evaluate((id) => {
-    window.dispatchEvent(
-      new CustomEvent('dreamwalk:account-updated', {
-        detail: {
-          id,
-          name: 'Other synthetic owner',
-          role: 'user',
-          onboarded: true,
-          settings: { language: 'en', theme: 'dark', reducedMotion: true },
-        },
-      }),
-    );
+  await page.evaluate((user) => {
+    window.dispatchEvent(new CustomEvent('dreamwalk:account-updated', { detail: user }));
   }, nextOwner);
+  // Wait for the keyed replacement controller's GET before returning the old
+  // valid quote. This proves disposal, rather than racing the React owner update.
+  await expect.poll(f.blockedReads).toBeGreaterThan(1);
+  expect(pageErrors).toEqual([]);
   f.releaseRead();
   await expect(form.getByText(settlementMessages.en.unavailable, { exact: true })).toBeVisible();
   await expect(form.getByRole('button')).toHaveCount(0);
   expect(f.writes).toHaveLength(0);
+  expect(f.posts).toHaveLength(0);
+  expect(pageErrors).toEqual([]);
   expect(
     await page.evaluate(() =>
       Object.keys(sessionStorage).filter((key) =>
