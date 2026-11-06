@@ -79,6 +79,9 @@ test(
       await pool.query(
         await readFile('packages/db/migrations/055_content_translations.sql', 'utf8'),
       );
+      await pool.query(
+        'CREATE TABLE platform_metadata_translation_jobs(adventure_id uuid,requester_id uuid,visibility text,context jsonb,result jsonb)',
+      );
       await pool.query('INSERT INTO users VALUES($1),($2)', [reader, other]);
       await pool.query('INSERT INTO adventures(id) VALUES($1)', [adventure]);
       await pool.query('INSERT INTO game_campaigns(id) VALUES($1)', [campaign]);

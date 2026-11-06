@@ -3,6 +3,9 @@ import { travelMapPlanDefinition } from './game/travel-map-plan';
 import { resolveReplyLocale } from './game/reply-locale';
 import { CachedTranslations, PostgresTranslationCache } from './translation/service';
 import { TranslationInterceptor } from './translation/interceptor';
+import { PlatformMetadataTranslations } from './translation/platform-metadata';
+import { translationDefinition } from './translation/definition';
+import { BoundedAuthoringTextProvider } from './live-test/authoring-provider';
 import {
   activateRegisteredReleaseDeployment,
   releaseDeploymentId,
@@ -107,9 +110,30 @@ class Health {
     Db,
     TranslationInterceptor,
     {
-      provide: CachedTranslations,
+      provide: PlatformMetadataTranslations,
       inject: [Db],
-      useFactory: (db: Db) => new CachedTranslations(new PostgresTranslationCache(db)),
+      useFactory: (db: Db) => {
+        const policy = readGenerationConfig(process.env);
+        return policy.mode === 'release'
+          ? new PlatformMetadataTranslations(
+              db,
+              new BoundedAuthoringTextProvider(
+                translationDefinition,
+                process.env.OPENAI_API_KEY,
+                fetch,
+                policy.text,
+              ),
+              policy,
+              () => process.env.NPC_AI_KILL_SWITCH !== 'true',
+            )
+          : new PlatformMetadataTranslations(db);
+      },
+    },
+    {
+      provide: CachedTranslations,
+      inject: [Db, PlatformMetadataTranslations],
+      useFactory: (db: Db, metadata: PlatformMetadataTranslations) =>
+        new CachedTranslations(new PostgresTranslationCache(db), undefined, 2000, metadata),
     },
     {
       provide: GenerationAuthority,

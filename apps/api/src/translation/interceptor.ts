@@ -37,6 +37,11 @@ export class TranslationInterceptor implements NestInterceptor {
           value,
           resolveReplyLocale(req, undefined, viewer?.settings.language),
           viewer?.id ?? null,
+          () =>
+            context
+              .switchToHttp()
+              .getResponse<Response>()
+              .setHeader('X-Dreamwalk-Translation-Pending', 'true'),
         );
       }),
     );

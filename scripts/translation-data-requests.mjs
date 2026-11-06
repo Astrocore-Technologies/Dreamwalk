@@ -1,5 +1,19 @@
 /** Clear derived text before source/membership redaction. No network or regeneration. */
 export async function eraseTranslations(client, userId) {
+  // Keep the shared financial reservation/usage, never retained metadata prose.
+  // A late provider receipt is allowed to settle cost but cannot restore this context/result.
+  await client.query(
+    `UPDATE platform_metadata_translation_jobs SET context=NULL,result=NULL,
+      adventure_id=CASE WHEN adventure_id IN (SELECT id FROM adventures WHERE owner_id=$1) THEN NULL ELSE adventure_id END,
+      requester_id=CASE WHEN requester_id=$1 THEN NULL ELSE requester_id END
+     WHERE adventure_id IN (SELECT id FROM adventures WHERE owner_id=$1)
+       OR (visibility='private' AND requester_id=$1)`,
+    [userId],
+  );
+  await client.query(
+    'UPDATE platform_metadata_translation_jobs SET requester_id=NULL WHERE requester_id=$1',
+    [userId],
+  );
   await client.query(
     `DELETE FROM content_translations WHERE viewer_id=$1
      OR adventure_id IN (SELECT id FROM adventures WHERE owner_id=$1)

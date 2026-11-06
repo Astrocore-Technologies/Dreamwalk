@@ -227,14 +227,19 @@ test('concurrent reads claim once and repeated failures, timeouts and crashes ne
     assert.ok([...store.rows.values()].every((row) => row.status === 'failed'));
   }
 });
-test('disabled production path makes no dispatch/claims even with inherited provider credentials', async () => {
+test('gameplay dispatcher remains disabled and metadata dispatch requires explicit release mode', async () => {
   const cache = memoryCache(),
     service = new CachedTranslations(cache);
   assert.deepEqual(await service.localize('/adventures/forest', story(), 'en', user), story());
   assert.equal(cache.claims, 0);
   assert.throws(() => new CachedTranslations(cache, { external: true }), /PAYMENT_POLICY_REQUIRED/);
   const main = readFileSync('apps/api/src/main.ts', 'utf8');
-  assert.match(main, /new CachedTranslations\(new PostgresTranslationCache\(db\)\)/);
+  assert.match(
+    main,
+    /new CachedTranslations\(new PostgresTranslationCache\(db\), undefined, 2000, metadata\)/,
+  );
+  assert.match(main, /policy.mode === 'release'[\s\S]*?new PlatformMetadataTranslations\(db\)/);
+  assert.match(main, /NPC_AI_KILL_SWITCH/);
 });
 test('strict output binding rejects missing, duplicated, invented, oversized and control-character translations', () => {
   const id = 'a'.repeat(64),
@@ -282,4 +287,36 @@ test('owner default detail, unpublished drafts and reviewer views never enter tr
     assert.deepEqual(await service.localize('/adventures/forest', value, 'en', user), value);
   }
   assert.equal(calls.length, 0);
+});
+
+const {
+  metadataTranslationKey,
+  isMetadataField,
+} = require('../../apps/api/dist/translation/platform-metadata');
+test('platform metadata keys share readers and unrelated revisions but fence source, field, locale and visibility', () => {
+  const publicStory = { ...story(), visibility: 'public' };
+  const fields = (value, viewer = user) =>
+    translationProjection('/adventures/forest', value, 'en', viewer).fields.filter(isMetadataField);
+  const keys = (value, viewer = user, locale = 'en') =>
+    fields(value, viewer).map((field) => metadataTranslationKey(field, locale));
+  assert.deepEqual(keys(publicStory), keys(publicStory, randomUUID()));
+  assert.deepEqual(keys(publicStory), keys(publicStory, null));
+  assert.deepEqual(keys(publicStory), keys({ ...publicStory, sourceRevision: 91 }));
+  const changed = keys({ ...publicStory, title: 'Новый лес' });
+  assert.notEqual(changed[0], keys(publicStory)[0]);
+  assert.equal(changed[1], keys(publicStory)[1], 'unchanged description is not translated again');
+  assert.notDeepEqual(keys(publicStory), keys({ ...publicStory, visibility: 'private' }));
+  assert.notDeepEqual(keys(publicStory), keys(publicStory, user, 'uk'));
+  assert.notDeepEqual(keys(publicStory), keys({ ...publicStory, id: randomUUID() }));
+  assert.equal(fields({ ...publicStory, editRevision: 1 }).length, 0);
+  assert.equal(fields({ ...publicStory, status: 'draft' }).length, 0);
+  assert.equal(
+    translationProjection(
+      `/game/campaigns/${campaignId}/turns/feed`,
+      { entries: [{ text: 'PRIVATE WORDS' }] },
+      'en',
+      user,
+    ).fields.filter(isMetadataField).length,
+    0,
+  );
 });

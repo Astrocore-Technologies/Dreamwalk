@@ -17,6 +17,11 @@ export interface VisibleText {
   revision: string;
   maxLength: number;
   apply: (translation: string) => void;
+  metadata?: {
+    field: 'title' | 'synopsis';
+    visibility: 'public' | 'private';
+    sourceLanguage: Locale;
+  };
 }
 
 /** Called ONLY after a controller has built its authorized, spoiler-safe DTO.
@@ -101,6 +106,16 @@ export function translationProjection<T>(
         source,
         maxLength,
         revision,
+        ...(['public', 'private'].includes(String(target.visibility)) &&
+        ['ru', 'en', 'uk'].includes(String(target.sourceLanguage ?? 'ru'))
+          ? {
+              metadata: {
+                field: key,
+                visibility: target.visibility as 'public' | 'private',
+                sourceLanguage: (target.sourceLanguage ?? 'ru') as Locale,
+              },
+            }
+          : {}),
         apply: (text) => {
           const translations = record(target.translations) ?? {};
           const existing = record(translations[locale]);
