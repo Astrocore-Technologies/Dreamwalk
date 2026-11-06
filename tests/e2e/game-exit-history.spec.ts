@@ -68,7 +68,10 @@ test('exit goes to catalog and Library resumes the same save, preserving all sav
   const beforeResponse = await page.request.get(`/api/v1/game/campaigns/${id}/snapshot`);
   expect(beforeResponse.ok()).toBeTruthy();
   const before = (await beforeResponse.json()).projection;
-  await page.locator('#game-toolbar .game-return[href="/explore"]').click();
+  const roomExit = page.locator('#game-toolbar [data-game-toolbar] .game-return');
+  await expect(roomExit).toBeVisible();
+  await expect(roomExit).toHaveAttribute('href', '/explore');
+  await roomExit.click();
   await catalog(page);
   await expect(page.getByTestId('game-room')).toHaveCount(0);
   await page.goBack();
@@ -187,9 +190,11 @@ test('Library campaign invitation keeps hero choice and explicit acceptance, inc
       name: 'Принять приглашение в кампанию',
       exact: true,
     });
-    await expect(guest.getByLabel('Герой для этого прохождения', { exact: true })).toHaveValue(
-      heroId,
-    );
+    await expect(
+      guest.getByTestId('hero-selection').getByRole('combobox', {
+        name: /^Герой для этого прохождения/,
+      }),
+    ).toHaveValue(heroId);
     await guest.reload();
     await expect(accept).toBeVisible();
     expect(calls).toEqual([]);

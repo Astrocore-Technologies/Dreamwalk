@@ -11,10 +11,12 @@ async function fixture(
   page: Page,
   locale: 'en' | 'ru' | 'uk',
   initial: 'pending' | 'settled' = 'pending',
+  mode: 'automatic' | 'legacy_confirmation' = 'automatic',
 ) {
   const posts: Record<string, unknown>[] = [];
   const writes: string[] = [];
   let settled = initial === 'settled';
+  let acceptPost = false;
   const quote = () => ({
     jobId,
     holdId,
@@ -32,6 +34,7 @@ async function fixture(
     },
     requiresConsent: !settled,
     noGameEffect: true,
+    settlementMode: mode,
   });
   const balance = {
     ownerId,
@@ -73,7 +76,9 @@ async function fixture(
     if (endpoint === `/api/v1/game/campaigns/${campaignId}/ai/jobs/${jobId}/settlement`) {
       if (method === 'POST') {
         posts.push(route.request().postDataJSON());
-        return route.abort('failed');
+        if (!acceptPost) return route.abort('failed');
+        settled = true;
+        return route.fulfill({ json: quote() });
       }
       return route.fulfill({ json: quote() });
     }
@@ -82,6 +87,9 @@ async function fixture(
   return {
     posts,
     writes,
+    accept: () => {
+      acceptPost = true;
+    },
     settle: () => {
       settled = true;
     },
@@ -132,3 +140,53 @@ for (const initial of ['pending', 'settled'] as const) {
     expect(writes).toHaveLength(0);
   });
 }
+
+for (const locale of ['en', 'ru', 'uk'] as const) {
+  test(`legacy NPC/player exact confirmation settles only on click in ${locale}`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width: 375, height: 740 });
+    const f = await fixture(page, locale, 'pending', 'legacy_confirmation');
+    const text = settlementMessages[locale];
+    await page.goto(path);
+    const form = page.getByTestId('known-npc-settlement');
+    await expect(form.getByRole('status')).toHaveText(text.legacy);
+    await expect(form.getByRole('button', { name: text.confirm, exact: true })).toBeVisible();
+    const decimal = locale === 'en' ? '.' : ',';
+    await expect(form.getByTestId('settlement-sparks-charge')).toHaveText(`0${decimal}0146`);
+    await expect(form.getByTestId('settlement-sparks-release')).toHaveText(`0${decimal}0754`);
+    expect(f.writes).toHaveLength(0);
+    f.accept();
+    await form.getByRole('button', { name: text.confirm, exact: true }).click();
+    await expect(form.getByRole('status')).toHaveText(text.complete);
+    expect(f.posts).toHaveLength(1);
+    await page.reload();
+    await expect(form.getByRole('status')).toHaveText(text.complete);
+    expect(f.posts).toHaveLength(1);
+    expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
+      true,
+    );
+  });
+}
+test('interrupted legacy confirmation reload uses the same durable operation ID', async ({
+  page,
+}) => {
+  const f = await fixture(page, 'en', 'pending', 'legacy_confirmation');
+  await page.goto(path);
+  const form = page.getByTestId('known-npc-settlement');
+  await form.getByRole('button', { name: settlementMessages.en.confirm, exact: true }).click();
+  await expect(
+    form.getByRole('button', { name: settlementMessages.en.retry, exact: true }),
+  ).toBeVisible();
+  expect(f.posts).toHaveLength(1);
+  await page.reload();
+  await expect(
+    form.getByRole('button', { name: settlementMessages.en.retry, exact: true }),
+  ).toBeVisible();
+  expect(f.posts).toHaveLength(1);
+  f.accept();
+  await form.getByRole('button', { name: settlementMessages.en.retry, exact: true }).click();
+  await expect(form.getByRole('status')).toHaveText(settlementMessages.en.complete);
+  expect(f.posts).toHaveLength(2);
+  expect(f.posts[1]).toEqual(f.posts[0]);
+});

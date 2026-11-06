@@ -25,6 +25,7 @@ for (const locale of ['ru', 'uk', 'en']) {
         });
       if (route.request().method() !== 'GET') writes.push(path);
       if (path.endsWith('/auth/me')) return route.fulfill({ json: { user } });
+      if (path.endsWith('/game/campaigns')) return route.fulfill({ json: { campaigns: [] } });
       if (path.endsWith('/library'))
         return route.fulfill({
           json: {

@@ -489,3 +489,32 @@ click, and only reuses that operation after an uncertain response. Mount, pollin
 and reload do not send settlement mutations. Pending automatic requests reject the
 manual route and keep their background recovery. Terminal replay preserves the
 original financial fingerprint and creates no second charge or audit.
+
+### Historical owner reservation recovery
+
+`GET /api/v1/sparks/settlements?after=<hold UUID>` is authenticated, owner-only and
+`Cache-Control: no-store`. It lists at most ten open reservations and a nullable
+`nextCursor`. Each entry includes `holdId`, `reservedSubunits`, and `state`:
+`active`, `unavailable`, or `verified`. Only verified entries contain a `kind`
+(`authoring` or `npc`), `jobId`, nullable `campaignId`, and the existing exact
+settlement quote. Discovery calls the full read-only source proof; it never
+settles, retries a provider, or exposes story/NPC context. Missing/unknown evidence
+has no confirmation link. Unexpected database failures fail the read instead of
+being presented as known cost.
+
+The NPC settlement quote now includes `settlementMode`, matching authoring:
+`automatic` or `legacy_confirmation`. A pending automatic request rejects manual
+POST, including ordinary accepted world batches without the later policy marker.
+Historical player recovery is limited to `story_turn`; its original owner,
+request hash, native quote, provider reservation, verified usage, frozen tariff,
+and funding lineage must all match. The pre-world-batch hash shape is accepted
+only when the original batch field was absent and no batch/policy applies.
+Unknown costs and active jobs remain ineligible.
+
+Historical authoring jobs are reachable at
+`/wallet/settlements/authoring/:jobId`, independently of a story's latest build.
+NPC/player jobs retain `/game/:campaignId/settlement/:jobId`. Opening, polling,
+reload and navigation are GET-only. The explicit legacy confirmation persists an
+owner/job-scoped operation ID before POST, rechecks the complete quote, and reuses
+the same receipt after an interrupted response. Accounting, surplus release and
+audit remain one transaction. No new provider or gameplay action occurs.

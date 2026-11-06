@@ -1,4 +1,8 @@
 'use client';
+import {
+  WalletSettlementsPage,
+  OwnerAuthoringSettlementPage,
+} from '@/components/owner-settlements';
 import { VisualWorkshop } from '@/components/visual-authoring/workshop';
 import { GamePage } from '@/components/game/game-page';
 import { KnownNpcSettlementPage } from '@/components/game/known-npc-settlement';
@@ -74,6 +78,18 @@ function Router() {
     content = (
       <Protected>
         <StudioPage path={path} />
+      </Protected>
+    );
+  else if (/^\/wallet\/settlements\/authoring\/[^/]+$/.test(path))
+    content = (
+      <Protected>
+        <OwnerAuthoringSettlementPage jobId={path.split('/')[4]} />
+      </Protected>
+    );
+  else if (path === '/wallet/settlements')
+    content = (
+      <Protected>
+        <WalletSettlementsPage />
       </Protected>
     );
   else if (path === '/wallet')

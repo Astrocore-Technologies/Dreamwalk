@@ -185,22 +185,39 @@ export function automaticNpcAdmission(
           ('subjectKind' in s || job.subject_kind === 'npc') &&
           ('purpose' in s || job.purpose === 'plan'),
       );
+    // Before world batches existed, direct requests omitted this field entirely.
+    // Accept that exact historical hash only for a legacy direct admission, never
+    // by dropping a real batch identity or automatic-policy consent.
+    const batchScopes: Array<{ acceptedWorldBatchId: unknown } | Record<string, never>> = [
+      { acceptedWorldBatchId },
+    ];
     if (
-      !scopes.some(
-        (scope) =>
-          digest({
-            scope,
-            context: job.context,
-            quoteId: native.id,
-            consent: true,
-            requestKey: job.request_meta.requestKey ?? '',
-            sponsorId: null,
-            runtimeRequestId: job.request_meta.runtimeRequestId ?? null,
-            acceptedWorldBatchId,
-            ...(job.request_meta.automaticKnownCostPolicy
-              ? { automaticKnownCostPolicy: job.request_meta.automaticKnownCostPolicy }
-              : {}),
-          }) === job.request_hash,
+      historicalSourceProof &&
+      !batch &&
+      acceptedWorldBatchId === null &&
+      !Object.hasOwn(job.request_meta, 'acceptedWorldBatchId') &&
+      admitted.automaticKnownCostPolicy == null &&
+      job.request_meta.automaticKnownCostPolicy == null
+    )
+      batchScopes.push({});
+    if (
+      !scopes.some((scope) =>
+        batchScopes.some(
+          (batchScope) =>
+            digest({
+              scope,
+              context: job.context,
+              quoteId: native.id,
+              consent: true,
+              requestKey: job.request_meta.requestKey ?? '',
+              sponsorId: null,
+              runtimeRequestId: job.request_meta.runtimeRequestId ?? null,
+              ...batchScope,
+              ...(job.request_meta.automaticKnownCostPolicy
+                ? { automaticKnownCostPolicy: job.request_meta.automaticKnownCostPolicy }
+                : {}),
+            }) === job.request_hash,
+        ),
       )
     )
       return false;
