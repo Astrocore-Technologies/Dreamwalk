@@ -584,6 +584,17 @@ export function storyPrivateAudience(actorId: string, input: StoryTurnInput): st
     ? [...new Set([actorId, ...(input.targetNpcId ? [input.targetNpcId] : [])])].sort()
     : undefined;
 }
+/** Input attribution describes pre-admission intent, not a permanent ban on resolving it. */
+export const storyDirectorRoleplayPolicy =
+  'Player-authored RP is intent, not by itself a validated inventory, money, damage or movement change. This describes the input before adjudication, not the outcome of a supported typed effect selected for this turn. Resolve permitted effects through their listed capabilities; preserve harmless everyday roleplay naturally.';
+
+// Bind policy upgrades into the semantic readset without duplicating the full prompt in context.
+export const storyDirectorResolutionVersion = 'atomic-current-turn-v1';
+
+/** Candidate prose is published with admission, never evidence of a future queued effect. */
+export const storyDirectorResolutionPolicy =
+  'Separate the current turn from historical evidence. actionOutcomes describes previews for current director segment indices; committedAttackOutcomes describes already persisted results at ORIGINAL post indices, not new actions to repeat. A current known failure or ACTION_PENDING for that same attempt/effect overrides candidate success. A failed attempt remains failed for that attempt, not for a later retry. When selecting a supported inline give with no current known failure for its own attempt/effect, write its successful result as candidate narration, not as still unconfirmed: the engine validates the effect and publishes it together with narration only after all required admission and confirmation succeed. If that give fails admission, neither its transfer nor its success narration is committed. Player intent alone and null-action emotes do not establish a tracked transfer. travelIntent, queued paths and ACTION_PENDING remain unresolved; do not borrow the inline-give rule for deferred effects. Historical confirmedTurns and evidenceIds describe their own past turns; a citation does not determine this turn outcome or current custody. Cite history only for relevant historical continuity; a current typed effect needs no old canon citation. Preserve ordinary RP and each NPC own audience-safe evidence; director resolution is not NPC knowledge.';
+
 export function buildStoryTurnContext(
   state: GameState,
   actorId: string,
@@ -806,6 +817,12 @@ export function buildStoryTurnContext(
     mapId: actor.mapId,
     canonRevision: state.narrativeCanon?.revision ?? 0,
     mechanics,
+    ...(mode === 'director'
+      ? {
+          roleplayPolicy: storyDirectorRoleplayPolicy,
+          resolutionPolicy: storyDirectorResolutionVersion,
+        }
+      : {}),
     referencedInventory: (mode === 'director' ? view.inventory : [])
       .filter((item) =>
         parsed.segments.some(
@@ -833,7 +850,7 @@ export function buildStoryTurnContext(
                 ),
               })),
             instructions:
-              'Interpret an explicit current handoff semantically, not as a command keyword. Use action give with the matching owned item ID and visible recipient ID from this exact segment. Item mention alone, looking, gesturing, negation, a hypothetical, quoted speech or another actor action is not a handoff. These are private director references, never NPC knowledge or permission to enumerate inventory. Preserve ordinary untracked RP. A completed transfer of a tracked item requires the typed action and successful server admission; otherwise narrate only the attempt, refusal or obstacle. Never claim acceptance without the matching transfer. No invented items, owners or recipients.',
+              'Interpret an explicit current handoff semantically, not as a command keyword. Use action give with the matching owned item ID and visible recipient ID from this exact segment. Item mention alone, looking, gesturing, negation, a hypothetical, quoted speech or another actor action is not a handoff. These are private director references, never NPC knowledge or permission to enumerate inventory. Preserve ordinary untracked RP. A completed transfer requires its matching typed give. When selecting a supported give with no current known failure for its own attempt/effect, narrate its successful result conditionally on atomic admission, not as still unconfirmed. The server publishes the transfer and narration together only after all required checks and confirmation; failed admission publishes neither. Without that give, narrate only the attempt, refusal or obstacle. No invented items, owners or recipients.',
           },
         }
       : {}),

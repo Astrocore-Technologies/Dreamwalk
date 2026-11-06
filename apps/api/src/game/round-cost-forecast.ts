@@ -112,7 +112,6 @@ export async function forecastWorldRound(
           ...(row.turn_context.untrustedRoleplay
             ? {
                 untrustedRoleplay: row.turn_context.untrustedRoleplay,
-                roleplayPolicy: row.turn_context.roleplayPolicy,
               }
             : {}),
         };
