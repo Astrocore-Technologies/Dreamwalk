@@ -84,3 +84,43 @@ replay, restart/offline confirmation, erasure preserving another player's mechan
 and actual desktop/390px browser captures. Pure fixtures and schema acceptance are
 not a new Luna-quality result or permission for another paid request. The exhausted
 text evaluation count and the image request's unknown-cost hold remain unchanged.
+
+## Existing owned-item ground placement (KAN-32)
+
+The director can interpret a current RP attempt to put down an existing portable
+carried object through `drop {targetId, target:{x,y}}`. This is a story-only
+extension, not an unrestricted legacy narrative action. The server supplies at
+most eight named owned references and sixteen validated adjacent ground points
+per item and attempt segment. Unique noun references and bounded RU/UK name
+inflections are supported; ambiguous identical labels or nouns do not select an
+inventory identity. The complete inventory is never provider/NPC context.
+
+The context binds item and actor revisions, current map revision, geometry hash,
+and image/grounding bindings. Original offered choices and live choices after
+preceding actions must both allow the exact item and point. Deferred world
+resolution uses the same fenced temporary player-turn view as ordinary ordered
+actions. Ownership, geometry, footprint collisions, capacity and remaining
+additional-action resources are rechecked. Duplicate drops fail atomically;
+independently requested drop then pickup may succeed when both actions remain
+legal and funded by turn resources. Neither a new entity nor a new paid request
+is created. A validated drop does not introduce another action-confirmation UI;
+existing provider/budget admission rules are unchanged.
+
+Placement supports nearby ground only. It does not establish a table/shelf
+surface, container membership, thrown trajectory, damage or distant landing.
+Location-only or unsafe/unverified image geometry has no placement candidates.
+Speech, quotation, negation, hypothetical/reported actions and another actor's
+intent do not authorize placement. Model interpretation remains semantic rather
+than a positive command grammar; conservative local vetoes are only backstops.
+Ordinary untracked props, descriptive RP and unrelated services remain available.
+
+Narration is published only with the whole committed ordered operation. Grounded
+provider prose is preserved. A bounded literal checker rejects recognized
+prose-only placement claims and uses a localized historical ground-result
+fallback for a detected contradictory dropped-item surface/trajectory/custody
+claim. Stale advisory NPC replies after the effect are omitted without inventing
+knowledge or losing the admitted source speech. Private audience remains private;
+actual witnesses can observe the physical effect through the existing perception
+path. These checks do not prove arbitrary prose semantically correct. Synthetic
+EN/RU/UK fixtures validate admission boundaries, not live-model interpretation
+quality; no paid or live-provider evaluation was run for this change.

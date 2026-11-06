@@ -39,13 +39,21 @@ export const storyClarificationSchema = z.enum([
   'INVALID_MARKUP',
   'TOO_MANY_SEGMENTS',
 ]);
-export const storyActionSchema = narrativeActionSchema.extend({
-  kind: z.enum([...narrativeActionSchema.shape.kind.options, 'approach', 'move_to']),
-  target: z
-    .object({ x: z.number().int().min(0).max(63), y: z.number().int().min(0).max(63) })
-    .strict()
-    .optional(),
-});
+export const storyActionSchema = narrativeActionSchema
+  .extend({
+    kind: z.enum([...narrativeActionSchema.shape.kind.options, 'approach', 'move_to', 'drop']),
+    target: z
+      .object({ x: z.number().int().min(0).max(63), y: z.number().int().min(0).max(63) })
+      .strict()
+      .optional(),
+  })
+  .superRefine((action, ctx) => {
+    if (action.kind === 'drop' && (!action.targetId || !action.target || action.itemId))
+      ctx.addIssue({
+        code: 'custom',
+        message: 'Ground drop requires an existing targetId and point only.',
+      });
+  });
 /** Semantic interpretation of the player's current departure, never an already completed journey. */
 export const storyTravelIntentSchema = z
   .object({

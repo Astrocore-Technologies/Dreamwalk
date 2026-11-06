@@ -480,10 +480,12 @@ export function recordLivingNpcEvents(
       const e = events[index],
         actor = e.actorId ? before.entities[e.actorId] : undefined,
         actualTarget = e.targetId
-          ? (before.entities[e.targetId] ?? after.entities[e.targetId])
+          ? e.kind === 'item.placed'
+            ? after.entities[e.targetId]
+            : (before.entities[e.targetId] ?? after.entities[e.targetId])
           : undefined,
         target =
-          actualTarget && ['item.placed', 'item.given', 'item.consumed'].includes(e.kind)
+          actualTarget && ['item.given', 'item.consumed'].includes(e.kind)
             ? {
                 ...actualTarget,
                 ownerId: undefined,
@@ -609,7 +611,12 @@ export function recordLivingNpcEvents(
         kind === 'helped' ||
         ((kind === 'harmed' || kind === 'pushed') && e.targetId === npcId);
       const seesActor = attentive && observedVisible(before, npc, actor),
-        seesTarget = target && attentive && observedVisible(before, npc, target as GameEntity);
+        seesTarget =
+          target &&
+          attentive &&
+          (e.kind === 'item.placed'
+            ? observedVisible(after, after.entities[npcId] ?? npc, target as GameEntity)
+            : observedVisible(before, npc, target as GameEntity));
       const direct =
         e.actorId === npcId ||
         ((kind === 'addressed' || kind === 'helped' || kind === 'harmed' || kind === 'pushed') &&
