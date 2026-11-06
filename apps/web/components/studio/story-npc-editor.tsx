@@ -136,7 +136,7 @@ export function StoryNpcEditor({
   const [previewId, setPreviewId] = useState<string | null>(null);
   const [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
-    [notice, setNotice] = useState('');
+    [notice, setNotice] = useState<'' | 'saved' | 'exported'>('');
   const [discard, setDiscard] = useState(false);
   const epoch = useRef(0),
     lock = useRef(false),
@@ -252,7 +252,7 @@ export function StoryNpcEditor({
         setDraft(next);
         setBaseline(JSON.stringify(next));
       }
-      setNotice(text(kind === 'export' ? 'exported' : 'saved'));
+      setNotice(kind === 'export' ? 'exported' : 'saved');
     } catch (failure) {
       if (stamp === epoch.current) {
         if (
@@ -540,7 +540,7 @@ export function StoryNpcEditor({
         </>
       )}
       <ErrorBox message={error} />
-      {notice && <p role="status">{notice}</p>}
+      {notice && <p role="status">{text(notice)}</p>}
       {discard && (
         <Modal title={text('discard')} onClose={() => setDiscard(false)}>
           <p>{text('discardInfo')}</p>

@@ -1,16 +1,18 @@
 import {
+  entityPresentationLabels,
+  presentationAliasReferencesValid,
+  type PresentationAliases,
+} from './presentation-aliases';
+import {
   footprintDistance,
   hasPosition,
   isActorConscious,
-  type GameEntity,
   type GameState,
 } from '@dreamwalk/contracts';
 import { observedVisible } from './observation-visibility';
 
 const normalize = (text: string) => text.normalize('NFKC').toLocaleLowerCase().trim();
 const words = (text: string) => normalize(text).match(/[\p{L}\p{N}_-]+/gu) ?? [];
-const names = (item: GameEntity) =>
-  [item.id, item.label ?? '', ...Object.values(item.labelTranslations ?? {})].filter(Boolean);
 const mentions = (text: string, labels: string[]) => {
   const tokens = words(text).join(' ');
   return labels.some((label) => {
@@ -23,14 +25,31 @@ type ReferencedItem = { id: string; label?: string; labels: string[]; revision: 
 /** Private director capability, not an inventory dump or a command parser.
  * The model interprets the current attempt; the server limits it to objects the
  * player actually carries and names in that attempt, and visible existing actors. */
-export function storyItemTransferContext(state: GameState, actorId: string, text: string) {
+export function storyItemTransferContext(
+  state: GameState,
+  actorId: string,
+  text: string,
+  presentationAliases?: PresentationAliases,
+) {
   const actor = state.entities[actorId];
   const items: ReferencedItem[] =
-    actor?.kind === 'player' && isActorConscious(actor) && hasPosition(actor)
+    actor?.kind === 'player' &&
+    isActorConscious(actor) &&
+    hasPosition(actor) &&
+    presentationAliasReferencesValid(state, actorId, text, presentationAliases)
       ? [...new Set(actor.inventory ?? [])].flatMap((id) => {
           const item = state.entities[id];
-          return item?.kind === 'item' && item.ownerId === actorId && mentions(text, names(item))
-            ? [{ id, label: item.label, labels: names(item), revision: item.revision }]
+          return item?.kind === 'item' &&
+            item.ownerId === actorId &&
+            mentions(text, entityPresentationLabels(state, actorId, item, presentationAliases))
+            ? [
+                {
+                  id,
+                  label: item.label,
+                  labels: entityPresentationLabels(state, actorId, item, presentationAliases),
+                  revision: item.revision,
+                },
+              ]
             : [];
         })
       : [];
@@ -48,6 +67,9 @@ export function storyItemTransferContext(state: GameState, actorId: string, text
         .map((target) => ({
           id: target.id,
           label: target.label,
+          ...(presentationAliases
+            ? { labels: entityPresentationLabels(state, actorId, target, presentationAliases) }
+            : {}),
           revision: target.revision,
           reachable: footprintDistance(actor, target) <= 1,
           hasCapacity:
@@ -63,7 +85,7 @@ export function storyItemTransferContext(state: GameState, actorId: string, text
 export function claimedStoryItemTransfers(
   narration: string,
   items: ReferencedItem[],
-  recipients: { id: string; label?: string }[],
+  recipients: { id: string; label?: string; labels?: string[] }[],
 ): { itemId: string; recipientId: string }[] {
   const result = new Map<string, { itemId: string; recipientId: string }>();
   const escape = (value: string) => value.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
@@ -73,8 +95,8 @@ export function claimedStoryItemTransfers(
     'quietly|carefully|silently|gently|молча|бережно|осторожно|спокойно|обережно|мовчки';
   const determiner =
     'the|a|your|his|her|offered|extended|протянутый|поданный|предложенный|этот|тот|твой|ваш|твій|цей|запропонований';
-  const actorNames = (recipient: { id: string; label?: string }) => {
-    const base = [recipient.id, recipient.label ?? '']
+  const actorNames = (recipient: { id: string; label?: string; labels?: string[] }) => {
+    const base = [recipient.id, recipient.label ?? '', ...(recipient.labels ?? [])]
       .map((name) => words(name).join(' '))
       .filter(Boolean);
     const name = normalize(recipient.label ?? '');

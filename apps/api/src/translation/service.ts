@@ -3,6 +3,7 @@ import type { Locale } from '@dreamwalk/contracts';
 import type { Db } from '../db';
 import { TRANSLATION_VERSION, validateTranslations } from './definition';
 import { translationProjection, type TranslationScope, type VisibleText } from './projection';
+import type { PlatformMetadataTranslations } from './platform-metadata';
 
 export interface TranslationInput {
   id: string;
@@ -15,9 +16,9 @@ export interface TranslationRequest {
   items: TranslationInput[];
   signal: AbortSignal;
 }
-/** A provider is not an authority to spend. Production intentionally supplies no
- * dispatcher until a payer, data-sharing policy and durable reserve/settlement
- * integration are approved. Only local synthetic dispatchers are accepted here.
+/** The generic/gameplay pipeline remains cache-only in production. The separately
+ * authorized platform metadata service owns its durable budget and source/ACL checks.
+ * Only local synthetic dispatchers are accepted by this generic interface.
  */
 export interface SyntheticTranslationDispatcher {
   readonly external: false;
@@ -95,8 +96,9 @@ export class CachedTranslations {
     private readonly cache: TranslationCache,
     private readonly dispatcher?: SyntheticTranslationDispatcher,
     private readonly timeoutMs = 2000,
+    private readonly metadata?: Pick<PlatformMetadataTranslations, 'localize'>,
   ) {
-    // No environment flag or inherited OpenAI key can silently enable paid translation.
+    // An inherited key cannot enable paid gameplay translation through this interface.
     if (dispatcher && dispatcher.external !== false)
       throw new Error('TRANSLATION_PAYMENT_POLICY_REQUIRED');
     if (!Number.isSafeInteger(timeoutMs) || timeoutMs < 1 || timeoutMs > 10000)
@@ -107,7 +109,17 @@ export class CachedTranslations {
     original: T,
     locale: Locale,
     viewerId: string | null,
+    onPending?: () => void,
   ): Promise<T> {
+    if (this.metadata) {
+      try {
+        const localized = await this.metadata.localize(path, original, locale, viewerId);
+        original = localized.value;
+        if (localized.pending) onPending?.();
+      } catch {
+        /* Cache/queue failure cannot block ordinary reads. */
+      }
+    }
     const { value, fields } = translationProjection(path, original, locale, viewerId);
     if (!fields.length) return original;
     // Bound work before touching storage. Never recursively traverse arbitrary DTOs.

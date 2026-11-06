@@ -145,7 +145,7 @@ test('tick and irrelevant routine movement do not stale director; canon and actu
   assert.ok(g.applyNarrativeProposal(occupied, 'alice', p, 'Investigate the signal').error);
   assert.equal(g.applyNarrativeProposal(s, 'alice', p, 'different intent').error, 'STALE_STATE');
 });
-test('pinned feature and role constraints remain while legacy lifetime caps no longer block RP', () => {
+test('standalone director preserves pinned feature, role and scene capacity constraints', () => {
   const s = world();
   s.narrativeConstraints = {
     allowNewScenes: false,
@@ -165,7 +165,10 @@ test('pinned feature and role constraints remain while legacy lifetime caps no l
   s.narrativeConstraints.allowNewScenes = true;
   s.narrativeConstraints.maxScenes = 2;
   p.contextHash = g.buildNarrativeContext(s, 'alice', 'Investigate the signal').contextHash;
-  assert.equal(g.applyNarrativeProposal(s, 'alice', p, 'Investigate the signal').error, undefined);
+  assert.equal(
+    g.applyNarrativeProposal(s, 'alice', p, 'Investigate the signal').error,
+    'RATE_LIMITED',
+  );
   s.narrativeConstraints.maxScenes = 16;
   p.contextHash = g.buildNarrativeContext(s, 'alice', 'Investigate the signal').contextHash;
   p.newNpc.roleLabel = 'Replacement Keeper';

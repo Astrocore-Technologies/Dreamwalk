@@ -1,4 +1,9 @@
 import {
+  entityPresentationLabels,
+  presentationAliasReferencesValid,
+  type PresentationAliases,
+} from './presentation-aliases';
+import {
   hasPosition,
   footprintDistance,
   type GameAction,
@@ -88,19 +93,23 @@ export function parseStoryItemAction(
   state: GameState,
   actorId: string,
   text: string,
+  presentationAliases?: PresentationAliases,
 ): GameAction | null {
   const actor = state.entities[actorId];
-  if (actor?.kind !== 'player') return null;
+  if (
+    actor?.kind !== 'player' ||
+    !presentationAliasReferencesValid(state, actorId, text, presentationAliases)
+  )
+    return null;
   const candidates = Object.values(state.entities).filter(
     (item) =>
       item.kind === 'item' &&
       (visible(state, actor, item) ||
         (item.ownerId === actorId && actor.inventory?.includes(item.id))) &&
-      explicitStoryPickup(text, [
-        item.id,
-        item.label ?? '',
-        ...Object.values(item.labelTranslations ?? {}),
-      ]),
+      explicitStoryPickup(
+        text,
+        entityPresentationLabels(state, actorId, item, presentationAliases),
+      ),
   );
   return candidates.length === 1 ? { kind: 'pick_up', targetId: candidates[0].id } : null;
 }
@@ -117,6 +126,7 @@ export function materializeStoryItem(
   actorId: string,
   turnId: string,
   proposal: NonNullable<StoryTurnProposal['narrative']>['newItem'],
+  presentationAliases?: PresentationAliases,
 ): GameResult {
   if (!proposal) return { state, events: [] };
   const actor = state.entities[actorId];
@@ -126,7 +136,7 @@ export function materializeStoryItem(
   if (
     state.entities[id] ||
     Object.values(state.entities).some((entity) =>
-      [entity.id, entity.label ?? '', ...Object.values(entity.labelTranslations ?? {})].some(
+      entityPresentationLabels(state, actorId, entity, presentationAliases).some(
         (label) => normalize(label) === normalize(proposal.name),
       ),
     )
@@ -170,17 +180,15 @@ export function applyStoryPickup(
   itemId: string,
   text: string,
   input: StoryTurnInput,
+  presentationAliases?: PresentationAliases,
 ): GameResult {
   const actor = state.entities[actorId],
     item: GameEntity | undefined = state.entities[itemId];
   if (
     actor?.kind !== 'player' ||
+    !presentationAliasReferencesValid(state, actorId, text, presentationAliases) ||
     item?.kind !== 'item' ||
-    !explicitStoryPickup(text, [
-      item.id,
-      item.label ?? '',
-      ...Object.values(item.labelTranslations ?? {}),
-    ])
+    !explicitStoryPickup(text, entityPresentationLabels(state, actorId, item, presentationAliases))
   )
     return fail(state, 'FORBIDDEN');
   const turn = state.turnController;

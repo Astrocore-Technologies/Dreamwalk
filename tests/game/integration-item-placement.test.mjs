@@ -327,7 +327,7 @@ await test(
         },
       );
       await t.test(
-        'drop consumes one additional action and replay never charges it twice',
+        'free player drop preserves resources and replay never duplicates it',
         async () => {
           const before = (await snapshot(owner, ids.sequential)).projection;
           assert.equal(before.turn.resources.additional, 1);
@@ -342,7 +342,7 @@ await test(
           };
           const committed = await command(owner, ids.sequential, body);
           assert.equal(committed.status, 'committed');
-          assert.equal(committed.projection.turn.resources.additional, 0);
+          assert.deepEqual(committed.projection.turn.resources, before.turn.resources);
           assert.equal(committed.projection.turn.resources.main, before.turn.resources.main);
           assert.deepEqual(await command(owner, ids.sequential, body), committed);
           assert.deepEqual(await jobs(ids.sequential), { ai: 0, legacy: 0, decisions: 0 });

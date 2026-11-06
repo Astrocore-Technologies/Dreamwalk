@@ -139,3 +139,108 @@ test('a delayed game denial cannot erase the newest snapshot after en to uk to e
   await expect(page.getByTestId('game-room')).toBeVisible();
   await expect(page.locator('html')).toHaveAttribute('lang', 'en');
 });
+
+for (const width of [390, 1536])
+  test(`pending metadata refreshes automatically and stops after language/navigation changes (${width}px)`, async ({
+    page,
+  }) => {
+    await page.setViewportSize({ width, height: 900 });
+    await page.clock.install();
+    await page.addInitScript(() => {
+      if (!localStorage.getItem('dreamwalk-language'))
+        localStorage.setItem('dreamwalk-language', 'ru');
+    });
+    async function selectLocale(locale: 'en' | 'uk') {
+      const select = page.locator('.locale-select');
+      const inDrawer = !(await select.isVisible());
+      if (inDrawer) await page.locator('.mobile-menu').click();
+      await expect(select).toBeVisible();
+      await select.selectOption(locale);
+      if (inDrawer) {
+        await page.keyboard.press('Escape');
+        await expect(page.locator('.mobile-menu')).toHaveAttribute('aria-expanded', 'false');
+      }
+    }
+    const counts = { en: 0, uk: 0 };
+    let englishReady = false;
+    await page.route('**/api/v1/**', async (route) => {
+      const path = new URL(route.request().url()).pathname;
+      if (path === '/api/v1/auth/me') return route.fulfill({ json: { user: null } });
+      if (path !== '/api/v1/adventures') return route.fulfill({ json: [] });
+      const requested = route.request().headers()['accept-language'];
+      const locale = requested === 'en' || requested === 'uk' ? requested : 'ru';
+      if (locale !== 'ru') counts[locale]++;
+      // A response count is not job completion: hydration may issue two GETs.
+      const pending = locale === 'uk' || (locale === 'en' && !englishReady);
+      return route.fulfill({
+        headers: pending ? { 'X-Dreamwalk-Translation-Pending': 'true' } : {},
+        json: [
+          {
+            id: '4b47eba7-e071-497e-b382-d250ecb51a41',
+            slug: 'pending-fixture',
+            title: 'Тихий лес',
+            synopsis: 'История о лесе',
+            sourceLanguage: 'ru',
+            sourceRevision: 1,
+            genre: 'Фэнтези',
+            tags: [],
+            cover: 'forest',
+            playersMin: 1,
+            playersMax: 4,
+            visibility: 'public',
+            status: 'published',
+            author: { name: 'Fixture', handle: 'fixture' },
+            favoriteCount: 0,
+            createdAt: '2026-11-03T00:00:00Z',
+            updatedAt: '2026-11-03T00:00:00Z',
+            translations:
+              pending || locale === 'ru'
+                ? {}
+                : { en: { title: 'Quiet forest', synopsis: 'A forest story', sourceRevision: 1 } },
+          },
+        ],
+      });
+    });
+    await page.goto('/explore');
+    const title = page.locator('.card-art-title');
+    await expect(page.locator('.locale-select')).toHaveValue('ru');
+    await expect(title).toHaveText('Тихий лес');
+    expect(counts.en).toBe(0);
+    const pendingEnglish = page.waitForResponse(
+      (response) =>
+        new URL(response.url()).pathname === '/api/v1/adventures' &&
+        response.request().headers()['accept-language'] === 'en' &&
+        response.headers()['x-dreamwalk-translation-pending'] === 'true',
+    );
+    await selectLocale('en');
+    await (await pendingEnglish).finished();
+    await expect.poll(() => counts.en).toBeGreaterThan(0);
+    await expect(title).toHaveText('Тихий лес');
+    const beforeReady = counts.en;
+    englishReady = true;
+    await page.clock.fastForward(1600);
+    await expect(title).toHaveText('Quiet forest');
+    expect(counts.en).toBe(beforeReady + 1);
+    await page.clock.fastForward(6000);
+    expect(counts.en).toBe(beforeReady + 1);
+    await selectLocale('uk');
+    await expect(title).toHaveText('Тихий лес');
+    expect(counts.uk).toBe(1);
+    await selectLocale('en');
+    await expect(title).toHaveText('Quiet forest');
+    await page.clock.fastForward(2000);
+    expect(counts.uk).toBe(1);
+    expect(counts.en).toBe(beforeReady + 2);
+    await selectLocale('uk');
+    await expect(title).toHaveText('Тихий лес');
+    expect(counts.uk).toBe(2);
+    await page.locator('a[href="/about"]').first().click();
+    await expect(page).toHaveURL(/\/about$/);
+    await expect(page.locator('.locale-select')).toHaveValue('uk');
+    const atNavigation = counts.uk;
+    await page.clock.fastForward(2000);
+    expect(counts.uk).toBe(atNavigation);
+    await expect(page.getByRole('button', { name: /Translate|Перевести|Перекласти/i })).toHaveCount(
+      0,
+    );
+  });

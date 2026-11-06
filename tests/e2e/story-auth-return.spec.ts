@@ -25,7 +25,7 @@ async function chooseStory(page: Page) {
   );
 }
 async function signIn(page: Page, account: ReturnType<typeof credentials>) {
-  await page.getByLabel('Email', { exact: true }).fill(account.email);
+  await page.getByLabel(/^(Email|Электронная почта|Електронна пошта)$/).fill(account.email);
   await page.getByLabel('Пароль', { exact: true }).fill(account.password);
   await page.getByRole('button', { name: 'Войти', exact: true }).click();
 }
@@ -49,7 +49,7 @@ test('guest selected story survives signup and onboarding; explicit hero launch 
     (url) => url.pathname === '/auth/sign-up' && url.searchParams.get('returnTo') === storyPath,
   );
   await page.getByLabel('Логин').fill(account.handle);
-  await page.getByLabel('Email', { exact: true }).fill(account.email);
+  await page.getByLabel(/^(Email|Электронная почта|Електронна пошта)$/).fill(account.email);
   await page.getByLabel('Пароль', { exact: true }).fill(account.password);
   await page.getByRole('button', { name: 'Создать аккаунт', exact: true }).click();
   await expect(page).toHaveURL(
@@ -143,7 +143,7 @@ test('failed sign-in retains selected story and safe Back flow; successful sign-
   ).toBeTruthy();
   expect((await page.request.post('/api/v1/auth/logout', { data: {} })).ok()).toBeTruthy();
   await chooseStory(page);
-  await page.getByLabel('Email', { exact: true }).fill(account.email);
+  await page.getByLabel(/^(Email|Электронная почта|Електронна пошта)$/).fill(account.email);
   await page.getByLabel('Пароль', { exact: true }).fill('Definitely-not-the-password');
   const rejected = page.waitForResponse(
     (r) => r.url().endsWith('/auth/login') && r.request().method() === 'POST',
@@ -233,7 +233,7 @@ test('switching auth mode during a pending login remounts a fresh usable signup 
       url.pathname === '/auth/sign-up' && url.searchParams.get('returnTo') === storyPath;
     await expect(page).toHaveURL(signup);
     await expect(page.getByRole('button', { name: 'Создать аккаунт', exact: true })).toBeEnabled();
-    await expect(page.getByLabel('Email', { exact: true })).toHaveValue('');
+    await expect(page.getByLabel(/^(Email|Электронная почта|Електронна пошта)$/)).toHaveValue('');
     await expect(page.getByLabel('Пароль', { exact: true })).toHaveValue('');
     await page.getByLabel('Логин').fill('fresh_signup_editable');
     const delivered = page.waitForResponse((r) => r.url().endsWith('/auth/login') && r.ok());

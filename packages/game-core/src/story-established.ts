@@ -1,3 +1,4 @@
+import { entityPresentationLabels, type PresentationAliases } from './presentation-aliases';
 import {
   establishedRoleplayEventSchema,
   hasPosition,
@@ -28,14 +29,19 @@ const tokens = (text: string) =>
     .toLocaleLowerCase()
     .match(/[\p{L}\p{N}_-]+/gu)
     ?.join(' ') ?? '';
-const named = (text: string, entity: GameEntity) =>
-  [entity.id, entity.label, ...Object.values(entity.labelTranslations ?? {})].some((label) => {
+const named = (text: string, labels: string[]) =>
+  labels.some((label) => {
     const name = label ? tokens(label) : '';
     return name.length > 1 && ` ${tokens(text)} `.includes(` ${name} `);
   });
 /** Public scene references plus only the player's named carried objects. No keys,
  * private stock, unseen identities, other inventories, or executable patches. */
-export function establishedRoleplayContext(state: GameState, actorId: string, text: string) {
+export function establishedRoleplayContext(
+  state: GameState,
+  actorId: string,
+  text: string,
+  aliases?: PresentationAliases,
+) {
   const actor = state.entities[actorId];
   const entities = Object.values(state.entities).filter(
     (entity) =>
@@ -44,7 +50,7 @@ export function establishedRoleplayContext(state: GameState, actorId: string, te
         (!entity.ownerId && observedVisible(state, actor, entity)) ||
         (entity.ownerId === actorId &&
           actor.inventory?.includes(entity.id) &&
-          named(text, entity))),
+          named(text, entityPresentationLabels(state, actorId, entity, aliases)))),
   );
   const map = actor && state.maps[actor.mapId];
   return {

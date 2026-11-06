@@ -996,7 +996,7 @@ export class NpcAiEngine {
       return this.dto(c, j);
     });
   }
-  async queue(input: QueueDecision) {
+  async queue(input: QueueDecision, admission?: (c: PoolClient) => Promise<void>) {
     const scope = scopeSchema.parse({
       ...input.scope,
       requesterUserId: input.requesterUserId ?? input.scope.requesterUserId,
@@ -1067,6 +1067,9 @@ export class NpcAiEngine {
           fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
         return this.dto(c, previous);
       }
+      // Trusted server-side read fence, never part of a client DTO. Replays above
+      // retain their exact existing result; new admission fails before planning or spend.
+      await admission?.(c);
       const releaseProvider =
         this.provider instanceof ReleaseGenerationProvider ? this.provider : null;
       const hasReleasePermit =

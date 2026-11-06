@@ -1,7 +1,11 @@
 import {
+  entityPresentationLabels,
+  presentationAliasReferencesValid,
+  type PresentationAliases,
+} from './presentation-aliases';
+import {
   hasPosition,
   isActorConscious,
-  type GameEntity,
   type GamePoint,
   type GameState,
   type Locale,
@@ -22,8 +26,6 @@ const stem = (token: string) =>
         '',
       )
     : token;
-const labels = (item: GameEntity) =>
-  [item.id, item.label ?? '', ...Object.values(item.labelTranslations ?? {})].filter(Boolean);
 const mentions = (text: string, names: string[]) => {
   const tokens = ` ${words(text).map(stem).join(' ')} `;
   return names.some((name) => {
@@ -34,7 +36,13 @@ const mentions = (text: string, names: string[]) => {
 
 /** These vetoes are a conservative backstop, not a positive verb grammar. The
  * director still interprets arbitrary current player attempts semantically. */
-function directClause(state: GameState, actorId: string, raw: string, aliases: string[]) {
+function directClause(
+  state: GameState,
+  actorId: string,
+  raw: string,
+  aliases: string[],
+  presentationAliases?: PresentationAliases,
+) {
   const clause = raw.trim();
   if (
     /^(?:(?:i|я)\s+)?(?:if|unless|would|could|might|если|якщо|вчера|учора|yesterday)(?=$|[^\p{L}])/u.test(
@@ -75,14 +83,20 @@ function directClause(state: GameState, actorId: string, raw: string, aliases: s
     (other) =>
       other.id !== actorId &&
       ['npc', 'player'].includes(other.kind) &&
-      labels(other).some((name) => {
+      entityPresentationLabels(state, actorId, other, presentationAliases).some((name) => {
         const prefix = words(name).map(stem).join(' ');
         return prefix && words(clause).map(stem).join(' ').startsWith(`${prefix} `);
       }),
   );
 }
 
-function directAttempt(state: GameState, actorId: string, text: string, aliases: string[]) {
+function directAttempt(
+  state: GameState,
+  actorId: string,
+  text: string,
+  aliases: string[],
+  presentationAliases?: PresentationAliases,
+) {
   const clauses = normalize(unquoted(text)).split(
     /[.!?;]+|\s+(?:and\s+(?:i\s+)?(?=say\b|tell\b)|и\s+(?=говорю\b)|та\s+(?=кажу\b))/u,
   );
@@ -95,7 +109,7 @@ function directAttempt(state: GameState, actorId: string, text: string, aliases:
     previousReference = referenced;
     return (
       (referenced || pronoun) &&
-      directClause(state, actorId, clause, aliases) &&
+      directClause(state, actorId, clause, aliases, presentationAliases) &&
       !inconsistentStoryPlacementNarration(clause, [
         { id: 'reference', label: undefined, labels: aliases, revision: 0, points: [] },
       ])
@@ -110,6 +124,7 @@ export function storyItemPlacementContext(
   actorId: string,
   text: string,
   input: StoryTurnInput,
+  presentationAliases?: PresentationAliases,
 ) {
   const actor = state.entities[actorId];
   const map = actor && state.maps[actor.mapId];
@@ -132,28 +147,43 @@ export function storyItemPlacementContext(
     return item?.kind === 'item' && item.ownerId === actorId ? [item] : [];
   });
   const items =
-    actor?.kind === 'player' && isActorConscious(actor) && hasPosition(actor)
+    actor?.kind === 'player' &&
+    isActorConscious(actor) &&
+    hasPosition(actor) &&
+    presentationAliasReferencesValid(state, actorId, text, presentationAliases)
       ? owned
           .flatMap((item) => {
             const unique = (noun: string) =>
               !owned.some(
                 (other) =>
                   other.id !== item.id &&
-                  labels(other).some((label) => stem(words(label).at(-1) ?? '') === stem(noun)),
+                  entityPresentationLabels(state, actorId, other, presentationAliases).some(
+                    (label) => stem(words(label).at(-1) ?? '') === stem(noun),
+                  ),
               );
-            const aliases = labels(item).filter(
+            const aliases = entityPresentationLabels(
+              state,
+              actorId,
+              item,
+              presentationAliases,
+            ).filter(
               (label) =>
                 !owned.some(
                   (other) =>
                     other.id !== item.id &&
-                    labels(other).some(
+                    entityPresentationLabels(state, actorId, other, presentationAliases).some(
                       (otherLabel) =>
                         words(otherLabel).map(stem).join(' ') === words(label).map(stem).join(' '),
                     ),
                 ) &&
                 (words(label).length > 1 || unique(label)),
             );
-            for (const label of labels(item)) {
+            for (const label of entityPresentationLabels(
+              state,
+              actorId,
+              item,
+              presentationAliases,
+            )) {
               const noun = words(label).at(-1);
               if (noun && noun.length >= 3 && unique(noun)) aliases.push(noun);
             }
@@ -164,7 +194,7 @@ export function storyItemPlacementContext(
                 label: item.label,
                 labels: [...new Set(aliases)],
                 revision: item.revision,
-                points: directAttempt(state, actorId, text, aliases)
+                points: directAttempt(state, actorId, text, aliases, presentationAliases)
                   ? itemDropCandidates(placementState, actorId, item.id).slice(0, 16)
                   : [],
               },

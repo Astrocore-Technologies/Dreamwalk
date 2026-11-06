@@ -1,4 +1,6 @@
 'use client';
+import { useT } from '@/lib/i18n';
+import { imageQualityLabel, imageSizeLabel } from '@/lib/generation-labels';
 import type { ImageKnownCostSettlement } from './image-cost-policy';
 import { imageFramingEvidenceMatches, type ImageFraming } from '@dreamwalk/contracts';
 import { ImageQuotePrice } from './image-quote-price';
@@ -163,6 +165,7 @@ export function ImageGeneration({
 }) {
   const a = useAssetText(),
     g = useImageText(),
+    { locale } = useT(),
     { s, amount } = useSparkCosts(),
     { user } = useClient();
   const config = useResource<ImageConfiguration & { mockAvailable: boolean }>(
@@ -531,8 +534,10 @@ export function ImageGeneration({
       )}
       {user?.role === 'admin' && mode === 'external' && config.data?.requestProfile && (
         <p>
-          {config.data.requestProfile.model} · {config.data.requestProfile.size} ·{' '}
-          {config.data.requestProfile.quality} · {config.data.requestProfile.outputs}
+          {config.data.requestProfile.model} ·{' '}
+          {imageSizeLabel(locale, config.data.requestProfile.size)} ·{' '}
+          {imageQualityLabel(locale, config.data.requestProfile.quality)} ·{' '}
+          {config.data.requestProfile.outputs}
         </p>
       )}
       <ErrorBox message={error || config.error || jobsError} />

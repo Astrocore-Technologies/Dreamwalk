@@ -144,10 +144,8 @@ export function EmailVerification() {
                 });
                 setMessage(
                   result.code === 'EMAIL_DELIVERY_UNAVAILABLE'
-                    ? t('Почтовая доставка пока не настроена.')
-                    : t(
-                        'Проверь почту. Если доставка доступна, письмо со ссылкой придёт в ближайшее время.',
-                      ),
+                    ? 'Почтовая доставка пока не настроена.'
+                    : 'Проверь почту. Если доставка доступна, письмо со ссылкой придёт в ближайшее время.',
                 );
               } catch (e) {
                 setError(errorMessage(e));
@@ -159,7 +157,7 @@ export function EmailVerification() {
             {t('Отправить ссылку подтверждения')}
           </Button>
         )}
-        {message && <p role="status">{message}</p>}
+        {message && <p role="status">{t(message)}</p>}
         <ErrorBox message={error} />
       </div>
     </Panel>

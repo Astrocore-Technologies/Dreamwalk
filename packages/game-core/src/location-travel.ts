@@ -1,3 +1,8 @@
+import {
+  mapPresentationLabels,
+  presentationAliasReferencesValid,
+  type PresentationAliases,
+} from './presentation-aliases';
 import { groundedArrivalArea } from './grounded-arrival';
 import { enterScene, copyEntityPlacement } from './scene-presence';
 import {
@@ -68,20 +73,35 @@ const inflectedLocationName = (value: string) =>
       );
     })
     .join(' ');
-export function resolveTravelRequest(state: GameState, text: string) {
+export function resolveTravelRequest(
+  state: GameState,
+  text: string,
+  presentationAliases?: PresentationAliases,
+) {
   const destinationName = requestedLocation(text);
   if (!destinationName) return null;
-  return resolveTravelDestination(state, destinationName);
+  return resolveTravelDestination(state, destinationName, presentationAliases);
 }
 
 /** A model-derived name uses the same public catalog and ambiguity rules as the free parser. */
-export function resolveTravelDestination(state: GameState, destinationName: string) {
+export function resolveTravelDestination(
+  state: GameState,
+  destinationName: string,
+  presentationAliases?: PresentationAliases,
+) {
+  if (
+    presentationAliases &&
+    !presentationAliasReferencesValid(
+      state,
+      presentationAliases.actorId,
+      destinationName,
+      presentationAliases,
+    )
+  )
+    return { destinationName, mapId: null, ambiguous: true };
   const locations = travelLocations(state);
-  const names = (map: (typeof locations)[number]) => [
-    map.id,
-    map.label,
-    ...Object.values(map.labelTranslations ?? {}),
-  ];
+  const names = (map: (typeof locations)[number]) =>
+    mapPresentationLabels(state, map.id, presentationAliases);
   const exact = locations.filter((map) =>
     names(map).some(
       (name) => normalizeLocationName(name) === normalizeLocationName(destinationName),

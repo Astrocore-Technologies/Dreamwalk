@@ -132,8 +132,8 @@ for (const outcome of ['ready', 'failed', 'stale', 'queued', 'unknown'] as const
       expect(dispatches).toBe(0);
       await page.getByRole('button', { name: 'Начать заново', exact: true }).click();
       await expect(page.getByRole('dialog')).toBeVisible();
-      await expect(page.getByRole('dialog')).toContainText('0.20');
-      await expect(page.getByRole('dialog')).toContainText('1.00');
+      await expect(page.getByRole('dialog')).toContainText('Оценка в искрах: 0,20');
+      await expect(page.getByRole('dialog')).toContainText('Резерв искр: 1,00');
       expect(quotes).toBe(1);
       expect(dispatches).toBe(0);
       await page.keyboard.press('Escape');

@@ -44,19 +44,27 @@ const Context = createContext<{
 export function LocaleProvider({ children }: { children: ReactNode }) {
   const authenticated = useRef(false);
   const [genres, setGenres] = useState<GenreDefinition[]>([]);
+  const [locale, changeLocale] = useState<Locale>('ru');
   useEffect(() => {
     let active = true;
     let request = 0;
+    let refreshTimer: ReturnType<typeof setTimeout> | undefined;
     const controller = new AbortController();
     async function refresh() {
+      if (refreshTimer) clearTimeout(refreshTimer);
       const version = ++request;
       try {
-        const response = await fetch('/api/v1/taxonomy', { signal: controller.signal });
+        const response = await fetch('/api/v1/taxonomy', {
+          signal: controller.signal,
+          headers: { 'Accept-Language': locale },
+        });
         if (!response.ok) return;
         const parsed = taxonomySchema.safeParse(await response.json());
         if (active && version === request && parsed.success) {
           currentGenres = parsed.data.genreDefinitions;
           setGenres(parsed.data.genreDefinitions);
+          if (response.headers.get('X-Dreamwalk-Translation-Pending') === 'true')
+            refreshTimer = setTimeout(() => void refresh(), 1500);
         }
       } catch {
         /* Keep local labels available when metadata is unavailable. */
@@ -67,10 +75,10 @@ export function LocaleProvider({ children }: { children: ReactNode }) {
     return () => {
       active = false;
       controller.abort();
+      if (refreshTimer) clearTimeout(refreshTimer);
       window.removeEventListener('dreamwalk:taxonomy-updated', refresh);
     };
-  }, []);
-  const [locale, changeLocale] = useState<Locale>('ru');
+  }, [locale]);
   const setLocale = useCallback((next: Locale, persistAccount = true) => {
     currentLocale = next;
     changeLocale(next);

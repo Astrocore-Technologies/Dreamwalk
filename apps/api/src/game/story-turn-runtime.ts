@@ -1,4 +1,8 @@
 import {
+  assertPresentationAliasAuthority,
+  storedPresentationAliases,
+} from './presentation-aliases';
+import {
   acceptStoryKnownCostPolicy,
   acceptedStoryKnownCostPolicy,
   type StoryKnownCostAcceptance,
@@ -55,6 +59,7 @@ import {
   npcContextFingerprint,
   projectState,
   type StorySafeEntry,
+  type PresentationAliases,
 } from '@dreamwalk/game-core';
 import { Db } from '../db';
 import { NpcAiService } from '../ai/npc-ai.service';
@@ -72,6 +77,13 @@ export interface StoryLive {
   decisionsPending: boolean;
 }
 interface Port {
+  presentationAliases?(
+    id: string,
+    live: StoryLive,
+    actorId: string,
+    userId: string,
+    input: StoryTurnInput,
+  ): Promise<PresentationAliases | undefined>;
   serial<T>(id: string, work: () => Promise<T>): Promise<T>;
   access(
     req: Request,
@@ -99,6 +111,7 @@ interface Port {
     state: GameState,
     input: StoryTurnInput,
     proposal: unknown,
+    aliases?: PresentationAliases,
   ): Promise<{ input: StoryTurnInput; proposal: StoryTurnProposal } | null>;
   admitTravel?(
     campaignId: string,
@@ -228,7 +241,13 @@ export class StoryTurnRuntime {
   private erased(row: Row) {
     if (row.erased_at || row.result_code === 'DATA_ERASED') fail(409, 'DATA_ERASED', 'DATA_ERASED');
   }
-  private async authorized(c: PoolClient, id: string, userId: string) {
+  private async authorized(
+    c: PoolClient,
+    id: string,
+    userId: string,
+    aliases?: PresentationAliases,
+    text?: string,
+  ) {
     // Erasure owns a user row before it reaches campaigns/source rows. Lock
     // every participating user first, in deterministic order, before world locks.
     await c.query(
@@ -248,6 +267,35 @@ export class StoryTurnRuntime {
       [id, userId],
     );
     if (!active.rowCount) fail(403, 'FORBIDDEN', 'FORBIDDEN');
+    await assertPresentationAliasAuthority(c, id, userId, active.rows[0].actor_id, aliases, text);
+  }
+  private aliasAdmission(
+    id: string,
+    userId: string,
+    actorId: string,
+    context: unknown,
+    text: string,
+  ) {
+    const aliases = storedPresentationAliases(context);
+    return aliases
+      ? (c: PoolClient) => assertPresentationAliasAuthority(c, id, userId, actorId, aliases, text)
+      : undefined;
+  }
+  private aliasFence<T>(
+    id: string,
+    userId: string,
+    actorId: string,
+    context: unknown,
+    text: string,
+    work: (c?: PoolClient) => Promise<T>,
+  ): Promise<T> {
+    const admission = this.aliasAdmission(id, userId, actorId, context, text);
+    return admission
+      ? this.db.tx(async (c) => {
+          await admission(c);
+          return work(c);
+        })
+      : work();
   }
   private async row(id: string, turnId: string, userId?: string) {
     return (
@@ -403,6 +451,7 @@ export class StoryTurnRuntime {
     input: StoryTurnInput,
     turnId: string,
     userId: string,
+    aliases?: PresentationAliases,
   ) {
     const turn = state.turnController;
     if (
@@ -425,7 +474,7 @@ export class StoryTurnRuntime {
         !input.targetNpcId &&
         parsed.segments.length === 1 &&
         parsed.segments[0].kind === 'attempt' &&
-        resolveTravelRequest(state, parsed.segments[0].text)?.mapId
+        resolveTravelRequest(state, parsed.segments[0].text, aliases)?.mapId
       )
     )
       throw new Error('WRONG_MODE');
@@ -478,7 +527,7 @@ export class StoryTurnRuntime {
         .sort();
     for (const segment of parsed.segments) {
       if (segment.kind === 'attempt') {
-        const parsedAction = parsePlayerTextAction(next, actorId, segment.text);
+        const parsedAction = parsePlayerTextAction(next, actorId, segment.text, aliases);
         const action = deferAllAttempts ? null : parsedAction;
         if (!action) {
           // Free-form RP is attributed player intent, never an authoritative action.
@@ -787,6 +836,7 @@ export class StoryTurnRuntime {
     a: { user: { id: string }; actorId: string },
     live: StoryLive,
     input: StoryTurnInput,
+    aliases?: PresentationAliases,
   ): Promise<StoryTurnQuoteResponse> {
     const mode = storyTurnMode(input);
     return this.db.tx(async (c) => {
@@ -806,10 +856,18 @@ export class StoryTurnRuntime {
         if (old.request_hash !== hash) fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
         return old.quote_result;
       }
+      await assertPresentationAliasAuthority(c, id, a.user.id, a.actorId, aliases, input.text);
       const turnId = runtimeQuoteIdentity(`turn:${id}:${a.user.id}:${input.operationId}`);
       let simulation: ReturnType<StoryTurnRuntime['simulateTurnPost']>;
       try {
-        simulation = this.simulateTurnPost(live.state, a.actorId, input, turnId, a.user.id);
+        simulation = this.simulateTurnPost(
+          live.state,
+          a.actorId,
+          input,
+          turnId,
+          a.user.id,
+          aliases,
+        );
       } catch (error) {
         const code = error instanceof Error ? error.message : 'UNSUPPORTED';
         if (
@@ -852,7 +910,7 @@ export class StoryTurnRuntime {
         !input.targetNpcId &&
         simulation.segments.length === 1 &&
         simulation.segments[0].kind === 'attempt'
-          ? resolveTravelRequest(live.state, simulation.segments[0].text)
+          ? resolveTravelRequest(live.state, simulation.segments[0].text, aliases)
           : null;
       const response: StoryTurnQuoteResponse = {
         status: 'quoted',
@@ -873,6 +931,7 @@ export class StoryTurnRuntime {
         quote,
       };
       const context = {
+        ...(aliases ? { presentationAliases: aliases } : {}),
         generationPolicy: 'world-batch-v1',
         turnBased: !!live.state.turnController,
         localTravel: !live.state.turnController,
@@ -931,7 +990,8 @@ export class StoryTurnRuntime {
       input.confirmedActionHash !== r.context.confirmationHash
     )
       fail(409, 'STALE_STATE', 'STALE_STATE');
-    const simulation = this.simulateTurnPost(live.state, a.actorId, base, r.id, a.user.id);
+    const aliases = storedPresentationAliases(r.context);
+    const simulation = this.simulateTurnPost(live.state, a.actorId, base, r.id, a.user.id, aliases);
     await this.port.touch(id, live, a.actorId);
     const sequence = live.eventSeq + 1;
     await this.port.persist(
@@ -993,7 +1053,7 @@ export class StoryTurnRuntime {
         );
         await this.writeFeed(c, id, r.id, sequence, simulation.entries);
       },
-      (c) => this.authorized(c, id, a.user.id),
+      (c) => this.authorized(c, id, a.user.id, aliases, base.text),
     );
     if (simulation.requests.length || simulation.directorText) live.decisionsPending = true;
     return this.receipt((await this.row(id, r.id, a.user.id))!);
@@ -1004,12 +1064,44 @@ export class StoryTurnRuntime {
       const a = await this.port.access(req, id),
         live = await this.port.load(id);
       input.replyLocale = resolveReplyLocale(req, input.replyLocale, a.user.settings?.language);
+      if (this.port.presentationAliases) {
+        // A replay must keep the same locked access/erasure fence as initial
+        // admission, before returning historical private quote content.
+        const replay = await this.db.tx(async (c) => {
+          await c.query('SELECT pg_advisory_xact_lock(hashtextextended($1,0))', [
+            `story-turn:${id}:${a.user.id}:${input.operationId}`,
+          ]);
+          await this.authorized(c, id, a.user.id);
+          const old = (
+            await c.query(
+              'SELECT * FROM game_story_turns WHERE campaign_id=$1 AND requester_user_id=$2 AND operation_id=$3 FOR UPDATE',
+              [id, a.user.id, input.operationId],
+            )
+          ).rows[0];
+          if (!old) return undefined;
+          this.erased(old);
+          if (old.request_hash !== digest(input))
+            fail(409, 'IDEMPOTENCY_CONFLICT', 'IDEMPOTENCY_CONFLICT');
+          if (
+            !old.context?.turnBased &&
+            !old.context?.localTravel &&
+            old.status === 'quoted' &&
+            new Date(old.quote_result?.quote?.expiresAt).getTime() <= Date.now()
+          )
+            fail(409, 'QUOTE_EXPIRED', 'QUOTE_EXPIRED');
+          return old.quote_result as StoryTurnQuoteResponse;
+        });
+        if (replay) return replay;
+      }
+      const aliases = await this.port.presentationAliases?.(id, live, a.actorId, a.user.id, input);
       const localSegments = parseStorySegments(input.text).segments;
       const requestedTravels =
         !input.targetNpcId && input.channel === 'say'
           ? localSegments.flatMap((segment) => {
               const request =
-                segment.kind === 'attempt' ? resolveTravelRequest(live.state, segment.text) : null;
+                segment.kind === 'attempt'
+                  ? resolveTravelRequest(live.state, segment.text, aliases)
+                  : null;
               return request ? [request] : [];
             })
           : [];
@@ -1030,15 +1122,18 @@ export class StoryTurnRuntime {
         !input.targetNpcId &&
         localSegments.length === 1 &&
         localSegments[0].kind === 'attempt' &&
-        resolveTravelRequest(live.state, localSegments[0].text)?.mapId;
-      if (live.state.turnController || localTravel) return this.quoteTurnBased(id, a, live, input);
+        resolveTravelRequest(live.state, localSegments[0].text, aliases)?.mapId;
+      if (live.state.turnController || localTravel)
+        return this.quoteTurnBased(id, a, live, input, aliases);
       // Legacy realtime has no combined image+text consent. Never sell text that cannot finish an illustrated arrival.
       if (
         !input.targetNpcId &&
         input.channel === 'say' &&
         localSegments.some((segment) => {
           const request =
-            segment.kind === 'attempt' ? resolveTravelRequest(live.state, segment.text) : null;
+            segment.kind === 'attempt'
+              ? resolveTravelRequest(live.state, segment.text, aliases)
+              : null;
           return request && !request.mapId && !request.ambiguous;
         })
       )
@@ -1091,10 +1186,11 @@ export class StoryTurnRuntime {
             fail(409, 'QUOTE_EXPIRED', 'QUOTE_EXPIRED');
           return old.quote_result;
         }
+        await assertPresentationAliasAuthority(c, id, a.user.id, a.actorId, aliases, input.text);
         const turnId = runtimeQuoteIdentity(`turn:${id}:${a.user.id}:${input.operationId}`);
         let context!: ReturnType<typeof buildStoryTurnContext>;
         try {
-          context = buildStoryTurnContext(live.state, a.actorId, input, turnId);
+          context = buildStoryTurnContext(live.state, a.actorId, input, turnId, aliases);
         } catch (e) {
           const code = e instanceof Error ? e.message : 'UNSUPPORTED';
           if (['WALK_FIRST', 'UNSUPPORTED', 'PRIVATE_STORY_EXTENSION'].includes(code))
@@ -1116,7 +1212,13 @@ export class StoryTurnRuntime {
           a.actorId,
           {
             ...context,
-            mockProposal: createMockStoryTurnProposal(live.state, a.actorId, input, turnId),
+            mockProposal: createMockStoryTurnProposal(
+              live.state,
+              a.actorId,
+              input,
+              turnId,
+              aliases,
+            ),
           },
           'story_turn',
           input.targetNpcId,
@@ -1213,7 +1315,13 @@ export class StoryTurnRuntime {
         fail(409, 'QUOTE_EXPIRED', 'QUOTE_EXPIRED');
       let current!: ReturnType<typeof buildStoryTurnContext>;
       try {
-        current = buildStoryTurnContext(live.state, a.actorId, base, r.id);
+        current = buildStoryTurnContext(
+          live.state,
+          a.actorId,
+          base,
+          r.id,
+          storedPresentationAliases(r.context),
+        );
       } catch {
         fail(409, 'STALE_STATE', 'STALE_STATE');
       }
@@ -1261,7 +1369,7 @@ export class StoryTurnRuntime {
             [r.id, input.confirmedActionHash ?? null, sequence],
           );
         },
-        (c) => this.authorized(c, id, a.user.id),
+        (c) => this.authorized(c, id, a.user.id, storedPresentationAliases(r.context), base.text),
       );
       live.decisionsPending = true;
       return this.receipt((await this.row(id, r.id, a.user.id))!);
@@ -1326,7 +1434,21 @@ export class StoryTurnRuntime {
               expectedCanonRevision: live.state.narrativeCanon?.revision ?? 0,
               turnFence: turnFence(live.state),
             };
-            const base = buildStoryTurnContext(live.state, a.actorId, worldInput, turnId);
+            await assertPresentationAliasAuthority(
+              c,
+              id,
+              a.user.id,
+              a.actorId,
+              storedPresentationAliases(turn.context),
+              worldInput.text,
+            );
+            const base = buildStoryTurnContext(
+              live.state,
+              a.actorId,
+              worldInput,
+              turnId,
+              storedPresentationAliases(turn.context),
+            );
             context = await extendContextHistory(
               this.db,
               this.ai,
@@ -1355,6 +1477,7 @@ export class StoryTurnRuntime {
                   a.actorId,
                   worldInput,
                   turnId,
+                  storedPresentationAliases(turn.context),
                 ),
               },
               'story_turn',
@@ -1461,6 +1584,15 @@ export class StoryTurnRuntime {
             : {}),
         }));
         for (const reply of replies) {
+          if (reply.request.purpose === 'story_turn')
+            await assertPresentationAliasAuthority(
+              c,
+              id,
+              a.user.id,
+              a.actorId,
+              storedPresentationAliases(reply.request.context),
+              (reply.request.context.worldInput as StoryTurnInput).text,
+            );
           const updated = await c.query(
             `UPDATE game_npc_decision_requests r SET context=$2,result_code=NULL WHERE r.id=$1 AND r.campaign_id=$3 AND r.requester_user_id=$4 AND r.status='queued' AND r.result_code='GENERATION_QUOTE_STALE' AND r.job_id IS NULL
             AND NOT EXISTS(SELECT 1 FROM npc_ai_jobs j WHERE j.operation_id=r.id OR j.request_meta->>'runtimeRequestId'=r.id::text)
@@ -1572,46 +1704,73 @@ export class StoryTurnRuntime {
           expectedCanonRevision: live.state.narrativeCanon?.revision ?? 0,
           turnFence: turnFence(live.state)!,
         };
-        const base = buildStoryTurnContext(live.state, turn.actor_id, worldInput, turn.id);
-        context = await extendContextHistory(
-          this.db,
-          this.ai,
+        context = await this.aliasFence(
           id,
-          live.state,
+          turn.requester_user_id,
           turn.actor_id,
-          {
-            ...base,
-            worldInput,
-            turnBasedDeferredDirector: true,
-            turnBased: true,
-            storyTurnId: turn.id,
-            generationPolicy: 'world-batch-v1',
-            worldPrepared: true,
-            worldRequesterId: turn.requester_user_id,
-            turnFence: turnFence(live.state),
-            npcRepliesHandled: turn.context.npcRepliesHandled === true,
-            ...(turn.context.semanticTravelIntent
-              ? { semanticTravelIntent: turn.context.semanticTravelIntent }
-              : {}),
-            speechAlreadyRecorded: turn.context.speechAlreadyRecorded === true,
-            committedAttackOutcomes: turn.context.committedAttackOutcomes ?? [],
-            ...(turn.context.untrustedRoleplay?.length
-              ? {
-                  untrustedRoleplay: turn.context.untrustedRoleplay,
-                  roleplayPolicy: storyDirectorRoleplayPolicy,
-                }
-              : {}),
-            mockProposal: createMockStoryTurnProposal(
+          turn.context,
+          worldInput.text,
+          async (c) => {
+            const base = buildStoryTurnContext(
               live.state,
               turn.actor_id,
               worldInput,
               turn.id,
-            ),
+              storedPresentationAliases(turn.context),
+            );
+            return extendContextHistory(
+              this.db,
+              this.ai,
+              id,
+              live.state,
+              turn.actor_id,
+              {
+                ...base,
+                worldInput,
+                turnBasedDeferredDirector: true,
+                turnBased: true,
+                storyTurnId: turn.id,
+                generationPolicy: 'world-batch-v1',
+                worldPrepared: true,
+                worldRequesterId: turn.requester_user_id,
+                turnFence: turnFence(live.state),
+                npcRepliesHandled: turn.context.npcRepliesHandled === true,
+                ...(turn.context.semanticTravelIntent
+                  ? { semanticTravelIntent: turn.context.semanticTravelIntent }
+                  : {}),
+                speechAlreadyRecorded: turn.context.speechAlreadyRecorded === true,
+                committedAttackOutcomes: turn.context.committedAttackOutcomes ?? [],
+                ...(turn.context.untrustedRoleplay?.length
+                  ? {
+                      untrustedRoleplay: turn.context.untrustedRoleplay,
+                      roleplayPolicy: storyDirectorRoleplayPolicy,
+                    }
+                  : {}),
+                mockProposal: createMockStoryTurnProposal(
+                  live.state,
+                  turn.actor_id,
+                  worldInput,
+                  turn.id,
+                  storedPresentationAliases(turn.context),
+                ),
+              },
+              'story_turn',
+              undefined,
+              c,
+            );
           },
-          'story_turn',
         );
       } else continue;
       await this.db.tx(async (c) => {
+        if (request.purpose === 'story_turn')
+          await assertPresentationAliasAuthority(
+            c,
+            id,
+            turn.requester_user_id,
+            turn.actor_id,
+            storedPresentationAliases(context),
+            (context.worldInput as StoryTurnInput).text,
+          );
         await c.query(
           "UPDATE game_npc_decision_requests SET context=$2 WHERE id=$1 AND status='queued' AND job_id IS NULL AND NOT(context ? 'worldPrepared')",
           [request.id, JSON.stringify(context)],
@@ -1685,30 +1844,39 @@ export class StoryTurnRuntime {
       return;
     }
     try {
-      const context = buildStoryTurnContext(live.state, r.actor_id, r.input, r.id);
+      const context = buildStoryTurnContext(
+        live.state,
+        r.actor_id,
+        r.input,
+        r.id,
+        storedPresentationAliases(r.context),
+      );
       if (context.contextHash !== r.context.contextHash) throw new Error('STALE_STATE');
-      await this.ai.queue({
-        scope: {
-          campaignId: id,
-          npcId: r.actor_id,
-          subjectKind: 'player',
-          origin: 'user',
-          purpose: 'story_turn',
+      await this.ai.queue(
+        {
+          scope: {
+            campaignId: id,
+            npcId: r.actor_id,
+            subjectKind: 'player',
+            origin: 'user',
+            purpose: 'story_turn',
+            requesterUserId: r.requester_user_id,
+          },
           requesterUserId: r.requester_user_id,
+          operationId: r.id,
+          quoteId: r.quote_id,
+          consent: true,
+          automaticKnownCostPolicy: acceptedStoryKnownCostPolicy(
+            r.quote_result.quote,
+            r.id,
+            r.quote_result.automaticKnownCostAcceptance,
+          ),
+          context: r.context,
+          requestKey: `story:${r.id}`,
+          runtimeRequestId: r.id,
         },
-        requesterUserId: r.requester_user_id,
-        operationId: r.id,
-        quoteId: r.quote_id,
-        consent: true,
-        automaticKnownCostPolicy: acceptedStoryKnownCostPolicy(
-          r.quote_result.quote,
-          r.id,
-          r.quote_result.automaticKnownCostAcceptance,
-        ),
-        context: r.context,
-        requestKey: `story:${r.id}`,
-        runtimeRequestId: r.id,
-      });
+        this.aliasAdmission(id, r.requester_user_id, r.actor_id, r.context, r.input.text),
+      );
       live.aiPending = true;
       this.port.dispatch(id);
     } catch (e) {
@@ -1750,6 +1918,7 @@ export class StoryTurnRuntime {
               }
             : (context.worldInput as StoryTurnInput),
           r.id,
+          storedPresentationAliases(context),
         );
         if (
           (current.contextHash !== context.contextHash && !compatibleTravel) ||
@@ -1765,28 +1934,37 @@ export class StoryTurnRuntime {
             JSON.stringify({ ...r.context, ...context, quotedReplies: r.context.quotedReplies }),
           ],
         );
-        await this.ai.queue({
-          scope: {
-            campaignId: id,
-            npcId: r.actor_id,
-            subjectKind: 'player',
-            origin: 'user',
-            purpose: 'story_turn',
+        await this.ai.queue(
+          {
+            scope: {
+              campaignId: id,
+              npcId: r.actor_id,
+              subjectKind: 'player',
+              origin: 'user',
+              purpose: 'story_turn',
+              requesterUserId: request.requester_user_id,
+            },
             requesterUserId: request.requester_user_id,
+            operationId: r.id,
+            quoteId: frozenReply.quote.id,
+            consent: true,
+            context,
+            requestKey: `turn-director:${r.id}`,
+            runtimeRequestId: r.id,
+            expectedRuntimeContextDigest: digest(context),
+            ...(worldReply?.batchId ? { acceptedWorldBatchId: worldReply.batchId } : {}),
+            ...(frozenReply?.automaticKnownCostPolicy
+              ? { automaticKnownCostPolicy: frozenReply.automaticKnownCostPolicy }
+              : {}),
           },
-          requesterUserId: request.requester_user_id,
-          operationId: r.id,
-          quoteId: frozenReply.quote.id,
-          consent: true,
-          context,
-          requestKey: `turn-director:${r.id}`,
-          runtimeRequestId: r.id,
-          expectedRuntimeContextDigest: digest(context),
-          ...(worldReply?.batchId ? { acceptedWorldBatchId: worldReply.batchId } : {}),
-          ...(frozenReply?.automaticKnownCostPolicy
-            ? { automaticKnownCostPolicy: frozenReply.automaticKnownCostPolicy }
-            : {}),
-        });
+          this.aliasAdmission(
+            id,
+            r.requester_user_id,
+            r.actor_id,
+            context,
+            (context.worldInput as StoryTurnInput).text,
+          ),
+        );
         live.aiPending = true;
         this.port.dispatch(id);
       } catch (error) {
@@ -1828,29 +2006,51 @@ export class StoryTurnRuntime {
         expectedCanonRevision: live.state.narrativeCanon?.revision ?? 0,
         turnFence: turnFence(live.state),
       };
-      const base = buildStoryTurnContext(live.state, r.actor_id, worldInput, r.id);
+      const base = buildStoryTurnContext(
+        live.state,
+        r.actor_id,
+        worldInput,
+        r.id,
+        storedPresentationAliases(r.context),
+      );
       const context =
         this.ai.contextWindow() &&
         r.context.historyPolicy &&
         r.context.contextHash === base.contextHash &&
         digest(r.context.turnFence) === digest(turnFence(live.state))
           ? r.context
-          : await extendContextHistory(
-              this.db,
-              this.ai,
+          : await this.aliasFence(
               id,
-              live.state,
+              r.requester_user_id,
               r.actor_id,
-              {
-                ...r.context,
-                ...base,
-                committedAttackOutcomes: r.context.committedAttackOutcomes ?? [],
-                worldInput,
-                turnBasedDeferredDirector: true,
-                turnFence: turnFence(live.state),
-                mockProposal: createMockStoryTurnProposal(live.state, r.actor_id, worldInput, r.id),
-              },
-              'story_turn',
+              r.context,
+              worldInput.text,
+              (c) =>
+                extendContextHistory(
+                  this.db,
+                  this.ai,
+                  id,
+                  live.state,
+                  r.actor_id,
+                  {
+                    ...r.context,
+                    ...base,
+                    committedAttackOutcomes: r.context.committedAttackOutcomes ?? [],
+                    worldInput,
+                    turnBasedDeferredDirector: true,
+                    turnFence: turnFence(live.state),
+                    mockProposal: createMockStoryTurnProposal(
+                      live.state,
+                      r.actor_id,
+                      worldInput,
+                      r.id,
+                      storedPresentationAliases(r.context),
+                    ),
+                  },
+                  'story_turn',
+                  undefined,
+                  c,
+                ),
             );
       const scope = {
         campaignId: id,
@@ -1875,17 +2075,27 @@ export class StoryTurnRuntime {
         !(await this.ai.manualRequestAuthorized(String(request.id), context))
       )
         return;
-      const quote = await this.ai.quote(scope, context, r.requester_user_id);
-      await this.ai.queue({
-        scope,
-        requesterUserId: r.requester_user_id,
-        operationId: r.id,
-        quoteId: quote.id,
-        consent: true,
+      const quote = await this.aliasFence(
+        id,
+        r.requester_user_id,
+        r.actor_id,
         context,
-        requestKey: `turn-director:${r.id}`,
-        runtimeRequestId: r.id,
-      });
+        worldInput.text,
+        (c) => this.ai.quote(scope, context, r.requester_user_id, c),
+      );
+      await this.ai.queue(
+        {
+          scope,
+          requesterUserId: r.requester_user_id,
+          operationId: r.id,
+          quoteId: quote.id,
+          consent: true,
+          context,
+          requestKey: `turn-director:${r.id}`,
+          runtimeRequestId: r.id,
+        },
+        this.aliasAdmission(id, r.requester_user_id, r.actor_id, context, worldInput.text),
+      );
       live.aiPending = true;
       this.port.dispatch(id);
     } catch (error) {
@@ -2054,6 +2264,9 @@ export class StoryTurnRuntime {
       turnFence: turnFence(state),
     });
     const context = {
+      ...(source.context.presentationAliases
+        ? { presentationAliases: storedPresentationAliases(source.context) }
+        : {}),
       generationPolicy: 'world-batch-v1',
       turnBased: true,
       turnBasedDeferredDirector: true,
@@ -2128,7 +2341,14 @@ export class StoryTurnRuntime {
     const rebasedTravel =
       job.context.travelSceneSpec &&
       (job.proposal as { contextHash?: string })?.contextHash === job.contextHash
-        ? await this.port.rebaseTravel?.(id, r.id, live.state, originalInput, job.proposal)
+        ? await this.port.rebaseTravel?.(
+            id,
+            r.id,
+            live.state,
+            originalInput,
+            job.proposal,
+            storedPresentationAliases(r.context),
+          )
         : null;
     let travelFailure: string | undefined;
     let travelArt:
@@ -2162,6 +2382,7 @@ export class StoryTurnRuntime {
             r.id,
             rebasedTravel?.proposal ?? job.proposal,
             {
+              presentationAliases: storedPresentationAliases(r.context),
               speechAlreadyRecorded: deferredDirector && r.context.speechAlreadyRecorded === true,
               ...(travelArt ? { prepareTravelPlacement: travelArt.preparePlacement } : {}),
               ...(deferredDirector && r.input.channel === 'whisper' && !r.input.targetNpcId
@@ -2308,7 +2529,27 @@ export class StoryTurnRuntime {
               },
             ]);
         },
-        (c) => this.authorized(c, id, r.requester_user_id),
+        async (c) => {
+          await this.authorized(c, id, r.requester_user_id);
+          // Invalid results can terminalize without renewing their alias authority.
+          // A valid result must keep the lifetime fence through the canonical write.
+          if (status === 'committed' || status === 'awaiting_confirmation') {
+            try {
+              await assertPresentationAliasAuthority(
+                c,
+                id,
+                r.requester_user_id,
+                r.actor_id,
+                storedPresentationAliases(r.context),
+                originalInput.text,
+              );
+            } catch (error) {
+              if (error instanceof Error && error.message === 'INVALID_PRESENTATION_ALIASES')
+                pinFailure = error.message;
+              throw error;
+            }
+          }
+        },
         status === 'committed' && travelArt
           ? async (c, state) => {
               try {
@@ -2374,7 +2615,9 @@ export class StoryTurnRuntime {
       await this.port.touch(id, live, a.actorId);
       const applied =
         input.decision === 'accept' && Number(r.valid_until_tick) >= live.state.tick
-          ? applyStoryTurnProposal(live.state, a.actorId, r.input, r.id, r.proposal)
+          ? applyStoryTurnProposal(live.state, a.actorId, r.input, r.id, r.proposal, {
+              presentationAliases: storedPresentationAliases(r.context),
+            })
           : undefined;
       const status =
         input.decision === 'decline'
@@ -2418,7 +2661,14 @@ export class StoryTurnRuntime {
           );
           if (status === 'committed') await this.writeFeed(c, id, r.id, sequence, applied!.entries);
         },
-        (c) => this.authorized(c, id, a.user.id),
+        (c) =>
+          this.authorized(
+            c,
+            id,
+            a.user.id,
+            status === 'committed' ? storedPresentationAliases(r.context) : undefined,
+            r.input.text,
+          ),
       );
       return this.receipt((await this.row(id, r.id, a.user.id))!);
     });

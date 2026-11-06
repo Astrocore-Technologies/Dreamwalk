@@ -92,6 +92,26 @@ const actionLabels: Record<string, string> = {
   'adventure.quarantine': 'История помещена в карантин',
   'adventure.delete': 'История перемещена в удалённые',
   'adventure.restore': 'История восстановлена в черновики',
+  'adventure.private.publish': 'История опубликована приватно',
+  'adventure.translation.save': 'Перевод истории сохранён',
+  'npc.translation.save': 'Перевод NPC сохранён',
+  'story.npc.create': 'NPC создан в истории',
+  'story.npc.import': 'NPC добавлен в историю из библиотеки',
+  'story.npc.update': 'NPC истории обновлён',
+  'story.npc.export': 'NPC истории сохранён в библиотеку',
+  'invitation.create': 'Личное приглашение отправлено',
+  'invitation.revoke': 'Личное приглашение отозвано',
+  'invitation.accept': 'Личное приглашение принято',
+  'invitation.decline': 'Личное приглашение отклонено',
+  'narrative.known_cost.accepted': 'Автоматический расчёт по запросу истории разрешён',
+  'npc.known_failure.settled': 'Расчёт по неудачному запросу NPC завершён',
+  'authoring.known_failure.settled': 'Расчёт по неудачному запросу мастерской завершён',
+  'image.known_result.settled': 'Расчёт по генерации изображения завершён',
+  image_rejection_recovered: 'Доступ к изображениям восстановлен после проверки расходов',
+  'generation.release-policy.refresh': 'Правила генерации обновлены',
+  'generation.verified_access.recovered': 'Доступ к генерации восстановлен после проверки',
+  'seed.metadata.upgrade': 'Данные встроенной истории обновлены',
+  'seed.playable.firstparty': 'Встроенное игровое приключение подготовлено',
   'model.create': 'Поведенческий профиль создан',
   'model.update': 'Поведенческий профиль обновлён',
   'runtime.create': 'Runtime-конфигурация создана',
@@ -1616,7 +1636,9 @@ function AdminAudit() {
                     })}
                   </td>
                   <td>
-                    <strong>{actionLabels[a.action] ? t(actionLabels[a.action]) : a.action}</strong>
+                    <strong title={a.action}>
+                      {t(actionLabels[a.action] || 'Другое действие')}
+                    </strong>
                   </td>
                   <td>
                     <code className={styles.identifier}>

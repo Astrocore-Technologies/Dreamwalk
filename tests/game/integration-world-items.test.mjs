@@ -59,6 +59,12 @@ async function saveFixture(id, s) {
 }
 function draft() {
   const d = g.createAuthoredDraft('courtyard');
+  // Item consumption stays in this room; unsolicited mock expansion is unrelated.
+  d.narrativeConstraints = {
+    ...d.narrativeConstraints,
+    allowNewScenes: false,
+    allowNewNpcs: false,
+  };
   d.maps = [
     {
       ...d.maps[0],
@@ -207,8 +213,8 @@ await test(
         [items.cup],
       );
       assert.ok(!p.entities.some((e) => e.id === items.food));
-      assert.equal(p.turn.resources.main, 0);
-      assert.equal(p.turn.resources.additional, 0);
+      assert.equal(p.turn.resources.main, 1);
+      assert.equal(p.turn.resources.additional, 1);
       const other = await client().register();
       await other.request(path(id, 'snapshot'), undefined, 'GET', 403);
       const textCampaign = await fixture(owner);
@@ -234,9 +240,24 @@ await test(
       const textReceipt = await owner.request(path(textCampaign, 'turns'), textSubmit);
       assert.equal(textReceipt.status, 'committed');
       assert.deepEqual(await owner.request(path(textCampaign, 'turns'), textSubmit), textReceipt);
+      assert.ok(
+        (await snapshot(owner, textCampaign)).projection.entities.some(
+          (entity) => entity.id === textItems.food,
+        ),
+      );
+      await command(owner, textCampaign, {
+        protocolVersion: 1,
+        operationId: randomUUID(),
+        type: 'turn.end',
+        turnFence: fence((await snapshot(owner, textCampaign)).projection),
+      });
+      await until(
+        () => snapshot(owner, textCampaign),
+        (result) => !result.projection.entities.some((entity) => entity.id === textItems.food),
+      );
       const textAfter = (await snapshot(owner, textCampaign)).projection;
       assert.ok(!textAfter.entities.some((e) => e.id === textItems.food));
-      assert.equal(textAfter.turn.resources.main, 0);
+      assert.equal(textAfter.turn.resources.main, 1);
       const textState = (
         await db.query('SELECT state FROM game_campaigns WHERE id=$1', [textCampaign])
       ).rows[0].state;

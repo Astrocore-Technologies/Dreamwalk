@@ -1,3 +1,8 @@
+import {
+  entityPresentationLabels,
+  presentationAliasReferencesValid,
+  type PresentationAliases,
+} from './presentation-aliases';
 import type { GameAction, GameResult, GameState, StoryAttackOutcome } from '@dreamwalk/contracts';
 import { visible } from './index';
 
@@ -13,11 +18,13 @@ export function parseStoryAttackAttempt(
   state: GameState,
   actorId: string,
   text: string,
+  presentationAliases?: PresentationAliases,
 ): { kind: 'hit' | 'push'; targetId: string } | null {
   const actor = state.entities[actorId],
     value = normalize(text);
   if (
     actor?.kind !== 'player' ||
+    !presentationAliasReferencesValid(state, actorId, text, presentationAliases) ||
     !value ||
     value.length > 1000 ||
     /["«»“”]/u.test(value) ||
@@ -61,15 +68,13 @@ export function parseStoryAttackAttempt(
         target.id !== actorId &&
         ['player', 'npc'].includes(target.kind) &&
         visible(state, actor, target) &&
-        [target.id, target.label ?? '', ...Object.values(target.labelTranslations ?? {})].some(
-          (label) => {
-            const name = normalize(label);
-            return (
-              name.length > 1 &&
-              new RegExp(`^${escape(name)}(?=$|[^\\p{L}\\p{N}_])`, 'u').test(clause)
-            );
-          },
-        ),
+        entityPresentationLabels(state, actorId, target, presentationAliases).some((label) => {
+          const name = normalize(label);
+          return (
+            name.length > 1 &&
+            new RegExp(`^${escape(name)}(?=$|[^\\p{L}\\p{N}_])`, 'u').test(clause)
+          );
+        }),
     );
     return candidates.length === 1 ? { kind, targetId: candidates[0].id } : null;
   }
@@ -80,8 +85,9 @@ export function storyContactAction(
   state: GameState,
   actorId: string,
   text: string,
+  presentationAliases?: PresentationAliases,
 ): GameAction | null {
-  const attempt = parseStoryAttackAttempt(state, actorId, text);
+  const attempt = parseStoryAttackAttempt(state, actorId, text, presentationAliases);
   return attempt;
 }
 

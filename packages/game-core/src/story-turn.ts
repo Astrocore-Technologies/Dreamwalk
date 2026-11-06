@@ -1,5 +1,10 @@
 import { establishedRoleplayContext, applyEstablishedRoleplayEvent } from './story-established';
 import {
+  entityPresentationLabels,
+  type PresentationAliases,
+  validatePresentationAliases,
+} from './presentation-aliases';
+import {
   storyItemPlacementContext,
   claimedStoryItemPlacements,
   inconsistentStoryPlacementNarration,
@@ -14,7 +19,12 @@ import {
 import { sharesScene } from './scene-presence';
 import { applyStoryOrderedAction } from './story-ordered-actions';
 import { admitStoryRoleplayAttempt, storyAttemptEvidenceIds } from './story-roleplay';
-import { explicitStoryPickup, materializeStoryItem, applyStoryPickup } from './story-items';
+import {
+  explicitStoryPickup,
+  materializeStoryItem,
+  applyStoryPickup,
+  parseStoryItemAction,
+} from './story-items';
 import {
   resolveTravelRequest,
   resolveTravelDestination,
@@ -347,6 +357,7 @@ function prospectiveImpactVoices(
   segments: StorySegment[],
   actionPreview: StoryActionPreview[],
   bases: DirectorVoice[],
+  presentationAliases?: PresentationAliases,
 ) {
   const extraBases: DirectorVoice[] = [],
     variants: ImpactVoiceVariant[] = [];
@@ -460,7 +471,14 @@ function prospectiveImpactVoices(
           }
           const result =
             permitted.kind === 'pick_up'
-              ? applyStoryPickup(current, actorId, permitted.targetId!, segment.text, input)
+              ? applyStoryPickup(
+                  current,
+                  actorId,
+                  permitted.targetId!,
+                  segment.text,
+                  input,
+                  presentationAliases,
+                )
               : applyStoryOrderedAction(current, actorId, permitted, input);
           if (result.error) {
             valid = false;
@@ -602,6 +620,7 @@ export function buildStoryTurnContext(
   actorId: string,
   raw: StoryTurnInput,
   turnId: string,
+  aliases?: PresentationAliases,
 ) {
   const input = storyTurnInputSchema.parse(raw),
     parsed = parseStorySegments(input.text);
@@ -618,13 +637,18 @@ export function buildStoryTurnContext(
     throw new Error('PRIVATE_STORY_EXTENSION');
   if (input.expectedCanonRevision !== (state.narrativeCanon?.revision ?? 0))
     throw new Error('STALE_CANON');
+  const presentationAliases = validatePresentationAliases(state, actorId, aliases, input.text);
+  if (presentationAliases && presentationAliases.locale !== (input.replyLocale ?? 'en'))
+    throw new Error('INVALID_PRESENTATION_ALIASES');
   const mode = storyTurnMode(input),
     privateAudience = storyPrivateAudience(actorId, input);
   const travelRequests =
     mode === 'director' && parsed.segments.length === 1
       ? parsed.segments.flatMap((segment) => {
           const request =
-            segment.kind === 'attempt' ? resolveTravelRequest(state, segment.text) : null;
+            segment.kind === 'attempt'
+              ? resolveTravelRequest(state, segment.text, presentationAliases)
+              : null;
           if (
             request &&
             !hasPosition(actor) &&
@@ -632,11 +656,7 @@ export function buildStoryTurnContext(
             Object.values(state.entities).some(
               (entity) =>
                 observedVisible(state, actor, entity) &&
-                [
-                  entity.id,
-                  entity.label ?? '',
-                  ...Object.values(entity.labelTranslations ?? {}),
-                ].some(
+                entityPresentationLabels(state, actorId, entity, presentationAliases).some(
                   (name) =>
                     normalizeLocationName(name) === normalizeLocationName(request.destinationName),
                 ),
@@ -671,7 +691,7 @@ export function buildStoryTurnContext(
       directorStates.set(segment.index, structuredClone(simulated));
     if (segment.kind === 'attempt') {
       if (mode === 'director') attemptStates.set(segment.index, structuredClone(simulated));
-      const action = parsePlayerTextAction(simulated, actorId, segment.text);
+      const action = parsePlayerTextAction(simulated, actorId, segment.text, presentationAliases);
       if (
         (mode === 'director' && (!action || isNpcStoryContact(simulated, action))) ||
         !hasPosition(actor)
@@ -686,7 +706,14 @@ export function buildStoryTurnContext(
         if (!valid) throw new Error('UNSUPPORTED');
         const r =
           valid.kind === 'pick_up'
-            ? applyStoryPickup(simulated, actorId, valid.targetId!, segment.text, input)
+            ? applyStoryPickup(
+                simulated,
+                actorId,
+                valid.targetId!,
+                segment.text,
+                input,
+                presentationAliases,
+              )
             : applyStoryOrderedAction(simulated, actorId, valid, input);
         if ((r.error === 'OUT_OF_RANGE' || r.error === 'PATH_BLOCKED') && mode !== 'director')
           throw new Error('WALK_FIRST');
@@ -782,6 +809,7 @@ export function buildStoryTurnContext(
           parsed.segments,
           actionPreview,
           sceneSpeakers,
+          presentationAliases,
         )
       : { bases: [], variants: [] };
   const view = projectState(state, actorId);
@@ -810,6 +838,7 @@ export function buildStoryTurnContext(
               actorId,
               segment.text,
               input,
+              presentationAliases,
             ),
           }))
           .filter((entry) => entry.items.length)
@@ -832,11 +861,12 @@ export function buildStoryTurnContext(
     mapId: actor.mapId,
     canonRevision: state.narrativeCanon?.revision ?? 0,
     mechanics,
+    ...(mode === 'director' && presentationAliases ? { presentationAliases } : {}),
     ...(mode === 'director'
       ? {
           roleplayPolicy: storyDirectorRoleplayPolicy,
           establishedRoleplay: {
-            ...establishedRoleplayContext(state, actorId, input.text),
+            ...establishedRoleplayContext(state, actorId, input.text, presentationAliases),
           },
           resolutionPolicy: storyDirectorResolutionVersion,
         }
@@ -846,11 +876,15 @@ export function buildStoryTurnContext(
         parsed.segments.some(
           (segment) =>
             segment.kind === 'attempt' &&
-            explicitStoryPickup(segment.text, [
-              item.id,
-              item.label ?? '',
-              ...Object.values(item.labelTranslations ?? {}),
-            ]),
+            explicitStoryPickup(
+              segment.text,
+              entityPresentationLabels(
+                state,
+                actorId,
+                state.entities[item.id],
+                presentationAliases,
+              ),
+            ),
         ),
       )
       .map((item) => ({ id: item.id, label: item.label, alreadyCarried: true as const })),
@@ -874,6 +908,7 @@ export function buildStoryTurnContext(
                   attemptStates.get(segment.index)!,
                   actorId,
                   segment.text,
+                  presentationAliases,
                 ),
               }))
               .filter((entry) => entry.items.length),
@@ -976,6 +1011,7 @@ export function buildStoryTurnContext(
     },
     source: state.narrativeSource ?? null,
     ...safe,
+    ...(presentationAliases ? { presentationAliases } : {}),
   };
   return {
     ...safe,
@@ -989,8 +1025,9 @@ export function createMockStoryTurnProposal(
   actorId: string,
   input: StoryTurnInput,
   turnId: string,
+  presentationAliases?: PresentationAliases,
 ): StoryTurnProposal {
-  const context = buildStoryTurnContext(state, actorId, input, turnId);
+  const context = buildStoryTurnContext(state, actorId, input, turnId, presentationAliases);
   const selectedVoice = context.mode === 'director' ? context.sceneSpeakers?.at(-1) : undefined;
   const steps: StoryTurnProposal['steps'] = context.segments.map((segment) => ({
     segmentIndex: segment.index,
@@ -1124,6 +1161,7 @@ export function applyStoryTurnProposal(
   turnId: string,
   raw: unknown,
   options: {
+    presentationAliases?: PresentationAliases;
     speechAlreadyRecorded?: boolean;
     sourceSpeechSegments?: { index: number; text: string }[];
     /** Server-validated image placement before any arrival observation is recorded. */
@@ -1147,10 +1185,13 @@ export function applyStoryTurnProposal(
       : reject('INVALID_ACTION');
   let context: StoryTurnContext;
   try {
-    context = buildStoryTurnContext(state, actorId, input, turnId);
+    context = buildStoryTurnContext(state, actorId, input, turnId, options.presentationAliases);
   } catch {
     return reject();
   }
+  const presentationAliases =
+    context.presentationAliases ??
+    validatePresentationAliases(state, actorId, options.presentationAliases, input.text);
   const privateAudience = storyPrivateAudience(actorId, input);
   const p = parsed.data;
   if (p.turnId !== turnId || p.contextHash !== context.contextHash) return reject();
@@ -1182,6 +1223,26 @@ export function applyStoryTurnProposal(
       p.steps.some((step) => step.action?.kind === 'travel'))
   )
     return reject('FORBIDDEN');
+  if (presentationAliases && p.narrative) {
+    if (p.narrative.newScene) {
+      const destination = resolveTravelDestination(
+        state,
+        p.narrative.newScene.name,
+        presentationAliases,
+      );
+      if (destination.mapId || destination.ambiguous) return reject('INVALID_ACTION');
+    }
+    for (const proposed of [p.narrative.newNpc, p.narrative.newItem])
+      if (
+        proposed &&
+        Object.values(state.entities).some((entity) =>
+          entityPresentationLabels(state, actorId, entity, presentationAliases).some(
+            (name) => normalizeLocationName(name) === normalizeLocationName(proposed.name),
+          ),
+        )
+      )
+        return reject('INVALID_ACTION');
+  }
   const actions: StoryActionPreview[] = [];
   if (
     p.steps.some((step) => step.narrativeImpact) &&
@@ -1336,8 +1397,21 @@ export function applyStoryTurnProposal(
         target &&
         ('name' in target
           ? [target.name]
-          : [target.id, target.label ?? '', ...Object.values(target.labelTranslations ?? {})]);
+          : entityPresentationLabels(state, actorId, target, presentationAliases));
       if (step.action.itemId || !labels || !explicitStoryPickup(segment.text, labels))
+        return reject('FORBIDDEN');
+      if (
+        presentationAliases &&
+        step.action.targetId !== 'new_item' &&
+        !context.actionPreview.some(
+          (entry) =>
+            entry.segmentIndex === segment.index &&
+            entry.action.kind === 'pick_up' &&
+            entry.action.targetId === step.action!.targetId,
+        ) &&
+        parseStoryItemAction(state, actorId, segment.text, presentationAliases)?.targetId !==
+          step.action.targetId
+      )
         return reject('FORBIDDEN');
     }
     if (step.action?.kind === 'travel') {
@@ -1545,7 +1619,13 @@ export function applyStoryTurnProposal(
     next = recordNpcEvents(next, created.state, created.events, `story:${turnId}`).state;
     events.push(...created.events);
     if (p.narrative?.newItem) {
-      const materialized = materializeStoryItem(next, actorId, turnId, p.narrative.newItem);
+      const materialized = materializeStoryItem(
+        next,
+        actorId,
+        turnId,
+        p.narrative.newItem,
+        presentationAliases,
+      );
       if (materialized.error) return reject(materialized.error);
       next = recordNpcEvents(
         next,
@@ -1751,7 +1831,13 @@ export function applyStoryTurnProposal(
             ? { ...proposed, targetId: `scene-${turnId}` }
             : proposed;
         if (proposed.kind === 'drop') {
-          const candidates = storyItemPlacementContext(next, actorId, segment.text, input);
+          const candidates = storyItemPlacementContext(
+            next,
+            actorId,
+            segment.text,
+            input,
+            presentationAliases,
+          );
           const quoted = context.itemPlacementPolicy?.segmentCandidates.find(
             (entry) => entry.segmentIndex === segment.index,
           );
@@ -1769,7 +1855,12 @@ export function applyStoryTurnProposal(
             return reject('FORBIDDEN');
         }
         if (proposed.kind === 'give') {
-          const candidates = storyItemTransferContext(next, actorId, segment.text);
+          const candidates = storyItemTransferContext(
+            next,
+            actorId,
+            segment.text,
+            presentationAliases,
+          );
           if (
             !candidates.items.some((item) => item.id === proposed.itemId) ||
             !candidates.recipients.some(
@@ -1783,7 +1874,14 @@ export function applyStoryTurnProposal(
         if (!action && proposed.kind !== 'approach') return reject('FORBIDDEN');
         const outcome =
           proposed.kind === 'pick_up'
-            ? applyStoryPickup(next, actorId, proposed.targetId!, segment.text, input)
+            ? applyStoryPickup(
+                next,
+                actorId,
+                proposed.targetId!,
+                segment.text,
+                input,
+                presentationAliases,
+              )
             : proposed.kind === 'travel'
               ? proposed.targetId === 'new_scene' || !hasPosition(next.entities[actorId])
                 ? travelToLocation(next, actorId, resolved.targetId!)
@@ -2074,7 +2172,14 @@ export function applyStoryTurnProposal(
         if (!action) return reject('FORBIDDEN');
         const r =
           action.kind === 'pick_up'
-            ? applyStoryPickup(next, actorId, action.targetId!, segment.text, input)
+            ? applyStoryPickup(
+                next,
+                actorId,
+                action.targetId!,
+                segment.text,
+                input,
+                presentationAliases,
+              )
             : applyAction(next, actorId, action);
         if (r.error && !knownFailure(segment.index, action, r.error)) return unsupported();
         if (
@@ -2148,7 +2253,11 @@ export function applyStoryTurnProposal(
   }
   let pendingTravel: StoryTravelIntent | undefined;
   if (p.travelIntent) {
-    const destination = resolveTravelDestination(next, p.travelIntent.destinationName);
+    const destination = resolveTravelDestination(
+      next,
+      p.travelIntent.destinationName,
+      presentationAliases,
+    );
     if (!destination.ambiguous && !destination.mapId) pendingTravel = p.travelIntent;
     else if (destination.mapId) {
       const outcome = travelToLocation(next, actorId, destination.mapId);

@@ -431,7 +431,7 @@ test('relocation uses the frozen public destination catalog without exposing rem
   assert.equal(bad.error, 'FORBIDDEN');
   assert.deepEqual(state, before);
 });
-test('new narrative locations and NPCs do not stop at legacy lifetime counters', () => {
+test('explicit authored locations and NPCs bypass autonomous lifetime counters', () => {
   const state = world();
   state.narrativeConstraints = {
     allowNewScenes: true,
@@ -451,13 +451,69 @@ test('new narrative locations and NPCs do not stop at legacy lifetime counters',
     personalitySummary: 'Old',
   };
   const text = 'Continue exploring';
-  const body = g.createMockNarrativeProposal(state, 'alice', text, randomUUID());
+  const body = g.createMockNarrativeProposal(
+    state,
+    'alice',
+    text,
+    randomUUID(),
+    'en',
+    undefined,
+    true,
+  );
   assert.ok(body.newScene);
   assert.ok(body.newNpc);
-  const context = g.buildNarrativeContext(state, 'alice', text);
+  const context = g.buildNarrativeContext(state, 'alice', text, 'en', undefined, true);
   for (const name of ['maxTurns', 'maxScenes', 'maxSupportingNpcs'])
     assert.equal(context.constraints[name], undefined);
-  assert.equal(g.applyNarrativeProposal(state, 'alice', body, text).error, undefined);
+  assert.equal(
+    g.applyNarrativeProposal(state, 'alice', body, text, 'en', undefined, true).error,
+    undefined,
+  );
+});
+test('standalone director retains scene, NPC and canon caps in its frozen context', () => {
+  for (const cap of ['maxScenes', 'maxSupportingNpcs', 'maxTurns']) {
+    const state = world();
+    state.narrativeConstraints = contracts.narrativeConstraintsSchema.parse({});
+    const text = 'Explore a new room';
+    const initial = g.createMockNarrativeProposal(state, 'alice', text, randomUUID());
+    assert.ok(initial.newScene);
+    assert.ok(initial.newNpc);
+    if (cap === 'maxScenes') state.narrativeConstraints.maxScenes = Object.keys(state.maps).length;
+    if (cap === 'maxSupportingNpcs') {
+      state.narrativeConstraints.maxSupportingNpcs = 1;
+      state.entities.keeper.supportingNpc = {
+        generated: true,
+        roleId: 'old',
+        roleLabel: 'old',
+        description: 'Old',
+        appearance: 'Old',
+        personalitySummary: 'Old',
+      };
+    }
+    if (cap === 'maxTurns') {
+      state.narrativeConstraints.maxTurns = 1;
+      state.narrativeCanon = {
+        revision: 1,
+        turns: [
+          {
+            id: randomUUID(),
+            actorId: 'alice',
+            requestHash: 'old',
+            tick: state.tick,
+            narration: 'Prior turn',
+            evidenceIds: [],
+          },
+        ],
+      };
+    }
+    const before = structuredClone(state);
+    const context = g.buildNarrativeContext(state, 'alice', text);
+    assert.equal(context.constraints[cap], state.narrativeConstraints[cap]);
+    assert.equal(g.applyNarrativeProposal(state, 'alice', initial, text).error, 'STALE_STATE');
+    const currentHash = { ...initial, contextHash: context.contextHash };
+    assert.equal(g.applyNarrativeProposal(state, 'alice', currentHash, text).error, 'RATE_LIMITED');
+    assert.deepEqual(state, before);
+  }
 });
 test('modern mock keeps ordinary RP as canon and known locked-door actions as real outcomes', () => {
   for (const text of ['*I smiled and enjoyed my dinner.*', '*open door*']) {

@@ -123,7 +123,7 @@ async function fixture(owner, guest) {
         label: 'Second token',
         mapId: 'room',
         x: 5,
-        y: 2,
+        y: 4,
         visual: 'token',
       },
     ],
@@ -164,8 +164,9 @@ async function fixture(owner, guest) {
       },
     ],
     narrativeConstraints: {
-      allowNewScenes: true,
-      allowNewNpcs: true,
+      // This fixture tests ordered in-scene dialogue, not automatic world expansion.
+      allowNewScenes: false,
+      allowNewNpcs: false,
       maxScenes: 16,
       maxSupportingNpcs: 16,
       maxTurns: 256,
@@ -199,7 +200,7 @@ await test(
         guest = await client().register(),
         outsider = await client().register();
       const id = await fixture(owner, guest);
-      let firstPost, endCommand, roundOne;
+      let firstPost, endCommand, roundOne, pickupPost;
       await t.test(
         'new authored preset is pinned; legacy campaigns retain compatibility',
         async () => {
@@ -319,19 +320,21 @@ await test(
           );
           assert.equal(take.status, 'committed');
           assert.equal(take.projection.turn.resources.additional, 1);
-          await move(owner, id, { x: 4, y: 2 });
+          await move(owner, id, { x: 4, y: 4 });
           const attempt = await post(owner, id, '*take second-token*');
+          pickupPost = attempt;
           assert.equal(attempt.receipt.status, 'committed');
           const feed = await owner.request(path(id, 'turns/feed'));
           assert.ok(
-            feed.entries.some(
-              (e) =>
-                e.turnId === attempt.receipt.id &&
-                e.kind === 'outcome' &&
-                e.code === 'ACTION_SUCCEEDED',
+            !feed.entries.some(
+              (entry) =>
+                entry.turnId === attempt.receipt.id &&
+                entry.kind === 'outcome' &&
+                entry.code === 'ACTION_SUCCEEDED',
             ),
           );
-          assert.equal((await state(id)).entities['second-token'].ownerId, take.projection.actorId);
+          assert.equal((await state(id)).entities['second-token'].ownerId, undefined);
+          assert.deepEqual(attempt.quote.actionPreview, []);
           await move(owner, id, { x: 4, y: 4 });
           p = (await snapshot(owner, id)).projection;
           const bad = await command(
@@ -390,6 +393,15 @@ await test(
           const current = await state(id);
           assert.equal(current.turnController.deferredSpeech.length, 0);
           assert.equal(current.turnController.activeActorId, `player-${owner.user.id}`);
+          assert.equal(current.entities['second-token'].ownerId, `player-${owner.user.id}`);
+          assert.ok(
+            (await owner.request(path(id, 'turns/feed'))).entries.some(
+              (entry) =>
+                entry.turnId === pickupPost.receipt.id &&
+                entry.kind === 'outcome' &&
+                entry.code === 'ACTION_SUCCEEDED',
+            ),
+          );
           const replies = (await owner.request(path(id, 'turns/feed'))).entries.filter(
             (e) => e.kind === 'npc_reply',
           );

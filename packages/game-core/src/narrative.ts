@@ -165,6 +165,13 @@ export function buildNarrativeContext(
     intent: text,
     canonRevision: canon?.revision ?? 0,
     constraints: {
+      ...(!playerAuthoredRoleplay
+        ? {
+            maxScenes: constraints.maxScenes,
+            maxSupportingNpcs: constraints.maxSupportingNpcs,
+            maxTurns: constraints.maxTurns,
+          }
+        : {}),
       allowNewScenes: playerAuthoredRoleplay || constraints.allowNewScenes,
       allowNewNpcs: playerAuthoredRoleplay || constraints.allowNewNpcs,
       protectedFacts: constraints.protectedFacts,
@@ -258,6 +265,18 @@ export function buildNarrativeContext(
       introducedNpc: t.introducedNpc,
       introducedItem: t.introducedItem,
     })),
+    ...(!playerAuthoredRoleplay
+      ? {
+          remainingScenes: Math.max(0, constraints.maxScenes - Object.keys(state.maps).length),
+          remainingNpcs: Math.max(
+            0,
+            constraints.maxSupportingNpcs -
+              Object.values(state.entities).filter((entity) => entity.supportingNpc?.generated)
+                .length,
+          ),
+          remainingTurns: Math.max(0, constraints.maxTurns - (canon?.turns.length ?? 0)),
+        }
+      : {}),
     evidenceIds: accessibleTurns.map((t) => t.id).slice(-16),
     supportedActions: [
       'inspect',
@@ -354,6 +373,7 @@ export function applyNarrativeProposal(
     ),
     constraints = policy(state);
   if (context.contextHash !== p.contextHash) return error(state, 'STALE_STATE');
+  if (!establishedRoleplay && !context.remainingTurns) return error(state, 'RATE_LIMITED');
   if (
     new Set(p.evidenceIds).size !== p.evidenceIds.length ||
     p.evidenceIds.some((id) => !context.evidenceIds.includes(id))
@@ -366,7 +386,11 @@ export function applyNarrativeProposal(
   if (p.newScene) {
     const scene = p.newScene;
     if (!constraints.allowNewScenes && !establishedRoleplay) return error(state, 'FORBIDDEN');
-    if (next.maps[actor.mapId].exits.length >= 32) return error(state, 'RATE_LIMITED');
+    if (
+      (!establishedRoleplay && !context.remainingScenes) ||
+      next.maps[actor.mapId].exits.length >= 32
+    )
+      return error(state, 'RATE_LIMITED');
     if (
       scene.connection.fromMapId !== actor.mapId ||
       (hasPosition(actor)
@@ -451,6 +475,7 @@ export function applyNarrativeProposal(
   if (p.newNpc) {
     const n = p.newNpc;
     if (!constraints.allowNewNpcs && !establishedRoleplay) return error(state, 'FORBIDDEN');
+    if (!establishedRoleplay && !context.remainingNpcs) return error(state, 'RATE_LIMITED');
     const reserved = Object.values(state.entities).flatMap((e) => [
       e.id,
       e.label ?? '',
@@ -619,7 +644,7 @@ export function createMockNarrativeProposal(
     audienceIds,
     playerAuthoredRoleplay,
   );
-  if (!c.currentScene) return null;
+  if (!c.currentScene || (!playerAuthoredRoleplay && !c.remainingTurns)) return null;
   if (!hasPosition(state.entities[actorId]) || !c.availableConnections.length)
     return {
       turnId,
@@ -631,7 +656,10 @@ export function createMockNarrativeProposal(
       evidenceIds: c.evidenceIds.slice(-1),
     };
   const next = (state.narrativeCanon?.revision ?? 0) + 1,
-    extend = !audienceIds && c.constraints.allowNewScenes;
+    extend =
+      !audienceIds &&
+      c.constraints.allowNewScenes &&
+      (playerAuthoredRoleplay || !!c.remainingScenes);
   const copy = {
     en: {
       name: 'Mira',
@@ -695,7 +723,7 @@ export function createMockNarrativeProposal(
     narration: extend ? copy.discovery(newScene!.name) : copy.pause,
     newScene,
     newNpc:
-      extend && c.constraints.allowNewNpcs
+      extend && c.constraints.allowNewNpcs && (playerAuthoredRoleplay || !!c.remainingNpcs)
         ? {
             name,
             roleLabel: copy.role,

@@ -54,7 +54,9 @@ jobs:
       - name: Semantic NPC context and disclosure regression
         run: node --test tests/game/npc-semantic-context.test.cjs tests/game/npc-reply-binding.test.cjs tests/game/world-items-provider.test.cjs tests/game/coauthor-provider.test.cjs tests/game/authoring-provider.test.cjs tests/game/live-secret-loader.test.mjs
       - name: Automatic translation cache and output safeguards (synthetic only)
-        run: node --test tests/game/automatic-translation.test.cjs
+        run: |
+          node --test tests/game/automatic-translation.test.cjs tests/game/content-translation-fields.test.cjs tests/game/released-playable-translation.test.cjs tests/game/presentation-alias-admission.test.cjs
+          node --import tsx --test tests/game/studio-content-translation.test.mjs
       - name: Safe image provider error diagnostics
         run: node --test tests/images/provider-error-diagnostics.test.mjs
       # Exact test payload of test:voice; the same-job production build supplies
@@ -84,7 +86,7 @@ jobs:
       - name: Private release and opt-in Sparks accounting (disposable databases)
         run: node --test tests/game/paid-start.integration.test.cjs tests/game/private-release.integration.test.cjs tests/game/admin-story-deletion.integration.test.cjs tests/game/story-local-npcs.test.cjs tests/game/sparks-accounting.test.cjs tests/game/sparks-dispatch.integration.test.cjs tests/game/npc-sparks.integration.test.cjs
       - name: Durable translation cache and erasure (disposable database)
-        run: node --test tests/game/automatic-translation.integration.test.cjs
+        run: node --test --test-concurrency=1 tests/game/automatic-translation.integration.test.cjs tests/game/platform-metadata.integration.test.cjs tests/game/platform-content.integration.test.cjs tests/game/released-playable-translation.integration.test.cjs tests/game/presentation-alias-admission.integration.test.cjs
       - name: Private authoring HTTP persistence journey (synthetic only)
         run: STORY_AUTHORING_HTTP=1 node scripts/test-story-authoring.mjs
       - name: Private authoring browser journey (synthetic only)

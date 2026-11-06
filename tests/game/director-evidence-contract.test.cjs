@@ -247,7 +247,7 @@ test('ordinary wave commits with no citation while the core still rejects a hist
   assert.equal(rejected.state, state);
 });
 
-test('current director resolution normalizes legacy RP guidance without changing history or NPC evidence', () => {
+test('frozen legacy director resolution keeps its policy without changing history or NPC evidence', () => {
   const old = context(['old-failed-turn']);
   old.roleplayPolicy = 'Player-authored RP, not a mechanical action or validated inventory change.';
   old.director.confirmedTurns = [
@@ -260,8 +260,22 @@ test('current director resolution normalizes legacy RP guidance without changing
   const before = structuredClone(old);
   const request = JSON.parse(buildOpenAiNpcRequestBody(config(), 'story_turn', old));
   const supplied = JSON.parse(request.input).context;
-  assert.equal(supplied.roleplayPolicy, g.storyDirectorRoleplayPolicy);
-  assert.equal(supplied.resolutionPolicy, g.storyDirectorResolutionVersion);
+  assert.match(
+    supplied.roleplayPolicy,
+    /^Player-authored RP is intent, not by itself a validated inventory/,
+  );
+  assert.equal(supplied.resolutionPolicy, 'atomic-current-turn-ground-placement-v2');
+  const fresh = { ...old, establishedRoleplay: { entities: [], destinations: [] } };
+  const freshRequest = JSON.parse(buildOpenAiNpcRequestBody(config(), 'story_turn', fresh));
+  const freshContext = JSON.parse(freshRequest.input).context;
+  assert.equal(freshContext.roleplayPolicy, g.storyDirectorRoleplayPolicy);
+  assert.equal(freshContext.resolutionPolicy, g.storyDirectorResolutionVersion);
+  for (const key of ['director', 'actionOutcomes', 'committedAttackOutcomes', 'outputAudienceIds'])
+    assert.deepEqual(freshContext[key], old[key]);
+  assert.match(
+    freshRequest.instructions,
+    /Already persisted effects and pending other-player reactions must not be repeated or overridden/,
+  );
   assert.deepEqual(supplied.director, old.director);
   assert.deepEqual(supplied.actionOutcomes, old.actionOutcomes);
   assert.deepEqual(supplied.committedAttackOutcomes, old.committedAttackOutcomes);
@@ -284,7 +298,14 @@ test('current director resolution normalizes legacy RP guidance without changing
   const provider = new OpenAiNpcProvider(config(), async () => {
     throw Error('no dispatch');
   });
+  const freshPrepared = provider.prepareTextRequest('story_turn', fresh);
+  assert.equal(freshPrepared.body, provider.countBody('story_turn', fresh));
+  assert.equal(
+    freshPrepared.body,
+    provider.prepareTextRequest('story_turn', JSON.parse(JSON.stringify(fresh))).body,
+  );
   const prepared = provider.prepareTextRequest('story_turn', old);
+  assert.notEqual(freshPrepared.body, prepared.body);
   assert.equal(prepared.body, provider.countBody('story_turn', old));
   assert.equal(
     prepared.body,

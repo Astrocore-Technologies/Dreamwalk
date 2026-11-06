@@ -57,7 +57,9 @@ nontextual mechanics, canonical entity IDs and replay receipts.
 ## Bounds and compatibility
 
 The old six-segment/two-attempt cap, per-turn impact cap, 1024-post API lifetime cap,
-narrative lifetime counters, and read-projection item/location/population caps are removed.
+and read-projection item/location/population caps are removed. Explicit authored RP
+also bypasses narrative lifetime counters. Standalone and autonomous narration retain
+their scene, supporting-NPC and canon-turn caps in both context and commit validation.
 Current input length, provider context/output/response limits, map dimensions and geometric
 proofs remain technical bounds. Context preparation removes only redundant descriptions
 and empty per-segment capability rows; it does not raise the configured financial ceilings.

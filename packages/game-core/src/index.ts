@@ -1338,3 +1338,4 @@ export * from './lifecycle';
 export * from './story-scene-encounters';
 
 export * from './story-established';
+export * from './presentation-aliases';
