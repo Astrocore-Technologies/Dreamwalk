@@ -79,6 +79,14 @@ test(
       await pool.query(
         await readFile('packages/db/migrations/055_content_translations.sql', 'utf8'),
       );
+      await pool.query(
+        'CREATE TABLE platform_metadata_translation_jobs(adventure_id uuid,requester_id uuid,visibility text,context jsonb,result jsonb)',
+      );
+      await pool.query(
+        `CREATE TABLE platform_content_translation_jobs(context jsonb,result jsonb,erasure_user_ids uuid[],field_path text,partition text,authority text,source_id text);
+         CREATE TABLE platform_content_translation_cache(erasure_user_ids uuid[]);
+         CREATE TABLE platform_content_translation_bindings(erasure_user_ids uuid[])`,
+      );
       await pool.query('INSERT INTO users VALUES($1),($2)', [reader, other]);
       await pool.query('INSERT INTO adventures(id) VALUES($1)', [adventure]);
       await pool.query('INSERT INTO game_campaigns(id) VALUES($1)', [campaign]);

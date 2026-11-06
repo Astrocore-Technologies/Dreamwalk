@@ -92,7 +92,7 @@ test('mandatory email blocks gameplay UI until confirmation and grants starter c
     ).rows[0];
     await db.query('INSERT INTO wallets(user_id) VALUES($1)', [user.id]);
     await page.goto('/auth/sign-in');
-    await page.getByLabel('Email', { exact: true }).fill(email);
+    await page.getByLabel(/^(Email|Электронная почта|Електронна пошта)$/).fill(email);
     await page.getByLabel('Пароль', { exact: true }).fill(password);
     await page.getByRole('button', { name: 'Войти', exact: true }).click();
     await expect(page).toHaveURL(/\/account\/sessions$/);

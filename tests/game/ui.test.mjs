@@ -484,14 +484,66 @@ test('generation admission errors explain recovery in every locale', async () =>
   assert.equal(required.size, 0);
 });
 
+function withoutPassiveReleaseAuditKey(text) {
+  const source = ts.createSourceFile(
+    'adoption-guard.tsx',
+    text,
+    ts.ScriptTarget.Latest,
+    true,
+    ts.ScriptKind.TSX,
+  );
+  assert.deepEqual(source.parseDiagnostics, []);
+  const keys = [];
+  for (const statement of source.statements) {
+    if (!ts.isVariableStatement(statement)) continue;
+    for (const declaration of statement.declarationList.declarations) {
+      if (
+        !ts.isIdentifier(declaration.name) ||
+        declaration.name.text !== 'actionLabels' ||
+        !declaration.initializer ||
+        !ts.isObjectLiteralExpression(declaration.initializer)
+      )
+        continue;
+      for (const property of declaration.initializer.properties) {
+        if (
+          ts.isPropertyAssignment(property) &&
+          ts.isStringLiteral(property.name) &&
+          property.name.text === 'generation.release-policy.refresh' &&
+          ts.isStringLiteral(property.initializer)
+        )
+          keys.push([property.name.getStart(source), property.name.end]);
+      }
+    }
+  }
+  // Only the passive audit property's name is exempt. Its value and all imports,
+  // controls, state and request paths remain subject to the original guard.
+  for (const [start, end] of keys.reverse())
+    text = text.slice(0, start) + "'passive-audit-event'" + text.slice(end);
+  return text;
+}
+const manualAdoptionControl = /ReleasePolicyReview|release-policy|policyTarget/;
 test('server profile updates do not expose manual account adoption controls', async () => {
   for (const file of ['admin.tsx', 'game/adventure-launch.tsx']) {
     const source = await readFile(
       new URL('../../apps/web/components/' + file, import.meta.url),
       'utf8',
     );
-    assert.doesNotMatch(source, /ReleasePolicyReview|release-policy|policyTarget/);
+    assert.doesNotMatch(withoutPassiveReleaseAuditKey(source), manualAdoptionControl);
   }
+});
+test('manual adoption guard exempts only a passive audit key, never controls or request paths', () => {
+  const passive = "const actionLabels = { 'generation.release-policy.refresh': 'Rules updated' };";
+  assert.doesNotMatch(withoutPassiveReleaseAuditKey(passive), manualAdoptionControl);
+  for (const source of [
+    passive + 'const view = <ReleasePolicyReview />;',
+    passive + "import { ReleasePolicyReview } from './review';",
+    passive + 'const policyTarget = null;',
+    passive + "api('/admin/live-test/release-policy', { method: 'POST' });",
+    passive.replace('Rules updated', '/release-policy'),
+    passive.replace('actionLabels', 'otherLabels'),
+    "const actionLabels = { 'generation.release-policy.refresh': () => true };",
+  ])
+    assert.match(withoutPassiveReleaseAuditKey(source), manualAdoptionControl);
 });
 
 test('every browser new-campaign launch explicitly requests turns, never realtime', async () => {

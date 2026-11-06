@@ -1,4 +1,5 @@
 'use client';
+import { requestPurposeLabel } from '@/lib/generation-labels';
 import { formatSparkSubunits } from '@dreamwalk/contracts';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError, useClient } from '@/lib/client';
@@ -529,7 +530,7 @@ export function LiveTestPanel({
           {batch?.requests.map((request) => (
             <article className={styles.request} key={request.id} data-live-request={request.id}>
               <strong>{request.subjectId}</strong>
-              <code>{request.purpose}</code>
+              <span>{requestPurposeLabel(locale, request.purpose)}</span>
               {request.estimateSnapshot ? (
                 <TextRequestReserve snapshot={request.estimateSnapshot} />
               ) : (

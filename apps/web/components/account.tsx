@@ -106,10 +106,8 @@ function AuthForm({
         if (!authGate.accepts(lease)) return;
         setResult(
           response.code === 'EMAIL_DELIVERY_UNAVAILABLE'
-            ? tr('Почтовая доставка не подключена. Восстановление доступа пока недоступно.')
-            : tr(
-                'Если такой аккаунт существует, письмо со ссылкой восстановления придёт на его email.',
-              ),
+            ? 'Почтовая доставка не подключена. Восстановление доступа пока недоступно.'
+            : 'Если такой аккаунт существует, письмо со ссылкой восстановления придёт на его email.',
         );
       } else {
         const r = await api<{ user: User }>(signup ? '/auth/register' : '/auth/login', {
@@ -207,7 +205,7 @@ function AuthForm({
           )}
           <div className="field auth-field">
             <label className="auth-field-label" htmlFor="auth-email">
-              {localAlias ? localText.identifier : 'Email'}
+              {localAlias ? localText.identifier : tr('Электронная почта')}
             </label>
             <div className="auth-input-wrap">
               <Mail aria-hidden="true" size={28} />
@@ -218,7 +216,7 @@ function AuthForm({
                 autoComplete={localAlias ? 'username' : 'email'}
                 required
                 maxLength={254}
-                placeholder={localAlias ? localText.identifier : 'Email'}
+                placeholder={localAlias ? localText.identifier : tr('Электронная почта')}
                 aria-describedby={localAlias ? 'auth-local-hint' : undefined}
               />
             </div>
@@ -267,7 +265,7 @@ function AuthForm({
           <ErrorBox message={error} />
           {result && (
             <div className="notice" role="status">
-              {result}
+              {tr(result)}
             </div>
           )}
           <Button busy={busy}>

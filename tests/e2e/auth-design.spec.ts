@@ -46,7 +46,9 @@ for (const locale of ['ru', 'uk', 'en'] as const) {
         await expect(page.locator('.auth-form')).toBeVisible();
         await expect(page.locator('#main-sidebar')).toHaveCount(0);
         await expect(page.locator('#auth-email')).toBeVisible();
-        await expect(page.locator('#auth-email')).toHaveAccessibleName('Email');
+        const emailLabel = { ru: 'Электронная почта', uk: 'Електронна пошта', en: 'Email' }[locale];
+        await expect(page.locator('#auth-email')).toHaveAccessibleName(emailLabel);
+        await expect(page.locator('#auth-email')).toHaveAttribute('placeholder', emailLabel);
         await expect(page.locator('.locale-select')).toBeVisible();
         await expect(page.locator('.theme-button')).toBeVisible();
         await expect(page.locator('.legal-note')).toHaveCSS(
@@ -104,5 +106,22 @@ for (const locale of ['ru', 'uk', 'en'] as const) {
     await page.goBack();
     await expect(page.locator('#auth-password')).toHaveAttribute('type', 'password');
     expect(submissions).toBe(0);
+    await page.route('**/api/v1/auth/reset-password', (route) =>
+      route.fulfill({ json: { code: 'EMAIL_DELIVERY_UNAVAILABLE' } }),
+    );
+    await page.goto('/auth/reset-password');
+    await page.locator('#auth-email').fill('synthetic-reset@example.test');
+    await page.locator('form .button').last().click();
+    const notice = page.locator('.auth-form [role=status]');
+    const notices = {
+      ru: 'Почтовая доставка не подключена. Восстановление доступа пока недоступно.',
+      uk: 'Доставку пошти не підключено. Відновлення доступу поки недоступне.',
+      en: 'Email delivery is not connected. Account recovery is not available yet.',
+    };
+    await expect(notice).toHaveText(notices[locale]);
+    const nextLocale = locale === 'en' ? 'uk' : 'en';
+    await page.locator('.locale-select').selectOption(nextLocale);
+    await expect(notice).toHaveText(notices[nextLocale]);
+    await expect(page.locator('#auth-email')).toHaveValue('synthetic-reset@example.test');
   });
 }

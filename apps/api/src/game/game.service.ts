@@ -1,3 +1,8 @@
+import {
+  capturePresentationAliases,
+  withPresentationAliasScope,
+  type ReadyContentTranslationsReader,
+} from './presentation-aliases';
 import { requiresMapRecovery } from './map-readiness';
 import type { AuthoringTextEngine } from '../live-test/authoring-text';
 import { listCampaigns } from './campaign-list';
@@ -286,6 +291,9 @@ export class GameService implements OnModuleDestroy {
     @Inject(AssetReuseService) private art: AssetReuseService,
     @Optional() @Inject(ImageGenerationService) images?: ImageGenerationService,
     @Optional() @Inject('TRAVEL_MAP_ENGINE') travelMapEngine?: AuthoringTextEngine,
+    @Optional()
+    @Inject('READY_CONTENT_TRANSLATIONS')
+    readyTranslations?: ReadyContentTranslationsReader,
   ) {
     this.corrections = new NarrativeCorrections(this.db, {
       access: (req, id) => this.access(req, id),
@@ -312,6 +320,27 @@ export class GameService implements OnModuleDestroy {
       );
     this.worldGeneration = new WorldGenerationBatch(this.db, this.ai, this.travelGeneration);
     this.story = new StoryTurnRuntime(this.db, this.ai, {
+      ...(readyTranslations
+        ? {
+            presentationAliases: (
+              id: string,
+              live: import('./story-turn-runtime').StoryLive,
+              actorId: string,
+              userId: string,
+              input: import('@dreamwalk/contracts').StoryTurnInput,
+            ) =>
+              capturePresentationAliases(
+                this.db,
+                readyTranslations,
+                id,
+                (live as Live).campaign,
+                live.state,
+                actorId,
+                userId,
+                input,
+              ),
+          }
+        : {}),
       serial: <T>(id: string, work: () => Promise<T>) => this.serial(id, work),
       access: (req, id) => this.access(req, id),
       load: (id, requireGrid) => this.load(id, requireGrid),
@@ -320,8 +349,9 @@ export class GameService implements OnModuleDestroy {
         this.persist(id, live as Live, state, kind, undefined, extra, prepare, preflight),
       canUseFrozenTravel: (id, turnId) =>
         this.travelGeneration?.canUseFrozen(id, turnId) ?? Promise.resolve(false),
-      rebaseTravel: (id, turnId, state, input, proposal) =>
-        this.travelGeneration?.rebase(id, turnId, state, input, proposal) ?? Promise.resolve(null),
+      rebaseTravel: (id, turnId, state, input, proposal, aliases) =>
+        this.travelGeneration?.rebase(id, turnId, state, input, proposal, aliases) ??
+        Promise.resolve(null),
       admitTravel: (id, turnId, proposal) =>
         this.travelGeneration
           ? this.travelGeneration.admitted(id, turnId, proposal)
@@ -573,7 +603,7 @@ export class GameService implements OnModuleDestroy {
     return this.story.feed(req, id);
   }
   withRuntimeVisionQuote<T>(work: () => Promise<T>) {
-    return this.ai.withRuntimeVisionQuote(work);
+    return withPresentationAliasScope(() => this.ai.withRuntimeVisionQuote(work));
   }
   storyQuote(req: Request, id: string, body: unknown) {
     return this.story.quote(req, id, body);

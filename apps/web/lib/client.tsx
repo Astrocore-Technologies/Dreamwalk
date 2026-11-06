@@ -90,7 +90,11 @@ export class ApiError extends Error {
     super(message);
   }
 }
-export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
+export async function api<T>(
+  path: string,
+  options: RequestInit = {},
+  responseStatus?: (status: { translationPending: boolean }) => void,
+): Promise<T> {
   const headers = new Headers(options.headers);
   if (!headers.has('Accept-Language')) headers.set('Accept-Language', getLocale());
   if (!(options.body instanceof FormData)) headers.set('Content-Type', 'application/json');
@@ -115,6 +119,9 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
     !['GET', 'HEAD'].includes((options.method ?? 'GET').toUpperCase())
   )
     window.dispatchEvent(new Event(SPARKS_REFRESH_EVENT));
+  responseStatus?.({
+    translationPending: response.headers.get('X-Dreamwalk-Translation-Pending') === 'true',
+  });
   return data as T;
 }
 export function useResource<T>(path: string | null) {
@@ -133,20 +140,37 @@ export function useResource<T>(path: string | null) {
       return;
     }
     let active = true;
+    let translationRefresh: ReturnType<typeof setTimeout> | undefined;
     setLoading(true);
     setError('');
-    api<T>(path)
-      .then((value) => {
-        if (active) setData(value);
+    const read = (): Promise<void> =>
+      api<T>(path, {}, ({ translationPending }) => {
+        // Only the server's admitted metadata work requests refresh. No extra
+        // generation endpoint, retries, game polling, or stale-locale update.
+        if (
+          active &&
+          translationPending &&
+          /^\/(adventures(?:[/?]|$)|creators\/|library(?:[?]|$)|taxonomy(?:[?]|$)|tags(?:[?]|$))/.test(
+            path,
+          )
+        )
+          translationRefresh = setTimeout(() => {
+            if (active) void read();
+          }, 1500);
       })
-      .catch((e: Error) => {
-        if (active) setError(e.message);
-      })
-      .finally(() => {
-        if (active) setLoading(false);
-      });
+        .then((value) => {
+          if (active) setData(value);
+        })
+        .catch((e: Error) => {
+          if (active) setError(e.message);
+        })
+        .finally(() => {
+          if (active) setLoading(false);
+        });
+    void read();
     return () => {
       active = false;
+      if (translationRefresh) clearTimeout(translationRefresh);
     };
   }, [path, version, readLocale]);
   const reload = useCallback(() => setVersion((v) => v + 1), []);

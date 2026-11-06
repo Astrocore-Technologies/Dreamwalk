@@ -1,4 +1,6 @@
 'use client';
+import { useT } from '@/lib/i18n';
+import { imageQualityLabel, imageSizeLabel } from '@/lib/generation-labels';
 import { ImageQuotePrice } from '../assets/image-quote-price';
 import { GenerationProgress } from './generation-progress';
 import { imageFramingEvidenceMatches } from '@dreamwalk/contracts';
@@ -63,6 +65,7 @@ type Props = {
 };
 export function LocationImageInline(p: Props) {
   const m = useLocationInlineText(),
+    { locale } = useT(),
     g = useImageText(),
     a = useAssetText(),
     l = useLocationImageText(),
@@ -383,8 +386,8 @@ export function LocationImageInline(p: Props) {
     >
       {user?.role === 'admin' && config?.requestProfile && (
         <small>
-          {config.requestProfile.model} · {config.requestProfile.size} ·{' '}
-          {config.requestProfile.quality}
+          {config.requestProfile.model} · {imageSizeLabel(locale, config.requestProfile.size)} ·{' '}
+          {imageQualityLabel(locale, config.requestProfile.quality)}
         </small>
       )}
       <ErrorBox message={error || p.settings.configError || p.settings.live.error} />

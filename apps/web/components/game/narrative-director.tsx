@@ -11,6 +11,7 @@ import { api, ApiError, errorMessage } from '@/lib/client';
 import { Button, ErrorBox, Field, Textarea } from '@/components/ui';
 import { providerBoundKnown, samePreparedTurn, type ProviderCostQuote } from './narrative-guards';
 import { useNarrativeText } from './narrative-messages';
+import { useT } from '@/lib/i18n';
 type Turn = {
   id: string;
   operationId: string;
@@ -69,6 +70,7 @@ export function NarrativeDirector({
   disabled: boolean;
 }) {
   const h = useNarrativeText();
+  const { locale } = useT();
   const inputHintId = useId();
   const path = `/game/campaigns/${campaignId}/narrative`;
   const [status, setStatus] = useState<NarrativeStatus | null>(null);
@@ -282,7 +284,9 @@ export function NarrativeDirector({
           {(prepared.quote.external ?? status?.configuration.provider === 'external') && (
             <ProviderSparkReserve quote={prepared.quote} />
           )}
-          <p>{h('expires', { time: new Date(prepared.quote.expiresAt).toLocaleTimeString() })}</p>
+          <p>
+            {h('expires', { time: new Date(prepared.quote.expiresAt).toLocaleTimeString(locale) })}
+          </p>
           <Button
             type="button"
             disabled={

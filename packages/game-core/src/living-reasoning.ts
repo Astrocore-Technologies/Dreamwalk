@@ -1,3 +1,8 @@
+import {
+  entityPresentationLabels,
+  presentationAliasReferencesValid,
+  type PresentationAliases,
+} from './presentation-aliases';
 import { isActorConscious } from '@dreamwalk/contracts';
 import { parseStoryItemAction } from './story-items';
 import { resolveTravelRequest } from './location-travel';
@@ -108,15 +113,17 @@ export function parsePlayerTextAction(
   state: GameState,
   actorId: string,
   text: string,
+  presentationAliases?: PresentationAliases,
 ): GameAction | null {
   const actor = state.entities[actorId];
   if (actor?.kind !== 'player' || typeof text !== 'string' || !text.trim() || text.length > 1000)
     return null;
-  const pickup = parseStoryItemAction(state, actorId, text);
+  if (!presentationAliasReferencesValid(state, actorId, text, presentationAliases)) return null;
+  const pickup = parseStoryItemAction(state, actorId, text, presentationAliases);
   if (pickup) return pickup;
-  const travel = resolveTravelRequest(state, text);
+  const travel = resolveTravelRequest(state, text, presentationAliases);
   if (travel?.mapId) return { kind: 'travel', targetId: travel.mapId };
-  const contact = storyContactAction(state, actorId, text);
+  const contact = storyContactAction(state, actorId, text, presentationAliases);
   if (contact) return contact;
   const normalized = text.trim().toLowerCase(),
     patterns: [RegExp, GameAction['kind']][] = [
@@ -141,7 +148,12 @@ export function parsePlayerTextAction(
         (e) =>
           (visible(state, actor, e) ||
             (kind === 'consume' && e.ownerId === actorId && actor.inventory?.includes(e.id))) &&
-          [e.id, e.label?.toLowerCase()].includes(match[2]),
+          (presentationAliases
+            ? entityPresentationLabels(state, actorId, e, presentationAliases).map((name) =>
+                name.toLowerCase(),
+              )
+            : [e.id, e.label?.toLowerCase()]
+          ).includes(match[2]),
       ),
     );
     if (target) action = { kind, targetId: target.id };
@@ -152,14 +164,28 @@ export function parsePlayerTextAction(
     const item = unique(
       (actor.inventory ?? [])
         .map((id) => state.entities[id])
-        .filter((e) => [e.id, e.label?.toLowerCase()].includes(give[2])),
+        .filter(
+          (e) =>
+            e &&
+            (presentationAliases
+              ? entityPresentationLabels(state, actorId, e, presentationAliases).map((name) =>
+                  name.toLowerCase(),
+                )
+              : [e.id, e.label?.toLowerCase()]
+            ).includes(give[2]),
+        ),
     );
     const target = unique(
       Object.values(state.entities).filter(
         (e) =>
           ['npc', 'player'].includes(e.kind) &&
           visible(state, actor, e) &&
-          [e.id, e.label?.toLowerCase()].includes(give[3]),
+          (presentationAliases
+            ? entityPresentationLabels(state, actorId, e, presentationAliases).map((name) =>
+                name.toLowerCase(),
+              )
+            : [e.id, e.label?.toLowerCase()]
+          ).includes(give[3]),
       ),
     );
     if (item && target) action = { kind: 'give', targetId: target.id, itemId: item.id };

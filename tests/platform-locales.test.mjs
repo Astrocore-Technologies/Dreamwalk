@@ -5,6 +5,12 @@ import path from 'node:path';
 import { fileURLToPath } from 'node:url';
 import ts from 'typescript';
 import {
+  imageQualityLabel,
+  imageSizeLabel,
+  requestPurposeLabel,
+} from '../apps/web/lib/generation-labels.ts';
+import { formatSparkSubunits } from '../packages/contracts/src/sparks.ts';
+import {
   dictionaries,
   supportedLocales,
   translate,
@@ -117,12 +123,26 @@ test('every literal t()/tr() UI key exists in all dictionaries', async () => {
         node.arguments.length
       ) {
         const argument = node.arguments[0];
-        if (ts.isStringLiteral(argument) || ts.isNoSubstitutionTemplateLiteral(argument)) {
-          checked++;
-          for (const locale of supportedLocales)
-            if (!Object.hasOwn(dictionaries[locale], argument.text.trim()))
-              missing.push(`${path.relative(root, filename)} ${locale}: ${argument.text}`);
-        }
+        const inspectKey = (key) => {
+          if (ts.isStringLiteral(key) || ts.isNoSubstitutionTemplateLiteral(key)) {
+            checked++;
+            for (const locale of supportedLocales)
+              if (!Object.hasOwn(dictionaries[locale], key.text.trim()))
+                missing.push(`${path.relative(root, filename)} ${locale}: ${key.text}`);
+          } else if (ts.isConditionalExpression(key)) {
+            inspectKey(key.whenTrue);
+            inspectKey(key.whenFalse);
+          } else if (ts.isParenthesizedExpression(key)) {
+            inspectKey(key.expression);
+          } else if (
+            ts.isBinaryExpression(key) &&
+            ['||', '??'].includes(key.operatorToken.getText(source))
+          ) {
+            inspectKey(key.left);
+            inspectKey(key.right);
+          }
+        };
+        inspectKey(argument);
       }
       ts.forEachChild(node, visit);
     };
@@ -203,11 +223,20 @@ test('dynamic translated step, status, audit and navigation collections contain 
     'links',
     'inviteStatuses',
     'invitationLabels',
+    'labels',
+    'goalLabels',
+    'motivationLabels',
+    'disclosureLabels',
+    'observationLabels',
+    'channelLabels',
   ]);
   for (const relative of [
     'apps/web/components/studio.tsx',
     'apps/web/components/admin.tsx',
     'apps/web/components/personal.tsx',
+    'apps/web/components/game/living-ai-panel.tsx',
+    'apps/web/components/studio/living-npc-authoring.tsx',
+    'apps/web/components/studio/living-npc-preview.tsx',
   ]) {
     const filename = path.join(root, relative);
     const source = ts.createSourceFile(
@@ -218,6 +247,7 @@ test('dynamic translated step, status, audit and navigation collections contain 
       ts.ScriptKind.TSX,
     );
     const inspect = (node, collection) => {
+      if (ts.isTypeNode(node)) return;
       if (ts.isStringLiteral(node)) {
         // Navigation routes are identifiers; only its labels are translated.
         if (
@@ -239,6 +269,8 @@ test('dynamic translated step, status, audit and navigation collections contain 
         ts.isVariableDeclaration(node) &&
         ts.isIdentifier(node.name) &&
         collections.has(node.name.text) &&
+        (node.name.text !== 'labels' ||
+          relative === 'apps/web/components/game/living-ai-panel.tsx') &&
         node.initializer
       )
         inspect(node.initializer, node.name.text);
@@ -292,4 +324,118 @@ test('built-in adventure metadata has complete translations without inventing au
   const creatorDuration = 'until the silver moon sets';
   assert.equal(dictionaries.uk[creatorDuration] ?? creatorDuration, creatorDuration);
   assert.equal(dictionaries.en[creatorDuration] ?? creatorDuration, creatorDuration);
+});
+
+test('authentication, validation and dynamic NPC labels are complete in the selected language', () => {
+  const expected = {
+    ru: ['Электронная почта', 'Ошибка', 'Помочь', 'Заполни это поле.'],
+    en: ['Email', 'Error', 'Help', 'Fill in this field.'],
+    uk: ['Електронна пошта', 'Помилка', 'Допомогти', 'Заповни це поле.'],
+  };
+  for (const locale of supportedLocales)
+    assert.deepEqual(
+      ['Электронная почта', 'Ошибка', 'Помочь', 'Заполни это поле.'].map((key) =>
+        translate(locale, key),
+      ),
+      expected[locale],
+    );
+});
+
+test('visible date and time formatting always has an explicit UI locale', async () => {
+  const missing = [];
+  for (const filename of await sourceFiles(path.join(root, 'apps/web/components'))) {
+    const source = ts.createSourceFile(
+      filename,
+      await readFile(filename, 'utf8'),
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TSX,
+    );
+    const visit = (node) => {
+      if (
+        ts.isCallExpression(node) &&
+        ts.isPropertyAccessExpression(node.expression) &&
+        ['toLocaleDateString', 'toLocaleTimeString', 'toLocaleString'].includes(
+          node.expression.name.text,
+        ) &&
+        !node.arguments.length
+      )
+        missing.push(`${path.relative(root, filename)}: ${node.getText(source)}`);
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
+  assert.deepEqual(missing, []);
+});
+
+test('generation enum labels and launch amounts follow the chosen locale without mutating identifiers', async () => {
+  for (const [locale, quality, size, task, amount] of [
+    ['ru', 'Низкое качество', 'Автоматический размер', 'Реплика NPC', '1,25'],
+    ['uk', 'Низька якість', 'Автоматичний розмір', 'Репліка NPC', '1,25'],
+    ['en', 'Low quality', 'Automatic size', 'NPC reply', '1.25'],
+  ]) {
+    assert.equal(imageQualityLabel(locale, 'low'), quality);
+    assert.equal(imageSizeLabel(locale, 'auto'), size);
+    assert.equal(requestPurposeLabel(locale, 'speech'), task);
+    assert.equal(formatSparkSubunits('12500', locale), amount);
+    assert.equal(imageSizeLabel(locale, '1024x1536'), '1024x1536');
+    assert.equal(imageQualityLabel(locale, 'provider-v2'), 'provider-v2');
+    assert.ok(requestPurposeLabel(locale, 'future-task').length);
+    for (const known of ['low', 'medium', 'high', 'auto'])
+      assert.notEqual(imageQualityLabel(locale, known), known);
+    for (const known of [
+      'plan',
+      'summary',
+      'speech',
+      'intent',
+      'narrative',
+      'story_turn',
+      'story_plan',
+      'supporting_npc',
+    ])
+      assert.notEqual(requestPurposeLabel(locale, known), known);
+  }
+  const launch = await readFile(
+    path.join(root, 'apps/web/components/game/adventure-launch.tsx'),
+    'utf8',
+  );
+  assert.match(launch, /formatSparkSubunits\(estimatedSubunits, locale\)/);
+  assert.match(launch, /formatSparkSubunits\(quote.sparks.reserveSubunits, locale\)/);
+});
+
+test('persistent success notices translate at render rather than freezing the action-time language', async () => {
+  for (const [relative, key, renderer] of [
+    ['apps/web/components/account.tsx', 'setResult', 'tr(result)'],
+    ['apps/web/components/account-email.tsx', 'setMessage', 't(message)'],
+    ['apps/web/components/studio/story-npc-editor.tsx', 'setNotice', 'text(notice)'],
+  ]) {
+    const contents = await readFile(path.join(root, relative), 'utf8');
+    assert.ok(contents.includes(renderer), relative);
+    const source = ts.createSourceFile(
+      relative,
+      contents,
+      ts.ScriptTarget.Latest,
+      true,
+      ts.ScriptKind.TSX,
+    );
+    const visit = (node) => {
+      if (
+        ts.isCallExpression(node) &&
+        node.expression.getText(source) === key &&
+        node.arguments[0]
+      ) {
+        const inspectArgument = (argument) => {
+          assert.ok(
+            !ts.isCallExpression(argument) ||
+              !['t', 'tr', 'text'].includes(argument.expression.getText(source)),
+            relative,
+          );
+          ts.forEachChild(argument, inspectArgument);
+        };
+        inspectArgument(node.arguments[0]);
+      }
+      ts.forEachChild(node, visit);
+    };
+    visit(source);
+  }
 });

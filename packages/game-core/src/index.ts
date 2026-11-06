@@ -1335,3 +1335,5 @@ export * from './story-impact';
 export * from './lifecycle';
 
 export * from './story-scene-encounters';
+
+export * from './presentation-aliases';

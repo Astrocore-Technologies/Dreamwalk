@@ -1,4 +1,5 @@
 'use client';
+import { imageQualityLabel, imageSizeLabel } from '@/lib/generation-labels';
 import { ImageQuotePrice } from '../assets/image-quote-price';
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { api, ApiError, useClient } from '@/lib/client';
@@ -158,7 +159,8 @@ function FullExternalGeneration({
       {user?.role === 'admin' && config?.requestProfile && (
         <small>
           {config.requestProfile.provider} · {config.requestProfile.model} ·{' '}
-          {config.requestProfile.size} · {config.requestProfile.quality}
+          {imageSizeLabel(locale, config.requestProfile.size)} ·{' '}
+          {imageQualityLabel(locale, config.requestProfile.quality)}
         </small>
       )}
       {config?.externalBlockReasons?.map((code) => (
