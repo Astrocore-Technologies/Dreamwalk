@@ -3,7 +3,9 @@ import { travelMapPlanDefinition } from './game/travel-map-plan';
 import { resolveReplyLocale } from './game/reply-locale';
 import { CachedTranslations, PostgresTranslationCache } from './translation/service';
 import { TranslationInterceptor } from './translation/interceptor';
-import { PlatformMetadataTranslations } from './translation/platform-metadata';
+import { PlatformContentTranslations } from './translation/platform-content';
+import { studioContentTranslationAdapters } from './translation/studio-content-sources';
+import { PlayableContentSource } from './translation/playable-content-source';
 import { translationDefinition } from './translation/definition';
 import { BoundedAuthoringTextProvider } from './live-test/authoring-provider';
 import {
@@ -58,6 +60,10 @@ import { GameController } from './game/game.controller';
 import { KnownNpcSettlement } from './game/known-npc-settlement';
 import { attachGameSockets } from './game/game.socket';
 const releaseReadiness = new ReleaseDeploymentReadiness(process.env.GENERATION_MODE === 'release');
+const contentTranslationAdapters = [
+  ...studioContentTranslationAdapters,
+  new PlayableContentSource(),
+];
 @Controller('api/v1')
 class Health {
   constructor(
@@ -110,13 +116,14 @@ class Health {
     Db,
     TranslationInterceptor,
     {
-      provide: PlatformMetadataTranslations,
+      provide: PlatformContentTranslations,
       inject: [Db],
       useFactory: (db: Db) => {
         const policy = readGenerationConfig(process.env);
         return policy.mode === 'release'
-          ? new PlatformMetadataTranslations(
+          ? new PlatformContentTranslations(
               db,
+              contentTranslationAdapters,
               new BoundedAuthoringTextProvider(
                 translationDefinition,
                 process.env.OPENAI_API_KEY,
@@ -126,15 +133,16 @@ class Health {
               policy,
               () => process.env.NPC_AI_KILL_SWITCH !== 'true',
             )
-          : new PlatformMetadataTranslations(db);
+          : new PlatformContentTranslations(db, contentTranslationAdapters);
       },
     },
     {
       provide: CachedTranslations,
-      inject: [Db, PlatformMetadataTranslations],
-      useFactory: (db: Db, metadata: PlatformMetadataTranslations) =>
+      inject: [Db, PlatformContentTranslations],
+      useFactory: (db: Db, metadata: PlatformContentTranslations) =>
         new CachedTranslations(new PostgresTranslationCache(db), undefined, 2000, metadata),
     },
+    { provide: 'READY_CONTENT_TRANSLATIONS', useExisting: PlatformContentTranslations },
     {
       provide: GenerationAuthority,
       inject: [Db],

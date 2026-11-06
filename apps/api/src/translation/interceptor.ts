@@ -22,7 +22,7 @@ export class TranslationInterceptor implements NestInterceptor {
     const path = req.path.replace(/^\/api\/v1/, '');
     if (
       req.method !== 'GET' ||
-      !/^\/(adventures(?:\/[^/]+)?|creators\/[^/]+|library|game\/campaigns\/[0-9a-f-]{36}\/(snapshot|turns\/feed|narrative))$/i.test(
+      !/^\/(adventures(?:\/[^/]+)?|creators\/[^/]+|library|taxonomy|tags|game\/campaigns\/[0-9a-f-]{36}\/snapshot)$/i.test(
         path,
       )
     )

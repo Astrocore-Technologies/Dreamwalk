@@ -150,7 +150,9 @@ export function useResource<T>(path: string | null) {
         if (
           active &&
           translationPending &&
-          /^\/(adventures(?:[/?]|$)|creators\/|library(?:[?]|$))/.test(path)
+          /^\/(adventures(?:[/?]|$)|creators\/|library(?:[?]|$)|taxonomy(?:[?]|$)|tags(?:[?]|$))/.test(
+            path,
+          )
         )
           translationRefresh = setTimeout(() => {
             if (active) void read();

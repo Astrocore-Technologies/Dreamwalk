@@ -449,11 +449,11 @@ export function AdventureLaunch({ adventure }: { adventure: Adventure }) {
           <MapImageNotice count={quote.imageInputCount} schematicCount={quote.schematicMapCount} />
           <p>
             {t('Оценка в искрах')}:{' '}
-            {estimatedSubunits === null ? '—' : formatSparkSubunits(estimatedSubunits)}
+            {estimatedSubunits === null ? '—' : formatSparkSubunits(estimatedSubunits, locale)}
           </p>
           <p>
             {t('Резерв искр')}:{' '}
-            {quote.sparks ? formatSparkSubunits(quote.sparks.reserveSubunits) : '—'}
+            {quote.sparks ? formatSparkSubunits(quote.sparks.reserveSubunits, locale) : '—'}
           </p>
           <small>
             {t(

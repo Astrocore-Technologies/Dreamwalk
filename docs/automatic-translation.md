@@ -1,120 +1,105 @@
-# KAN-11: selected-language story and game views
+# KAN-11: automatic released-content translation
 
-## Delivery boundary
+## Current owner-approved boundary (2026-11-06)
 
-The owner approved platform-funded translation of story titles and descriptions
-on the site, including released private stories read by their owner or an accepted
-invitee. Translate each source field once per selected language, save it, and
-translate again only when that source text changes. This is not authorization to
-translate gameplay, draft content, private lore, or personal account fields.
+Translate released story titles/descriptions, NPC names/descriptions, tags and
+reader-visible authored world descriptions into Russian, Ukrainian and English.
+The platform pays. Queue the work automatically when a public approval or private
+release is created or changed; readers do not press a translation button, give
+another confirmation or spend Sparks. Save the variants and reuse exact unchanged
+fields. Existing valid curated variants take precedence.
 
-`PlatformMetadataTranslations` now provides that production dispatcher in the
-existing `GENERATION_MODE=release`. It uses the existing bounded text adapter,
-reviewed model/pricing and release deployment authority. It creates no player
-Sparks/Dreams charge, fake player account, separate activation flag or new spending
-ceiling. The current owner-approved `allowance=unlimited` release policy also makes
-the dedicated platform scope unlimited. If an operator later changes the release
-policy, admission fails closed rather than silently overriding that policy.
-Mock, disabled and owner-test modes do not dispatch platform translations.
-The existing `NPC_AI_KILL_SWITCH` stops new admissions/dispatches; saved safe text
-and outstanding financial receipts remain readable/reconcilable.
+The owner subsequently withdrew both gameplay-message translation and draft
+translation. These later instructions override the earlier broader request:
 
-Gameplay translations still use only the saved cache and original fallback.
-Their payer/data-sharing policy is a separate decision. Do not describe this
-metadata implementation as a paid gameplay translation rollout.
+- No draft/Studio/NPC-template/private-test-build translation or backfill.
+- No translation of player messages/actions, NPC utterances, narration/director
+  text, party chat, thought-reader dialogue, receipts or action previews. The old
+  generic cache also excludes these fields, including previously saved variants.
+- Do not expose withheld lore, private NPC facts or an unpublished cast through a
+  translation DTO. An ordinary story reader still receives the existing safe DTO.
+- Static UI, errors, labels and accessibility text use complete RU/UK/EN dictionaries.
+  They are not sent to a model on every render.
 
-## Read surfaces
+## Sources and automatic creation
 
-- Public catalog, story detail, creator stories and non-editable library cards:
-  title and synopsis are added to the selected-language metadata variant. Current
-  curated variants win per field. Source title, synopsis and source revision are
-  never rewritten. Author drafts and Studio endpoints are excluded.
-- Authorized campaign snapshots: map/exits/NPC/item labels, visible descriptions,
-  supporting NPC cards, revealed objectives/epilogues and NPC utterances.
-- Authorized story feed: visible entries and NPC speaker labels. The original
-  submission receipts, action previews and confirmation hashes stay unchanged.
-- HTTP reads follow the selected `Accept-Language`; WebSocket connections carry a
-  validated locale because browser sockets cannot set custom headers. Changing
-  language refreshes read resources and reconnects the localized game stream.
-  The normal UI locale dictionaries and generation `replyLocale` remain intact.
+Migration 069 adds a transactional identifier-only outbox. Public approvals,
+private releases and changes to the current released snapshot enqueue work in the
+same transaction. A draft save cannot enqueue a translation. Existing released
+sources are seeded once into the same durable queue; workers consume bounded
+windows until it is exhausted. No read request is required to start translation.
 
-There is no new translation button or extra explanatory text in the player UI.
-Missing translations keep the original text visible. Translation/storage failure
-never blocks story reading or authoritative gameplay.
+Explicit adapters cover released title/synopsis/custom tags and public taxonomy,
+and immutable released playable descriptions. Private test packages are not a
+release. Playable fields are selected by exact frozen map/entity IDs and source
+text, not guessed names. The same released source is freshly authorized before
+read, dispatch and completion. A changed runtime description or a newly generated
+entity has no proof of that released source and is not admitted by this adapter.
 
-## Safety and persistence
+Release metadata intentionally omits unused NPC-cast/duration translation: the
+existing story page does not expose those fields. NPC descriptions are served
+through the authorized playable projection instead. The private lorebook is not
+published as a side effect, and translating a field never changes what a player
+is allowed to know.
 
-The interceptor runs only after ordinary controller authorization and safe DTO
-projection. It never queries original private lore or an NPC's private model
-context. The socket also obtains a fresh authorized snapshot before localization.
-Selection is an explicit list of display fields, not a recursive walk through
-arbitrary object keys. Private author notes, knowledge, credentials, IDs, control
-fields and financial values are not translation inputs.
+## Persistent cache and cost
 
-Released metadata keys bind adventure, visibility, source language, target
-language, field name, exact source text, maximum output length and protocol version.
-They exclude reader identity and unrelated edit revisions: all permitted readers
-reuse a translation, and changing only a title does not retranslate its description.
-Curated current translations win per field. Source text and canon are unchanged.
-Private/public keys are separate. The generic gameplay cache retains its existing
-viewer/revision-bound identities and has no production paid dispatcher.
+Exact field identity includes its immutable source, semantic path, disclosure
+compartment, source text/language, output bound and target locale. A general edit
+revision, a page visit or the number of readers is not a reason to translate again.
+Per-field human translations win. Long prose is split at sentence/word boundaries
+with retained whitespace and a shared field output budget; successful fragments
+cannot exceed the consuming field's total limit. Each provider request contains
+one source fragment, so private lore cannot contaminate another field in a batch.
 
-The platform service rechecks the released snapshot and ACL during cache reads,
-admission, final dispatch and completion. User/adventure/invitation share locks
-remain held through the corresponding database transition. Contention with
-revocation or erasure fails fast without an external request. There is no direct
-cache-key endpoint, and no private cache is exposed through a public namespace.
+The shared platform reservation ledger records actual cost with no player or
+Spark-quote identity. Existing release model/pricing/configuration authority and
+kill switch are retained. The owner-approved unlimited allowance has no invented
+total spending ceiling. Window/concurrency and request/output bounds are technical
+scheduling/safety controls, not a product spending cap. A later finite operator
+policy is respected without rolling back an already affordable admission prefix.
 
-Durable field claims and job dispatch transitions deduplicate concurrent readers,
-replicas and restarts. A pending job stores only title/description inputs, then
-clears them on completion; source prose is not retained in financial records.
-The existing shared reservation ledger records actual platform cost with a null
-player/quote identity. Unknown outcomes retain held exposure and never automatically
-redispatch. A late response to a still-running worker settles that same reservation
-once, including after erasure. A receipt already durably saved as `result_received`
-can finish settlement after restart without another provider call. If the process
-lost a response before saving it, the hold stays unknown for explicit reconciliation;
-this implementation does not query the provider for a missing receipt.
-Invalid output still settles known usage but never
-becomes visible. The provider enforces request/output bounds and execution timeout;
-these are technical request safety bounds, not a total platform spending cap.
+Durable claims, exact claim IDs and a persistent paid-attempt barrier deduplicate
+replicas, concurrent readers, restarts and source A-to-B-to-A reverts. Unknown
+provider outcomes retain the same held exposure and never automatically dispatch
+again. Known invalid output settles usage but remains unavailable. A late response
+to the living worker may settle its original hold once; a durably saved receipt
+can finish after restart. A lost receipt is not silently queried or regenerated.
 
-Account erasure clears derived text and queued/in-flight input/results. A late
-provider response may settle its known cost but cannot resurrect erased prose.
-At completion, unchanged fields are committed independently: an edit to the title
-while a request is in flight cannot poison the unchanged description's cache.
+## Authorization, erasure and display
 
-HTTP never waits for a model response. Original text remains visible while an
-admitted job is pending. A response header asks catalog/detail/creator/library
-resources to refresh after 1.5 seconds until ready. Ready, failed or unknown work
-stops refresh. Language changes and navigation cancel the old refresh context,
-so slow responses cannot overwrite the new language. No extra button is required.
+Source/user/adventure/invitation/membership locks and access epochs fence
+revocation, erasure and release lifetime changes. Deleting a historical private
+release rotates its parent access epoch even while a newer release remains live.
+Ordinary content/review edits do
+not masquerade as an access revocation. Cache reads happen in the same transaction
+as fresh source authorization. There is no public cache-key read endpoint.
 
-## Release and verification boundary
+Account deletion synchronously removes cache/bindings and scrubs job input,
+results and prose-bearing paths. Financial usage/reservations and one-way attempt
+identities remain. A late receipt can settle cost but cannot restore erased prose.
+Source strings, canonical state, source checksums and action receipts are never
+replaced by translations. Ready-cache descriptive names are frozen as explicit
+presentation-alias evidence before quote/count, tied to the actor, exact canonical
+source label, entity/map ID and locale. Every retry and atomic gameplay admission
+reuses the same evidence and revalidates its source/access lifetime. This is an
+input-reference aid, never translation of gameplay messages or a change to canon.
+An alias cannot grant visibility, revive a revoked source or refresh a paid quote.
 
-Apply migration `068_platform_metadata_translation.sql` with the normal release.
-No credentials or production settings are changed by this implementation. The
-shared active release/configuration/pricing checks still gate every admission and
-dispatch. A new release does not reuse a queued request prepared under a different
-provider/configuration snapshot. Financial holds are never cleared just because
-a worker timed out or restarted.
+Original text remains readable while work is pending or unavailable. The pending
+response header refreshes catalog/detail/library/taxonomy views without a button.
+Ready/failed work stops refresh; language changes/navigation cancel the old
+refresh. Existing game snapshot refresh can pick up ready descriptive variants.
 
-Local tests use an injected synthetic provider and disposable PostgreSQL, not real
-OpenAI requests. Linguistic quality and the deployed end-to-end path still require
-an authorized live acceptance check; source tests alone do not close KAN-11.
+## Verification and release gate
 
-## Verification
+Tests use an injected synthetic provider and disposable PostgreSQL, not paid
+requests. The normal CI gates include pure field/allowlist tests, source adapters,
+full-schema lifecycle tests, source/ACL lock races, exact cost/unknown outcomes,
+erasure and browser language/pending/navigation behavior at 390px and 1536px.
 
-- `node --test tests/game/automatic-translation.test.cjs`
-- `node --test --test-concurrency=1 tests/game/automatic-translation.integration.test.cjs tests/game/platform-metadata.integration.test.cjs`
-  is included in the normal PostgreSQL CI gate. It covers deduplication, field
-  invalidation, private ACL/revocation barriers, restart recovery, erasure and
-  late-receipt settlement without charging a player.
-- `tests/platform-translation.test.mjs` runs in `npm run test:integration` against
-  real local HTTP and PostgreSQL, including authorization and stale-source checks.
-- `tests/e2e/automatic-translation.spec.ts` uses synthetic API responses to test
-  pending-to-ready refresh, language changes, navigation cancellation, late
-  responses and reload without an extra button.
-
-The static, PostgreSQL, platform and browser suites include these regressions.
-Synthetic translation verifies the pipeline, not actual linguistic quality.
+The previous metadata-only PR119 head 319163bb passed all six CI513 checks, but that
+head was read-triggered and does not prove this broader creation-triggered work.
+This candidate requires new exact-head CI and independent source/privacy review.
+Actual linguistic quality, deployed migration/queue behavior and localized-name
+interaction still need release acceptance; source tests do not close KAN-11.

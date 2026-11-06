@@ -1,4 +1,5 @@
 'use client';
+import { imageQualityLabel, imageSizeLabel } from '@/lib/generation-labels';
 import { useEffect, useRef, useState } from 'react';
 import { api, ApiError, useClient } from '@/lib/client';
 import { useT } from '@/lib/i18n';
@@ -134,8 +135,8 @@ function PolicyComparison({
         read: (p) =>
           p
             ? [
-                p.image.size,
-                p.image.quality,
+                imageSizeLabel(locale, p.image.size),
+                imageQualityLabel(locale, p.image.quality),
                 p.image.outputs,
                 ...(p.image.framingPolicy ? [JSON.stringify(p.image.framingPolicy)] : []),
               ].join(' / ')

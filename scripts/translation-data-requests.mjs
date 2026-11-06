@@ -1,5 +1,21 @@
 /** Clear derived text before source/membership redaction. No network or regeneration. */
 export async function eraseTranslations(client, userId) {
+  // This runs inside the existing source/user erasure transaction. Preserve only
+  // financial usage/reservation and one-way attempt identity, never derived prose.
+  await client.query(
+    `UPDATE platform_content_translation_jobs SET context=NULL,result=NULL,erasure_user_ids='{}',
+      field_path='',partition='erased',authority='erased',source_id=''
+     WHERE $1=ANY(erasure_user_ids)`,
+    [userId],
+  );
+  await client.query(
+    'DELETE FROM platform_content_translation_cache WHERE $1=ANY(erasure_user_ids)',
+    [userId],
+  );
+  await client.query(
+    'DELETE FROM platform_content_translation_bindings WHERE $1=ANY(erasure_user_ids)',
+    [userId],
+  );
   // Keep the shared financial reservation/usage, never retained metadata prose.
   // A late provider receipt is allowed to settle cost but cannot restore this context/result.
   await client.query(

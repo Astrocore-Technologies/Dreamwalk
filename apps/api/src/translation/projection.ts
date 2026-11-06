@@ -27,7 +27,8 @@ export interface VisibleText {
 /** Called ONLY after a controller has built its authorized, spoiler-safe DTO.
  * Explicit paths, not recursive key matching: credentials, source lore, hidden
  * NPC facts, proposals, prices, hashes and user profiles can never become input.
- * Draft/Studio and mutation payloads are never translated.
+ * Draft/Studio, gameplay messages/actions/narration and mutation payloads are
+ * never translated, including from an older ready cache entry.
  */
 export function translationProjection<T>(
   path: string,
@@ -139,61 +140,44 @@ export function translationProjection<T>(
     for (const key of ['favorites', 'shared', 'privatePublished'])
       items(record(value)?.[key]).forEach(adventure);
   }
-  const campaign = path.match(
-    /^\/game\/campaigns\/([0-9a-f-]{36})\/(snapshot|turns\/feed|narrative)$/i,
-  );
+  const campaign = path.match(/^\/game\/campaigns\/([0-9a-f-]{36})\/snapshot$/i);
   if (campaign && viewerId) {
     const scope: TranslationScope = { kind: 'campaign', id: campaign[1], viewerId };
     const root = record(value);
-    if (campaign[2] === 'snapshot') {
-      add(scope, root?.campaign, 'title', 120);
-      const projection = record(root?.projection);
-      const map = record(projection?.map);
-      label(scope, map);
-      add(scope, map, 'description', 6000);
-      items(map?.exits).forEach((exit) => label(scope, exit));
-      for (const entity of [...items(projection?.entities), ...items(projection?.inventory)]) {
-        const visible = record(entity);
-        // Player identity stays exactly as entered, never transliterated by a model.
-        if (visible?.kind !== 'player') label(scope, entity);
-        for (const [key, limit] of [
-          ['role', 120],
-          ['description', 4000],
-          ['appearance', 4000],
-        ] as const)
-          add(scope, visible?.publicProfile, key, limit);
-        for (const [key, limit] of [
-          ['roleLabel', 120],
-          ['description', 1000],
-          ['appearance', 500],
-          ['personalitySummary', 500],
-        ] as const)
-          add(scope, visible?.supportingNpc, key, limit);
-        add(scope, visible?.item, 'label', 120);
-        add(scope, visible?.item, 'description', 1000);
-      }
-      for (const utterance of items(projection?.npcUtterances)) add(scope, utterance, 'text', 1000);
-      for (const topic of items(projection?.npcFactTopics)) add(scope, topic, 'title', 120);
-      for (const objective of items(projection?.objectives)) {
-        const visible = record(objective);
-        if (record(visible?.translations)?.[locale]) continue;
-        add(scope, visible, 'title', 120);
-        add(scope, visible, 'description', 1000);
-        // Only an already-revealed epilogue can enter this read projection.
-        if (visible?.status === 'achieved') add(scope, visible, 'epilogue', 2000);
-      }
-      for (const turn of items(record(projection?.narrative)?.turns))
-        add(scope, turn, 'narration', 2000);
-    } else if (campaign[2] === 'turns/feed') {
-      for (const entry of items(root?.entries)) {
-        add(scope, entry, 'text', 2000);
-        if (record(entry)?.kind === 'npc_reply') add(scope, entry, 'authorLabel', 120);
-      }
-      // Input receipts and unconfirmed action previews remain original evidence.
-    } else {
-      for (const turn of items(root?.turns)) {
-        if (record(turn)?.status === 'committed') add(scope, turn, 'narration', 2000);
-      }
+    add(scope, root?.campaign, 'title', 120);
+    const projection = record(root?.projection);
+    const map = record(projection?.map);
+    label(scope, map);
+    add(scope, map, 'description', 6000);
+    items(map?.exits).forEach((exit) => label(scope, exit));
+    for (const entity of [...items(projection?.entities), ...items(projection?.inventory)]) {
+      const visible = record(entity);
+      // Player identity stays exactly as entered, never transliterated by a model.
+      if (visible?.kind !== 'player') label(scope, entity);
+      for (const [key, limit] of [
+        ['role', 120],
+        ['description', 4000],
+        ['appearance', 4000],
+      ] as const)
+        add(scope, visible?.publicProfile, key, limit);
+      for (const [key, limit] of [
+        ['roleLabel', 120],
+        ['description', 1000],
+        ['appearance', 500],
+        ['personalitySummary', 500],
+      ] as const)
+        add(scope, visible?.supportingNpc, key, limit);
+      add(scope, visible?.item, 'label', 120);
+      add(scope, visible?.item, 'description', 1000);
+    }
+    for (const topic of items(projection?.npcFactTopics)) add(scope, topic, 'title', 120);
+    for (const objective of items(projection?.objectives)) {
+      const visible = record(objective);
+      if (record(visible?.translations)?.[locale]) continue;
+      add(scope, visible, 'title', 120);
+      add(scope, visible, 'description', 1000);
+      // Only an already-revealed epilogue can enter this read projection.
+      if (visible?.status === 'achieved') add(scope, visible, 'epilogue', 2000);
     }
   }
   return { value, fields };

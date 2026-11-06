@@ -51,7 +51,7 @@ export function LivingAiPanel({
   projection: GameProjection;
   disabled: boolean;
 }) {
-  const { t } = useT();
+  const { t, locale } = useT();
   const [status, setStatus] = useState<Status | null>(null),
     [quote, setQuote] = useState<Quote | null>(null),
     [error, setError] = useState(''),
@@ -245,7 +245,7 @@ export function LivingAiPanel({
           <SparkQuoteNotice quote={quote} />
           <p>
             {t('Предложение действует до {time}', {
-              time: new Date(quote.expiresAt).toLocaleTimeString(),
+              time: new Date(quote.expiresAt).toLocaleTimeString(locale),
             })}
           </p>
           <Button

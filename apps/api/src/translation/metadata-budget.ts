@@ -8,14 +8,7 @@ import { currentReleaseDeployment } from '../generation/release-deployment';
 export const METADATA_BUDGET_SCOPE = 'platform:story-metadata';
 /** Platform identity is never a fabricated player or a player's Sparks/Dreams grant.
  * The existing shared ledger includes these reservations in aggregate exposure. */
-export async function reserveMetadataSpend(
-  c: PoolClient,
-  config: ReleaseGenerationConfig,
-  jobId: string,
-  upperMicros: number,
-) {
-  if (!Number.isSafeInteger(upperMicros) || upperMicros < 1)
-    throw new Error('METADATA_COST_BOUND_REQUIRED');
+export async function lockMetadataSpendScope(c: PoolClient, config: ReleaseGenerationConfig) {
   const unlimited = config.allowance === 'unlimited';
   await c.query(
     `INSERT INTO generation_budget_scopes(id,approved,total_cap_micros,text_cap_micros,image_cap_micros,unlimited_allowance)
@@ -44,6 +37,17 @@ export async function reserveMetadataSpend(
   ] as const)
     if (cap === null ? scope[field] !== null : String(scope[field]) !== String(cap))
       throw new Error('METADATA_BUDGET_POLICY_CHANGED');
+}
+export async function reserveMetadataSpend(
+  c: PoolClient,
+  config: ReleaseGenerationConfig,
+  jobId: string,
+  upperMicros: number,
+) {
+  if (!Number.isSafeInteger(upperMicros) || upperMicros < 1)
+    throw new Error('METADATA_COST_BOUND_REQUIRED');
+  await lockMetadataSpendScope(c, config);
+  const unlimited = config.allowance === 'unlimited';
   if (!unlimited) {
     const exposure = await aggregateGenerationExposure(c);
     if (

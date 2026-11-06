@@ -176,7 +176,8 @@ test('game field allowlist excludes canonical mechanics, IDs, receipts, identiti
   assert.equal(localized.projection.entities[1].x, 3);
   assert.equal(localized.projectionRevision, 9);
   assert.equal(localized.streamId, value.streamId);
-  assert.equal(localized.projection.npcUtterances[0].text, 'en:Привет');
+  assert.equal(localized.projection.npcUtterances[0].text, 'Привет');
+  assert.ok(!JSON.stringify(calls).includes('Привет'));
   assert.ok(!JSON.stringify(calls).includes('SECRET'));
   assert.ok(!JSON.stringify(calls).includes('Yuri'));
   const feed = {
@@ -189,12 +190,82 @@ test('game field allowlist excludes canonical mechanics, IDs, receipts, identiti
     'uk',
     user,
   );
-  assert.equal(translatedFeed.entries[0].text, 'uk:Лес');
+  assert.deepEqual(translatedFeed, feed);
   assert.deepEqual(translatedFeed.turns, feed.turns);
   assert.deepEqual(
     await service.localize(`/game/campaigns/${campaignId}/snapshot`, value, 'uk', null),
     value,
   );
+});
+test('game messages, actions and narration never read old translated cache or enter a dispatcher', async () => {
+  const cache = memoryCache(),
+    calls = [],
+    reads = [];
+  const oldRead = cache.read;
+  cache.read = async (keys) => {
+    reads.push(...keys);
+    return oldRead(keys);
+  };
+  const messages = [
+    'ORIGINAL SPEECH',
+    'ORIGINAL ATTEMPT',
+    'ORIGINAL NPC REPLY',
+    'ORIGINAL NARRATION',
+  ];
+  const scope = { kind: 'campaign', id: campaignId, viewerId: user };
+  for (const locale of ['ru', 'uk', 'en'])
+    for (const text of [...messages, 'ORIGINAL NPC NAME'])
+      for (const maxLength of [120, 1000, 2000])
+        cache.rows.set(translationKey({ scope, source: text, revision: '', maxLength }, locale), {
+          key: translationKey({ scope, source: text, revision: '', maxLength }, locale),
+          status: 'ready',
+          translated_text: 'OLD CACHE MUST NOT REPLACE GAME TEXT',
+        });
+  const feed = {
+    canonRevision: 7,
+    entries: ['speech', 'attempt', 'npc_reply', 'narration'].map((kind, index) => ({
+      id: `original-${index}`,
+      kind,
+      text: messages[index],
+      authorLabel: 'ORIGINAL NPC NAME',
+      channel: index === 2 ? 'whisper' : 'say',
+    })),
+    turns: [
+      { inputText: messages[1], proposalHash: 'unchanged', actions: [{ label: messages[1] }] },
+    ],
+  };
+  const narrative = { turns: [{ id: 'turn', status: 'committed', narration: messages[3] }] };
+  const snapshot = {
+    projection: {
+      npcUtterances: [{ id: 'utterance', text: messages[2] }],
+      narrative: { turns: [{ id: 'turn', narration: messages[3] }] },
+      inputText: messages[0],
+      actionPreview: { text: messages[1] },
+    },
+  };
+  const service = new CachedTranslations(cache, fixtureProvider(calls));
+  for (const locale of ['ru', 'uk', 'en'])
+    for (const [suffix, value] of [
+      ['turns/feed', feed],
+      ['narrative', narrative],
+      ['snapshot', snapshot],
+      ['chat', { messages: feed.entries }],
+    ]) {
+      assert.deepEqual(
+        translationProjection(`/game/campaigns/${campaignId}/${suffix}`, value, locale, user)
+          .fields,
+        [],
+      );
+      assert.deepEqual(
+        await service.localize(`/game/campaigns/${campaignId}/${suffix}`, value, locale, user),
+        value,
+      );
+    }
+  assert.deepEqual(reads, []);
+  assert.deepEqual(calls, []);
+  assert.equal(cache.claims, 0);
+  assert.equal(feed.entries[2].channel, 'whisper');
+  assert.equal(feed.turns[0].proposalHash, 'unchanged');
 });
 test('concurrent reads claim once and repeated failures, timeouts and crashes never auto-retry', async () => {
   const cache = memoryCache(),
@@ -238,7 +309,11 @@ test('gameplay dispatcher remains disabled and metadata dispatch requires explic
     main,
     /new CachedTranslations\(new PostgresTranslationCache\(db\), undefined, 2000, metadata\)/,
   );
-  assert.match(main, /policy.mode === 'release'[\s\S]*?new PlatformMetadataTranslations\(db\)/);
+  assert.match(
+    main,
+    /policy.mode === 'release'[\s\S]*?new PlatformContentTranslations\(db, contentTranslationAdapters\)/,
+  );
+  assert.match(main, /new PlayableContentSource\(\)/);
   assert.match(main, /NPC_AI_KILL_SWITCH/);
 });
 test('strict output binding rejects missing, duplicated, invented, oversized and control-character translations', () => {

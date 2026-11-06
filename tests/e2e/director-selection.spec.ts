@@ -374,7 +374,7 @@ test('guest director choice survives sign-in and a hero-selection detour without
   await expect(page).toHaveURL(
     (url) => url.pathname === '/auth/sign-in' && url.searchParams.get('returnTo') === storyPath,
   );
-  await page.getByLabel('Email', { exact: true }).fill(credentials.email);
+  await page.getByLabel(/^(Email|Электронная почта|Електронна пошта)$/).fill(credentials.email);
   await page.getByLabel('Пароль', { exact: true }).fill(credentials.password);
   await page.getByRole('button', { name: 'Войти', exact: true }).click();
   await expect(page).toHaveURL(new RegExp(`${storyPath}$`));

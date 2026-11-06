@@ -96,7 +96,7 @@ export class CachedTranslations {
     private readonly cache: TranslationCache,
     private readonly dispatcher?: SyntheticTranslationDispatcher,
     private readonly timeoutMs = 2000,
-    private readonly metadata?: PlatformMetadataTranslations,
+    private readonly metadata?: Pick<PlatformMetadataTranslations, 'localize'>,
   ) {
     // An inherited key cannot enable paid gameplay translation through this interface.
     if (dispatcher && dispatcher.external !== false)

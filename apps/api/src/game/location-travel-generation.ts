@@ -1,4 +1,8 @@
 import {
+  assertPresentationAliasAuthority,
+  storedPresentationAliases,
+} from './presentation-aliases';
+import {
   reconcileTerminalTravelGrounding,
   resolvedTerminalTravelGroundings,
 } from './travel-map-grounding-reconciliation';
@@ -23,6 +27,7 @@ import {
   normalizeLocationName,
   turnFence,
   parseStorySegments,
+  type PresentationAliases,
 } from '@dreamwalk/game-core';
 import { Db } from '../db';
 import { fail } from '../errors';
@@ -490,6 +495,16 @@ export class LocationTravelGeneration {
       const request = (
         await c.query('SELECT context FROM game_npc_decision_requests WHERE id=$1', [row.id])
       ).rows[0];
+      const aliases = storedPresentationAliases(request?.context);
+      if (request)
+        await assertPresentationAliasAuthority(
+          c,
+          campaignId,
+          String(request.context.worldRequesterId ?? userId),
+          row.actor_id,
+          aliases,
+          request.context.worldInput?.text,
+        );
       if (
         !request ||
         digest(request.context.travelSceneSpec?.scene ?? null) !== digest(row.scene) ||
@@ -501,6 +516,7 @@ export class LocationTravelGeneration {
             expectedCanonRevision: source.state.narrativeCanon?.revision ?? 0,
           },
           row.id,
+          aliases,
         ).travelRequests.some(
           (intent) =>
             !intent.mapId &&
@@ -520,6 +536,7 @@ export class LocationTravelGeneration {
         row.actor_id,
         previewInput,
         row.id,
+        aliases,
       );
       if (!previewProposal.narrative)
         fail(409, 'LOCATION_GENERATION_UNAVAILABLE', 'LOCATION_GENERATION_UNAVAILABLE');
@@ -531,6 +548,7 @@ export class LocationTravelGeneration {
         previewInput,
         row.id,
         previewProposal,
+        { presentationAliases: aliases },
       );
       if (feasibility.error || feasibility.clarification)
         fail(409, 'LOCATION_GENERATION_UNAVAILABLE', 'LOCATION_GENERATION_UNAVAILABLE');
@@ -629,6 +647,7 @@ export class LocationTravelGeneration {
     state: GameState,
     input: import('@dreamwalk/contracts').StoryTurnInput,
     proposal: unknown,
+    aliases?: PresentationAliases,
   ) {
     const row = (
       await this.db.query(
@@ -663,7 +682,7 @@ export class LocationTravelGeneration {
     )
       return null;
     const nextInput = { ...input, expectedCanonRevision: state.narrativeCanon?.revision ?? 0 };
-    const context = buildStoryTurnContext(state, row.actor_id, nextInput, turnId);
+    const context = buildStoryTurnContext(state, row.actor_id, nextInput, turnId, aliases);
     return { input: nextInput, proposal: { ...value, contextHash: context.contextHash } };
   }
   async admitted(campaignId: string, turnId: string, proposal: StoryTurnProposal) {
