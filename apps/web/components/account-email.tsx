@@ -2,6 +2,7 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import { api, errorMessage, useClient } from '@/lib/client';
 import { useT } from '@/lib/i18n';
+import { Check } from 'lucide-react';
 import { Button, ButtonLink, ErrorBox, Field, Input, Panel } from './ui';
 
 export function EmailActionPage({ action }: { action: 'reset' | 'verify' }) {
@@ -115,7 +116,12 @@ export function EmailVerification() {
     <Panel className="account-email-banner">
       <div className="account-email-copy">
         <h2>{t('Подтверждение email')}</h2>
-        <p>{user?.emailVerified ? t('Email подтверждён') : t('Email пока не подтверждён')}</p>
+        <p
+          className={user?.emailVerified ? 'account-email-status verified' : 'account-email-status'}
+        >
+          {user?.emailVerified && <Check size={22} aria-hidden="true" />}
+          {user?.emailVerified ? t('Email подтверждён') : t('Email пока не подтверждён')}
+        </p>
         {user?.emailVerificationRequired && !user.emailVerified && (
           <p>
             {t(
