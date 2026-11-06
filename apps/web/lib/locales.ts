@@ -4090,6 +4090,7 @@ const messages: Record<string, Record<Locale, string>> = {
     en: 'Review transaction',
     uk: 'Перевірити операцію',
   },
+  'Грёзы выданы': { ru: 'Грёзы выданы', en: 'Dreams granted', uk: 'Мрії видано' },
   'Неизменяемый учёт': {
     ru: 'Неизменяемый учёт',
     en: 'Immutable accounting',

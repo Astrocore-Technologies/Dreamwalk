@@ -196,7 +196,16 @@ for (const locale of ['ru', 'uk', 'en']) {
           }
           if (path === 'models')
             await expect(tool.getByText('Synthetic storyteller', { exact: true })).toBeVisible();
-          if (path === 'credits') await expect(tool.locator('select option')).toHaveCount(2);
+          if (path === 'credits') {
+            await expect(tool.locator('[data-admin-currency="sparks"] select option')).toHaveCount(
+              2,
+            );
+            const dreams = tool.locator('[data-admin-currency="dreams"]');
+            await expect(dreams.locator('select option')).toHaveCount(2);
+            await expect(dreams.getByRole('heading')).toHaveText(
+              { ru: 'Выдача грёз', uk: 'Видача мрій', en: 'Grant Dreams' }[locale],
+            );
+          }
           if (path === 'audit') {
             await expect(tool.locator('tbody tr')).toHaveCount(2);
             await tool.locator('input').fill('synthetic.unknown_event');
@@ -281,7 +290,7 @@ test('admin tool dialogs preserve data on cancel and block dismissal while savin
   await dialog.getByRole('button', { name: 'Отмена', exact: true }).click();
 
   await page.goto('/admin/credits');
-  const credits = page.locator('[data-admin-tool="credits"]');
+  const credits = page.locator('[data-admin-currency="sparks"]');
   await credits.locator('select').selectOption('tool-admin');
   await credits.locator('textarea').fill('Synthetic adjustment only.');
   await credits.locator('button[type="submit"]').click();
@@ -392,4 +401,102 @@ test('runtime provider changes stay disabled and taxonomy cancel preserves sourc
   await expect(tool.locator('tbody tr').first()).toContainText('Fantasy');
   await expect(tool.getByLabel('ID жанра', { exact: true })).toHaveCount(0);
   expect(state.requests).toHaveLength(1);
+});
+
+test('Dreams grant panel isolates currency, confirms intent and safely retries an interrupted response', async ({
+  page,
+}, info) => {
+  const state = await fixture(page);
+  const requests: { userId: string; amount: number; reason: string; idempotencyKey: string }[] = [];
+  const seen = new Set<string>();
+  let release: () => void = () => {};
+  let first = true;
+  await page.route('**/api/v1/admin/dreams', async (route) => {
+    const body = route.request().postDataJSON();
+    requests.push(body);
+    seen.add(body.idempotencyKey);
+    if (first) {
+      first = false;
+      await new Promise<void>((resolve) => {
+        release = resolve;
+      });
+      return route.abort('connectionclosed');
+    }
+    return route.fulfill({
+      status: 201,
+      json: {
+        dreams: {
+          ownerId: 'tool-admin',
+          currency: 'dreams',
+          balanceSubunits: '1500000',
+          heldSubunits: '25000',
+          availableSubunits: '1475000',
+          subunitsPerDream: '10000',
+          spendingAvailable: true,
+          ledger: [
+            {
+              id: '1',
+              kind: 'admin_credit',
+              amountSubunits: '1000000',
+              createdAt: '2026-11-06T00:00:00Z',
+            },
+          ],
+        },
+      },
+    });
+  });
+  await page.goto('/admin/credits');
+  const dreams = page.locator('[data-admin-currency="dreams"]');
+  const sparks = page.locator('[data-admin-currency="sparks"]');
+  await expect(page.getByText('Неизменяемый учёт', { exact: true })).toHaveCount(0);
+  await sparks.locator('textarea').fill('Keep the independent Sparks draft.');
+  await dreams.locator('select').selectOption('tool-admin');
+  await dreams.locator('textarea').fill('Synthetic Dreams reward.');
+  for (const amount of ['0', '-1', '1.5']) {
+    await dreams.locator('input').fill(amount);
+    await expect(dreams.locator('button[type="submit"]')).toBeDisabled();
+  }
+  await dreams.locator('input').fill('100');
+  const trigger = dreams.locator('button[type="submit"]');
+  await trigger.click();
+  let dialog = page.getByRole('dialog', { name: 'Подтвердить выдачу грёз?' });
+  await expect(dialog).toContainText('+100 Грёзы');
+  await expect(dialog).toContainText('@synthetic_admin');
+  await dialog.getByRole('button', { name: 'Отмена', exact: true }).click();
+  expect(requests).toHaveLength(0);
+  await expect(trigger).toBeFocused();
+  await trigger.click();
+  dialog = page.getByRole('dialog');
+  const confirm = dialog.getByRole('button', { name: 'Подтвердить операцию', exact: true });
+  await confirm.evaluate((button: HTMLButtonElement) => {
+    button.click();
+    button.click();
+  });
+  await expect.poll(() => requests.length).toBe(1);
+  await page.keyboard.press('Escape');
+  await dialog.getByRole('button', { name: 'Закрыть', exact: true }).click();
+  await expect(dialog).toBeVisible();
+  release();
+  await expect(dialog.getByRole('alert')).toBeVisible();
+  await confirm.click();
+  await expect(dialog).toHaveCount(0);
+  expect(requests).toHaveLength(2);
+  expect(requests[0]).toEqual(requests[1]);
+  expect(seen.size).toBe(1);
+  await expect(dreams.getByRole('status')).toContainText('147,50');
+  await expect(sparks.locator('textarea')).toHaveValue('Keep the independent Sparks draft.');
+  await expect(sparks.locator('select')).toHaveValue('');
+  await expect(sparks.locator('input')).toHaveValue('100');
+  expect(state.requests).toEqual([]);
+  await trigger.click();
+  await page
+    .getByRole('dialog')
+    .getByRole('button', { name: 'Подтвердить операцию', exact: true })
+    .click();
+  await expect(page.getByRole('dialog')).toHaveCount(0);
+  expect(requests).toHaveLength(3);
+  expect(requests[2].idempotencyKey).not.toBe(requests[1].idempotencyKey);
+  await capture(page, info, 'dreams-grant-complete');
+  await dreams.locator('select').selectOption('');
+  await expect(dreams.getByRole('status')).toHaveCount(0);
 });
