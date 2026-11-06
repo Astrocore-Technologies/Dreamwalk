@@ -19,7 +19,7 @@ const { NpcAiEngine } = require('../../apps/api/dist/ai/npc-ai.service.js');
 const { estimateTextRequest } = require('../../apps/api/dist/generation/estimates.js');
 const { canonical } = require('../../apps/api/dist/ai/context.js');
 const { endPlayerTurn, turnFence, createMockNpcPlan } = require('../../packages/game-core/dist');
-const { WorldGenerationBatch } = require('../../apps/api/dist/game/world-generation-batch.js');
+const { SparksAccounting } = require('../../apps/api/dist/generation/sparks-accounting.js');
 const database = new Db();
 
 await test(
@@ -113,18 +113,37 @@ await test(
         "INSERT INTO game_npc_decision_requests(id,campaign_id,npc_id,purpose,cause_key,context) VALUES($1,$2,'keeper','plan',$3,$4)",
         [requestId, campaignId, `test-settlement:${requestId}`, JSON.stringify(context)],
       );
-      const batch = new WorldGenerationBatch(database, ai),
-        operationId = randomUUID();
-      const quote = await batch.quote(owner.user.id, campaignId, live.state, { operationId });
-      await batch.consent(owner.user.id, campaignId, live.state, {
-        operationId,
-        quoteId: quote.quote.id,
+      // Recreate the old producer before immutable INSERT; never rewrite an admitted bill.
+      const legacyQuote = async (scope, candidate) => {
+        const original = SparksAccounting.prototype.quote;
+        SparksAccounting.prototype.quote = function (c, input) {
+          const historical = structuredClone(input);
+          delete historical.providerQuote.automaticKnownCostPolicy;
+          return original.call(this, c, historical);
+        };
+        try {
+          return await ai.quote(scope, candidate, owner.user.id);
+        } finally {
+          SparksAccounting.prototype.quote = original;
+        }
+      };
+      const scope = {
+        campaignId,
+        npcId: 'keeper',
+        purpose: 'plan',
+        origin: 'user',
+        requesterUserId: owner.user.id,
+      };
+      const quote = await legacyQuote(scope, context);
+      const queued = await ai.queue({
+        scope,
+        context,
+        operationId: randomUUID(),
+        quoteId: quote.id,
         consent: true,
+        runtimeRequestId: requestId,
       });
-      await game.processDecisionRequests(campaignId, live);
-      const jobId = (
-        await db.query('SELECT job_id FROM game_npc_decision_requests WHERE id=$1', [requestId])
-      ).rows[0].job_id;
+      const jobId = queued.id;
       assert.ok(jobId);
       await ai.run(jobId, async () => true);
       await database.tx((c) => ai.finalize(c, jobId, 'stale'));
@@ -155,6 +174,13 @@ await test(
       assert.equal(view.actualMicros, '743');
       assert.equal(view.captureSubunits, '1486');
       assert.equal(view.status, 'pending');
+      assert.equal(view.settlementMode, 'legacy_confirmation');
+      const discovery = await owner.request('/sparks/settlements');
+      assert.equal(
+        discovery.entries.find((entry) => entry.holdId === view.holdId)?.state,
+        'verified',
+      );
+      assert.equal((await outsider.request('/sparks/settlements')).entries.length, 0);
       const body = {
         operationId: randomUUID(),
         holdId: view.holdId,
@@ -205,6 +231,86 @@ await test(
         ).rows[0].n,
         1,
       );
+      // A separately admitted player story_turn uses the same accounting and owner boundary.
+      await db.query(
+        'INSERT INTO dream_wallets(owner_id,enabled,balance_subunits) VALUES($1,true,1000) ON CONFLICT(owner_id) DO UPDATE SET enabled=true,balance_subunits=1000',
+        [owner.user.id],
+      );
+      const playerState = (
+        await db.query('SELECT state FROM game_campaigns WHERE id=$1', [campaignId])
+      ).rows[0].state;
+      const playerContext = {
+        turnFence: turnFence(playerState),
+        contextHash: randomUUID(),
+        mockProposal: { actions: [{ kind: 'wait' }] },
+      };
+      const playerScope = {
+        campaignId,
+        npcId: actorId,
+        subjectKind: 'player',
+        purpose: 'story_turn',
+        origin: 'user',
+        requesterUserId: owner.user.id,
+      };
+      const playerQuote = await legacyQuote(playerScope, playerContext);
+      const playerJob = await ai.queue({
+        scope: playerScope,
+        context: playerContext,
+        operationId: randomUUID(),
+        quoteId: playerQuote.id,
+        consent: true,
+      });
+      await ai.run(playerJob.id, async () => true);
+      await database.tx((c) => ai.finalize(c, playerJob.id, 'stale'));
+      const playerPath = `/game/campaigns/${campaignId}/ai/jobs/${playerJob.id}/settlement`;
+      const playerView = await owner.request(playerPath);
+      assert.equal(playerView.settlementMode, 'legacy_confirmation');
+      assert.equal(playerView.captureSubunits, '1486');
+      assert.equal(playerView.funding.dreamsCaptureSubunits, '1000');
+      assert.equal(playerView.funding.sparksCaptureSubunits, '486');
+      const playerBefore = (await db.query('SELECT * FROM npc_ai_jobs WHERE id=$1', [playerJob.id]))
+        .rows[0];
+      const playerBody = {
+        operationId: randomUUID(),
+        holdId: playerView.holdId,
+        expectedActualMicros: playerView.actualMicros,
+        expectedReservedSubunits: playerView.reservedSubunits,
+        expectedCaptureSubunits: playerView.captureSubunits,
+        consent: true,
+      };
+      await outsider.request(playerPath, playerBody, 'POST', 404);
+      const playerResults = await Promise.all([
+        owner.request(playerPath, playerBody),
+        owner.request(playerPath, playerBody),
+      ]);
+      assert.deepEqual(playerResults[0], playerResults[1]);
+      assert.equal(playerResults[0].status, 'settled');
+      assert.deepEqual(await owner.request(playerPath, playerBody), playerResults[0]);
+      assert.equal((await owner.request(playerPath)).status, 'settled');
+      assert.deepEqual(
+        (await db.query('SELECT * FROM npc_ai_jobs WHERE id=$1', [playerJob.id])).rows[0],
+        playerBefore,
+      );
+      assert.equal(calls, 2);
+      assert.equal(
+        (
+          await db.query(
+            "SELECT count(*)::int n FROM spark_ledger WHERE hold_id=$1 AND kind='capture'",
+            [playerView.holdId],
+          )
+        ).rows[0].n,
+        1,
+      );
+      assert.equal(
+        (
+          await db.query(
+            "SELECT count(*)::int n FROM audit WHERE target_id=$1 AND action='npc.known_failure.settled'",
+            [playerJob.id],
+          )
+        ).rows[0].n,
+        1,
+      );
+      assert.equal((await owner.request('/sparks/settlements')).entries.length, 0);
     } finally {
       await game?.onModuleDestroy();
       await stopApi();

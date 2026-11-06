@@ -1,4 +1,5 @@
 'use client';
+import { WalletSettlementLink } from './owner-settlements';
 import walletStyles from './library-wallet.module.css';
 import { NotificationsContent } from './notifications';
 import { DreamsWalletSection, useDreamsText } from './dreams-wallet';
@@ -686,6 +687,7 @@ export function WalletPage() {
         </section>
       </div>
       <ErrorBox message={sparks.unavailable ? text.unavailable : ''} retry={sparks.reload} />
+      <WalletSettlementLink />
       <Panel>
         <h2>
           {tr('Искры')} · {tr('История операций')}

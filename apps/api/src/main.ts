@@ -1,3 +1,4 @@
+import { OwnerSettlementsController } from './generation/owner-settlements.controller';
 import { VerifiedGenerationAccessRecovery } from './generation/verified-access-recovery';
 import { travelMapPlanDefinition } from './game/travel-map-plan';
 import { resolveReplyLocale } from './game/reply-locale';
@@ -92,6 +93,7 @@ class Health {
 }
 @Module({
   controllers: [
+    OwnerSettlementsController,
     PaidStartController,
     StoryAuthoringController,
     Health,

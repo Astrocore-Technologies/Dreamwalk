@@ -1,8 +1,12 @@
 export const settlementMessages = {
   ru: {
+    legacyHint:
+      'Старый запрос был принят до автоматического расчёта. Можно закрыть только его подтверждённый расход и освободить остаток резерва.',
+    legacy: 'Проверь точные суммы перед подтверждением старой операции.',
+    backWallet: 'К резервам кошелька',
     title: 'Статус расчёта',
     hint: 'Запрос к ИИ уже выполнен, но его результат не применён в игре. Система автоматически учтёт подтверждённую стоимость и освободит остаток резерва.',
-    noNew: 'Новых запросов к ИИ и изменений в игре не будет. Ручное подтверждение не требуется.',
+    noNew: 'Новых запросов к ИИ и изменений в игре не будет.',
     automatic: 'Статус расчёта обновляется автоматически. Подтверждённая сумма появится здесь.',
     reserve: 'Резерв, эквивалент искр',
     charge: 'К списанию',
@@ -27,9 +31,13 @@ export const settlementMessages = {
       'Подтверждённый расчёт пока недоступен. Статус обновляется автоматически; новый запрос к ИИ не создаётся.',
   },
   en: {
+    legacyHint:
+      'This older request predates automatic settlement. Only its verified cost can be charged and the remaining reservation released.',
+    legacy: 'Review the exact amounts before confirming this older operation.',
+    backWallet: 'Wallet reservations',
     title: 'Charge status',
     hint: 'The AI request already ran, but its result was not applied to the game. The system automatically settles the verified cost and releases the remaining reservation.',
-    noNew: 'This makes no new AI requests or game changes. No manual confirmation is needed.',
+    noNew: 'This makes no new AI requests or game changes.',
     automatic: 'Settlement status refreshes automatically. The confirmed amount will appear here.',
     reserve: 'Reservation, in Spark equivalents',
     charge: 'To charge',
@@ -54,9 +62,13 @@ export const settlementMessages = {
       'A verified settlement is not available yet. Status refreshes automatically without creating another AI request.',
   },
   uk: {
+    legacyHint:
+      'Цей старий запит прийнято до автоматичного розрахунку. Можна закрити лише його підтверджену вартість і звільнити решту резерву.',
+    legacy: 'Перевір точні суми перед підтвердженням старої операції.',
+    backWallet: 'До резервів гаманця',
     title: 'Статус розрахунку',
     hint: 'Запит до ШІ вже виконано, але його результат не застосовано у грі. Система автоматично врахує підтверджену вартість і звільнить решту резерву.',
-    noNew: 'Нових запитів до ШІ та змін у грі не буде. Ручне підтвердження не потрібне.',
+    noNew: 'Нових запитів до ШІ та змін у грі не буде.',
     automatic: 'Статус розрахунку оновлюється автоматично. Підтверджена сума з’явиться тут.',
     reserve: 'Резерв, еквівалент іскор',
     charge: 'До списання',

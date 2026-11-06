@@ -31,6 +31,7 @@ const quote = () => ({
   },
   requiresConsent: true,
   noGameEffect: true,
+  settlementMode: 'legacy_confirmation',
 });
 const complete = (value = quote()) => ({ ...value, status: 'settled', requiresConsent: false });
 const storage = () => {
@@ -335,7 +336,7 @@ test('strict quote parser rejects mismatched identity, malformed sums/tariff and
   for (const bad of [null, [], 1, 'bad']) assert.throws(() => readKnownSettlement(bad, jobId));
 });
 
-test('all locales disclose automatic settlement and the page is read-only', () => {
+test('all locales distinguish legacy recovery and confirmation is an explicit event', () => {
   for (const locale of ['en', 'ru', 'uk']) {
     assert.deepEqual(Object.keys(settlementMessages[locale]), Object.keys(settlementMessages.en));
     for (const value of Object.values(settlementMessages[locale])) assert.ok(value.trim());
@@ -346,16 +347,36 @@ test('all locales disclose automatic settlement and the page is read-only', () =
   );
   assert.match(source, /formatSparkSubunits\(amount, locale, 'exact'\)/);
   assert.match(source, /cache: 'no-store'/);
-  assert.doesNotMatch(source, /sessionStorage|method: 'POST'|\.confirm\(/);
+  assert.match(source, /legacy && \['ready', 'uncertain'/);
+  assert.match(source, /onClick=\{\(\) => void controller.current\?\.confirm\(\)\}/);
   assert.match(source, /setTimeout.*5000/);
   assert.match(source, /key=\{`\$\{user.id\}:\$\{campaignId\}:\$\{jobId\}`\}/);
   assert.match(source, /disposed = true/);
   assert.match(source, /clearTimeout\(timer\)/);
   assert.match(source, /role="status" aria-live="polite"/);
-  assert.equal((source.match(/\.confirm\(\)/g) ?? []).length, 0);
+  assert.equal((source.match(/\.confirm\(\)/g) ?? []).length, 1);
   const route = readFileSync(
     new URL('../../apps/web/app/[[...path]]/page.tsx', import.meta.url),
     'utf8',
   );
   assert.match(route, /<Protected>\s*<KnownNpcSettlementPage/);
 });
+
+for (const mode of ['automatic', undefined, 'invented'])
+  test(`NPC ${mode} never opens a manual confirmation`, async () => {
+    let storageReads = 0;
+    const h = setup({
+      read: async () => ({ ...quote(), settlementMode: mode }),
+      storage: {
+        getItem: () => {
+          storageReads++;
+          throw new Error('unavailable');
+        },
+        setItem: () => assert.fail('storage write'),
+      },
+    });
+    await h.controller.refresh();
+    await h.controller.confirm();
+    assert.equal(h.posts.length, 0);
+    assert.equal(storageReads, 0);
+  });

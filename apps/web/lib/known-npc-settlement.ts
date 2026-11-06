@@ -16,7 +16,7 @@ export type KnownSettlementQuote = {
   };
   requiresConsent: boolean;
   noGameEffect: true;
-  // Authoring-only fields; NPC readers and behavior are unchanged.
+  // Only an immutable server-proven legacy admission may request manual confirmation.
   settlementMode?: 'automatic' | 'legacy_confirmation';
   noAuthoringEffect?: true;
 };
@@ -104,6 +104,9 @@ export function readKnownSettlement(value: unknown, jobId: string): KnownSettlem
     },
     requiresConsent: q.requiresConsent,
     noGameEffect: true,
+    ...(q.settlementMode === 'automatic' || q.settlementMode === 'legacy_confirmation'
+      ? { settlementMode: q.settlementMode }
+      : {}),
   };
 }
 export function readKnownAuthoringSettlement(value: unknown, jobId: string): KnownSettlementQuote {
@@ -170,16 +173,19 @@ export class KnownSettlementController {
     const stored = JSON.parse(raw) as StoredAttempt;
     if (stored.version !== 1 || !stored.body || !uuid.test(stored.body.operationId))
       throw new Error('storage');
-    // Pre-mode authoring attempts retain their original operation, but only a fresh
-    // server-proven legacy quote may supply the missing mode. Never infer it from storage.
-    const oldAuthoringAttempt =
-      this.input.kind === 'authoring' &&
+    // Preserve pre-mode operation IDs only after fresh server proof of legacy admission.
+    // Never infer permission from browser storage or mint a new receipt on reload.
+    const oldAttempt =
       fresh.settlementMode === 'legacy_confirmation' &&
       stored.quote?.settlementMode === undefined &&
-      stored.quote?.noAuthoringEffect === undefined;
+      (this.input.kind !== 'authoring' || stored.quote?.noAuthoringEffect === undefined);
     const quote = this.readQuote(
-      oldAuthoringAttempt
-        ? { ...stored.quote, settlementMode: 'legacy_confirmation', noAuthoringEffect: true }
+      oldAttempt
+        ? {
+            ...stored.quote,
+            settlementMode: 'legacy_confirmation',
+            ...(this.input.kind === 'authoring' ? { noAuthoringEffect: true } : {}),
+          }
         : stored.quote,
     );
     const expected = this.body(quote, stored.body.operationId);
@@ -208,7 +214,7 @@ export class KnownSettlementController {
         this.publish({ phase: 'complete' });
         return;
       }
-      if (this.input.kind === 'authoring' && quote.settlementMode === 'automatic') {
+      if (quote.settlementMode !== 'legacy_confirmation') {
         this.publish({ phase: 'ready' });
         return;
       }
@@ -239,7 +245,7 @@ export class KnownSettlementController {
       this.busy ||
       !this.state.quote ||
       !['ready', 'uncertain'].includes(this.state.phase) ||
-      (this.input.kind === 'authoring' && this.state.quote.settlementMode !== 'legacy_confirmation')
+      this.state.quote.settlementMode !== 'legacy_confirmation'
     )
       return;
     this.busy = true;
