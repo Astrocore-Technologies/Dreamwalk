@@ -88,6 +88,9 @@
   margin-top: auto;
   align-self: flex-start;
 }
+.credits [data-admin-currency] > :global(.panel) {
+  height: 100%;
+}
 .credits :global(.stack) {
   gap: 26px;
 }

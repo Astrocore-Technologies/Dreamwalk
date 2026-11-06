@@ -9,7 +9,7 @@ export interface DreamsWallet {
   spendingAvailable: boolean;
   ledger: {
     id: string;
-    kind: 'starter_grant' | 'reserve' | 'pending' | 'capture' | 'release';
+    kind: 'starter_grant' | 'admin_credit' | 'reserve' | 'pending' | 'capture' | 'release';
     amountSubunits: string;
     createdAt: string;
   }[];
@@ -39,7 +39,9 @@ export function readDreamsWallet(value: unknown, ownerId: string): DreamsWallet 
       !entry ||
       typeof entry.id !== 'string' ||
       !/^\d+$/.test(entry.id) ||
-      !['starter_grant', 'reserve', 'pending', 'capture', 'release'].includes(entry.kind) ||
+      !['starter_grant', 'admin_credit', 'reserve', 'pending', 'capture', 'release'].includes(
+        entry.kind,
+      ) ||
       typeof entry.createdAt !== 'string' ||
       !Number.isFinite(Date.parse(entry.createdAt))
     )
