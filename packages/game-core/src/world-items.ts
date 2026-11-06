@@ -57,6 +57,18 @@ function surface(
     ).length < rules(s).surfaceCapacity
   );
 }
+/** Current self-custody, not a statement of legal ownership or acquisition history. */
+export function npcOwnInventory(s: GameState, npcId: string) {
+  const npc = s.entities[npcId];
+  if (npc?.kind !== 'npc') return [];
+  return [...new Set(npc.inventory ?? [])].flatMap((id) => {
+    const item = s.entities[id];
+    return item?.kind === 'item' && item.ownerId === npcId
+      ? [{ id: item.id, ...(item.label ? { label: item.label } : {}), revision: item.revision }]
+      : [];
+  });
+}
+
 /** Only the NPC's approved private stock is an item-creation capability. */
 export function npcItemContext(s: GameState, npcId: string) {
   const npc = s.entities[npcId];
@@ -96,12 +108,12 @@ export function npcItemContext(s: GameState, npcId: string) {
       stock,
       placements,
       inventoryCapacity: rules(s).inventoryCapacity,
-      ownedItems: (npc.inventory ?? []).flatMap((id) => {
-        const e = s.entities[id];
-        return e?.item ? [{ id, label: e.label, item: e.item }] : [];
+      ownedItems: npcOwnInventory(s, npcId).flatMap((held) => {
+        const item = s.entities[held.id].item;
+        return item ? [{ ...held, item: structuredClone(item) }] : [];
       }),
       rules:
-        'Use only these stock definitions, owned item IDs and placement candidates. Items are created/transferred only after server acceptance.',
+        'Listed ownedItems are checked current self-custody, not an exhaustive inventory, legal ownership or receipt history. Use give_existing for a voluntary transfer of one of these existing objects; do not create replacement stock. Omitted items imply no absence. Do not enumerate unrequested holdings or infer who returned them. Listed capabilities do not compel agreement. Transfers and speech require atomic server acceptance.',
     },
   };
 }
