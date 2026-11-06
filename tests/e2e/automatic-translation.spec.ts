@@ -150,6 +150,17 @@ for (const width of [390, 1536])
       if (!localStorage.getItem('dreamwalk-language'))
         localStorage.setItem('dreamwalk-language', 'ru');
     });
+    async function selectLocale(locale: 'en' | 'uk') {
+      const select = page.locator('.locale-select');
+      const inDrawer = !(await select.isVisible());
+      if (inDrawer) await page.locator('.mobile-menu').click();
+      await expect(select).toBeVisible();
+      await select.selectOption(locale);
+      if (inDrawer) {
+        await page.keyboard.press('Escape');
+        await expect(page.locator('.mobile-menu')).toHaveAttribute('aria-expanded', 'false');
+      }
+    }
     const counts = { en: 0, uk: 0 };
     let englishReady = false;
     await page.route('**/api/v1/**', async (route) => {
@@ -201,7 +212,7 @@ for (const width of [390, 1536])
         response.request().headers()['accept-language'] === 'en' &&
         response.headers()['x-dreamwalk-translation-pending'] === 'true',
     );
-    await page.locator('.locale-select').selectOption('en');
+    await selectLocale('en');
     await (await pendingEnglish).finished();
     await expect.poll(() => counts.en).toBeGreaterThan(0);
     await expect(title).toHaveText('Тихий лес');
@@ -212,15 +223,15 @@ for (const width of [390, 1536])
     expect(counts.en).toBe(beforeReady + 1);
     await page.clock.fastForward(6000);
     expect(counts.en).toBe(beforeReady + 1);
-    await page.locator('.locale-select').selectOption('uk');
+    await selectLocale('uk');
     await expect(title).toHaveText('Тихий лес');
     expect(counts.uk).toBe(1);
-    await page.locator('.locale-select').selectOption('en');
+    await selectLocale('en');
     await expect(title).toHaveText('Quiet forest');
     await page.clock.fastForward(2000);
     expect(counts.uk).toBe(1);
     expect(counts.en).toBe(beforeReady + 2);
-    await page.locator('.locale-select').selectOption('uk');
+    await selectLocale('uk');
     await expect(title).toHaveText('Тихий лес');
     expect(counts.uk).toBe(2);
     await page.locator('a[href="/about"]').first().click();
