@@ -167,6 +167,11 @@ export interface User {
   settings: Settings;
   createdAt: string;
 }
+// Handles are case-insensitive identifiers; keep one canonical value for existing UNIQUE keys.
+const handleSchema = z
+  .string()
+  .regex(/^[a-zA-Z0-9_]{3,30}$/)
+  .transform((value) => value.toLowerCase());
 export const registerSchema = z
   .object({
     email: z
@@ -176,17 +181,14 @@ export const registerSchema = z
     password: z.string().min(10).max(128),
     name: text(60).min(2),
     language: z.enum(['ru', 'en', 'uk']).optional(),
-    handle: z.string().regex(/^[a-z0-9_]{3,30}$/),
+    handle: handleSchema,
   })
   .strict();
 export const loginSchema = registerSchema.pick({ email: true, password: true });
 export const profileSchema = z
   .object({
     name: text(60).min(2).optional(),
-    handle: z
-      .string()
-      .regex(/^[a-z0-9_]{3,30}$/)
-      .optional(),
+    handle: handleSchema.optional(),
     bio: text(2000).optional(),
     avatarAssetId: idSchema.nullable().optional(),
   })

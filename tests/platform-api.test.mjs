@@ -85,11 +85,37 @@ await test('platform persistence, ownership, moderation and accounting', async (
     await t.test(
       'register real identities, reject duplicate identity and login errors',
       async () => {
-        playerUser = (await player.request('POST', '/auth/register', member, 201)).user;
+        playerUser = (
+          await player.request(
+            'POST',
+            '/auth/register',
+            { ...member, handle: member.handle.toUpperCase() },
+            201,
+          )
+        ).user;
+        assert.equal(playerUser.handle, member.handle);
+        assert.equal(playerUser.name, member.name);
         writerUser = (await writer.request('POST', '/auth/register', author, 201)).user;
         assert.ok(playerUser.id && writerUser.id);
         assert.notEqual(playerUser.id, writerUser.id);
         await anonymous.request('POST', '/auth/register', member, 409);
+        await anonymous.request(
+          'POST',
+          '/auth/register',
+          {
+            ...member,
+            email: `case-duplicate-${suffix}@example.test`,
+            handle: member.handle.toUpperCase(),
+          },
+          409,
+        );
+        const signedIn = await player.request(
+          'POST',
+          '/auth/login',
+          { email: member.email.toUpperCase(), password },
+          201,
+        );
+        assert.equal(signedIn.user.id, playerUser.id);
         await anonymous.request(
           'POST',
           '/auth/login',
@@ -110,7 +136,7 @@ await test('platform persistence, ownership, moderation and accounting', async (
       async () => {
         await player.request('PATCH', '/account/profile', {
           name: 'Имя после сохранения',
-          handle: member.handle,
+          handle: member.handle.toUpperCase(),
           bio: 'Проверка постоянного профиля.',
         });
         await player.request('PATCH', '/account/settings', {

@@ -99,3 +99,31 @@ References checked 2026-11-02:
 - https://help.brevo.com/hc/en-us/articles/14925263522578-Comply-with-Gmail-Yahoo-and-Microsoft-s-requirements-for-email-senders
 - https://developers.google.com/identity/openid-connect/openid-connect
 - https://developers.google.com/identity/gsi/web/guides/verify-google-id-token
+
+## Registration runtime permissions (KAN-36)
+
+Password registration grants the existing starter Dreams inside the same transaction.
+Migration 054 enabled RLS on the four Dreams tables, while production uses the
+non-owner, non-BYPASSRLS `dreamwalk_runtime` role. Table grants alone do not satisfy
+RLS: missing policies reject the starter wallet insert with SQLSTATE 42501 and roll
+back the account. Owner-role test databases do not expose this failure.
+
+Migration 071 supplies only backend-role policies for the existing operations:
+wallets/holds SELECT, INSERT, UPDATE; quotes/ledger SELECT, INSERT. RLS stays enabled,
+no role/credential is created, existing GRANTs are unchanged, and no policy is given
+to PUBLIC, anon, authenticated or other browser roles. The runtime role is trusted
+server-only: API authentication, ownership checks and accounting constraints remain
+the user-level boundary. It must not be exposed through a client or Data API role.
+
+Applying this migration to production changes persistent access and requires the
+owner's explicit action-time approval. Review the role/table matrix first, apply via
+the approved migration rollout, and verify policies and non-owner registration.
+The disposable PostgreSQL `platform-registration-runtime` test reproduces the
+pre-policy failure, rolls back the failed fixture, then checks signup, one starter grant,
+case-insensitive identity, and denial for another non-owner role. It creates no
+real production accounts. No existing account receives a gift or data change.
+
+Registration and profile accept ASCII uppercase handles, canonicalize them to
+lowercase before the existing UNIQUE key, and retain the supplied display name.
+Password login remains email-based, with existing case normalization. Google
+credentials and mandatory email-verification rollout remain separate operations.
