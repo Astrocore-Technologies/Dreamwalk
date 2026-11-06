@@ -163,6 +163,8 @@ export function knownAuthoringSettlementQuote(
     !job.request_snapshot ||
     !native.request_snapshot ||
     !admitted ||
+    (admitted.automaticKnownCostPolicy !== undefined &&
+      admitted.automaticKnownCostPolicy !== 'known-cost-v1') ||
     !admitted.requestSnapshot ||
     digest(job.request_snapshot) !== digest(native.request_snapshot) ||
     digest(job.request_snapshot) !== digest(admitted.requestSnapshot) ||
@@ -316,6 +318,11 @@ export function knownAuthoringSettlementQuote(
         sparksCaptureSubunits: (capture - dreamCapture).toString(),
         sparksReleaseSubunits: (sparkReserve - (capture - dreamCapture)).toString(),
       },
+      // Only the immutable quote and its matching original acceptance authorize automatic recovery.
+      settlementMode:
+        policyConsentHash && job.request_hash === policyConsentHash
+          ? ('automatic' as const)
+          : ('legacy_confirmation' as const),
       requiresConsent: hold.status === 'pending',
       noGameEffect: true as const,
       noAuthoringEffect: true as const,
@@ -523,6 +530,10 @@ export class KnownAuthoringSettlement implements OnModuleInit, OnModuleDestroy {
         consent: true,
       };
     if (!consent) return view;
+    // New requests already authorize the recovery worker. Manual confirmation is
+    // only for older generic admissions, never a second route for pending automatic work.
+    if (!automatic && view.status === 'pending' && view.settlementMode !== 'legacy_confirmation')
+      unavailable();
     if (
       consent.holdId !== view.holdId ||
       consent.expectedActualMicros !== view.actualMicros ||

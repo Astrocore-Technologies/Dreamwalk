@@ -34,6 +34,8 @@ function setup() {
       sparksCaptureSubunits: '246',
       sparksReleaseSubunits: '754',
     },
+    settlementMode: 'legacy_confirmation',
+    noAuthoringEffect: true,
     requiresConsent: true,
     noGameEffect: true,
   };
@@ -106,7 +108,7 @@ test('authoring quote errors and disposal never submit, and storage is owner/job
   );
   assert.throws(() => authoringSettlementScope(f.input.ownerId, 'foreign-path'));
 });
-test('owner UI observes automatic settlement without mutation or manual confirmation in three locales', () => {
+test('owner UI gates the explicit legacy action and keeps polling read-only in three locales', () => {
   const component = readFileSync(
     'apps/web/components/visual-authoring/owner-authoring-settlement.tsx',
     'utf8',
@@ -121,9 +123,17 @@ test('owner UI observes automatic settlement without mutation or manual confirma
     'authoring-sparks-release',
   ])
     assert.ok(component.includes(key));
-  assert.doesNotMatch(component, /\.confirm\(|method: 'POST'|sessionStorage|<Button/);
+  assert.match(
+    component,
+    /legacy && \['ready', 'uncertain', 'sending', 'loading'\]\.includes\(state.phase\)/,
+  );
+  assert.match(component, /q\?\.settlementMode === 'legacy_confirmation'/);
+  assert.match(component, /onClick=\{\(\) => void controller.current\?\.confirm\(\)\}/);
+  assert.equal((component.match(/\.confirm\(/g) ?? []).length, 1);
+  assert.match(component, /instance.dispose\(\)/);
+  assert.match(component, /key=\{`\$\{user.id\}:\$\{jobId\}`\}/);
   assert.match(component, /setTimeout\(\(\) => void refresh\(\), 5000\)/);
-  assert.match(component, /q && state\.phase === 'complete'/);
+  assert.match(component, /q && \(legacy \|\| state\.phase === 'complete'\)/);
   assert.match(builder, /j\.sparkStatus === 'pending'/);
   assert.match(builder, /\['held', 'pending'\]\.includes\(j\.sparkStatus \?\? ''\)/);
   assert.match(builder, /onSettled=\{\(\) => void refreshAfterSettlement\(\)\}/);
@@ -133,6 +143,8 @@ test('owner UI observes automatic settlement without mutation or manual confirma
     for (const key of [
       'title',
       'hint',
+      'legacyHint',
+      'legacy',
       'noNew',
       'providerCost',
       'charged',
@@ -140,4 +152,112 @@ test('owner UI observes automatic settlement without mutation or manual confirma
       'uncertain',
     ])
       assert.ok(authoringSettlementMessages[locale][key]);
+});
+
+test('automatic authoring remains read-only even on confirm and with unavailable storage', async () => {
+  const f = setup();
+  f.q.settlementMode = 'automatic';
+  const c = new KnownSettlementController({
+    ...f.input,
+    storage: {
+      getItem: () => {
+        throw new Error('blocked');
+      },
+      setItem: () => {
+        throw new Error('blocked');
+      },
+    },
+  });
+  await c.refresh();
+  await c.confirm();
+  await c.refresh();
+  assert.equal(f.posts.length, 0);
+  assert.equal(f.values.size, 0);
+});
+for (const mode of [undefined, 'unavailable', 'other-policy'])
+  test(`unrecognized authoring mode ${mode} never submits`, async () => {
+    const f = setup();
+    f.q.settlementMode = mode;
+    const c = new KnownSettlementController(f.input);
+    await c.refresh();
+    await c.confirm();
+    assert.equal(f.posts.length, 0);
+  });
+test('changed authoring mode or exact amounts are rejected before sending', async () => {
+  for (const change of [
+    (q) => {
+      q.settlementMode = 'automatic';
+    },
+    (q) => {
+      q.actualMicros = '124';
+      q.captureSubunits = '248';
+      q.releaseSubunits = '752';
+      q.funding.sparksCaptureSubunits = '248';
+      q.funding.sparksReleaseSubunits = '752';
+    },
+    (q) => {
+      q.noAuthoringEffect = false;
+    },
+  ]) {
+    const f = setup(),
+      c = new KnownSettlementController(f.input);
+    await c.refresh();
+    change(f.q);
+    await c.confirm();
+    assert.equal(f.posts.length, 0);
+    assert.equal(f.values.size, 0);
+  }
+});
+test('repeated legacy clicks use one operation and storage failure refuses before POST', async () => {
+  const f = setup(),
+    c = new KnownSettlementController(f.input);
+  await c.refresh();
+  await Promise.all([c.confirm(), c.confirm(), c.confirm()]);
+  assert.equal(f.posts.length, 1);
+  for (const failure of ['getItem', 'setItem']) {
+    const x = setup();
+    x.input.storage[failure] = () => {
+      throw new Error('denied');
+    };
+    const blocked = new KnownSettlementController(x.input);
+    await blocked.refresh();
+    await blocked.confirm();
+    assert.equal(x.posts.length, 0);
+  }
+});
+test('a pre-mode saved authoring attempt only replays after fresh exact legacy proof', async () => {
+  const f = setup(),
+    c = new KnownSettlementController(f.input);
+  await c.refresh();
+  f.lost(true);
+  await c.confirm();
+  c.dispose();
+  const key = authoringSettlementScope(f.input.ownerId, f.input.jobId).storageKey;
+  const stored = JSON.parse(f.values.get(key));
+  delete stored.quote.settlementMode;
+  delete stored.quote.noAuthoringEffect;
+  f.values.set(key, JSON.stringify(stored));
+  const resumed = new KnownSettlementController(f.input);
+  await resumed.refresh();
+  assert.equal(f.posts.length, 1);
+  f.lost(false);
+  await resumed.confirm();
+  assert.equal(f.posts.length, 2);
+  assert.deepEqual(f.posts[1], f.posts[0]);
+});
+test('owner switch disposes an in-flight confirmation before POST and isolates saved attempts', async () => {
+  const f = setup();
+  let release;
+  const c = new KnownSettlementController(f.input);
+  await c.refresh();
+  f.input.read = () =>
+    new Promise((resolve) => {
+      release = () => resolve(f.q);
+    });
+  const waiting = c.confirm();
+  c.dispose();
+  release();
+  await waiting;
+  assert.equal(f.posts.length, 0);
+  assert.equal(f.values.size, 0);
 });

@@ -468,3 +468,24 @@ preparation, reuse, consent, settlement and exactly-once creation rules. Reload,
 Back and reading saved preparations never grant entry or payment consent.
 Uncertain preparation reads and unresolved dispatches keep their operation key
 and expose status recovery instead of an unsafe fresh-start action.
+
+### Legacy authoring receipt recovery
+
+`GET /generation/authoring-text/jobs/:id/settlement` remains owner-only and read-only.
+An eligible known-cost quote includes `settlementMode: automatic | legacy_confirmation`,
+exact provider cost, reservation, capture/release and Dreams/Sparks split, plus
+`requiresConsent`, `noGameEffect: true` and `noAuthoringEffect: true`.
+`automatic` requires both the immutable `known-cost-v1` quote marker and matching
+original policy-bearing acceptance. Generic original acceptance with an absent or
+known marker is `legacy_confirmation`; unsupported markers or unproved cost are
+unavailable. Dates and identifiers never select the mode.
+
+Only a separately confirmed legacy quote can be manually settled while pending via
+`POST /generation/authoring-text/jobs/:id/settlement`, using the existing exact
+`operationId`, `holdId`, `expectedActualMicros`, `expectedReservedSubunits`,
+`expectedCaptureSubunits` and `consent: true` contract. The browser persists the
+owner/job-scoped operation before sending, rechecks the quote on each explicit
+click, and only reuses that operation after an uncertain response. Mount, polling
+and reload do not send settlement mutations. Pending automatic requests reject the
+manual route and keep their background recovery. Terminal replay preserves the
+original financial fingerprint and creates no second charge or audit.

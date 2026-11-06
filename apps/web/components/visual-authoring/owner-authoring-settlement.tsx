@@ -3,11 +3,8 @@ import { useEffect, useRef, useState } from 'react';
 import { formatSparkSubunits } from '@dreamwalk/contracts';
 import { api, useClient } from '@/lib/client';
 import { useT } from '@/lib/i18n';
-import {
-  authoringSettlementScope,
-  readKnownSettlement,
-  type SettlementState,
-} from '@/lib/known-npc-settlement';
+import { KnownSettlementController, type SettlementState } from '@/lib/known-npc-settlement';
+import { Button, ErrorBox } from '../ui';
 import { authoringSettlementMessages } from './owner-authoring-settlement-messages';
 
 export function OwnerAuthoringSettlement({
@@ -44,24 +41,38 @@ function SettlementForm({
     phase: 'loading',
     error: null,
   });
+  const controller = useRef<KnownSettlementController | null>(null);
   useEffect(() => {
     let disposed = false;
+    let complete = false;
     let timer: ReturnType<typeof setTimeout> | undefined;
+    const instance = new KnownSettlementController({
+      kind: 'authoring',
+      ownerId,
+      jobId,
+      // Delay storage access so automatic read-only recovery does not depend on it.
+      storage: {
+        getItem: (key) => window.sessionStorage.getItem(key),
+        setItem: (key, value) => window.sessionStorage.setItem(key, value),
+      },
+      operationId: () => crypto.randomUUID(),
+      read: (path) => api(path, { cache: 'no-store' }),
+      post: (path, body) => api(path, { method: 'POST', body: JSON.stringify(body) }),
+      changed: (next) => {
+        complete = next.phase === 'complete';
+        setState(next);
+      },
+    });
+    controller.current = instance;
     const refresh = async () => {
-      let complete = false;
-      try {
-        const path = authoringSettlementScope(ownerId, jobId).path;
-        const quote = readKnownSettlement(await api(path, { cache: 'no-store' }), jobId);
-        complete = quote.status !== 'pending';
-        if (!disposed) setState({ quote, phase: complete ? 'complete' : 'ready', error: null });
-      } catch {
-        if (!disposed) setState({ quote: null, phase: 'uncertain', error: 'uncertain' });
-      }
+      await instance.refresh();
       if (!disposed && !complete) timer = setTimeout(() => void refresh(), 5000);
     };
     void refresh();
     return () => {
       disposed = true;
+      instance.dispose();
+      controller.current = null;
       if (timer) clearTimeout(timer);
     };
   }, [ownerId, jobId]);
@@ -73,6 +84,7 @@ function SettlementForm({
     }
   }, [state.phase, onSettled]);
   const q = state.quote;
+  const legacy = q?.settlementMode === 'legacy_confirmation';
   const exact = (amount: string) => formatSparkSubunits(amount, locale, 'exact');
   const providerCost = q
     ? `${BigInt(q.actualMicros) / 1000000n}.${(BigInt(q.actualMicros) % 1000000n).toString().padStart(6, '0')}`
@@ -80,9 +92,9 @@ function SettlementForm({
   return (
     <section className="stack" data-testid="owner-authoring-settlement">
       <h3>{text.title}</h3>
-      <p>{text.hint}</p>
+      <p>{legacy && state.phase !== 'complete' ? text.legacyHint : text.hint}</p>
       <p>{text.noNew}</p>
-      {q && state.phase === 'complete' && (
+      {q && (legacy || state.phase === 'complete') && (
         <dl className="stack">
           <div>
             <dt>{text.providerCost}</dt>
@@ -118,13 +130,32 @@ function SettlementForm({
           </div>
         </dl>
       )}
+      <ErrorBox message={state.error ? text[state.error] : ''} />
       <p role="status" aria-live="polite">
         {state.phase === 'complete'
           ? text.complete
-          : state.phase === 'uncertain'
-            ? text.uncertain
-            : text.automatic}
+          : state.phase === 'loading'
+            ? text.loading
+            : state.phase === 'sending'
+              ? text.sending
+              : state.error
+                ? ''
+                : legacy
+                  ? text.legacy
+                  : q?.settlementMode === 'automatic'
+                    ? text.automatic
+                    : text.unavailable}
       </p>
+      {legacy && ['ready', 'uncertain', 'sending', 'loading'].includes(state.phase) && (
+        <Button
+          type="button"
+          busy={state.phase === 'sending'}
+          disabled={state.phase === 'sending' || state.phase === 'loading'}
+          onClick={() => void controller.current?.confirm()}
+        >
+          {state.phase === 'uncertain' ? text.retry : text.confirm}
+        </Button>
+      )}
     </section>
   );
 }
