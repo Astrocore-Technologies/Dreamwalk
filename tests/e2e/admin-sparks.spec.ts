@@ -55,9 +55,10 @@ test('admin retry adjusts actual Sparks once and wallet/header show the same bal
   });
   await page.goto('/admin/credits');
   await expect(page.getByTestId('sparks-balance')).toHaveText('50,00');
-  await page.getByLabel('Пользователь', { exact: true }).selectOption(user.id);
-  await page.getByLabel('Причина операции', { exact: true }).fill('Reward');
-  await page.getByRole('button', { name: 'Проверить операцию', exact: true }).click();
+  const sparks = page.locator('[data-admin-currency="sparks"]');
+  await sparks.getByLabel('Пользователь', { exact: true }).selectOption(user.id);
+  await sparks.getByLabel('Причина операции', { exact: true }).fill('Reward');
+  await sparks.getByRole('button', { name: 'Проверить операцию', exact: true }).click();
   const dialog = page.getByRole('dialog', { name: 'Подтвердить операцию с искрами?' });
   await dialog.getByRole('button', { name: 'Подтвердить операцию', exact: true }).click();
   await expect(dialog.getByRole('alert')).toBeVisible();

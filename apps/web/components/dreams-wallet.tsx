@@ -20,6 +20,7 @@ const messages = {
     operation: 'Операция',
     date: 'Дата',
     starter_grant: 'Стартовый подарок',
+    admin_credit: 'Выдано администратором',
     reserve: 'Резерв',
     pending: 'На сверке',
     capture: 'Списано',
@@ -39,6 +40,7 @@ const messages = {
     operation: 'Операція',
     date: 'Дата',
     starter_grant: 'Стартовий подарунок',
+    admin_credit: 'Видано адміністратором',
     reserve: 'Резерв',
     pending: 'На звірці',
     capture: 'Списано',
@@ -59,6 +61,7 @@ const messages = {
     operation: 'Operation',
     date: 'Date',
     starter_grant: 'Welcome gift',
+    admin_credit: 'Admin grant',
     reserve: 'Reserved',
     pending: 'Pending reconciliation',
     capture: 'Charged',
@@ -150,7 +153,11 @@ export function DreamsWalletSection({
                       <td>{text[entry.kind]}</td>
                       <td>{date(entry.createdAt)}</td>
                       <td>
-                        {entry.kind === 'starter_grant' ? '+' : entry.kind === 'capture' ? '−' : ''}
+                        {entry.kind === 'starter_grant' || entry.kind === 'admin_credit'
+                          ? '+'
+                          : entry.kind === 'capture'
+                            ? '−'
+                            : ''}
                         {formatSparkSubunits(entry.amountSubunits, locale, 'exact')}
                       </td>
                     </tr>

@@ -45,3 +45,13 @@ test('Dreams amounts retain integer precision above JavaScript safe-number limit
     large,
   );
 });
+
+test('admin-issued Dreams remain readable without accepting unknown or other-account entries', () => {
+  const value = wallet({
+    ledger: [
+      { id: '2', kind: 'admin_credit', amountSubunits: '70000', createdAt: '2026-11-06T00:00:00Z' },
+    ],
+  });
+  assert.equal(readDreamsWallet(value, 'owner-a').ledger[0].kind, 'admin_credit');
+  assert.throws(() => readDreamsWallet(value, 'owner-b'));
+});

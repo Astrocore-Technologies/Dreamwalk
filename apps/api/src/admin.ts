@@ -5,6 +5,7 @@ import {
   removeStory,
   restoreStory,
 } from './admin-story-deletion';
+import { grantAdminDreams } from './admin-dreams';
 import { directorStyleUpdateSchema } from '@dreamwalk/contracts/dist/director-style';
 import {
   readDirectorCatalog,
@@ -131,6 +132,12 @@ export class AdminController {
   @Get('currencies/wallet')
   async currenciesWallet(@Req() req: Request) {
     const ownerId = (await this.auth.require(req)).id;
+    return {
+      sparks: await this.sparksWalletFor(ownerId),
+      dreams: await this.dreamsWalletFor(ownerId),
+    };
+  }
+  private async dreamsWalletFor(ownerId: string) {
     const row = (
       await this.db.query(
         `
@@ -146,17 +153,14 @@ export class AdminController {
     const balance = BigInt(row?.balance_subunits ?? '0'),
       held = BigInt(row?.held_subunits ?? '0');
     return {
-      sparks: await this.sparksWalletFor(ownerId),
-      dreams: {
-        ownerId,
-        currency: 'dreams',
-        balanceSubunits: balance.toString(),
-        heldSubunits: held.toString(),
-        availableSubunits: (balance - held).toString(),
-        subunitsPerDream: '10000',
-        spendingAvailable: true,
-        ledger: row.ledger.map(camel),
-      },
+      ownerId,
+      currency: 'dreams',
+      balanceSubunits: balance.toString(),
+      heldSubunits: held.toString(),
+      availableSubunits: (balance - held).toString(),
+      subunitsPerDream: '10000',
+      spendingAvailable: true,
+      ledger: row.ledger.map(camel),
     };
   }
   private async sparksWalletFor(owner: string) {
@@ -744,6 +748,12 @@ export class AdminController {
       ]);
       return camel(row);
     });
+  }
+  @Post('admin/dreams')
+  async dreams(@Body() body: unknown, @Req() req: Request) {
+    const actor = await this.auth.admin(req);
+    const ownerId = await grantAdminDreams(this.db, actor.id, body);
+    return { dreams: await this.dreamsWalletFor(ownerId) };
   }
   @Post('admin/credits')
   async credits(

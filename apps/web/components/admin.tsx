@@ -1,6 +1,7 @@
 'use client';
 import { AdminStoryDeleteButton, AdminStoryTrash } from './studio/admin-story-deletion';
 import { adminStoryDeletionCopy } from './studio/admin-story-deletion-copy';
+import { AdminDreams } from './studio/admin-dreams';
 import { AdminDirector } from './studio/admin-director';
 import { PlayableReview } from './studio/playable-review';
 import { formatSparkSubunits, selectAdventureText, selectNpcText } from '@dreamwalk/contracts';
@@ -25,7 +26,6 @@ import {
   Settings2,
   Shield,
   Users,
-  X,
 } from 'lucide-react';
 import type { Adventure, ModelProfile, Npc, RuntimeProfile, User } from '@dreamwalk/contracts';
 import { api, ApiError, useDate, errorMessage, useClient, useResource } from '@/lib/client';
@@ -123,6 +123,7 @@ const actionLabels: Record<string, string> = {
   'user.role': 'Роль пользователя изменена',
   'wallet.adjust': 'Баланс скорректирован',
   'sparks.adjust': 'Баланс скорректирован',
+  'dreams.credit': 'Грёзы выданы',
 };
 const links = [
   { href: '/admin', label: 'Обзор' },
@@ -1466,95 +1467,78 @@ function AdminCredits() {
         <h2>{t('Искры')}</h2>
       </div>
       <div className={styles.overviewGrid}>
-        <Panel>
-          <form
-            method="post"
-            className="stack"
-            onSubmit={(e) => {
-              e.preventDefault();
-              setError('');
-              dialog.capture();
-              setConfirm(true);
-            }}
-          >
-            <Field label={t('Пользователь')}>
-              <Select
-                aria-label={t('Пользователь')}
-                value={userId}
-                onChange={(e) => {
-                  setUserId(e.target.value);
-                  setResult(null);
-                }}
-                required
-              >
-                <option value="">{t('Выберите пользователя')}</option>
-                {users.data?.map((u) => (
-                  <option value={u.id} key={u.id}>
-                    {u.name} (@{u.handle})
-                  </option>
-                ))}
-              </Select>
-            </Field>
-            <ErrorBox message={users.error} retry={users.reload} />
-            <Field
-              label={t('Изменение баланса')}
-              hint={t(
-                'Положительное число — начисление, отрицательное — списание. Только целые искры.',
-              )}
+        <div data-admin-currency="sparks">
+          <Panel>
+            <h3>{t('Искры')}</h3>
+            <form
+              method="post"
+              className="stack"
+              onSubmit={(e) => {
+                e.preventDefault();
+                setError('');
+                dialog.capture();
+                setConfirm(true);
+              }}
             >
-              <Input
-                required
-                type="number"
-                step={1}
-                value={amount}
-                onChange={(e) => setAmount(Number(e.target.value))}
-              />
-            </Field>
-            <Field label={t('Причина операции')}>
-              <Textarea
-                required
-                minLength={3}
-                maxLength={500}
-                value={reason}
-                onChange={(e) => setReason(e.target.value)}
-                placeholder={t('Например, награда за участие')}
-              />
-            </Field>
-            <Button type="submit" disabled={!amount || users.loading}>
-              <Coins size={16} />
-              {t('Проверить операцию')}
-            </Button>
-          </form>
-        </Panel>
-        <Panel>
-          <h3>{t('Неизменяемый учёт')}</h3>
-          <ul className={styles.rules}>
-            <li>
-              <Check size={16} />
-              {t('Повтор одного запроса не начислит валюту дважды.')}
-            </li>
-            <li>
-              <Check size={16} />
-              {t('Баланс не может стать отрицательным.')}
-            </li>
-            <li>
-              <Check size={16} />
-              {t('Каждая корректировка имеет причину и запись аудита.')}
-            </li>
-            <li>
-              <X size={16} />
-              {t('Обычный пользователь не может менять баланс.')}
-            </li>
-          </ul>
-          {result && (
-            <div className={styles.result}>
-              <span>{t('Баланс после операции')}</span>
-              <strong>
-                {formatSparkSubunits(result.availableSubunits, locale)} <small>✦</small>
-              </strong>
-            </div>
-          )}
-        </Panel>
+              <Field label={t('Пользователь')}>
+                <Select
+                  aria-label={t('Пользователь')}
+                  value={userId}
+                  onChange={(e) => {
+                    setUserId(e.target.value);
+                    setResult(null);
+                  }}
+                  required
+                >
+                  <option value="">{t('Выберите пользователя')}</option>
+                  {users.data?.map((u) => (
+                    <option value={u.id} key={u.id}>
+                      {u.name} (@{u.handle})
+                    </option>
+                  ))}
+                </Select>
+              </Field>
+              <ErrorBox message={users.error} retry={users.reload} />
+              <Field
+                label={t('Изменение баланса')}
+                hint={t(
+                  'Положительное число — начисление, отрицательное — списание. Только целые искры.',
+                )}
+              >
+                <Input
+                  required
+                  type="number"
+                  step={1}
+                  value={amount}
+                  onChange={(e) => setAmount(Number(e.target.value))}
+                />
+              </Field>
+              <Field label={t('Причина операции')}>
+                <Textarea
+                  required
+                  minLength={3}
+                  maxLength={500}
+                  value={reason}
+                  onChange={(e) => setReason(e.target.value)}
+                  placeholder={t('Например, награда за участие')}
+                />
+              </Field>
+              <Button type="submit" disabled={!amount || users.loading}>
+                <Coins size={16} />
+                {t('Проверить операцию')}
+              </Button>
+            </form>
+            {result && (
+              <div className={styles.result}>
+                <span>{t('Баланс после операции')}</span>
+                <strong>
+                  {formatSparkSubunits(result.availableSubunits, locale)} <small>✦</small>
+                </strong>
+              </div>
+            )}
+          </Panel>
+        </div>
+        <AdminDreams users={users} />
       </div>
       {confirm && (
         <Modal title={t('Подтвердить операцию с искрами?')} onClose={dialog.close}>
