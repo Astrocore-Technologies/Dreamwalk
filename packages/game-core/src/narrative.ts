@@ -212,8 +212,11 @@ export function buildNarrativeContext(
             .map((e) => ({ id: e.id }))
             .sort((a, b) => a.id.localeCompare(b.id))
         : [],
+    confirmedTurnsPolicy:
+      'These are historical turns, not the status of the current attempt. Preserve past events without treating an earlier failure, pending claim or custody description as a current outcome. Current state and current admitted effects take precedence; old evidence IDs support historical continuity only.',
     confirmedTurns: accessibleTurns.slice(-16).map((t) => ({
       id: t.id,
+      tick: t.tick,
       narration: t.narration,
       ...(t.impact ? { impact: t.impact } : {}),
       introducedScene: t.introducedScene,

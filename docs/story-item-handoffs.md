@@ -26,3 +26,19 @@ RP remain narrative, with no forced inventory materialization or technical discl
 
 Validation uses synthetic core and injected-provider tests only. No live campaign,
 provider call, image generation, payment or new model pass is required.
+
+## Current outcomes and historical prose
+
+Director narration is a candidate post-admission result, not a report emitted before
+admission. A selected supported inline give may describe the transfer completing:
+the engine publishes the effect and narration together only after required admission
+and confirmation. Failed admission publishes neither. Current known failures and
+pending reactions remain authoritative; travel intent and queued paths do not inherit
+this immediate-effect rule.
+
+The pre-admission RP label is normalized on quote, rebuild, forecast and provider
+serialization. It cannot permanently classify a newly selected typed effect as an
+unresolved gesture. Historical canon citations describe earlier turns, not the status
+of the current retry or current custody. Old history remains unchanged and audience
+filters are unchanged. No prose rewriting, extra provider pass or new RP restriction
+is introduced; synthetic tests verify the request contract, not future live wording.

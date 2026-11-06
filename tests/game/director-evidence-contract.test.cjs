@@ -246,3 +246,59 @@ test('ordinary wave commits with no citation while the core still rejects a hist
   assert.deepEqual(rejected.events, []);
   assert.equal(rejected.state, state);
 });
+
+test('current director resolution normalizes legacy RP guidance without changing history or NPC evidence', () => {
+  const old = context(['old-failed-turn']);
+  old.roleplayPolicy = 'Player-authored RP, not a mechanical action or validated inventory change.';
+  old.director.confirmedTurns = [
+    { id: 'old-failed-turn', narration: 'The transfer is not confirmed.' },
+  ];
+  old.actionOutcomes = [{ segmentIndex: 0, code: 'ACTION_PENDING' }];
+  old.committedAttackOutcomes = [{ segmentIndex: 3, code: 'PUSH_BLOCKED' }];
+  old.outputAudienceIds = ['alice', 'keeper'];
+  old.channel = 'whisper';
+  const before = structuredClone(old);
+  const request = JSON.parse(buildOpenAiNpcRequestBody(config(), 'story_turn', old));
+  const supplied = JSON.parse(request.input).context;
+  assert.equal(supplied.roleplayPolicy, g.storyDirectorRoleplayPolicy);
+  assert.equal(supplied.resolutionPolicy, g.storyDirectorResolutionVersion);
+  assert.deepEqual(supplied.director, old.director);
+  assert.deepEqual(supplied.actionOutcomes, old.actionOutcomes);
+  assert.deepEqual(supplied.committedAttackOutcomes, old.committedAttackOutcomes);
+  assert.deepEqual(supplied.outputAudienceIds, old.outputAudienceIds);
+  assert.match(
+    request.instructions,
+    /current known failure or ACTION_PENDING for that same attempt\/effect overrides candidate success/,
+  );
+  assert.match(request.instructions, /ORIGINAL post indices/);
+  assert.match(
+    request.instructions,
+    /travelIntent, queued paths and ACTION_PENDING remain unresolved/,
+  );
+  assert.match(request.instructions, /all required admission and confirmation succeed/);
+  assert.doesNotMatch(
+    request.instructions,
+    /New action interpretation may need human confirmation/,
+  );
+  assert.deepEqual(old, before);
+  const provider = new OpenAiNpcProvider(config(), async () => {
+    throw Error('no dispatch');
+  });
+  const prepared = provider.prepareTextRequest('story_turn', old);
+  assert.equal(prepared.body, provider.countBody('story_turn', old));
+  assert.equal(
+    prepared.body,
+    provider.prepareTextRequest('story_turn', JSON.parse(JSON.stringify(old))).body,
+  );
+  for (const [purpose, value] of [
+    ['speech', old],
+    ['story_turn', { ...old, mode: 'npc' }],
+  ]) {
+    const body = JSON.parse(buildOpenAiNpcRequestBody(config(), purpose, value));
+    assert.equal(JSON.parse(body.input).context.roleplayPolicy, old.roleplayPolicy);
+    assert.doesNotMatch(
+      body.instructions,
+      /write its successful result as candidate narration, not as still unconfirmed/,
+    );
+  }
+});
