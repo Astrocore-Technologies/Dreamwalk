@@ -57,6 +57,7 @@ const actionLabels = {
   close: 'Закрыть дверь',
   unlock: 'Отпереть',
   pick_up: 'Подобрать',
+  drop: 'Положить на землю',
   give: 'Передать',
   transition: 'Перейти',
   travel: 'Перейти',

@@ -1,3 +1,9 @@
+import {
+  storyItemPlacementContext,
+  claimedStoryItemPlacements,
+  inconsistentStoryPlacementNarration,
+  storyItemPlacementOutcomeText,
+} from './story-item-placement';
 import { storyItemTransferContext, claimedStoryItemTransfers } from './story-item-transfers';
 import {
   sceneEncounterCandidates,
@@ -126,7 +132,7 @@ function allowedAction(state: GameState, actorId: string, input: unknown): GameA
       !target ||
       !(
         visible(state, actor, target) ||
-        (['consume', 'pick_up'].includes(p.data.kind) &&
+        (['consume', 'pick_up', 'drop'].includes(p.data.kind) &&
           target.ownerId === actorId &&
           actor.inventory?.includes(target.id))
       )
@@ -589,11 +595,11 @@ export const storyDirectorRoleplayPolicy =
   'Player-authored RP is intent, not by itself a validated inventory, money, damage or movement change. This describes the input before adjudication, not the outcome of a supported typed effect selected for this turn. Resolve permitted effects through their listed capabilities; preserve harmless everyday roleplay naturally.';
 
 // Bind policy upgrades into the semantic readset without duplicating the full prompt in context.
-export const storyDirectorResolutionVersion = 'atomic-current-turn-v1';
+export const storyDirectorResolutionVersion = 'atomic-current-turn-ground-placement-v2';
 
 /** Candidate prose is published with admission, never evidence of a future queued effect. */
 export const storyDirectorResolutionPolicy =
-  'Separate the current turn from historical evidence. actionOutcomes describes previews for current director segment indices; committedAttackOutcomes describes already persisted results at ORIGINAL post indices, not new actions to repeat. A current known failure or ACTION_PENDING for that same attempt/effect overrides candidate success. A failed attempt remains failed for that attempt, not for a later retry. When selecting a supported inline give with no current known failure for its own attempt/effect, write its successful result as candidate narration, not as still unconfirmed: the engine validates the effect and publishes it together with narration only after all required admission and confirmation succeed. If that give fails admission, neither its transfer nor its success narration is committed. Player intent alone and null-action emotes do not establish a tracked transfer. travelIntent, queued paths and ACTION_PENDING remain unresolved; do not borrow the inline-give rule for deferred effects. Historical confirmedTurns and evidenceIds describe their own past turns; a citation does not determine this turn outcome or current custody. Cite history only for relevant historical continuity; a current typed effect needs no old canon citation. Preserve ordinary RP and each NPC own audience-safe evidence; director resolution is not NPC knowledge.';
+  'Separate the current turn from historical evidence. actionOutcomes describes previews for current director segment indices; committedAttackOutcomes describes already persisted results at ORIGINAL post indices, not new actions to repeat. A current known failure or ACTION_PENDING for that same attempt/effect overrides candidate success. A failed attempt remains failed for that attempt, not for a later retry. When selecting a supported inline give or owned-item ground drop with no current known failure for its own attempt/effect, write its successful result as candidate narration, not as still unconfirmed: the engine validates the effect and publishes it together with narration only after all required admission and confirmation succeed. If that inline effect fails admission, neither its transfer nor its success narration is committed. Player intent alone and null-action emotes do not establish a tracked transfer or ground placement. travelIntent, queued paths and ACTION_PENDING remain unresolved; do not borrow the inline-effect rule for deferred effects. Historical confirmedTurns and evidenceIds describe their own past turns; a citation does not determine this turn outcome or current custody. Cite history only for relevant historical continuity; a current typed effect needs no old canon citation. Preserve ordinary RP and each NPC own audience-safe evidence; director resolution is not NPC knowledge.';
 
 export function buildStoryTurnContext(
   state: GameState,
@@ -799,6 +805,21 @@ export function buildStoryTurnContext(
       locked: e.locked,
       ...(e.kind === 'npc' || e.kind === 'player' ? {} : { x: e.x, y: e.y }),
     }));
+  const placementCandidates =
+    mode === 'director'
+      ? parsed.segments
+          .filter((segment) => segment.kind === 'attempt')
+          .map((segment) => ({
+            segmentIndex: segment.index,
+            ...storyItemPlacementContext(
+              attemptStates.get(segment.index)!,
+              actorId,
+              segment.text,
+              input,
+            ),
+          }))
+          .filter((entry) => entry.items.length)
+      : [];
   const safe = {
     schemaVersion: 1,
     turnId,
@@ -838,6 +859,15 @@ export function buildStoryTurnContext(
       .map((item) => ({ id: item.id, label: item.label, alreadyCarried: true as const })),
     ...(mode === 'director'
       ? {
+          ...(placementCandidates.length
+            ? {
+                itemPlacementPolicy: {
+                  segmentCandidates: placementCandidates,
+                  instructions:
+                    'Private named owned-item ground choices for the exact current attempt only. Ground only, no new item, surface or trajectory. Not NPC knowledge. Revalidate ordered effects; never authorize speech, negation, hypothetical, quotation or another actor intent.',
+                },
+              }
+            : {}),
           itemTransferPolicy: {
             segmentCandidates: parsed.segments
               .filter((segment) => segment.kind === 'attempt')
@@ -923,7 +953,7 @@ export function buildStoryTurnContext(
           'consume',
           'give',
           'wait',
-          ...(mode === 'director' ? ['move_to', 'transition'] : []),
+          ...(mode === 'director' ? ['move_to', 'transition', 'drop'] : []),
           ...(mode === 'director' && !state.turnController ? ['approach'] : []),
           ...(travelRequests.length ? ['travel'] : []),
         ],
@@ -1191,7 +1221,7 @@ export function applyStoryTurnProposal(
       context.mode === 'director' &&
       state.turnController &&
       step.action &&
-      !['pick_up', 'travel', 'give'].includes(step.action.kind) &&
+      !['pick_up', 'travel', 'give', 'drop'].includes(step.action.kind) &&
       !context.actionPreview.some(
         (entry) =>
           entry.segmentIndex === segment.index &&
@@ -1209,6 +1239,24 @@ export function applyStoryTurnProposal(
       )
     )
       return reject('FORBIDDEN');
+    if (step.action?.kind === 'drop') {
+      const candidates = context.itemPlacementPolicy?.segmentCandidates.find(
+        (entry) => entry.segmentIndex === segment.index,
+      );
+      if (
+        context.mode !== 'director' ||
+        step.action.itemId ||
+        !step.action.target ||
+        !candidates?.items.some(
+          (item) =>
+            item.id === step.action!.targetId &&
+            item.points.some(
+              (point) => point.x === step.action!.target!.x && point.y === step.action!.target!.y,
+            ),
+        )
+      )
+        return reject('FORBIDDEN');
+    }
     if (step.action?.kind === 'give' && context.mode === 'director') {
       const candidates = context.itemTransferPolicy?.segmentCandidates.find(
         (entry) => entry.segmentIndex === segment.index,
@@ -1269,6 +1317,9 @@ export function applyStoryTurnProposal(
     )
       return reject('FORBIDDEN');
   }
+  const droppedIds = p.steps
+    .filter((step) => step.action?.kind === 'drop')
+    .map((step) => step.action!.targetId!);
   if (
     p.narrative?.newItem &&
     (context.mode !== 'director' ||
@@ -1307,6 +1358,19 @@ export function applyStoryTurnProposal(
     actions: [],
     clarification: 'UNSUPPORTED',
   });
+  const referencedPlacementItems = [
+    ...new Map(
+      (context.itemPlacementPolicy?.segmentCandidates ?? []).flatMap((entry) =>
+        entry.items.map((item) => [item.id, item] as const),
+      ),
+    ).values(),
+  ];
+  const claimedPlacements = claimedStoryItemPlacements(
+    p.narrative?.narration ?? '',
+    referencedPlacementItems,
+  );
+  if (claimedPlacements.some((id) => !droppedIds.includes(id))) return unsupported();
+  const placedItems = new Set<string>();
   const referencedTransferItems = [
     ...new Map(
       (context.itemTransferPolicy?.segmentCandidates ?? []).flatMap((entry) =>
@@ -1558,6 +1622,24 @@ export function applyStoryTurnProposal(
           proposed.kind === 'travel' && proposed.targetId === 'new_scene'
             ? { ...proposed, targetId: `scene-${turnId}` }
             : proposed;
+        if (proposed.kind === 'drop') {
+          const candidates = storyItemPlacementContext(next, actorId, segment.text, input);
+          const quoted = context.itemPlacementPolicy?.segmentCandidates.find(
+            (entry) => entry.segmentIndex === segment.index,
+          );
+          if (
+            candidates.readset.mapId !== quoted?.readset.mapId ||
+            !candidates.items.some(
+              (item) =>
+                item.id === proposed.targetId &&
+                item.revision === quoted?.items.find((entry) => entry.id === item.id)?.revision &&
+                item.points.some(
+                  (point) => point.x === proposed.target?.x && point.y === proposed.target?.y,
+                ),
+            )
+          )
+            return reject('FORBIDDEN');
+        }
         if (proposed.kind === 'give') {
           const candidates = storyItemTransferContext(next, actorId, segment.text);
           if (
@@ -1606,6 +1688,7 @@ export function applyStoryTurnProposal(
           events.push(...outcome.events);
           if (proposed.kind === 'give' && proposed.itemId)
             transferredItems.add(`${proposed.itemId}:${proposed.targetId}`);
+          if (proposed.kind === 'drop' && proposed.targetId) placedItems.add(proposed.targetId);
         }
         push({
           kind: 'outcome',
@@ -1623,7 +1706,8 @@ export function applyStoryTurnProposal(
           (entry) => entry.id === turnId,
         )?.impact;
         const canOmitAdvisoryReply =
-          !!committedImpact && committedImpact.segmentIndex < segment.index;
+          (!!committedImpact && committedImpact.segmentIndex < segment.index) ||
+          placedItems.size > 0;
         if (
           npc?.kind !== 'npc' ||
           !isActorConscious(npc) ||
@@ -1746,6 +1830,7 @@ export function applyStoryTurnProposal(
       )
     )
       return unsupported();
+    if (claimedPlacements.some((id) => !placedItems.has(id))) return unsupported();
     const admittedEncounter = next.narrativeCanon!.turns.find(
       (entry) => entry.id === turnId,
     )?.sceneEncounter;
@@ -1764,14 +1849,29 @@ export function applyStoryTurnProposal(
       // Generated prose may repeat the unadmitted reply. Keep the real consequence,
       // but never canonize fabricated words from an omitted advisory voice.
       const admitted = next.narrativeCanon!.turns.find((entry) => entry.id === turnId)!;
-      const impact = admitted.impact!;
-      admittedNarration = narrativeImpactOutcomeText(
-        impact.effect === 'harm' && impact.lifeStateAfter === 'unconscious'
-          ? 'unconscious'
-          : impact.effect,
-        input.replyLocale,
-      );
+      const impact = admitted.impact;
+      admittedNarration = impact
+        ? narrativeImpactOutcomeText(
+            impact.effect === 'harm' && impact.lifeStateAfter === 'unconscious'
+              ? 'unconscious'
+              : impact.effect,
+            input.replyLocale,
+          )
+        : storyItemPlacementOutcomeText(input.replyLocale);
       admitted.narration = admittedNarration;
+    }
+    if (
+      placedItems.size &&
+      inconsistentStoryPlacementNarration(
+        admittedNarration,
+        referencedPlacementItems.filter((item) => placedItems.has(item.id)),
+      )
+    ) {
+      // A detected invented surface/trajectory cannot be canonized. Preserve
+      // ordinary grounded prose; this fallback records only the admitted result.
+      admittedNarration = storyItemPlacementOutcomeText(input.replyLocale, placedItems.size);
+      next.narrativeCanon!.turns.find((entry) => entry.id === turnId)!.narration =
+        admittedNarration;
     }
     // A scene-cut narration can contain facts from both sides of the journey.
     // Neither source nor destination bystanders are authorized for that combined prose.

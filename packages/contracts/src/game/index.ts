@@ -105,6 +105,7 @@ export const gameActionSchema = z
       'talk',
       'distract',
       'pick_up',
+      'drop',
       'consume',
       'give',
       'unlock',
@@ -147,6 +148,12 @@ export const gameActionSchema = z
     if (action.kind === 'move_to') {
       if (!action.target || action.targetId !== undefined || action.itemId !== undefined)
         ctx.addIssue({ code: 'custom', message: 'Movement requires only a target point' });
+    } else if (action.kind === 'drop') {
+      if (!action.targetId || !action.target || action.itemId !== undefined)
+        ctx.addIssue({
+          code: 'custom',
+          message: 'Drop requires only an owned item and target point',
+        });
     } else if (!noTarget) {
       if (!action.targetId || action.target !== undefined)
         ctx.addIssue({ code: 'custom', message: 'Action requires an entity or exit target' });
