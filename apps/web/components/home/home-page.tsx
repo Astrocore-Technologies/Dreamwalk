@@ -442,9 +442,15 @@ export function HomePage() {
         </div>
         <Link
           className={styles.continueLink}
-          href={saved[0] ? `/game/${saved[0].id}` : user ? '/game' : '/auth/sign-in'}
+          href={
+            saved[0]
+              ? `/game/${saved[0].id}`
+              : user
+                ? `/explore${heroSelection.heroId ? `?heroId=${encodeURIComponent(heroSelection.heroId)}` : ''}`
+                : '/auth/sign-in'
+          }
         >
-          {h(saved.length ? 'resume' : user ? 'saves' : 'signIn')}
+          {h(saved.length ? 'resume' : user ? 'browse' : 'signIn')}
           <ArrowRight size={18} />
         </Link>
       </section>

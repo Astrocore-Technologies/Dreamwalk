@@ -100,7 +100,7 @@ test('two realtime players coauthor committed evolving scenes, travel and retain
     await owner.getByLabel('Пригласить по имени пользователя').fill(guestHandle);
     await owner.getByRole('button', { name: 'Пригласить игрока', exact: true }).click();
     await expect(owner.getByText('Игрок приглашён', { exact: true })).toBeVisible();
-    await guest.goto('/game');
+    await guest.goto('/library?tab=history');
     await guest
       .getByRole('button', { name: 'Принять приглашение в кампанию', exact: true })
       .click();

@@ -160,7 +160,7 @@ async function launchFixture(
 }
 
 for (const locale of ['ru', 'en', 'uk'] as const) {
-  for (const surface of ['story', 'lobby'] as const) {
+  for (const surface of ['story'] as const) {
     test(`selected director reaches ${surface} creation once (${locale})`, async ({
       page,
     }, testInfo) => {
@@ -394,7 +394,7 @@ test('guest director choice survives sign-in and a hero-selection detour without
   expect(fixture.calls.create[0]).toMatchObject({ directorProfileId: 'storyteller', heroId });
 });
 
-for (const surface of ['story', 'lobby'] as const) {
+for (const surface of ['story'] as const) {
   test(`catalog errors block ${surface} starts until a successful retry`, async ({ page }) => {
     test.setTimeout(120000);
     await register(page);

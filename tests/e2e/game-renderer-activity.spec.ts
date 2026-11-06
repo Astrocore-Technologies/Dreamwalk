@@ -132,7 +132,7 @@ test('offscreen renderer pauses without stopping shared state and resumes the sa
       );
     })
     .toBeLessThan(0.01);
-  await page.getByRole('link', { name: 'К кампаниям', exact: true }).click();
+  await page.getByRole('link', { name: 'Открыть миры', exact: true }).click();
   await expect(host).toHaveCount(0);
   expect(await canvas!.evaluate((element) => element.isConnected)).toBe(false);
   await canvas!.dispose();
