@@ -439,3 +439,36 @@ test('persistent success notices translate at render rather than freezing the ac
     visit(source);
   }
 });
+
+test('story composer explains completed roleplay facts and technical checks in every locale', async () => {
+  const filename = path.join(root, 'apps/web/components/game/story-messages.ts');
+  const source = ts.createSourceFile(
+    filename,
+    await readFile(filename, 'utf8'),
+    ts.ScriptTarget.Latest,
+    true,
+  );
+  let hints;
+  const visit = (node) => {
+    if (ts.isPropertyAssignment(node) && node.name.getText(source) === 'hint') {
+      assert.ok(ts.isArrayLiteralExpression(node.initializer));
+      hints = node.initializer.elements.map((element) => {
+        assert.ok(ts.isStringLiteral(element));
+        return element.text;
+      });
+    }
+    ts.forEachChild(node, visit);
+  };
+  visit(source);
+  assert.deepEqual(hints, [
+    'Действие — между *звёздочками*, слова — обычным текстом. Описывай завершённые действия как факты истории. Изменения игрового состояния проходят технические проверки.',
+    'Put actions between *asterisks* and speech in plain text. Describe completed actions as story facts. Game-state changes still undergo technical checks.',
+    'Дія — між *зірочками*, слова — звичайним текстом. Описуй завершені дії як факти історії. Зміни ігрового стану проходять технічні перевірки.',
+  ]);
+  const composer = await readFile(
+    path.join(root, 'apps/web/components/game/unified-story.tsx'),
+    'utf8',
+  );
+  assert.match(composer, /aria-describedby=\{hintId\}/);
+  assert.match(composer, /<p id=\{hintId\}[^>]*>\s*\{h\('hint'\)\}/);
+});
