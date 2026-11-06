@@ -19,7 +19,7 @@ const { readGenerationConfig } = require('../../apps/api/dist/generation/config.
 const { estimateTextRequest } = require('../../apps/api/dist/generation/estimates.js');
 const { digest } = require('../../apps/api/dist/ai/context.js');
 const database = new Db();
-async function scenario(dreamReserve, policy = 'accepted') {
+async function scenario(dreamReserve, policy = 'accepted', evidence = 'known') {
   try {
     assert.match(process.env.LOCAL_POSTGRES_CLUSTER ?? '', /^game-test-/);
     await startApi();
@@ -77,15 +77,16 @@ async function scenario(dreamReserve, policy = 'accepted') {
         return {
           proposal: { title: 'Unusable synthetic plan' },
           requestId: `synthetic-${randomUUID()}`,
+          ...(evidence === 'unverified' ? { failureCode: 'AUTHORING_PROPOSAL_INVALID' } : {}),
           usage: {
             inputTokens: 6405,
             cachedInputTokens: 1383,
             outputTokens: 201,
             cacheWriteInputTokens: 5019,
             cacheWriteInputTokensDetails: { ttl30mTokens: 5019, ttl12hTokens: 0 },
-            costMicros: 743,
+            costMicros: evidence === 'unknown' ? null : 743,
             costEvidence: 'configured_rates',
-            costVerifiedForSparks: true,
+            costVerifiedForSparks: evidence !== 'unverified',
           },
         };
       },
@@ -109,10 +110,11 @@ async function scenario(dreamReserve, policy = 'accepted') {
     };
     // Emulate the historical producer before immutable INSERT, never rewrite an admitted quote.
     const originalQuote = SparksAccounting.prototype.quote;
-    if (policy === 'historical')
+    if (['historical', 'unsupported'].includes(policy))
       SparksAccounting.prototype.quote = function (c, input) {
         const historical = structuredClone(input);
-        delete historical.providerQuote.automaticKnownCostPolicy;
+        if (policy === 'historical') delete historical.providerQuote.automaticKnownCostPolicy;
+        else historical.providerQuote.automaticKnownCostPolicy = 'future-unsupported-policy';
         return originalQuote.call(this, c, historical);
       };
     let quote;
@@ -134,7 +136,7 @@ async function scenario(dreamReserve, policy = 'accepted') {
     }
     assert.equal(
       quote.automaticKnownCostPolicy,
-      policy === 'historical' ? undefined : 'known-cost-v1',
+      ['historical', 'unsupported'].includes(policy) ? undefined : 'known-cost-v1',
     );
     if (policy === 'historical') {
       await assert.rejects(
@@ -186,6 +188,18 @@ async function scenario(dreamReserve, policy = 'accepted') {
         .rows[0],
       native: (await db.query('SELECT * FROM live_authoring_text_quotes WHERE id=$1', [quote.id]))
         .rows[0],
+      sparkQuote: (
+        await db.query(
+          'SELECT q.* FROM spark_quotes q JOIN live_authoring_text_jobs j ON j.spark_quote_id=q.id WHERE j.id=$1',
+          [queued.id],
+        )
+      ).rows[0],
+      dreamQuote: (
+        await db.query(
+          'SELECT q.* FROM dream_quotes q JOIN spark_holds h ON h.dream_hold_id=q.id JOIN live_authoring_text_jobs j ON j.spark_quote_id=h.id WHERE j.id=$1',
+          [queued.id],
+        )
+      ).rows[0],
       project: (await db.query('SELECT * FROM visual_authoring_projects WHERE id=$1', [projectId]))
         .rows[0],
       reservation: (
@@ -200,6 +214,17 @@ async function scenario(dreamReserve, policy = 'accepted') {
           [queued.id],
         )
       ).rows[0],
+      gameAndAuthoringEffects: (
+        await db.query(`SELECT
+          (SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb) FROM game_campaigns t) AS campaigns,
+          (SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb) FROM game_snapshots t) AS snapshots,
+          (SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb) FROM game_events t) AS events,
+          (SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb) FROM game_operations t) AS operations,
+          (SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb) FROM game_start_preparations t) AS starts,
+          (SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb) FROM game_location_travel_preparations t) AS travel,
+          (SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb) FROM visual_authoring_operations t) AS authoring,
+          (SELECT coalesce(jsonb_agg(to_jsonb(t) ORDER BY to_jsonb(t)::text), '[]'::jsonb) FROM visual_authoring_stage_items t) AS stages`)
+      ).rows[0],
       scope: (
         await db.query(
           'SELECT s.* FROM generation_budget_scopes s JOIN generation_budget_reservations r ON r.scope_id=s.id JOIN live_authoring_text_jobs j ON j.reservation_id=r.id WHERE j.id=$1',
@@ -208,11 +233,39 @@ async function scenario(dreamReserve, policy = 'accepted') {
       ).rows[0],
     });
     const before = await immutable();
-    assert.equal(before.job.status, 'stale');
-    assert.equal(before.job.error_code, 'MAP_IMAGE_UNCERTAIN');
-    assert.equal(before.reservation.status, 'settled');
+    assert.equal(
+      before.job.status,
+      evidence === 'unknown' ? 'unknown' : evidence === 'unverified' ? 'failed' : 'stale',
+    );
+    assert.equal(
+      before.job.error_code,
+      evidence === 'unknown'
+        ? 'PROVIDER_USAGE_UNKNOWN'
+        : evidence === 'unverified'
+          ? 'AUTHORING_PROPOSAL_INVALID'
+          : 'MAP_IMAGE_UNCERTAIN',
+    );
+    assert.equal(before.reservation.status, evidence === 'unknown' ? 'held' : 'settled');
+    assert.equal(
+      before.job.request_hash,
+      digest({
+        quoteId: quote.id,
+        operationId: before.job.operation_id,
+        consent: true,
+        ...(policy === 'accepted' ? { automaticKnownCostPolicy: 'known-cost-v1' } : {}),
+      }),
+      'original generic consent is never backfilled with automatic policy acceptance',
+    );
+    assert.equal(
+      before.sparkQuote.price_snapshot.providerQuote.automaticKnownCostPolicy,
+      policy === 'historical'
+        ? undefined
+        : policy === 'unsupported'
+          ? 'future-unsupported-policy'
+          : 'known-cost-v1',
+    );
     assert.equal(dispatches, 1);
-    assert.equal(commits, 1);
+    assert.equal(commits, evidence === 'known' ? 1 : 0);
     const holdId = before.job.spark_quote_id;
     const heldDreamId = (
       await db.query('SELECT dream_hold_id FROM spark_holds WHERE id=$1', [holdId])
@@ -234,17 +287,63 @@ async function scenario(dreamReserve, policy = 'accepted') {
             ).rows,
           }
         : null,
+      audit: (
+        await db.query(
+          "SELECT * FROM audit WHERE target_id=$1 AND action='authoring.known_failure.settled' ORDER BY id",
+          [queued.id],
+        )
+      ).rows,
       ledger: (
         await db.query('SELECT * FROM spark_ledger WHERE hold_id=$1 ORDER BY event_key', [holdId])
       ).rows,
     });
     const held = await accounting();
-    assert.equal(held.hold.status, dreamReserve || policy !== 'accepted' ? 'pending' : 'settled');
+    assert.equal(
+      held.hold.status,
+      dreamReserve || policy !== 'accepted' || evidence !== 'known' ? 'pending' : 'settled',
+    );
     assert.equal(
       held.hold.reason,
-      dreamReserve || policy !== 'accepted' ? 'failure_policy_pending' : null,
+      evidence === 'unknown'
+        ? 'unknown'
+        : dreamReserve || policy !== 'accepted' || evidence !== 'known'
+          ? 'failure_policy_pending'
+          : null,
     );
     const settlement = new KnownAuthoringSettlement(database, authority);
+    if (evidence !== 'known' || policy === 'unsupported') {
+      const unavailable = (e) => e.getResponse?.().code === 'AUTHORING_SETTLEMENT_UNAVAILABLE';
+      const body = {
+        operationId: before.job.operation_id,
+        holdId,
+        expectedActualMicros: '743',
+        expectedReservedSubunits: held.hold.reserved_subunits,
+        expectedCaptureSubunits: '1486',
+        consent: true,
+      };
+      await assert.rejects(settlement.handle(owner.user.id, queued.id), unavailable);
+      await assert.rejects(settlement.handle(owner.user.id, queued.id, body), unavailable);
+      assert.equal(
+        await database.tx((c) => settlement.settleAutomatic(c, owner.user.id, queued.id)),
+        undefined,
+      );
+      await settlement.recoverPending();
+      await startApi();
+      for (const method of ['GET', 'POST']) {
+        const result = await owner.request(path, method === 'POST' ? body : undefined, method, 409);
+        assert.equal(result.code, 'AUTHORING_SETTLEMENT_UNAVAILABLE');
+        await outsider.request(path, method === 'POST' ? body : undefined, method, 404);
+      }
+      assert.deepEqual(
+        await accounting(),
+        held,
+        'unsupported receipts cannot mutate financial rows',
+      );
+      assert.deepEqual(await immutable(), before);
+      assert.equal(dispatches, 1);
+      assert.equal(commits, evidence === 'known' ? 1 : 0);
+      return;
+    }
     const view = await settlement.handle(owner.user.id, queued.id);
     assert.deepEqual(await settlement.handle(owner.user.id, queued.id), view);
     assert.deepEqual(await accounting(), held, 'read-only review never settles a pending hold');
@@ -252,6 +351,8 @@ async function scenario(dreamReserve, policy = 'accepted') {
     assert.equal(view.actualMicros, '743');
     assert.equal(view.captureSubunits, '1486');
     assert.equal(view.noAuthoringEffect, true);
+    assert.equal(view.noGameEffect, true);
+    assert.equal(view.settlementMode, policy === 'accepted' ? 'automatic' : 'legacy_confirmation');
     assert.equal(view.requiresConsent, !!dreamReserve || policy !== 'accepted');
     const body = {
       operationId: before.job.operation_id,
@@ -261,6 +362,14 @@ async function scenario(dreamReserve, policy = 'accepted') {
       expectedCaptureSubunits: view.captureSubunits,
       consent: true,
     };
+    if (policy === 'accepted' && dreamReserve) {
+      await assert.rejects(
+        settlement.handle(owner.user.id, queued.id, body),
+        (e) => e.getResponse?.().code === 'AUTHORING_SETTLEMENT_UNAVAILABLE',
+      );
+      assert.deepEqual(await accounting(), held, 'manual consent cannot settle an automatic hold');
+      assert.deepEqual(await immutable(), before);
+    }
     if (dreamReserve) {
       // Inject a nested accounting failure inside a disposable transaction only. The outer
       // ledger must roll back even if the shared accounting primitive returns a pending hold.
@@ -270,7 +379,9 @@ async function scenario(dreamReserve, policy = 'accepted') {
           .rows[0];
       try {
         await assert.rejects(
-          database.tx((c) => settlement.settleAutomatic(c, owner.user.id, queued.id)),
+          policy === 'accepted'
+            ? database.tx((c) => settlement.settleAutomatic(c, owner.user.id, queued.id))
+            : settlement.handle(owner.user.id, queued.id, body),
           (e) => e.getResponse?.().code === 'AUTHORING_SETTLEMENT_UNAVAILABLE',
         );
       } finally {
@@ -314,16 +425,69 @@ async function scenario(dreamReserve, policy = 'accepted') {
         0,
       );
     }
+    if (policy !== 'accepted') {
+      await startApi();
+      assert.deepEqual(await owner.request(path), view);
+      assert.deepEqual(await owner.request(path), view);
+      await outsider.request(path, undefined, 'GET', 404);
+      await outsider.request(path, body, 'POST', 404);
+      for (const patch of [
+        { holdId: randomUUID() },
+        { expectedActualMicros: '744' },
+        { expectedReservedSubunits: '1' },
+        { expectedCaptureSubunits: '1' },
+      ])
+        await owner.request(path, { ...body, ...patch }, 'POST', 409);
+      await owner.request(path, { ...body, consent: false }, 'POST', 400);
+      assert.deepEqual(
+        await accounting(),
+        held,
+        'legacy GET, denied owners and mismatched amounts leave the pending receipt untouched',
+      );
+      assert.deepEqual(await immutable(), before);
+    }
     // Only this exact explicit owner request may settle an unmarked historical job.
     const settle = () =>
       policy === 'accepted'
         ? database.tx((c) => settlement.settleAutomatic(c, owner.user.id, queued.id))
-        : settlement.handle(owner.user.id, queued.id, body);
-    const results = await Promise.all([settle(), settle()]);
-    assert.deepEqual(results[0], results[1]);
+        : owner.request(path, body);
+    // Discard one concurrent HTTP response. Restart/replay must discover the committed
+    // receipt without a second capture, authoring attempt or provider dispatch.
+    const lostResponse = async () => {
+      const response = await fetch(process.env.TEST_GAME_API_URL + path, {
+        method: 'POST',
+        signal: AbortSignal.timeout(15000),
+        headers: {
+          origin: process.env.WEB_ORIGIN,
+          'content-type': 'application/json',
+          cookie: owner.cookie,
+        },
+        body: JSON.stringify(body),
+      });
+      assert.equal(response.ok, true);
+      await response.body.cancel();
+    };
+    const results = await Promise.all([
+      settle(),
+      policy === 'accepted' ? settle() : lostResponse(),
+    ]);
+    if (policy === 'accepted') assert.deepEqual(results[0], results[1]);
     assert.equal(results[0].status, 'settled');
     assert.equal(results[0].requiresConsent, false);
     const settled = await accounting();
+    assert.equal(settled.hold.captured_subunits, '1486');
+    assert.deepEqual(
+      settled.audit.map((row) => row.details),
+      [
+        {
+          operationId: body.operationId,
+          holdId,
+          actualMicros: view.actualMicros,
+          captureSubunits: view.captureSubunits,
+          releaseSubunits: view.releaseSubunits,
+        },
+      ],
+    );
     assert.equal(settled.wallet.balance_subunits, dreamReserve ? '999514' : '998514');
     if (dreamReserve) {
       assert.equal(settled.dreams.hold.status, 'settled');
@@ -363,6 +527,7 @@ async function scenario(dreamReserve, policy = 'accepted') {
     assert.equal(dispatches, 1);
     assert.equal(commits, 1);
     await settlement.recoverPending();
+    await stopApi();
     await startApi();
     await outsider.request(path, undefined, 'GET', 404);
     await outsider.request(path, body, 'POST', 404);
@@ -381,6 +546,8 @@ async function scenario(dreamReserve, policy = 'accepted') {
     await owner.request(path, { ...body, operationId: randomUUID() }, 'POST', 409);
     assert.deepEqual(await accounting(), settled);
     assert.deepEqual(await immutable(), before);
+    assert.equal(dispatches, 1);
+    assert.equal(commits, 1);
   } finally {
     await stopApi();
   }
@@ -395,8 +562,20 @@ await test(
       await t.test('historical unmarked quote requires exact owner authorization', () =>
         scenario(0, 'historical'),
       );
+      await t.test('historical owner POST atomically settles mixed Dreams and Sparks', () =>
+        scenario(1000, 'historical'),
+      );
       await t.test('old client does not accept the new policy implicitly', () =>
         scenario(0, 'old-client'),
+      );
+      await t.test('unsupported original policy never permits manual or automatic settlement', () =>
+        scenario(0, 'unsupported'),
+      );
+      await t.test('unverified original usage never changes the pending hold', () =>
+        scenario(0, 'historical', 'unverified'),
+      );
+      await t.test('unknown original usage never changes the hold or retries the provider', () =>
+        scenario(0, 'historical', 'unknown'),
       );
     } finally {
       await stopApi();

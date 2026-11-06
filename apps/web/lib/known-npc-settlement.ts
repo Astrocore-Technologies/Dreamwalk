@@ -16,6 +16,9 @@ export type KnownSettlementQuote = {
   };
   requiresConsent: boolean;
   noGameEffect: true;
+  // Authoring-only fields; NPC readers and behavior are unchanged.
+  settlementMode?: 'automatic' | 'legacy_confirmation';
+  noAuthoringEffect?: true;
 };
 export type KnownSettlementConsent = {
   operationId: string;
@@ -103,9 +106,21 @@ export function readKnownSettlement(value: unknown, jobId: string): KnownSettlem
     noGameEffect: true,
   };
 }
+export function readKnownAuthoringSettlement(value: unknown, jobId: string): KnownSettlementQuote {
+  const quote = readKnownSettlement(value, jobId);
+  const authoring = value as { settlementMode?: unknown; noAuthoringEffect?: unknown };
+  if (
+    authoring.noAuthoringEffect !== true ||
+    (authoring.settlementMode !== 'automatic' && authoring.settlementMode !== 'legacy_confirmation')
+  )
+    throw new Error('unavailable');
+  return { ...quote, settlementMode: authoring.settlementMode, noAuthoringEffect: true };
+}
 function matches(a: KnownSettlementQuote, b: KnownSettlementQuote) {
   return (
     a.jobId === b.jobId &&
+    a.settlementMode === b.settlementMode &&
+    a.noAuthoringEffect === b.noAuthoringEffect &&
     a.holdId === b.holdId &&
     a.actualMicros === b.actualMicros &&
     a.reservedSubunits === b.reservedSubunits &&
@@ -139,18 +154,34 @@ export class KnownSettlementController {
         ? authoringSettlementScope(input.ownerId, input.jobId)
         : settlementScope(input.ownerId, input.campaignId, input.jobId);
   }
+  private readQuote(value: unknown) {
+    return this.input.kind === 'authoring'
+      ? readKnownAuthoringSettlement(value, this.input.jobId)
+      : readKnownSettlement(value, this.input.jobId);
+  }
   private publish(patch: Partial<SettlementState>) {
     if (!this.active) return;
     this.state = { ...this.state, ...patch };
     this.input.changed(this.state);
   }
-  private restore() {
+  private restore(fresh: KnownSettlementQuote) {
     const raw = this.input.storage.getItem(this.scope.storageKey);
     if (!raw) return;
     const stored = JSON.parse(raw) as StoredAttempt;
     if (stored.version !== 1 || !stored.body || !uuid.test(stored.body.operationId))
       throw new Error('storage');
-    const quote = readKnownSettlement(stored.quote, this.input.jobId);
+    // Pre-mode authoring attempts retain their original operation, but only a fresh
+    // server-proven legacy quote may supply the missing mode. Never infer it from storage.
+    const oldAuthoringAttempt =
+      this.input.kind === 'authoring' &&
+      fresh.settlementMode === 'legacy_confirmation' &&
+      stored.quote?.settlementMode === undefined &&
+      stored.quote?.noAuthoringEffect === undefined;
+    const quote = this.readQuote(
+      oldAuthoringAttempt
+        ? { ...stored.quote, settlementMode: 'legacy_confirmation', noAuthoringEffect: true }
+        : stored.quote,
+    );
     const expected = this.body(quote, stored.body.operationId);
     if (JSON.stringify(expected) !== JSON.stringify(stored.body)) throw new Error('storage');
     this.attempt = { version: 1, quote, body: expected };
@@ -170,15 +201,19 @@ export class KnownSettlementController {
     this.busy = true;
     this.publish({ phase: 'loading', error: null });
     try {
-      const quote = readKnownSettlement(await this.input.read(this.scope.path), this.input.jobId);
+      const quote = this.readQuote(await this.input.read(this.scope.path));
       if (!this.active) return;
       this.publish({ quote });
       if (quote.status !== 'pending') {
         this.publish({ phase: 'complete' });
         return;
       }
+      if (this.input.kind === 'authoring' && quote.settlementMode === 'automatic') {
+        this.publish({ phase: 'ready' });
+        return;
+      }
       try {
-        this.restore();
+        this.restore(quote);
       } catch {
         throw new Error('storage');
       }
@@ -203,7 +238,8 @@ export class KnownSettlementController {
       !this.active ||
       this.busy ||
       !this.state.quote ||
-      !['ready', 'uncertain'].includes(this.state.phase)
+      !['ready', 'uncertain'].includes(this.state.phase) ||
+      (this.input.kind === 'authoring' && this.state.quote.settlementMode !== 'legacy_confirmation')
     )
       return;
     this.busy = true;
@@ -211,7 +247,7 @@ export class KnownSettlementController {
     this.publish({ phase: 'sending', error: null });
     let sent = false;
     try {
-      const fresh = readKnownSettlement(await this.input.read(this.scope.path), this.input.jobId);
+      const fresh = this.readQuote(await this.input.read(this.scope.path));
       if (!this.active) return;
       if (fresh.status !== 'pending') {
         this.publish({ quote: fresh, phase: 'complete' });
@@ -231,10 +267,7 @@ export class KnownSettlementController {
         throw new Error('storage');
       }
       sent = true;
-      const result = readKnownSettlement(
-        await this.input.post(this.scope.path, this.attempt.body),
-        this.input.jobId,
-      );
+      const result = this.readQuote(await this.input.post(this.scope.path, this.attempt.body));
       if (!matches(fresh, result) || result.status === 'pending') throw new Error('uncertain');
       this.publish({ quote: result, phase: 'complete' });
     } catch (err) {

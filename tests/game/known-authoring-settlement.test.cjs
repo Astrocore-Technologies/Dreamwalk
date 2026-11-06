@@ -174,6 +174,7 @@ test('exact authoring provenance recomputes cache-aware cost and funding without
   assert.equal(q.releaseSubunits, '4514');
   assert.equal(q.actualMicros, '743');
   assert.equal(q.requiresConsent, true);
+  assert.equal(q.settlementMode, 'automatic');
   assert.equal(q.noAuthoringEffect, true);
   assert.deepEqual(f, before);
   addDreams(f);
@@ -404,7 +405,11 @@ test('historical and old-client consent never authorizes automatic capture', asy
       consent: true,
     });
     assert.throws(() => automaticReview(f), rejected);
-    assert.equal(review(f).requiresConsent, true);
+    if (policy === 'other-policy') assert.throws(() => review(f), rejected);
+    else {
+      assert.equal(review(f).requiresConsent, true);
+      assert.equal(review(f).settlementMode, 'legacy_confirmation');
+    }
   }
   const { f, c, service } = serviceFixture();
   delete f.quote.price_snapshot.providerQuote.automaticKnownCostPolicy;
@@ -417,6 +422,7 @@ test('automatic proof closes semantic failure, cancellation and a verified late 
     f.job.status = status;
     f.hold.reason = 'unknown';
     assert.equal(automaticReview(f).captureSubunits, '1486');
+    assert.equal(automaticReview(f).settlementMode, 'automatic');
     f.job.provider_usage = null;
     assert.throws(() => automaticReview(f), rejected);
   }
@@ -532,4 +538,30 @@ test('recovery is bounded, advances past rejected rows, resets cursor and never 
   await service.recoverPending();
   assert.deepEqual(cursors, [null, ids[24], null]);
   assert.equal(recovered.length, 50);
+});
+
+test('manual POST cannot mutate an automatic pending quote or unsupported policy', async () => {
+  for (const policy of ['known-cost-v1', 'future-policy']) {
+    const { f, service } = serviceFixture();
+    f.quote.price_snapshot.providerQuote.automaticKnownCostPolicy = policy;
+    if (policy === 'future-policy')
+      f.job.request_hash = digest({
+        quoteId: f.native.id,
+        operationId: f.job.operation_id,
+        consent: true,
+      });
+    await assert.rejects(
+      service.handle(f.job.actor_id, f.job.id, {
+        operationId: randomUUID(),
+        holdId: f.hold.id,
+        expectedActualMicros: '743',
+        expectedReservedSubunits: '6000',
+        expectedCaptureSubunits: '1486',
+        consent: true,
+      }),
+      rejected,
+    );
+    assert.deepEqual(f.writes, []);
+    assert.deepEqual(f.audits, []);
+  }
 });
