@@ -7,6 +7,8 @@ const {
   npcSchema,
   runtimeSchema,
   registerSchema,
+  loginSchema,
+  profileSchema,
   parsePatch,
 } = require('../dist');
 test('locale is an explicit persisted platform preference', () => {
@@ -60,6 +62,39 @@ test('registration never accepts roles or weak passwords', () => {
     registerSchema.parse({ ...body, email: 'Test@Example.Com' }).email,
     'test@example.com',
   );
+});
+
+test('uppercase handles use the same canonical identity without changing the display name', () => {
+  const input = {
+    email: 'Case@Example.Test',
+    name: 'Uppercase_QA',
+    handle: 'Uppercase_QA',
+    password: 'long-test-password',
+  };
+  const account = registerSchema.parse(input);
+  assert.equal(account.handle, 'uppercase_qa');
+  assert.equal(account.name, 'Uppercase_QA');
+  assert.equal(account.email, 'case@example.test');
+  assert.equal(registerSchema.parse({ ...input, handle: 'UPPERCASE_QA' }).handle, account.handle);
+  assert.deepEqual(profileSchema.parse({ handle: 'UPPERCASE_QA' }), { handle: account.handle });
+  assert.deepEqual(profileSchema.parse({ bio: 'Unchanged handle' }), { bio: 'Unchanged handle' });
+  assert.equal(
+    loginSchema.parse({ email: input.email, password: input.password }).email,
+    account.email,
+  );
+  for (const handle of [
+    'Ab',
+    'A'.repeat(31),
+    'With space',
+    ' leading',
+    'trailing ',
+    'Йура',
+    'a.b',
+    'a/b',
+  ]) {
+    assert.equal(registerSchema.safeParse({ ...input, handle }).success, false, handle);
+    assert.equal(profileSchema.safeParse({ handle }).success, false, handle);
+  }
 });
 
 test('timezone accepts supported zones and rejects invalid or empty values', () => {
