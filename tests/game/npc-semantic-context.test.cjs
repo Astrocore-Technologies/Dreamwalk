@@ -425,6 +425,7 @@ test('story provider preserves inherited recall/director guidance and binds trus
             },
     };
     let calls = 0;
+    let capturedRequest;
     const provider = new OpenAiNpcProvider(
       {
         enabled: true,
@@ -439,24 +440,7 @@ test('story provider preserves inherited recall/director guidance and binds trus
       },
       async (_url, init) => {
         calls++;
-        const body = JSON.parse(init.body);
-        assert.match(body.instructions, /exactly one ordered user turn/);
-        assert.match(body.instructions, /failed attempt remains failed/);
-        if (mode === 'npc') {
-          assert.match(body.instructions, /Answer currentUtterance first/);
-          assert.match(body.instructions, /not a chronological transcript/);
-          assert.match(body.instructions, /Attribute remembered names/);
-          assert.match(body.instructions, /do not invent speaker attribution/);
-        } else {
-          assert.match(body.instructions, /specific useful next step, not atmosphere alone/);
-          assert.match(body.instructions, /Ground that step in an existing visible entity\/exit/);
-          assert.match(body.instructions, /Do not enumerate private inventory/);
-        }
-        assert.equal(JSON.parse(body.input).context.mode, mode);
-        const schema = body.text.format.schema;
-        assert.ok(!('turnId' in schema.properties));
-        assert.ok(!('contextHash' in schema.properties));
-        assert.equal(schema.properties.steps.maxItems, 6);
+        capturedRequest = JSON.parse(init.body);
         return new Response(
           JSON.stringify({
             id: 'fixture-response',
@@ -481,6 +465,43 @@ test('story provider preserves inherited recall/director guidance and binds trus
       maxCostMicros: 1000,
     };
     let result = await provider.generate(request);
+    const body = capturedRequest;
+    if (mode === 'npc') {
+      assert.match(body.instructions, /exactly one ordered user turn/);
+      assert.match(body.instructions, /failed attempt remains failed/);
+      assert.match(body.instructions, /Answer currentUtterance first/);
+      assert.match(body.instructions, /not a chronological transcript/);
+      assert.match(body.instructions, /Attribute remembered names/);
+      assert.match(body.instructions, /do not invent speaker attribution/);
+    } else {
+      assert.match(
+        body.instructions,
+        /one steps entry for every original segment, without dropping or reordering/,
+      );
+      assert.match(
+        body.instructions,
+        /Already persisted effects and pending other-player reactions must not be repeated or overridden/,
+      );
+      assert.match(
+        body.instructions,
+        /Unknown\/hidden IDs and other characters' private belongings are not capabilities/,
+      );
+      assert.match(
+        body.instructions,
+        /Do not enumerate carried objects unless the player refers to them/,
+      );
+      assert.match(body.instructions, /Narrator canon does not become NPC knowledge/);
+    }
+    assert.equal(JSON.parse(body.input).context.mode, mode);
+    const schema = body.text.format.schema;
+    assert.ok(!('turnId' in schema.properties));
+    assert.ok(!('contextHash' in schema.properties));
+    assert.equal(schema.properties.steps.maxItems, mode === 'npc' ? 6 : undefined);
+    if (mode === 'director') {
+      assert.ok(
+        schema.properties.steps.items.anyOf.some((entry) => entry.properties?.establishedEvents),
+      );
+    }
     assert.equal(result.failureCode, undefined);
     assert.equal(result.proposal.turnId, turnId);
     assert.equal(result.proposal.contextHash, context.contextHash);

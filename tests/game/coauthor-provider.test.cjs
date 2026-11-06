@@ -69,6 +69,7 @@ test('actual turn-post route materializes and speaks as a professor with one syn
     },
   };
   let calls = 0;
+  let capturedRequest;
   const provider = new OpenAiNpcProvider(
     {
       enabled: true,
@@ -83,17 +84,7 @@ test('actual turn-post route materializes and speaks as a professor with one syn
     },
     async (url, init) => {
       calls++;
-      const request = JSON.parse(init.body);
-      assert.ok(request.text.format.schema.properties.steps.items.properties.replyContextHash);
-      assert.match(request.instructions, /no inherited memory/);
-      assert.match(
-        request.instructions,
-        /newborn reply.*companionIntent=null and actionIntent=null/i,
-      );
-      assert.match(request.instructions, /only wait actions/);
-      assert.match(request.instructions, /Never invent or infer a source observation ID/);
-      assert.match(request.instructions, /does not prove Mira said it/);
-      assert.match(request.instructions, /Russian/);
+      capturedRequest = JSON.parse(init.body);
       return new Response(
         JSON.stringify({
           id: 'synthetic-request',
@@ -115,6 +106,20 @@ test('actual turn-post route materializes and speaks as a professor with one syn
     signal: new AbortController().signal,
     maxCostMicros: 100,
   });
+  const request = capturedRequest;
+  assert.ok(
+    request.text.format.schema.properties.steps.items.anyOf.find((entry) => entry.properties)
+      .properties.replyContextHash,
+  );
+  assert.match(
+    request.instructions,
+    /newly introduced NPC has only its immediate public identity and perception/,
+  );
+  assert.match(request.instructions, /newborn reply.*companionIntent=null and actionIntent=null/i);
+  assert.match(request.instructions, /only wait actions/);
+  assert.match(request.instructions, /Never invent or infer a source observation ID/);
+  assert.match(request.instructions, /does not prove Mira said it/);
+  assert.match(request.instructions, /Russian/);
   assert.equal(generated.failureCode, undefined);
   assert.equal(calls, 1);
   const applied = g.applyStoryTurnProposal(state, 'alice', worldInput, turnId, generated.proposal);
@@ -303,6 +308,7 @@ test('deferred RP pickup survives strict provider transport and updates inventor
     },
   };
   let calls = 0;
+  let capturedRequest;
   const provider = new OpenAiNpcProvider(
     {
       enabled: true,
@@ -317,10 +323,7 @@ test('deferred RP pickup survives strict provider transport and updates inventor
     },
     async (_url, init) => {
       calls++;
-      const request = JSON.parse(init.body);
-      assert.ok(request.text.format.schema.properties.narrative.anyOf[0].properties.newItem);
-      assert.match(request.instructions, /targetId=new_item/);
-      assert.match(request.instructions, /No alleged prior owner/);
+      capturedRequest = JSON.parse(init.body);
       return new Response(
         JSON.stringify({
           id: 'synthetic-request',
@@ -342,6 +345,10 @@ test('deferred RP pickup survives strict provider transport and updates inventor
     signal: new AbortController().signal,
     maxCostMicros: 100,
   });
+  const request = capturedRequest;
+  assert.ok(request.text.format.schema.properties.narrative.anyOf[0].properties.newItem);
+  assert.match(request.instructions, /create_prop creates an ordinary named prop in actorId/);
+  assert.match(request.instructions, /Never invent a prior owner/);
   assert.equal(generated.failureCode, undefined);
   assert.equal(calls, 1);
   const applied = g.applyStoryTurnProposal(state, 'alice', worldInput, turnId, generated.proposal);
@@ -378,8 +385,43 @@ test('turn-post pocketing an already carried prop is a no-op success, not a dupl
     post.state.turnController.resources.alice.additional,
     state.turnController.resources.alice.additional,
   );
-  assert.equal(post.entries.find((entry) => entry.kind === 'outcome').code, 'ACTION_SUCCEEDED');
-  assert.equal(post.untrustedRoleplay.length, 0);
+  assert.equal(
+    post.entries.some((entry) => entry.kind === 'outcome'),
+    false,
+  );
+  assert.equal(post.untrustedRoleplay.length, 1);
+  assert.equal(post.directorText, input.text);
+  state = g.endPlayerTurn(post.state, 'alice', g.turnFence(post.state)).state;
+  const worldInput = { ...input, text: post.directorText, turnFence: g.turnFence(state) };
+  const turnId = randomUUID();
+  const context = g.buildStoryTurnContext(state, 'alice', worldInput, turnId);
+  const proposal = {
+    turnId,
+    contextHash: context.contextHash,
+    status: 'ready',
+    code: null,
+    steps: [
+      {
+        segmentIndex: 0,
+        action: null,
+        reply: null,
+        establishedEvents: [
+          { description: 'The ribbon stays in the pocket.', entityIds: [], effects: [] },
+        ],
+      },
+    ],
+    narrative: {
+      narration: 'The ribbon stays in the pocket.',
+      newScene: null,
+      newNpc: null,
+      evidenceIds: [],
+    },
+  };
+  const applied = g.applyStoryTurnProposal(state, 'alice', worldInput, turnId, proposal);
+  assert.equal(applied.error, undefined);
+  assert.deepEqual(applied.state.entities.alice.inventory, ['key']);
+  assert.deepEqual(applied.state.entities.key, state.entities.key);
+  assert.equal(Object.keys(applied.state.entities).length, Object.keys(state.entities).length);
 });
 
 test('natural existing-item handoff survives deferred post, one injected provider response and atomic admission', async () => {
@@ -432,6 +474,7 @@ test('natural existing-item handoff survives deferred post, one injected provide
   const beforeContext = structuredClone(context);
   assert.equal(context.itemTransferPolicy.segmentCandidates[0].items[0].id, 'key');
   let calls = 0;
+  let capturedRequest;
   const provider = new OpenAiNpcProvider(
     {
       enabled: true,
@@ -446,22 +489,7 @@ test('natural existing-item handoff survives deferred post, one injected provide
     },
     async (_url, init) => {
       calls++;
-      const request = JSON.parse(init.body);
-      const supplied = JSON.parse(request.input).context;
-      assert.equal(supplied.roleplayPolicy, g.storyDirectorRoleplayPolicy);
-      assert.equal(supplied.resolutionPolicy, g.storyDirectorResolutionVersion);
-      assert.match(
-        request.instructions,
-        /write its successful result as candidate narration, not as still unconfirmed/,
-      );
-      assert.match(request.instructions, /a current typed effect needs no old canon citation/i);
-      assert.equal(supplied.director.confirmedTurns[0].narration, oldHistory.narration);
-      assert.match(request.instructions, /current explicit handoff can additionally use give/);
-      assert.match(request.instructions, /not command keywords/);
-      assert.match(
-        request.instructions,
-        /Ordinary untracked props, services and descriptive roleplay remain unrestricted/,
-      );
+      capturedRequest = JSON.parse(init.body);
       return new Response(
         JSON.stringify({
           id: 'synthetic-handoff',
@@ -507,6 +535,25 @@ test('natural existing-item handoff survives deferred post, one injected provide
     signal: new AbortController().signal,
     maxCostMicros: 100,
   });
+  const request = capturedRequest;
+  const supplied = JSON.parse(request.input).context;
+  assert.equal(supplied.roleplayPolicy, g.storyDirectorRoleplayPolicy);
+  assert.equal(supplied.resolutionPolicy, g.storyDirectorResolutionVersion);
+  assert.match(
+    request.instructions,
+    /Write the successful candidate result, not an unconfirmed intention/,
+  );
+  assert.match(
+    request.instructions,
+    /ordinary current roleplay does not require a canon citation/i,
+  );
+  assert.equal(supplied.director.confirmedTurns[0].narration, oldHistory.narration);
+  assert.match(request.instructions, /item_custody uses a named carried item for a handoff/);
+  assert.match(request.instructions, /not a command vocabulary/);
+  assert.match(
+    request.instructions,
+    /Fictional coins, trades and services never mutate Sparks, Dreams, wallets or payment state/,
+  );
   assert.equal(generated.failureCode, undefined);
   assert.equal(calls, 1);
   const result = g.applyStoryTurnProposal(state, 'alice', worldInput, turnId, generated.proposal);
