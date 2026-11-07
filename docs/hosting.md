@@ -167,9 +167,10 @@ Vercel web deployments require two server-only, non-secret configuration values:
   credentials, path, query or fragment is allowed. The entire list fails closed
   if any entry is invalid, empty, over 16 entries, or over 4096 characters.
 
-For this deployment the API still uses `https://dreamwalk-rho.vercel.app` as
-`WEB_ORIGIN`, and Vercel must use that same `API_WEB_ORIGIN`. Adding or selecting
-a custom domain does not change this contract. `VERCEL_PROJECT_PRODUCTION_URL`
+Since 2026-11-07 the canonical origin is `https://www.dreamwalk.online`: the API
+`WEB_ORIGIN` and the Vercel `API_WEB_ORIGIN` are both set to it (the apex domain
+redirects to `www`; `dreamwalk-rho.vercel.app` stays only in `WEB_ALLOWED_ORIGINS`).
+The two values must always be identical. `VERCEL_PROJECT_PRODUCTION_URL`
 is deliberately ignored for both backend trust and browser admission. On Vercel,
 missing or invalid explicit configuration fails closed; there is no fallback to
 `WEB_ORIGIN`, a primary platform domain, or a caller header.
@@ -198,5 +199,42 @@ Vercel deployment protection remains separate and unchanged.
 
 Previews using the production API share real accounts, stories and balances;
 they are not an isolated sandbox. Cookie sessions remain host-specific. Google
-OAuth callbacks, redirects and mail links still derive from API `WEB_ORIGIN`;
-restoring Origin protection does not migrate them to the new domain.
+OAuth callbacks, redirects and mail links derive from API `WEB_ORIGIN`, so they now
+use `https://www.dreamwalk.online`. Sessions created on the old vercel.app host do
+not carry over.
+
+### Changing the canonical origin (lesson from 2026-11-07)
+
+1. Change API `WEB_ORIGIN` (Railway) and web `API_WEB_ORIGIN` (Vercel) to the same
+   exact HTTPS origin. Railway redeploys the API on every variable change and the
+   API is briefly unavailable.
+2. Create a new Vercel production deployment. A redeploy alone is not enough:
+   **new production deployments are not automatically assigned to the custom
+   domains** of this project. Assign `www.dreamwalk.online` and the vercel.app
+   alias to the new deployment, or promote it in the dashboard.
+3. Verify with a real mutation from a browser, and check the API HTTP logs: while
+   the live deployment still carries the old `API_WEB_ORIGIN`, every POST is
+   rejected with 403 in a few milliseconds while GET requests succeed, which looks
+   like a login that works but cannot save anything.
+
+Rollback: reassign the aliases to the previous deployment and restore both origin
+variables together.
+
+## Verified email and Google sign-in (configured 2026-11-07)
+
+Railway API variables, names only; values are secrets or deployment-specific and
+are managed in the platform dashboard: `BREVO_API_KEY`, `BREVO_FROM`,
+`GOOGLE_CLIENT_ID`, `GOOGLE_CLIENT_SECRET`. Brevo and Google settings must be set
+as complete pairs, otherwise the API refuses to start (a missing `BREVO_FROM` with
+a present key crashed startup during rollout). Do not set `SMTP_*` together with
+Brevo.
+
+- Brevo key: API key with only **Transactional email** permission, not the SMTP
+  key. Sender `noreply@dreamwalk.online` on the authenticated domain
+  `dreamwalk.online` (DKIM and DMARC records in GoDaddy DNS).
+- Google OAuth web client with redirect URI
+  `https://www.dreamwalk.online/api/v1/auth/google/callback` and only the
+  `openid email profile` scopes.
+- `AUTH_EMAIL_VERIFICATION_REQUIRED` stays off until real delivery is confirmed.
+  Real inbox delivery and the Google callback are verified by the owner in a
+  browser, not by this repository's synthetic tests.
