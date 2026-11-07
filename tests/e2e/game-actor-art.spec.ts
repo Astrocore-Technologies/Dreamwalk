@@ -145,6 +145,11 @@ test('a touch tap on a character opens the art window on a phone-sized screen', 
   const box = (await artWindow.boundingBox())!;
   expect(box.x).toBeGreaterThanOrEqual(0);
   expect(box.x + box.width).toBeLessThanOrEqual(390);
+  // The actions menu still lists every character from the map tools.
+  await artWindow.getByRole('button', { name: 'Закрыть арт персонажа', exact: true }).click();
+  await page.getByRole('button', { name: 'Действия', exact: true }).click();
+  const menu = page.getByRole('dialog', { name: 'Действия', exact: true });
+  await expect(menu.locator(`[data-map-target="${npc.id}"]`)).toBeVisible();
   await context.close();
 });
 

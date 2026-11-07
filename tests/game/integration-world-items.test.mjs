@@ -419,6 +419,14 @@ await test(
       await canvas.scrollIntoViewIfNeeded();
       const npcPoint = await point(3.5, 3.5);
       await page.touchscreen.tap(npcPoint.x, npcPoint.y);
+      // A touch tap on a character opens its compact art window; the actions menu
+      // (items, exits and every character) stays available from the map tools.
+      await page
+        .getByTestId('actor-art-window')
+        .getByRole('heading', { name: 'Host', exact: true })
+        .waitFor();
+      await page.getByRole('button', { name: 'Close character art', exact: true }).click();
+      await page.getByRole('button', { name: 'Actions', exact: true }).click();
       await page
         .getByRole('dialog', { name: 'Actions', exact: true })
         .getByText('Host', { exact: true })
