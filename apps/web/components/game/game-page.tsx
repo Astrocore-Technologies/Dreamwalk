@@ -423,6 +423,24 @@ function CampaignRoom({ campaignId }: { campaignId: string }) {
             onInspectNpc={setInspectedNpcId}
             onAction={act}
             onApproach={approach}
+            campaignId={campaignId}
+            selectOnTap={!(p.turn && p.map.spatialMode !== 'location_only')}
+            onTalkNpc={(npcId) => {
+              const npc = p.entities.find((entity) => entity.kind === 'npc' && entity.id === npcId);
+              if (!npc || npcUnavailable(npc)) return;
+              if (
+                (!p.turn || p.map.spatialMode === 'location_only') &&
+                !controlsDisabled &&
+                !storyBusy
+              )
+                setRecipient({ id: npc.id, label: npc.label || t('NPC') });
+              requestAnimationFrame(() => {
+                const input = document.querySelector<HTMLTextAreaElement>(
+                  '[data-testid="unified-story"] textarea',
+                );
+                if (input && !input.disabled) input.focus({ preventScroll: true });
+              });
+            }}
             onSelectNpc={(npcId) => {
               if (p.turn && p.map.spatialMode !== 'location_only') {
                 setInspectedNpcId(npcId);

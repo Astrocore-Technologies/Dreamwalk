@@ -31,7 +31,8 @@ Backend-only variables (Railway API service, never `NEXT_PUBLIC_*` or Vercel web
 
 - `BREVO_API_KEY`: transactional API key from the owner's Brevo account.
 - `BREVO_FROM`: an email sender accepted/verified by that Brevo account.
-- `WEB_ORIGIN`: canonical HTTPS web origin, currently the production vercel.app URL.
+- `WEB_ORIGIN`: canonical HTTPS web origin, currently `https://www.dreamwalk.online`
+  (must equal the Vercel `API_WEB_ORIGIN`; see `hosting.md`).
 - `AUTH_EMAIL_VERIFICATION_REQUIRED=true`: only after an authorized real delivery test.
 
 Do not configure SMTP and Brevo simultaneously. Existing `SMTP_HOST`, `SMTP_PORT`,
@@ -44,7 +45,8 @@ recipient or verification token is logged.
 The free provider allocation and shared-sender eligibility are external policies,
 not code guarantees. A vercel.app URL is not an owned sender domain. Brevo may offer
 temporary sender rewriting; the actual account must be activated and the sender
-accepted. Later authenticate an owned domain for more reliable delivery.
+accepted. The owned domain `dreamwalk.online` was authenticated in Brevo on
+2026-11-07 (DKIM and DMARC), with the sender `noreply@dreamwalk.online`.
 
 A 201 response means **provider accepted the request**, not that the email reached
 the inbox. Confirm arrival (including spam), open the link, confirm once, and check
@@ -60,8 +62,8 @@ client with the exact authorized redirect:
 
 `https://<canonical-web-host>/api/v1/auth/google/callback`
 
-Use the site's canonical Vercel hostname through the existing ingress proxy, not the
-Railway hostname. For local development use the matching localhost origin separately.
+Use the canonical web host (`www.dreamwalk.online`) through the existing ingress
+proxy, not the Railway hostname. For local development use the matching localhost origin separately.
 Configure consent/branding and audience for the intended public launch; no Gmail,
 Drive or other mail-reading scopes are needed (`openid email profile` only).
 

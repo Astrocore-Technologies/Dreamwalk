@@ -6,6 +6,16 @@ import {
   NPC_PLACEHOLDERS,
   NPC_SILHOUETTE_VARIANTS,
 } from './npc-silhouettes';
+import {
+  actorTokenKey,
+  drawActorToken,
+  tokenKind,
+  TOKEN_DISPLAY_SCALE,
+  TOKEN_TEXTURE_SIDE,
+  type TokenKind,
+} from './actor-token';
+import { ActorArtWindow } from './actor-art-window';
+import { ACTOR_PORTRAIT_RECHECK_MS, actorPortraitUrl, decodeActorPortrait } from './actor-portrait';
 import { intersectsViewport, rendererActivity } from './renderer-activity';
 import { sceneClick } from './scene-input';
 import { entityLayout, containsScenePoint } from './scene-geometry';
@@ -38,6 +48,12 @@ type GameCanvasProps = {
   onMove: (point: GamePoint) => void;
   onSelectNpc: (npcId: string) => void;
   onInspectNpc?: (npcId: string) => void;
+  /** Needed for the authorized player portrait endpoint; without it players show the bust. */
+  campaignId?: string;
+  /** Tapping a character always opens its art; false keeps the tap from also selecting it. */
+  selectOnTap?: boolean;
+  /** Same action as the inspection card's Talk button. Defaults to selecting the NPC. */
+  onTalkNpc?: (npcId: string) => void;
   onAction?: (action: GameAction) => void;
   onApproach?: (point: GamePoint) => void;
   onStop: () => void;
@@ -70,6 +86,9 @@ function PositionedGameCanvas({
   onMove,
   onSelectNpc,
   onInspectNpc,
+  campaignId,
+  selectOnTap = true,
+  onTalkNpc,
   onAction,
   onApproach,
   onStop,
@@ -90,6 +109,20 @@ function PositionedGameCanvas({
   const host = useRef<HTMLDivElement>(null);
   const coordinateRulers = useRef<HTMLDivElement>(null);
   const [pointedCell, setPointedCell] = useState<(GamePoint & { mapId: string }) | null>(null);
+  const [artActor, setArtActor] = useState<{ id: string; mapId: string } | null>(null);
+  const showArt = (id: string) => {
+    setMenu(null);
+    setInventoryOpen(false);
+    setArtActor({ id, mapId: projection.map.id });
+  };
+  const hideArt = () => setArtActor(null);
+  // Opening the full inspection card replaces the compact art window.
+  const inspectNpc = onInspectNpc
+    ? (id: string) => {
+        setArtActor(null);
+        onInspectNpc(id);
+      }
+    : undefined;
   const latest = useRef({
     projection,
     art,
@@ -97,6 +130,10 @@ function PositionedGameCanvas({
     onMove,
     onSelectNpc,
     onInspectNpc,
+    campaignId,
+    selectOnTap,
+    onShowArt: showArt,
+    onHideArt: hideArt,
     disabled,
     reducedMotion,
   });
@@ -119,9 +156,14 @@ function PositionedGameCanvas({
       onMove,
       onSelectNpc,
       onInspectNpc,
+      campaignId,
+      selectOnTap,
+      onShowArt: showArt,
+      onHideArt: hideArt,
       disabled,
       reducedMotion: reducedMotion || systemReducedMotion,
     };
+    // showArt only calls stable state setters and reads the current map id.
   }, [
     projection,
     art,
@@ -129,6 +171,8 @@ function PositionedGameCanvas({
     onMove,
     onSelectNpc,
     onInspectNpc,
+    campaignId,
+    selectOnTap,
     disabled,
     reducedMotion,
     systemReducedMotion,
@@ -260,6 +304,7 @@ function PositionedGameCanvas({
       const openMenu = (point: { x: number; y: number }, screen: { x: number; y: number }) => {
         const ids = targetsAt(point),
           p = latest.current.projection;
+        if (ids.length) latest.current.onHideArt();
         setMenu(
           ids.length
             ? {
@@ -383,6 +428,108 @@ function PositionedGameCanvas({
       const artRequests = new Map<string, AbortController>();
       const retryArtAt = new Map<string, number>();
       let artKey = '';
+      // Round actor tokens: one small canvas texture per role and pinned portrait revision.
+      const tokenTextures = new Map<string, InstanceType<typeof Texture>>();
+      // Player hero portraits come from an authorized per-actor endpoint, rechecked
+      // periodically so a withdrawn portrait or revoked access does not linger.
+      const actorPortraits = new Map<
+        string,
+        { surface?: HTMLCanvasElement; key?: string; checkedAt: number; pending: boolean }
+      >();
+      const actorPortraitRequests = new Set<AbortController>();
+      const requestActorPortrait = (actorId: string) => {
+        const url = actorPortraitUrl(latest.current.campaignId, actorId);
+        if (!url) return;
+        const now = Date.now();
+        const known = actorPortraits.get(actorId);
+        if (known && (known.pending || now - known.checkedAt < ACTOR_PORTRAIT_RECHECK_MS)) return;
+        if ([...actorPortraits.values()].filter((entry) => entry.pending).length >= 4) return;
+        const entry = known ?? { checkedAt: now, pending: true };
+        entry.pending = true;
+        entry.checkedAt = now;
+        actorPortraits.set(actorId, entry);
+        const controller = new AbortController();
+        actorPortraitRequests.add(controller);
+        void (async () => {
+          try {
+            const response = await fetch(url, {
+              credentials: 'same-origin',
+              cache: 'no-store',
+              signal: controller.signal,
+            });
+            if (response.status === 404) {
+              if (entry.surface) {
+                entry.surface = undefined;
+                entry.key = undefined;
+                lastRevision = -1;
+              }
+              return;
+            }
+            if (!response.ok) return;
+            const blob = await response.blob();
+            if (blob.size > 5 * 1024 * 1024) return;
+            const key = `actor:${actorId}:${blob.size}`;
+            if (entry.key === key) return;
+            const surface = await decodeActorPortrait(blob);
+            if (disposed || controller.signal.aborted) {
+              surface.width = 0;
+              surface.height = 0;
+              return;
+            }
+            entry.surface = surface;
+            entry.key = key;
+            lastRevision = -1;
+          } catch {
+            // Keep the previous face (or the bust); the next recheck retries.
+          } finally {
+            entry.pending = false;
+            actorPortraitRequests.delete(controller);
+          }
+        })();
+      };
+      const tokenTextureFor = (
+        kind: TokenKind,
+        portrait?: { key: string; surface?: HTMLCanvasElement },
+      ) => {
+        const surface = portrait?.surface;
+        const usable = !!surface && surface.width > 0 && surface.height > 0;
+        const key = actorTokenKey(kind, usable ? portrait!.key : undefined);
+        let texture = tokenTextures.get(key);
+        if (!texture) {
+          const canvas = document.createElement('canvas');
+          canvas.width = TOKEN_TEXTURE_SIDE;
+          canvas.height = TOKEN_TEXTURE_SIDE;
+          const context = canvas.getContext('2d');
+          if (!context) return undefined;
+          drawActorToken(
+            context,
+            TOKEN_TEXTURE_SIDE,
+            kind,
+            usable
+              ? { source: surface!, width: surface!.width, height: surface!.height }
+              : undefined,
+          );
+          texture = Texture.from(canvas);
+          tokenTextures.set(key, texture);
+        }
+        return texture;
+      };
+      // The authorized, visible art list changes only with the projection or art payload.
+      let sceneArtFor: [unknown, unknown, unknown] | null = null;
+      let sceneArtCache: VisibleArtBinding[] = [];
+      const sceneArt = () => {
+        const state = latest.current;
+        if (
+          !sceneArtFor ||
+          sceneArtFor[0] !== state.projection ||
+          sceneArtFor[1] !== state.art ||
+          sceneArtFor[2] !== state.illustration
+        ) {
+          sceneArtFor = [state.projection, state.art, state.illustration];
+          sceneArtCache = canvasSceneArt(state.projection, state.art, state.illustration);
+        }
+        return sceneArtCache;
+      };
       const oldCleanup = cleanup;
       let resourcesCleaned = false;
       cleanup = () => {
@@ -397,6 +544,16 @@ function PositionedGameCanvas({
         for (const texture of itemTextures.values()) texture.destroy(true);
         for (const texture of artTextures.values()) texture.destroy(true);
         artTextures.clear();
+        for (const texture of tokenTextures.values()) texture.destroy(true);
+        tokenTextures.clear();
+        for (const controller of actorPortraitRequests) controller.abort();
+        actorPortraitRequests.clear();
+        for (const entry of actorPortraits.values())
+          if (entry.surface) {
+            entry.surface.width = 0;
+            entry.surface.height = 0;
+          }
+        actorPortraits.clear();
         for (const surface of artSurfaces.values()) {
           surface.width = 0;
           surface.height = 0;
@@ -587,17 +744,56 @@ function PositionedGameCanvas({
       world.on('pointertap', (event) => {
         if (event.button !== 0) return;
         const state = latest.current;
+        // Tapping the map dismisses the art window; a character tap below reopens it.
+        state.onHideArt();
         const local = world.toLocal(event.global);
         pointToCell(local);
         const hits = targetsAt(local);
+        const itemOrExit = hits.some(
+          (id) =>
+            state.projection.entities.find((e) => e.id === id)?.kind === 'item' ||
+            id.startsWith('exit:'),
+        );
+        // A character token selects the NPC (as before) and opens its art. It never
+        // moves the player, and items/exits sharing the cell keep their action menu.
+        const actorHit = itemOrExit
+          ? undefined
+          : state.projection.entities.find(
+              (e) => hits.includes(e.id) && (e.kind === 'npc' || e.kind === 'player'),
+            );
+        if (actorHit) {
+          setMenu(null);
+          if (
+            actorHit.kind === 'npc' &&
+            state.selectOnTap &&
+            !state.disabled &&
+            !npcUnavailable(actorHit)
+          )
+            state.onSelectNpc(actorHit.id);
+          state.onShowArt(actorHit.id);
+          return;
+        }
+        // Your own token is excluded from targetsAt so it cannot shadow other targets;
+        // with nothing else under the pointer, tapping it shows your own art.
+        const own = state.projection.actorId ? sprites.get(state.projection.actorId) : undefined;
         if (
-          hits.some(
-            (id) =>
-              state.projection.entities.find((e) => e.id === id)?.kind === 'item' ||
-              id.startsWith('exit:'),
-          ) ||
-          (event.pointerType === 'touch' && hits.length)
+          !hits.length &&
+          own &&
+          containsScenePoint(
+            {
+              x: own.sprite.x,
+              y: own.sprite.y,
+              width: own.sprite.width,
+              height: own.sprite.height,
+            },
+            local,
+          )
         ) {
+          setMenu(null);
+          state.onShowArt(state.projection.actorId);
+          return;
+        }
+        if (itemOrExit || (event.pointerType === 'touch' && hits.length)) {
           openMenu(local, event.global);
           return;
         }
@@ -623,6 +819,12 @@ function PositionedGameCanvas({
         const reduced = reducedMotion || resuming;
         app.ticker.maxFPS = reduced ? 30 : 60;
         synchronizeArt();
+        for (const entity of p.entities)
+          if (
+            entity.kind === 'player' &&
+            !sceneArt().some((entry) => entry.slot === `entity:${entity.id}:portrait`)
+          )
+            requestActorPortrait(entity.id);
         const key = `${p.map.id}:${p.map.revision}:${p.map.width}:${p.map.height}:${p.map.sceneProfile || ''}:${JSON.stringify(p.map.composition)}`;
         if (key !== mapKey) {
           mapKey = key;
@@ -711,7 +913,25 @@ function PositionedGameCanvas({
                 (entry) => entry.slot === `entity:${entity.id}:object:default`,
               );
             const boundTexture = binding && artTextures.get(binding.url);
-            record.animated = !!(entity.characterAnimation && boundTexture);
+            // Characters are shown as a round face frame instead of a small full-body sprite.
+            let portrait: { key: string; surface?: HTMLCanvasElement } | undefined;
+            if (entity.kind === 'npc' || entity.kind === 'player') {
+              const pinned = sceneArt().find(
+                (entry) => entry.slot === `entity:${entity.id}:portrait`,
+              );
+              if (pinned)
+                portrait = { key: pinned.revisionId, surface: artSurfaces.get(pinned.url) };
+              else {
+                const loaded = actorPortraits.get(entity.id);
+                if (loaded?.surface && loaded.key)
+                  portrait = { key: loaded.key, surface: loaded.surface };
+              }
+            }
+            const token =
+              entity.kind === 'npc' || entity.kind === 'player'
+                ? tokenTextureFor(tokenKind(entity, p.actorId), portrait)
+                : undefined;
+            record.animated = !token && !!(entity.characterAnimation && boundTexture);
             record.sprite.tint = npcUnavailable(entity)
               ? publicLifeState(entity) === 'dead'
                 ? 0x888888
@@ -736,6 +956,7 @@ function PositionedGameCanvas({
               record.animatedTexture = undefined;
               record.animationBase = undefined;
               record.sprite.texture =
+                token ||
                 boundTexture ||
                 (entity.kind === 'npc'
                   ? npcTextures.get(npcSilhouetteKey(entity))!
@@ -747,14 +968,25 @@ function PositionedGameCanvas({
               record.sprite.width = tile;
               record.sprite.height = boundTexture && entity.kind === 'door' ? tile * 1.5 : tile;
             }
-            const layout = entityLayout(
+            const footprint = entityLayout(
               entity,
               p.entities,
               tile,
               record.sprite.texture.width / record.sprite.texture.height,
-              record.animated ||
-                (!!boundTexture && (entity.kind === 'npc' || entity.kind === 'player')),
+              !token &&
+                (record.animated ||
+                  (!!boundTexture && (entity.kind === 'npc' || entity.kind === 'player'))),
             );
+            // A face frame is drawn (and hit-tested) slightly larger than its cell, around the
+            // same centre. The server-side footprint and occupancy are unchanged.
+            const growX = token ? (footprint.width * (TOKEN_DISPLAY_SCALE - 1)) / 2 : 0;
+            const growY = token ? (footprint.height * (TOKEN_DISPLAY_SCALE - 1)) / 2 : 0;
+            const layout = {
+              x: footprint.x - growX,
+              y: footprint.y - growY,
+              width: footprint.width + growX * 2,
+              height: footprint.height + growY * 2,
+            };
             record.sprite.width = layout.width;
             record.sprite.height = layout.height;
             record.offsetX = layout.x - entity.x * tile;
@@ -807,6 +1039,17 @@ function PositionedGameCanvas({
               record.animatedTexture?.destroy(false);
               sprites.delete(id);
             }
+          for (const [id, entry] of actorPortraits)
+            if (!present.has(id) && !entry.pending) {
+              if (entry.surface) {
+                entry.surface.width = 0;
+                entry.surface.height = 0;
+              }
+              actorPortraits.delete(id);
+            }
+          element.dataset.actorPortraits = String(
+            [...actorPortraits.values()].filter((entry) => !!entry.surface).length,
+          );
           element.dataset.renderedPlayers = String(
             p.entities.filter((entity) => entity.kind === 'player' && sprites.has(entity.id))
               .length,
@@ -977,6 +1220,22 @@ function PositionedGameCanvas({
   const background = canvasSceneArt(projection, art, illustration).find(
     (entry) => entry.slot === `map:${projection.map.id}:background`,
   );
+  const artEntity =
+    artActor && artActor.mapId === projection.map.id
+      ? projection.entities.find(
+          (entity) =>
+            entity.id === artActor.id && (entity.kind === 'npc' || entity.kind === 'player'),
+        )
+      : undefined;
+  const artPortrait = artEntity
+    ? canvasSceneArt(projection, art, illustration).find(
+        (entry) => entry.slot === `entity:${artEntity.id}:portrait`,
+      )
+    : undefined;
+  const artLifeState = artEntity ? publicLifeState(artEntity) : 'conscious';
+  useEffect(() => {
+    setArtActor(null);
+  }, [projection.map.id]);
   const explicitStop = () => {
     if (!latest.current.disabled && !planning) onStop();
   };
@@ -1008,7 +1267,7 @@ function PositionedGameCanvas({
                   type="button"
                   key={entity.id}
                   data-life-state={state}
-                  onClick={() => onInspectNpc?.(entity.id)}
+                  onClick={() => inspectNpc?.(entity.id)}
                 >
                   {entity.label || entity.id}: {turnText(state)}
                 </button>
@@ -1061,8 +1320,46 @@ function PositionedGameCanvas({
             onAction={(action) => onAction?.(action)}
             onClose={() => setMenu(null)}
             onSay={onSelectNpc}
-            onInspect={onInspectNpc}
+            onInspect={inspectNpc}
             onApproach={onApproach ?? onMove}
+          />
+        )}
+        {artEntity && (
+          <ActorArtWindow
+            key={artEntity.id}
+            name={
+              artEntity.label ||
+              (artEntity.kind === 'npc'
+                ? t('NPC')
+                : artEntity.id === projection.actorId
+                  ? turnText('artYou')
+                  : turnText('artPlayer'))
+            }
+            kind={
+              artEntity.kind === 'npc'
+                ? 'npc'
+                : artEntity.id === projection.actorId
+                  ? 'self'
+                  : 'player'
+            }
+            portraitUrl={
+              artPortrait
+                ? artPreviewUrl(artPortrait.url)
+                : artEntity.kind === 'player'
+                  ? actorPortraitUrl(campaignId, artEntity.id)
+                  : undefined
+            }
+            role={artEntity.publicProfile?.role || artEntity.supportingNpc?.roleLabel}
+            lifeState={artLifeState !== 'conscious' ? turnText(artLifeState) : undefined}
+            canTalk={artEntity.kind === 'npc' && !disabled && !npcUnavailable(artEntity)}
+            onTalk={() => {
+              (onTalkNpc ?? onSelectNpc)(artEntity.id);
+              setArtActor(null);
+            }}
+            onDetails={
+              artEntity.kind === 'npc' && inspectNpc ? () => inspectNpc(artEntity.id) : undefined
+            }
+            onClose={() => setArtActor(null)}
           />
         )}
 
