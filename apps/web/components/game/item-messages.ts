@@ -30,9 +30,9 @@ export const itemMessages = {
   transition: ['Перейти', 'Enter', 'Перейти'],
   knock: ['Постучать', 'Knock', 'Постукати'],
   help: [
-    'ПКМ по персонажу или предмету — действия. На сенсорном экране коснись предмета или персонажа.',
-    'Right-click a character or item for actions. On touch screens, tap the item or character.',
-    'ПКМ по персонажу або предмету — дії. На сенсорному екрані торкнися предмета чи персонажа.',
+    'Нажми на персонажа — откроется его арт. ПКМ по персонажу или предмету — действия; на сенсорном экране коснись предмета или кнопки «…».',
+    'Tap a character to see their art. Right-click a character or item for actions; on touch screens, tap an item or the “…” button.',
+    'Торкнись персонажа — відкриється його арт. ПКМ по персонажу або предмету — дії; на сенсорному екрані торкнися предмета або кнопки «…».',
   ],
   unavailable: ['Сейчас недоступно', 'Currently unavailable', 'Зараз недоступно'],
   actions: ['Действия', 'Actions', 'Дії'],

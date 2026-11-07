@@ -33,7 +33,18 @@ test('only authenticated same-origin immutable revision routes become image sour
   ])
     assert.equal(artPreviewUrl(unsafe), undefined);
 });
-test('scene art admits visible player sprites while excluding portraits, hidden actors/maps and inactive doors', () => {
+test('hidden actors never admit a portrait into the scene', () => {
+  const projection = { map: { id: 'courtyard' }, entities: [{ id: 'keeper', kind: 'npc' }] };
+  assert.deepEqual(
+    visibleSceneArt(projection, [
+      entry('entity:keeper:portrait'),
+      entry('entity:hidden:portrait'),
+      entry('entity:hidden-player:portrait'),
+    ]).map((x) => x.slot),
+    ['entity:keeper:portrait'],
+  );
+});
+test('scene art admits portraits and sprites of visible actors only, excluding hidden actors/maps and inactive doors', () => {
   const projection = {
     map: { id: 'courtyard' },
     entities: [
@@ -59,8 +70,10 @@ test('scene art admits visible player sprites while excluding portraits, hidden 
     [
       'map:courtyard:background',
       'entity:keeper:sprite',
+      'entity:keeper:portrait',
       'entity:door:object:closed',
       'entity:player:sprite',
+      'entity:player:portrait',
     ],
   );
   assert.deepEqual(

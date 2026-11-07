@@ -26,8 +26,13 @@ export function visibleSceneArt(projection: ArtProjection, art: VisibleArtBindin
           (layer) => entry.slot === `map:${projection.map.id}:layer:${layer.id}`,
         )) ||
       projection.entities.some((entity) => {
+        // The round actor token and its art window both show the portrait, but only
+        // for an actor that is currently visible in this projection.
         if (entity.kind === 'npc' || entity.kind === 'player')
-          return entry.slot === `entity:${entity.id}:sprite`;
+          return (
+            entry.slot === `entity:${entity.id}:sprite` ||
+            entry.slot === `entity:${entity.id}:portrait`
+          );
         if (entity.kind === 'item') return entry.slot === `entity:${entity.id}:object:default`;
         if (entity.kind === 'door') {
           const active = `entity:${entity.id}:object:${entity.open ? 'open' : 'closed'}`;

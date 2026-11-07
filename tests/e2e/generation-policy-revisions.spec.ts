@@ -1312,8 +1312,19 @@ for (const locale of ['uk', 'en', 'ru'] as const)
 
     const npcPoint = await cellPoint(npc.x, npc.y);
     await page.mouse.click(npcPoint.x, npcPoint.y);
-    await expect(inspection.getByRole('heading')).toHaveText(npcLabel);
+    // A tap opens the compact art window; the full card stays behind "Inspect".
+    const artWindow = page.getByTestId('actor-art-window');
+    await expect(artWindow.getByRole('heading')).toHaveText(npcLabel);
     expect(f.moves).toHaveLength(0);
+    await expect(inspection).toHaveCount(0);
+    await artWindow
+      .getByRole('button', {
+        name: { ru: 'Осмотреть', en: 'Inspect', uk: 'Оглянути' }[locale],
+        exact: true,
+      })
+      .click();
+    await expect(inspection.getByRole('heading')).toHaveText(npcLabel);
+    await expect(artWindow).toHaveCount(0);
     await closeInspection.click();
     await page.mouse.click(npcPoint.x, npcPoint.y, { button: 'right' });
     await expect(page.locator(`[data-map-target="${npc.id}"]`)).toBeVisible();

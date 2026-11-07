@@ -113,7 +113,9 @@ test('unavailable NPCs remain inspectable on the map with localized lifecycle an
   assert.match(menu, /onInspect\?\.\(e.id\)/);
   const canvas = await read('game-canvas.tsx');
   assert.match(canvas, /projection.entities.filter\(npcUnavailable\)/);
-  assert.match(canvas, /onInspectNpc\?\.\(entity.id\)/);
+  // The badge opens the full card through the wrapper that also closes the compact art window.
+  assert.match(canvas, /inspectNpc\?\.\(entity.id\)/);
+  assert.match(canvas, /onInspectNpc\(id\)/);
   assert.match(canvas, /record.sprite.tint = npcUnavailable\(entity\)/);
   assert.match(canvas, /present.add\(entity.id\)/);
   const inspection = await read('npc-public-inspection.tsx');

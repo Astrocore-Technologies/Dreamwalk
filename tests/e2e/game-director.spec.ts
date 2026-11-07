@@ -314,7 +314,8 @@ test('two realtime players coauthor committed evolving scenes, travel and retain
     ).toBe(true);
     await travel(owner, id, originalMap);
     await travel(owner, id, first.sceneId);
-    await expect(owner.locator('[data-art-loaded]')).toHaveAttribute('data-art-loaded', '1', {
+    // The scene background plus the NPC portrait that now also fills its round face token.
+    await expect(owner.locator('[data-art-loaded]')).toHaveAttribute('data-art-loaded', '2', {
       timeout: 15000,
     });
     await prepare(guest, waitingText);
@@ -326,7 +327,7 @@ test('two realtime players coauthor committed evolving scenes, travel and retain
         page.getByTestId('story-feed').locator('[data-story-kind="narration"]'),
       ).toHaveCount(3);
     await expect(owner.getByTestId('game-position')).toHaveAttribute('data-map-id', first.sceneId);
-    await expect(owner.locator('[data-art-loaded]')).toHaveAttribute('data-art-loaded', '1', {
+    await expect(owner.locator('[data-art-loaded]')).toHaveAttribute('data-art-loaded', '2', {
       timeout: 15000,
     });
     await owner.getByTestId('unified-story').scrollIntoViewIfNeeded();
