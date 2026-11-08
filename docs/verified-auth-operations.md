@@ -1,7 +1,8 @@
 # Verified email and Google login — separate opt-in rollout
 
-This change retains Dreamwalk users, sessions and PostgreSQL. Supabase remains the
-application database; this is **not** a Supabase Auth migration.
+This change retains Dreamwalk users, sessions and PostgreSQL. The application
+database is Railway PostgreSQL (see `hosting.md`); Supabase is no longer used and
+Supabase Auth was never used.
 
 ## Safe rollout boundary
 
