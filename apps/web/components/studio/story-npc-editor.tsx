@@ -6,18 +6,8 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import { npcSchema, type Adventure, type Npc } from '@dreamwalk/contracts';
 import { api, ApiError, assetUrl, errorMessage, useResource } from '@/lib/client';
 import { useT } from '@/lib/i18n';
-import {
-  Button,
-  ErrorBox,
-  Field,
-  Input,
-  Modal,
-  Panel,
-  Select,
-  Textarea,
-  UploadField,
-  Loading,
-} from '../ui';
+import { Button, ErrorBox, Field, Input, Modal, Panel, Select, UploadField, Loading } from '../ui';
+import { MarkdownField } from '../markdown';
 import { FramedPortrait } from '../framed-portrait';
 import { PortraitFrameEditor } from '../portrait-frame-editor';
 import { CharacterSpriteControl } from '../visual-authoring/character-sprite-control';
@@ -456,6 +446,7 @@ export function StoryNpcEditor({
                     label={t(label)}
                     maxLength={limit}
                     value={draft[key]}
+                    markdown={key === 'personality'}
                     templates={
                       key === 'personality'
                         ? ['personality', 'motivation', 'reaction']
@@ -464,13 +455,13 @@ export function StoryNpcEditor({
                     onChange={(value) => change(key, value)}
                   />
                 ) : (
-                  <Field key={key} label={t(label)}>
-                    <Textarea
-                      maxLength={limit}
-                      value={draft[key]}
-                      onChange={(event) => change(key, event.target.value)}
-                    />
-                  </Field>
+                  <MarkdownField
+                    key={key}
+                    label={t(label)}
+                    maxLength={limit}
+                    value={draft[key] ?? ''}
+                    onChange={(event) => change(key, event.target.value)}
+                  />
                 ),
               )}
               <UploadField

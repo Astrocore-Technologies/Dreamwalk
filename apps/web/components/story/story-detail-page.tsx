@@ -36,6 +36,8 @@ import { StoryMetrics, StoryLikeButton } from '../story-metrics';
 import { storyReturnPath, withStoryReturn } from '../story-return';
 import { AdventureLaunch } from '../game/adventure-launch';
 import { FramedPortrait } from '../framed-portrait';
+import { Markdown } from '../markdown';
+import { stripMarkdown } from '@/lib/markdown';
 export function AdventurePage({ slug }: { slug: string }) {
   const date = useDate();
   const { t: tr, locale, taxonomy } = useT();
@@ -114,7 +116,7 @@ export function AdventurePage({ slug }: { slug: string }) {
             {a.author.handle}
             <ArrowUpRight size={14} />
           </Link>
-          <p className="sd-story-synopsis">{text.synopsis}</p>
+          <p className="sd-story-synopsis">{stripMarkdown(text.synopsis)}</p>
           <StoryMetrics adventure={a} />
           <div className="sd-story-tags">
             {selectAdventureTags(a, locale, tagDefinitions.data || []).map((tag, index) => (
@@ -233,7 +235,7 @@ export function AdventurePage({ slug }: { slug: string }) {
                         <span className="muted">{selectNpcText(n, locale).role}</span>
                       </div>
                       {selectNpcText(n, locale).description && (
-                        <p>{selectNpcText(n, locale).description}</p>
+                        <Markdown text={selectNpcText(n, locale).description} />
                       )}
                       {selectNpcText(n, locale).greeting && (
                         <p>«{selectNpcText(n, locale).greeting}»</p>
@@ -249,7 +251,7 @@ export function AdventurePage({ slug }: { slug: string }) {
                 <span>{tr('За порогом истории')}</span>
                 <ChevronDown size={24} aria-hidden="true" />
               </summary>
-              <p className="prose">{text.synopsis}</p>
+              <Markdown className="prose" text={text.synopsis} />
             </details>
             {a.access !== 'invited' && (
               <details className="sd-story-versions">

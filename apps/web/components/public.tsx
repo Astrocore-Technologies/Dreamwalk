@@ -13,6 +13,7 @@ import { useState, useEffect } from 'react';
 import { ArrowUpRight, UsersRound, Search, SlidersHorizontal } from 'lucide-react';
 import { useResource, coverUrl, assetUrl, type Adventure } from '@/lib/client';
 import { Badge, Button, Empty, ErrorBox, Input, Loading, Select } from './ui';
+import { stripMarkdown } from '@/lib/markdown';
 function discoveryCover(adventure: Adventure) {
   // Custom uploads retain their authenticated asset URL and access checks.
   if (adventure.coverAssetId) return coverUrl(adventure);
@@ -61,7 +62,7 @@ export function AdventureCard({
           {adventure.author?.handle || 'Dreamwalk Studio'}
         </div>
         {adventure.visibility === 'private' && <Badge>{tr('Приватный')}</Badge>}
-        <p>{text.synopsis}</p>
+        <p>{stripMarkdown(text.synopsis)}</p>
         <StoryMetrics adventure={adventure} />
         <div className="card-meta">
           <span>

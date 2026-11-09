@@ -32,7 +32,7 @@ test('public detail never renders the private author world even in the owner pre
     (await read('apps/web/components/public.tsx')) +
     (await read('apps/web/components/story/story-detail-page.tsx'));
   assert.doesNotMatch(publicUi, /a\.content(?:\?|)\.world/);
-  assert.match(publicUi, /className="prose">\{text\.synopsis\}/);
+  assert.match(publicUi, /<Markdown className="prose" text=\{text\.synopsis\}/);
 });
 
 test('Studio composition uses only owned story data and preserves all authoring steps', async () => {

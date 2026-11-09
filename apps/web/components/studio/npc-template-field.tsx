@@ -2,6 +2,7 @@
 import { useId, useLayoutEffect, useRef, useState } from 'react';
 import { useT } from '@/lib/i18n';
 import { Button, Textarea } from '../ui';
+import { MarkdownTextarea } from '../markdown';
 import {
   authoringText,
   insertNpcTemplate,
@@ -18,6 +19,7 @@ export function NpcTemplateField({
   maxLength,
   templates,
   disabled = false,
+  markdown = false,
 }: {
   label: string;
   value: string;
@@ -25,6 +27,8 @@ export function NpcTemplateField({
   maxLength: number;
   templates: readonly NpcTemplateKey[];
   disabled?: boolean;
+  /** Author prose that readers see formatted; spoken lines stay plain text. */
+  markdown?: boolean;
 }) {
   const { locale } = useT();
   const id = useId();
@@ -42,17 +46,32 @@ export function NpcTemplateField({
   return (
     <div ref={root} className="field">
       <label htmlFor={id}>{label}</label>
-      <Textarea
-        id={id}
-        aria-describedby={`${id}-hint ${id}-status`}
-        disabled={disabled}
-        value={value}
-        maxLength={maxLength}
-        onChange={(event) => {
-          setError('');
-          onChange(event.target.value);
-        }}
-      />
+      {markdown ? (
+        <MarkdownTextarea
+          id={id}
+          label={label}
+          aria-describedby={`${id}-hint ${id}-status`}
+          disabled={disabled}
+          value={value}
+          maxLength={maxLength}
+          onChange={(event) => {
+            setError('');
+            onChange(event.target.value);
+          }}
+        />
+      ) : (
+        <Textarea
+          id={id}
+          aria-describedby={`${id}-hint ${id}-status`}
+          disabled={disabled}
+          value={value}
+          maxLength={maxLength}
+          onChange={(event) => {
+            setError('');
+            onChange(event.target.value);
+          }}
+        />
+      )}
       <div
         className={styles.buttons}
         role="group"
