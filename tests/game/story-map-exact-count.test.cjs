@@ -213,14 +213,17 @@ test('exact image count, accepted quote and restarted dispatch use one identical
       (p) => compiled.maps.tower.spatialGrounding.rows[p.y][p.x] === '.',
     ),
   );
+  // Model-chosen spawn coordinates are ignored; the server places them on observed open floor.
   const unsafe = structuredClone(proposal);
   unsafe.rooms[0].spawns[0] = { x: 2, y: 8 };
-  const repaired = compileStoryPlan(source, unsafe).playable.maps.tower;
-  assert.deepEqual(repaired.spawns.slice(1), unsafe.rooms[0].spawns.slice(1));
-  assert.ok(repaired.spawns.every((p) => repaired.spatialGrounding.rows[p.y][p.x] === '.'));
-  const noSafeAnchor = structuredClone(unsafe);
-  noSafeAnchor.rooms[0].spawns = [2, 3, 4, 5].map((x) => ({ x, y: 8 }));
-  assert.throws(() => compileStoryPlan(source, noSafeAnchor), /MAP_IMAGE_UNSAFE_SPAWN/);
+  const placed = compileStoryPlan(source, unsafe).playable.maps.tower;
+  assert.equal(placed.spawns.length, 4);
+  assert.ok(placed.spawns.every((p) => placed.spatialGrounding.rows[p.y][p.x] === '.'));
+  const noFloor = structuredClone(proposal);
+  noFloor.rooms[0].spatialGrounding.rows = noFloor.rooms[0].spatialGrounding.rows.map((row) =>
+    row.replace(/[.?]/g, '#'),
+  );
+  assert.throws(() => compileStoryPlan(source, noFloor), /MAP_IMAGE_UNSAFE_SPAWN/);
   source.title = 'Changed source';
   assert.throws(
     () => restarted.prepareTextRequest(source, prepared.snapshot),

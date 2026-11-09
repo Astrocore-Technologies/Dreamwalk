@@ -187,7 +187,8 @@ await test(
                     imageRevisionId: image.revisionId,
                     imageSha256: image.sha256,
                     confidence: 0.2,
-                    rows: Array(24).fill('?'.repeat(24)),
+                    // No usable floor at all: server placement cannot start a game here.
+                    rows: Array(24).fill('#'.repeat(24)),
                     landmarks: [],
                   },
                   scenePresence: {
@@ -261,7 +262,7 @@ await test(
       const proposed = await builder.state(owner.user.id, prepared.id);
       assert.equal(proposed.status, 'prepared');
       assert.equal(proposed.draft, null);
-      assert.equal(proposed.jobs[0].error_code, 'MAP_GRID_REQUIRED');
+      assert.equal(proposed.jobs[0].error_code, 'MAP_IMAGE_UNSAFE_SPAWN');
       const authoringJobs = (
         await db.query(
           'SELECT j.status,r.status AS reserve_status,j.spark_quote_id FROM live_authoring_text_jobs j JOIN generation_budget_reservations r ON r.id=j.reservation_id WHERE j.project_id=$1',
@@ -318,7 +319,25 @@ await test(
           prepared.id,
         ])
       ).rows[0].source_snapshot.source;
-      const historical = compileStoryPlan(source, generatedProposal);
+      // Only an image deliberately left unanalyzed still compiles to a location-only map.
+      const omittedImage = source.mapImages[0];
+      const historical = compileStoryPlan(
+        {
+          ...source,
+          mapImages: undefined,
+          omittedMapImages: [
+            {
+              locationId: omittedImage.locationId,
+              revisionId: omittedImage.revisionId,
+              sha256: omittedImage.sha256,
+            },
+          ],
+        },
+        {
+          ...generatedProposal,
+          rooms: generatedProposal.rooms.map(({ spatialGrounding: _grounding, ...room }) => room),
+        },
+      );
       await startApi();
       const { campaignId } = await owner.request('/game/campaigns', {
         template: 'observatory-v1',
