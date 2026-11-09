@@ -535,39 +535,43 @@ export function UnifiedStory({
             >
               <div ref={feedContent}>
                 {!feed?.entries.length && <p className={styles.status}>{h('empty')}</p>}
-                {shownEntries.map((entry, index) => (
-                  <article
-                    key={entry.id}
-                    className={`${styles.entry} ${entry.authorId === projection.actorId ? styles.player : ''} ${
-                      sameMessage(shownEntries[index - 1], entry) ? styles.joinedPrev : ''
-                    } ${sameMessage(entry, shownEntries[index + 1]) ? styles.joinedNext : ''}`}
-                    data-story-entry={entry.id}
-                    data-story-kind={entry.kind}
-                    data-story-code={entry.code}
-                    data-story-turn={entry.turnId}
-                    data-story-sequence={entry.sequence ?? 'legacy'}
-                  >
-                    <header>
-                      <strong>
-                        {entry.authorId === projection.actorId
-                          ? h('you')
-                          : entry.authorLabel ||
-                            h(
-                              entry.kind === 'narration'
-                                ? 'narrator'
-                                : entry.kind === 'outcome'
-                                  ? 'outcome'
-                                  : 'nearby',
-                            )}
-                      </strong>
-                      {!entry.legacy && entry.channel === 'whisper' && (
-                        <span className={styles.private}>{h('whisper')}</span>
-                      )}
-                      {entry.legacy && <span>{h('legacy')}</span>}
-                    </header>
-                    <p>{entryText(entry)}</p>
-                  </article>
-                ))}
+                {(feed?.entries ?? []).map((entry) => {
+                  const index = shownEntries.indexOf(entry);
+                  return (
+                    <article
+                      key={entry.id}
+                      hidden={index < 0}
+                      className={`${styles.entry} ${entry.authorId === projection.actorId ? styles.player : ''} ${
+                        sameMessage(shownEntries[index - 1], entry) ? styles.joinedPrev : ''
+                      } ${sameMessage(entry, shownEntries[index + 1]) ? styles.joinedNext : ''}`}
+                      data-story-entry={entry.id}
+                      data-story-kind={entry.kind}
+                      data-story-code={entry.code}
+                      data-story-turn={entry.turnId}
+                      data-story-sequence={entry.sequence ?? 'legacy'}
+                    >
+                      <header>
+                        <strong>
+                          {entry.authorId === projection.actorId
+                            ? h('you')
+                            : entry.authorLabel ||
+                              h(
+                                entry.kind === 'narration'
+                                  ? 'narrator'
+                                  : entry.kind === 'outcome'
+                                    ? 'outcome'
+                                    : 'nearby',
+                              )}
+                        </strong>
+                        {!entry.legacy && entry.channel === 'whisper' && (
+                          <span className={styles.private}>{h('whisper')}</span>
+                        )}
+                        {entry.legacy && <span>{h('legacy')}</span>}
+                      </header>
+                      <p>{entryText(entry)}</p>
+                    </article>
+                  );
+                })}
               </div>
             </div>
             {newEvents && (

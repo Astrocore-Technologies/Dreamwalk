@@ -418,3 +418,8 @@
 .entry.joinedPrev header {
   display: none;
 }
+
+.entry[hidden],
+:global(.game-shell) .entry[hidden] {
+  display: none;
+}
