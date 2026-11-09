@@ -13,6 +13,11 @@ const messages = {
     'Appearance (required for a hero without a portrait)',
     'Опис зовнішності (для героя обов’язковий без портрета)',
   ],
+  fromProfile: [
+    'Образ строится по полю «Внешность» этого персонажа. Заполните его и сохраните NPC.',
+    'The sprite is built from this character’s Appearance field. Fill it in and save the NPC.',
+    'Образ будується за полем «Зовнішність» цього персонажа. Заповніть його та збережіть NPC.',
+  ],
   prepare: ['Подготовить спрайт', 'Prepare sprite', 'Підготувати спрайт'],
   photo: [
     'Разрешаю использовать мой загруженный портрет как приватный референс',
@@ -106,7 +111,7 @@ export function CharacterSpriteControl({
       if (kind === 'prepare') {
         const p = (await mutate('/visual-authoring/character-sprite/prepare', {
           target,
-          ...(appearance.trim() ? { appearance: appearance.trim() } : {}),
+          ...(target.kind === 'hero' && appearance.trim() ? { appearance: appearance.trim() } : {}),
           sourcePhotoPermission: photo,
           allowOutputReuse: share,
         })) as GenerationProject;
@@ -154,13 +159,17 @@ export function CharacterSpriteControl({
       <p>{text('info')}</p>
       {!project && (
         <>
-          <Field label={text('appearance')}>
-            <Textarea
-              value={appearance}
-              onChange={(e) => setAppearance(e.target.value)}
-              maxLength={1500}
-            />
-          </Field>
+          {target.kind === 'hero' ? (
+            <Field label={text('appearance')}>
+              <Textarea
+                value={appearance}
+                onChange={(e) => setAppearance(e.target.value)}
+                maxLength={1500}
+              />
+            </Field>
+          ) : (
+            <p>{text('fromProfile')}</p>
+          )}
           <label>
             <input type="checkbox" checked={photo} onChange={(e) => setPhoto(e.target.checked)} />
             {text('photo')}
