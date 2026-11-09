@@ -177,7 +177,8 @@
   width: 100%;
   height: 100%;
   object-fit: cover;
-  object-position: center 25%;
+  /* A standing figure shows head and shoulders in the card; the head must never be cut off. */
+  object-position: center top;
 }
 .story-detail-page .sd-npc-identity h3 {
   margin: 0 0 4px;
