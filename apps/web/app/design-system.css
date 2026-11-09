@@ -41,6 +41,17 @@ html[data-theme='light'] .app-shell {
 .app-shell:not(.game-shell) .main-content:has([data-testid='home-featured']) {
   background: transparent;
 }
+/* A short page keeps its footer at the bottom of the window instead of leaving a dead strip under it. */
+.app-shell:not(.game-shell):not(.auth-shell) .workspace {
+  display: flex;
+  flex-direction: column;
+  min-height: 100vh;
+  min-height: 100dvh;
+}
+.app-shell:not(.game-shell):not(.auth-shell) .main-content {
+  flex: 1 0 auto;
+  min-height: 0;
+}
 @media (max-width: 900px) {
   .app-shell:not(.game-shell) .main-content {
     width: calc(100% - 24px);
