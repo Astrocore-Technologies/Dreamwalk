@@ -1321,6 +1321,17 @@
   object-fit: cover;
   object-position: center 30%;
 }
+.artFrame[data-full-length='true'] {
+  width: 132px;
+  aspect-ratio: 2 / 3;
+}
+.artFrame[data-full-length='true'] img {
+  object-fit: contain;
+  object-position: center bottom;
+}
+.artWindow:has(.artFrame[data-full-length='true']) {
+  grid-template-columns: 132px minmax(0, 1fr);
+}
 .artBody {
   min-width: 0;
   display: flex;

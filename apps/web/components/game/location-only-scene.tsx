@@ -60,10 +60,10 @@ export function LocationOnlyScene({
         ) : (
           <p role="status">{text('unavailable')}</p>
         )}
-        {(background?.attribution || background?.licenseLabel) && (
+        {background?.attribution && (
           <figcaption>
             {background.attribution}
-            {background.attribution && background.licenseLabel ? ' · ' : ''}
+            {background.licenseLabel ? ' · ' : ''}
             {background.licenseLabel}
           </figcaption>
         )}

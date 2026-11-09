@@ -1360,6 +1360,7 @@ function PositionedGameCanvas({
                   : undefined
             }
             portraitFrame={artPortrait ? artEntity.publicProfile?.portraitFrame : undefined}
+            fullLength={artEntity.kind === 'npc'}
             role={artEntity.publicProfile?.role || artEntity.supportingNpc?.roleLabel}
             lifeState={artLifeState !== 'conscious' ? turnText(artLifeState) : undefined}
             canTalk={artEntity.kind === 'npc' && !disabled && !npcUnavailable(artEntity)}
@@ -1422,10 +1423,10 @@ function PositionedGameCanvas({
           </button>
         </div>
       </div>
-      {background?.attribution || background?.licenseLabel ? (
+      {background?.attribution ? (
         <small>
           {background.attribution}
-          {background.attribution && background.licenseLabel ? ' · ' : ''}
+          {background.licenseLabel ? ' · ' : ''}
           {background.licenseLabel}
         </small>
       ) : projection.map.sceneProfile ? (
