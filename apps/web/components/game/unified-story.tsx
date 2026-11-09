@@ -473,6 +473,23 @@ export function UnifiedStory({
   function isShownEntry(entry: StoryFeedEntry) {
     return !(entry.kind === 'outcome' && entry.code === 'ACTION_SUCCEEDED' && !entry.text);
   }
+  const shownEntries = (feed?.entries ?? []).filter(isShownEntry);
+  // Speech and actions the same author sent in one turn are one message, not several cards.
+  function sameMessage(a?: StoryFeedEntry, b?: StoryFeedEntry) {
+    const part = (entry: StoryFeedEntry) => entry.kind === 'speech' || entry.kind === 'attempt';
+    return (
+      !!a &&
+      !!b &&
+      !!a.turnId &&
+      a.turnId === b.turnId &&
+      a.authorId === b.authorId &&
+      a.channel === b.channel &&
+      !a.legacy &&
+      !b.legacy &&
+      part(a) &&
+      part(b)
+    );
+  }
   function entryText(entry: StoryFeedEntry) {
     if (entry.text) return entry.text; // Already parsed by the server; literal stars stay literal.
     if (entry.code && entry.code in noticeLabels)
@@ -518,10 +535,12 @@ export function UnifiedStory({
             >
               <div ref={feedContent}>
                 {!feed?.entries.length && <p className={styles.status}>{h('empty')}</p>}
-                {feed?.entries.filter(isShownEntry).map((entry) => (
+                {shownEntries.map((entry, index) => (
                   <article
                     key={entry.id}
-                    className={`${styles.entry} ${entry.authorId === projection.actorId ? styles.player : ''}`}
+                    className={`${styles.entry} ${entry.authorId === projection.actorId ? styles.player : ''} ${
+                      sameMessage(shownEntries[index - 1], entry) ? styles.joinedPrev : ''
+                    } ${sameMessage(entry, shownEntries[index + 1]) ? styles.joinedNext : ''}`}
                     data-story-entry={entry.id}
                     data-story-kind={entry.kind}
                     data-story-code={entry.code}

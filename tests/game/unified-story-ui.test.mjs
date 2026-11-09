@@ -101,7 +101,8 @@ test('one primary story surface replaces competing forms and guards private reci
     new URL('../../apps/web/components/game/unified-story.tsx', import.meta.url),
     'utf8',
   );
-  assert.match(source, /feed\?\.entries.map/);
+  assert.match(source, /feed\?\.entries \?\? \[\]\)\.filter\(isShownEntry\)/);
+  assert.match(source, /sameMessage\(shownEntries\[index - 1\], entry\)/);
   assert.doesNotMatch(source, /entries.sort|dangerouslySetInnerHTML/);
   assert.match(source, /!targetValid/);
   assert.match(source, /storyTargetValid\(projection, channel, targetNpcId\)/);

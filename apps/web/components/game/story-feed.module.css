@@ -398,3 +398,23 @@
   color: var(--muted);
   font-size: 10px;
 }
+
+/* Speech and actions of one turn read as a single message: later parts join the first card. */
+.entry.joinedNext,
+:global(.game-shell) .entry.joinedNext {
+  margin-bottom: 0;
+  min-height: 0;
+  padding-bottom: 6px;
+  border-bottom: 0;
+  border-bottom-right-radius: 0;
+}
+.entry.joinedPrev,
+:global(.game-shell) .entry.joinedPrev {
+  min-height: 0;
+  padding-top: 4px;
+  border-top: 0;
+  border-top-right-radius: 0;
+}
+.entry.joinedPrev header {
+  display: none;
+}
