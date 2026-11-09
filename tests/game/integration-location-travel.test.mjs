@@ -261,18 +261,6 @@ await test(
               ),
               landmarks: [],
             },
-            spawns: [
-              { x: 4, y: 4 },
-              { x: 5, y: 4 },
-              { x: 4, y: 5 },
-              { x: 5, y: 5 },
-            ],
-            returnPoint: { x: 3, y: 3 },
-            arrivals: context.arrivals.map((arrival, index) => ({
-              id: arrival.id,
-              x: 4 + (index % 5) * 3,
-              y: 7 + Math.floor(index / 5) * 3,
-            })),
           };
           return new Response(
             JSON.stringify({
@@ -712,12 +700,20 @@ await test(
             groundingBefore.map((n) => n + 1),
           );
           const arrived = live.state.entities[actor];
-          assert.deepEqual({ x: arrived.x, y: arrived.y }, { x: 4, y: 7 });
           const actualMap = live.state.maps[arrived.mapId];
           assert.equal(actualMap.spatialGrounding.imageRevisionId, grounded.image_revision_id);
           assert.equal(actualMap.spatialGrounding.imageSha256, grounded.image_sha256);
           assert.equal(actualMap.spatialGrounding.rows[0], '?'.repeat(24));
-          assert.deepEqual(actualMap.spawns[0], { x: 4, y: 4 });
+          // The model returned only the observed grid; the server placed everyone on that floor.
+          const onFloor = (p) => actualMap.spatialGrounding.rows[p.y][p.x] === '.';
+          assert.ok(onFloor(arrived), 'the traveller stands on observed floor');
+          assert.equal(actualMap.spawns.length, 4);
+          assert.equal(new Set(actualMap.spawns.map((p) => `${p.x},${p.y}`)).size, 4);
+          assert.ok(actualMap.spawns.every(onFloor), 'spawns are observed floor');
+          assert.ok(
+            actualMap.spawns.every((p) => p.x !== arrived.x || p.y !== arrived.y),
+            'no spawn under the traveller',
+          );
           const image = (
             await db.query('SELECT status FROM image_generation_jobs WHERE id=$1', [
               prep.image_job_id,

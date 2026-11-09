@@ -29,7 +29,9 @@ import {
   travelArrivalRoster,
   applyTravelMapPlacement,
   validateTravelMapPlan,
+  planTravelPlacement,
   type TravelMapContext,
+  type TravelMapProposal,
 } from './travel-map-plan';
 export type TravelGroundingEntry = { envelope: TravelGroundingEnvelope; quote: StoryQuote };
 type Authorize = (c: PoolClient, userId: string, row: QueryResultRow) => Promise<QueryResultRow>;
@@ -364,7 +366,7 @@ export class TravelMapGrounding {
               [id],
             )
           ).rows[0];
-          const plan = validateTravelMapPlan(current.context, proposal);
+          const plan = planTravelPlacement(current.context, proposal as TravelMapProposal);
           await verifyAcceptedTravelGrounding(
             c,
             p.owner_id,
