@@ -107,6 +107,10 @@ export async function spriteFixture(db, owner, target) {
   };
   await visuals.equip(owner.user.id, pkg.id, equip);
   await visuals.equip(owner.user.id, pkg.id, equip);
+  if (target.kind === 'npc') {
+    const stored = (await db.query('SELECT data FROM npcs WHERE id=$1', [target.id])).rows[0].data;
+    assert.equal(stored.portraitAssetId, pkg.parts[0].uploadId, 'the sprite is the NPC portrait');
+  }
   return pkg;
 }
 export async function bridgeFixture(db, owner) {

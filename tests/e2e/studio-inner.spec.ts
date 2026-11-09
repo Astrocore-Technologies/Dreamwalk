@@ -143,7 +143,7 @@ test('inner story workspace preserves complete drafts while selecting locations 
     if (request.method() === 'POST' && request.url().includes('/story-builds/'))
       buildWrites.push(request.url());
   });
-  await nav.getByRole('button').nth(6).click();
+  await nav.getByRole('button').nth(5).click();
   const preparePlan = page.getByRole('button', { name: 'Prepare plan', exact: true });
   await expect(preparePlan).toBeEnabled();
   await expect(
@@ -254,7 +254,7 @@ test('inner story workspace preserves complete drafts while selecting locations 
       await page.setViewportSize(viewport);
       await preferences(page, locale, viewport.theme);
       const steps = page.locator('nav').filter({ has: page.locator('[aria-current="step"]') });
-      for (const step of [2, 4, 5, 7]) {
+      for (const step of [2, 4, 6]) {
         await steps.getByRole('button').nth(step).click();
         expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
           true,

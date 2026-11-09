@@ -90,7 +90,7 @@ test('Studio preview exposes the saved story builder outside the editor form', a
     mount > studio.indexOf('</form>'),
     'builder controls must not nest in the authoring form',
   );
-  assert.match(studio.slice(mount - 50, mount), /!isNew && step === 6/);
+  assert.match(studio.slice(mount - 50, mount), /!isNew && step === 5/);
   assert.match(
     studio.slice(mount, mount + 220),
     /adventureId=\{id\}[\s\S]*beforePrepare=\{autosave.flush\}[\s\S]*onApplied=\{refreshArtModeration\}/,
@@ -103,7 +103,7 @@ test('Studio preview exposes the saved story builder outside the editor form', a
   );
   assert.match(source, /embedded \? <h2>\{copyText\('title'\)\}<\/h2> : <h1>/);
   assert.match(source, /\{!embedded && \(\s*<Link href=/);
-  const preview = studio.slice(studio.indexOf('{step === 6 &&'), studio.indexOf('{step === 7 &&'));
+  const preview = studio.slice(studio.indexOf('{step === 5 &&'), studio.indexOf('{step === 6 &&'));
   assert.match(preview, /isNew \?/);
   assert.match(preview, /onClick=\{\(\) => void save\(\)\}/);
 });

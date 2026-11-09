@@ -14,15 +14,14 @@ test('story cards, public detail and author preview do not advertise a fixed dur
   assert.match(studio, /duration: a\.duration/);
 });
 
-test('public story boundaries panel is removed without deleting author warnings or NPC boundaries', async () => {
+test('public story boundaries panel and the studio constraints step are removed without deleting stored warnings or NPC boundaries', async () => {
   const publicUi =
     (await read('apps/web/components/public.tsx')) +
     (await read('apps/web/components/story/story-detail-page.tsx'));
   const studio = await read('apps/web/components/studio.tsx');
   const contracts = await read('packages/contracts/src/index.ts');
   assert.doesNotMatch(publicUi, /Границы истории|content\.boundaries|content\?\.boundaries/);
-  assert.match(studio, /draft\.content\.boundaries\.includes/);
-  assert.match(studio, /Все границы и предупреждения/);
+  assert.doesNotMatch(studio, /draft\.content\.boundaries\.includes|Все границы и предупреждения/);
   assert.match(contracts, /boundaries: z\.array/);
   assert.match(contracts, /duration: text\(80\)/);
   assert.match(await read('apps/web/components/studio/npc-character-copy.ts'), /Границы поведения/);
@@ -49,7 +48,6 @@ test('Studio composition uses only owned story data and preserves all authoring 
     'Локации',
     'NPC',
     'Стартовая сцена',
-    'Ограничения',
     'Просмотр',
     'Публикация',
   ])
@@ -58,10 +56,17 @@ test('Studio composition uses only owned story data and preserves all authoring 
         .slice(studio.indexOf('const steps ='), studio.indexOf('const newContent'))
         .includes(step),
     );
+  assert.match(studio, /onClick=\{\(\) => setStep\(5\)\}/);
   assert.match(studio, /onClick=\{\(\) => setStep\(6\)\}/);
-  assert.match(studio, /onClick=\{\(\) => setStep\(7\)\}/);
+  assert.doesNotMatch(
+    studio.slice(studio.indexOf('const steps ='), studio.indexOf('const newContent')),
+    /Ограничения/,
+  );
   assert.match(studio, /reload=\{reloadDraft\}/);
-  assert.match(studio, /<StoryLorebookEditor/);
+  assert.doesNotMatch(
+    studio,
+    /<StoryLorebookEditor|label=\{t\('Жанр'\)\}|label=\{t\('Сложность'\)\}/,
+  );
   assert.match(studio, /<LocationMapIntent/);
   assert.match(studio, /<StoryNpcEditor/);
 });

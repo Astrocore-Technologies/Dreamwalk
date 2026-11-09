@@ -1,6 +1,4 @@
 'use client';
-import { useT } from '@/lib/i18n';
-import { imageQualityLabel, imageSizeLabel } from '@/lib/generation-labels';
 import { ImageQuotePrice } from '../assets/image-quote-price';
 import { GenerationProgress } from './generation-progress';
 import { imageFramingEvidenceMatches } from '@dreamwalk/contracts';
@@ -10,7 +8,6 @@ import { useEffect, useRef, useState } from 'react';
 import { api, errorMessage, useClient } from '@/lib/client';
 import { useSparkCosts, SparkReceiptCost } from './sparks-cost';
 import { Button, ErrorBox, Select, Field } from '../ui';
-import { useAssetText } from '../assets/messages';
 import { useImageText } from '../assets/image-messages';
 import type { ArtRevision } from '../assets/types';
 import { artPreviewUrl } from '../assets/types';
@@ -65,13 +62,11 @@ type Props = {
 };
 export function LocationImageInline(p: Props) {
   const m = useLocationInlineText(),
-    { locale } = useT(),
     g = useImageText(),
-    a = useAssetText(),
     l = useLocationImageText(),
     { s, amount } = useSparkCosts(),
     { user } = useClient();
-  const [share, setShare] = useState(false),
+  const share = false,
     [quote, setQuote] = useState<Quoted | null>(null),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
@@ -384,12 +379,6 @@ export function LocationImageInline(p: Props) {
       data-location-art={p.locationId}
       aria-label={l('title')}
     >
-      {user?.role === 'admin' && config?.requestProfile && (
-        <small>
-          {config.requestProfile.model} · {imageSizeLabel(locale, config.requestProfile.size)} ·{' '}
-          {imageQualityLabel(locale, config.requestProfile.quality)}
-        </small>
-      )}
       <ErrorBox message={error || p.settings.configError || p.settings.live.error} />
       {binding && (
         <ImageFramingNotice
@@ -409,18 +398,6 @@ export function LocationImageInline(p: Props) {
           </p>
         )
       )}
-      <details>
-        <summary>{g('advanced')}</summary>
-        <label className={styles.check}>
-          <input
-            type="checkbox"
-            checked={share}
-            disabled={busy || p.disabled}
-            onChange={(e) => setShare(e.target.checked)}
-          />
-          {a('allowReuse')}
-        </label>
-      </details>
       <small>{g('quoteRights')}</small>
       <Button
         type="button"
