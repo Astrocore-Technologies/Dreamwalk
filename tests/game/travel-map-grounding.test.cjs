@@ -156,9 +156,9 @@ const proposalOf = (f, rows, extra = {}) => ({
     ...extra,
   },
 });
-const gridOf = (floor, special = {}) =>
+const gridOf = (floor, special = {}, other = '?') =>
   Array.from({ length: 24 }, (_, y) =>
-    Array.from({ length: 24 }, (_, x) => special[`${x},${y}`] ?? (floor(x, y) ? '.' : '?')).join(
+    Array.from({ length: 24 }, (_, x) => special[`${x},${y}`] ?? (floor(x, y) ? '.' : other)).join(
       '',
     ),
   );
@@ -174,15 +174,45 @@ test('travel placement is computed by the server from the observed floor only', 
     ['player', 'companion'],
   );
   assert.equal(new Set(plan.spawns.map((p) => `${p.x},${p.y}`)).size, 4);
-  assert.deepEqual(plan.spatialGrounding, proposal.spatialGrounding);
+  assert.equal(plan.spatialGrounding.imageRevisionId, proposal.spatialGrounding.imageRevisionId);
+  assert.equal(plan.spatialGrounding.rows[0], '?'.repeat(24), 'the border stays as observed');
+});
+test('cells the model left unknown are open floor; observed obstacles stay obstacles', () => {
+  const f = spatial(),
+    water = { '10,10': '~', '11,10': '~', '10,11': '~', '12,11': 'X' },
+    plan = planTravelPlacement(
+      f.context,
+      proposalOf(
+        f,
+        gridOf((x, y) => x >= 1 && x <= 22 && y >= 1 && y <= 22, water),
+      ),
+    ),
+    rows = plan.spatialGrounding.rows;
+  assert.equal(rows[5][5], '.');
+  for (const [key, cell] of Object.entries(water)) {
+    const [x, y] = key.split(',').map(Number);
+    assert.equal(rows[y][x], cell);
+  }
+  const unknownInterior = proposalOf(
+      f,
+      gridOf(() => false),
+    ),
+    filled = planTravelPlacement(f.context, unknownInterior).spatialGrounding.rows;
+  assert.equal(filled[12][12], '.', 'an unseen interior becomes open ground');
+  assert.equal(filled[0], '?'.repeat(24));
+  assert.equal(filled[12][0], '?');
+  assert.equal(filled[12][23], '?');
+  for (const p of [plan.returnPoint, ...plan.spawns, ...plan.arrivals])
+    assert.equal(rows[p.y][p.x], '.', `${p.x},${p.y} is open floor`);
 });
 test('self-reported confidence never blocks travel; only missing floor does', () => {
   const f = spatial();
   assert.ok(planTravelPlacement(f.context, proposalOf(f, null, { confidence: 0.05 })));
+  const planned = planTravelPlacement(f.context, proposalOf(f));
   assert.doesNotThrow(() =>
     validateTravelMapPlan(f.context, {
-      ...planTravelPlacement(f.context, proposalOf(f)),
-      spatialGrounding: { ...f.plan.spatialGrounding, confidence: 0.05 },
+      ...planned,
+      spatialGrounding: { ...planned.spatialGrounding, confidence: 0.05 },
     }),
   );
   assert.throws(
@@ -191,7 +221,7 @@ test('self-reported confidence never blocks travel; only missing floor does', ()
         f.context,
         proposalOf(
           f,
-          gridOf(() => false),
+          gridOf(() => false, {}, '#'),
         ),
       ),
     /MAP_IMAGE_UNSAFE_SPAWN/,
@@ -206,7 +236,7 @@ test('placement fails closed when the observed floor cannot hold the arrivals', 
         f.context,
         proposalOf(
           f,
-          gridOf((x, y) => x >= 4 && x <= 5 && y >= 4 && y <= 5),
+          gridOf((x, y) => x >= 4 && x <= 5 && y >= 4 && y <= 5, {}, '#'),
         ),
       ),
     /MAP_IMAGE_UNSAFE_NPC/,
@@ -219,7 +249,7 @@ test('placement fails closed when the observed floor cannot hold the arrivals', 
         solo,
         proposalOf(
           f,
-          gridOf((x, y) => y === 6 && x >= 4 && x <= 7),
+          gridOf((x, y) => y === 6 && x >= 4 && x <= 7, {}, '#'),
         ),
       ),
     /MAP_IMAGE_UNSAFE_SPAWN/,
@@ -233,6 +263,7 @@ test('placement uses the largest connected floor and anchors at an observed door
       {
         '13,17': 'D',
       },
+      '#',
     ),
     plan = planTravelPlacement(
       f.context,
