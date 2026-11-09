@@ -62,7 +62,6 @@ export function Markdown({ text, className = '' }: { text: string; className?: s
 /** A textarea with an «edit / preview» switch. The textarea stays mounted so its state is never lost. */
 export function MarkdownTextarea({
   value,
-  label,
   hint,
   ...props
 }: Omit<TextareaHTMLAttributes<HTMLTextAreaElement>, 'value'> & {
@@ -75,7 +74,7 @@ export function MarkdownTextarea({
   const [preview, setPreview] = useState(false);
   return (
     <div>
-      <div className={styles.tabs} role="group" aria-label={`${t('Режим поля')}: ${label}`}>
+      <div className={styles.tabs} role="group" aria-label={t('Режим поля')}>
         <button type="button" aria-selected={!preview} onClick={() => setPreview(false)}>
           {t('Редактирование')}
         </button>
@@ -94,7 +93,7 @@ export function MarkdownTextarea({
           className={styles.preview}
           data-testid="markdown-preview"
           role="region"
-          aria-label={`${t('Предпросмотр')}: ${label}`}
+          aria-label={t('Предпросмотр')}
         >
           {value.trim() ? (
             <Markdown text={value} />
