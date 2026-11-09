@@ -25,7 +25,7 @@ export async function normalizeStaticSprite(bytes: Buffer) {
   if (!transparent || right < left || bottom < top) throw Error('ALPHA_REQUIRED');
   const cropped = await sharp(bytes)
     .extract({ left, top, width: right - left + 1, height: bottom - top + 1 })
-    .resize({ width: 256, height: 384, fit: 'inside', withoutEnlargement: true })
+    .resize({ width: 1024, height: 1536, fit: 'inside', withoutEnlargement: true })
     .extend({ top: 3, bottom: 3, left: 3, right: 3, background: { r: 0, g: 0, b: 0, alpha: 0 } })
     .png()
     .toBuffer();
