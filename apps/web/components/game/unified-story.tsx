@@ -469,6 +469,10 @@ export function UnifiedStory({
       </ul>
     );
   }
+  // A bare «action confirmed» line adds nothing: the result is already visible in the story.
+  function isShownEntry(entry: StoryFeedEntry) {
+    return !(entry.kind === 'outcome' && entry.code === 'ACTION_SUCCEEDED' && !entry.text);
+  }
   function entryText(entry: StoryFeedEntry) {
     if (entry.text) return entry.text; // Already parsed by the server; literal stars stay literal.
     if (entry.code && entry.code in noticeLabels)
@@ -514,7 +518,7 @@ export function UnifiedStory({
             >
               <div ref={feedContent}>
                 {!feed?.entries.length && <p className={styles.status}>{h('empty')}</p>}
-                {feed?.entries.map((entry) => (
+                {feed?.entries.filter(isShownEntry).map((entry) => (
                   <article
                     key={entry.id}
                     className={`${styles.entry} ${entry.authorId === projection.actorId ? styles.player : ''}`}
