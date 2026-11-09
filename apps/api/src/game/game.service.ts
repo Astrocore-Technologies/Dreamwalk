@@ -41,6 +41,7 @@ import { semanticGameProjection } from './projection-clock';
 import { pruneNpcMemory } from './npc-retention';
 import { recordNpcMetric } from './npc-telemetry';
 import { extendContextHistory, reuseFrozenContext } from './context-history';
+import { framedPortrait } from './portrait-frame';
 import { Inject, Injectable, OnModuleDestroy, Optional } from '@nestjs/common';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import type { Request } from 'express';
@@ -3166,16 +3167,18 @@ export class GameService implements OnModuleDestroy {
         fail(404, 'NOT_FOUND', 'NOT_FOUND');
       const row = (
         await this.db.query(
-          `SELECT a.filename FROM game_member_heroes h JOIN game_members m ON m.campaign_id=h.campaign_id AND m.user_id=h.user_id JOIN users u ON u.id=h.user_id JOIN game_campaigns c ON c.id=h.campaign_id JOIN assets a ON a.id::text=h.snapshot->>'portraitAssetId' AND a.owner_id=h.user_id WHERE h.campaign_id=$1 AND m.actor_id=$2 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('h.user_id')} AND NOT EXISTS(SELECT 1 FROM art_asset_revisions r JOIN art_asset_takedowns t ON t.revision_id=r.id WHERE r.upload_id=a.id)`,
+          `SELECT a.filename,h.snapshot->'portraitFrame' AS frame FROM game_member_heroes h JOIN game_members m ON m.campaign_id=h.campaign_id AND m.user_id=h.user_id JOIN users u ON u.id=h.user_id JOIN game_campaigns c ON c.id=h.campaign_id JOIN assets a ON a.id::text=h.snapshot->>'portraitAssetId' AND a.owner_id=h.user_id WHERE h.campaign_id=$1 AND m.actor_id=$2 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('h.user_id')} AND NOT EXISTS(SELECT 1 FROM art_asset_revisions r JOIN art_asset_takedowns t ON t.revision_id=r.id WHERE r.upload_id=a.id)`,
           [id, actorId],
         )
       )[0];
       if (!row || basename(row.filename) !== row.filename) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      let bytes: Buffer;
       try {
-        return await readFile(resolve(config.ASSET_DIR, row.filename));
+        bytes = await readFile(resolve(config.ASSET_DIR, row.filename));
       } catch {
         return fail(404, 'NOT_FOUND', 'NOT_FOUND');
       }
+      return framedPortrait(bytes, row.frame);
     });
   }
   async revoke(req: Request, id: string, userId: string) {

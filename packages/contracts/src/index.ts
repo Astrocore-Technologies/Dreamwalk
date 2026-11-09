@@ -1,7 +1,9 @@
 import { z } from 'zod';
+import { portraitFrameSchema } from './portrait-frame';
 import { mapIntentSchema } from './game/map-intent';
 import { npcCharacterProfileSchema, storyLorebookSchema } from './npc-authoring';
 export * from './npc-authoring';
+export * from './portrait-frame';
 export * from './game/map-intent';
 export const idSchema = z.string().uuid();
 const text = (max = 1000) => z.string().trim().max(max);
@@ -198,6 +200,7 @@ export const heroSchema = z
     characterPackageVersionId: z.uuid().nullable().optional(),
     name: text(80).min(2),
     portraitAssetId: idSchema.nullable().default(null),
+    portraitFrame: portraitFrameSchema.nullable().optional(),
     backstory: text(6000).default(''),
     notes: text(6000).default(''),
     traits: z.array(text(80)).max(12).default([]),
@@ -313,6 +316,7 @@ export const npcSchema = z
     modelProfileId: idSchema.nullable().default(null),
     visibility: z.literal('private').default('private'),
     portraitAssetId: idSchema.nullable().default(null),
+    portraitFrame: portraitFrameSchema.nullable().optional(),
   })
   .strict();
 export type Npc = z.infer<typeof npcSchema> & {

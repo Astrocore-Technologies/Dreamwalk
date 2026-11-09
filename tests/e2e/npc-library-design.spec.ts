@@ -198,7 +198,7 @@ for (const variant of [
     const name = editor.getByLabel(text.name, { exact: true });
     await expect(name).toHaveValue(npc.name);
     await expect(editor.locator('[data-autosave-status="saved"]')).toBeVisible();
-    const portrait = await editor.locator('img').boundingBox();
+    const portrait = await editor.locator('img:not([alt=""])').boundingBox();
     expect(portrait!.height).toBeGreaterThan(300);
     if (variant.width > 700)
       expect((await name.boundingBox())!.x).toBeGreaterThan(portrait!.x + portrait!.width);

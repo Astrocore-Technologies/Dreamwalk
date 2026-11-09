@@ -129,6 +129,7 @@ for (const variant of [
           backstory: hero.backstory,
           notes: hero.notes,
           portraitAssetId: hero.portraitAssetId,
+          portraitFrame: null,
           traits: ['Curious', 'Brave'],
         },
       },

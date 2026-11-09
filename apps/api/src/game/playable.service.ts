@@ -19,6 +19,7 @@ import {
   npcSchema,
   validateStoryLoreReferences,
   type PlayablePackage,
+  portraitFrameSchema,
 } from '@dreamwalk/contracts';
 import {
   compilePlayableDraft,
@@ -364,9 +365,11 @@ export class PlayableService {
             biography?: string;
             characterProfile?: unknown;
             characterPackageVersionId?: string;
+            portraitFrame?: unknown;
           }
         | undefined;
       if (!source) continue;
+      const portraitFrame = portraitFrameSchema.safeParse(source.portraitFrame);
       if (source.characterPackageVersionId) {
         const { manifest } = await ownedCharacterPackage(
           c,
@@ -388,6 +391,7 @@ export class PlayableService {
         appearance: (source.appearance ?? '').slice(0, 4000),
         ...(source.personality ? { personality: source.personality.slice(0, 4000) } : {}),
         ...(source.greeting ? { greeting: source.greeting.slice(0, 2000) } : {}),
+        ...(portraitFrame.success ? { portraitFrame: portraitFrame.data } : {}),
       };
       const memory = compiled.playable!.npcBrains[npc.id].living;
       if (memory && (!source.characterProfile || memory.personality.biography === undefined))

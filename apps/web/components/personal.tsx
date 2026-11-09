@@ -58,6 +58,8 @@ import {
   Textarea,
   UploadField,
 } from './ui';
+import { FramedPortrait } from './framed-portrait';
+import { PortraitFrameEditor } from './portrait-frame-editor';
 export function LibraryPage() {
   const date = useDate();
   const { t: tr, locale } = useT();
@@ -385,7 +387,11 @@ export function HeroesPage() {
             <Panel key={hero.id} className={`hero-card ${styles.card}`}>
               <div className={`hero-portrait ${styles.portrait}`}>
                 {hero.portraitAssetId ? (
-                  <img src={assetUrl(hero.portraitAssetId)} alt={hero.name} />
+                  <FramedPortrait
+                    src={assetUrl(hero.portraitAssetId)}
+                    alt={hero.name}
+                    frame={hero.portraitFrame}
+                  />
                 ) : (
                   <UserRound size={55} />
                 )}
@@ -497,6 +503,7 @@ export function HeroesPage() {
                       notes: fields.notes || '',
                       traits: fields.traits || [],
                       portraitAssetId: fields.portraitAssetId || null,
+                      portraitFrame: fields.portraitAssetId ? (fields.portraitFrame ?? null) : null,
                     }),
                   });
                   setEditing(null);
@@ -512,10 +519,11 @@ export function HeroesPage() {
               <div className={styles.portraitColumn}>
                 <div className={styles.editorPortrait}>
                   {editing.portraitAssetId ? (
-                    <img
+                    <FramedPortrait
                       className="upload-preview"
                       src={assetUrl(editing.portraitAssetId)}
                       alt={tr('Портрет героя')}
+                      frame={editing.portraitFrame}
                     />
                   ) : (
                     <UserRound size={100} aria-hidden="true" />
@@ -525,8 +533,17 @@ export function HeroesPage() {
                   label={tr('Загрузить портрет')}
                   onUploaded={(asset) =>
                     setEditing((current) =>
-                      current ? { ...current, portraitAssetId: asset.id } : null,
+                      current
+                        ? { ...current, portraitAssetId: asset.id, portraitFrame: null }
+                        : null,
                     )
+                  }
+                />
+                <PortraitFrameEditor
+                  src={assetUrl(editing.portraitAssetId)}
+                  value={editing.portraitFrame}
+                  onChange={(frame) =>
+                    setEditing((current) => (current ? { ...current, portraitFrame: frame } : null))
                   }
                 />
               </div>
@@ -600,7 +617,9 @@ export function HeroesPage() {
               backstory={editing.backstory || ''}
               traits={editing.traits || []}
               onSelected={(assetId) =>
-                setEditing((current) => (current ? { ...current, portraitAssetId: assetId } : null))
+                setEditing((current) =>
+                  current ? { ...current, portraitAssetId: assetId, portraitFrame: null } : null,
+                )
               }
             />
           </div>

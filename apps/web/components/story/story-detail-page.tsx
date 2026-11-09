@@ -35,6 +35,7 @@ import { Badge, Button, ButtonLink, ErrorBox, Field, Loading, Modal, Textarea } 
 import { StoryMetrics, StoryLikeButton } from '../story-metrics';
 import { storyReturnPath, withStoryReturn } from '../story-return';
 import { AdventureLaunch } from '../game/adventure-launch';
+import { FramedPortrait } from '../framed-portrait';
 import { Markdown } from '../markdown';
 import { stripMarkdown } from '@/lib/markdown';
 export function AdventurePage({ slug }: { slug: string }) {
@@ -222,7 +223,10 @@ export function AdventurePage({ slug }: { slug: string }) {
                       <div className="sd-npc-identity">
                         <span className="sd-character-orb">
                           {n.portraitAssetId ? (
-                            <img src={assetUrl(n.portraitAssetId)} alt="" />
+                            <FramedPortrait
+                              src={assetUrl(n.portraitAssetId)}
+                              frame={n.portraitFrame}
+                            />
                           ) : (
                             selectNpcText(n, locale).name[0]
                           )}

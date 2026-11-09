@@ -36,7 +36,7 @@ import { decodeArt } from '../assets/decode-art';
 import { canvasSceneArt } from '../assets/art-visibility';
 import type { SceneIllustration, VisibleArtBinding } from '../assets/use-campaign-art';
 import { artPreviewUrl } from '../assets/types';
-import type { GamePoint, GameProjection, GameAction } from '@dreamwalk/contracts';
+import type { GamePoint, GameProjection, GameAction, PortraitFrame } from '@dreamwalk/contracts';
 import { resolveGameAtlas } from '@/lib/game-assets';
 import { useT } from '@/lib/i18n';
 import styles from './game.module.css';
@@ -489,11 +489,11 @@ function PositionedGameCanvas({
       };
       const tokenTextureFor = (
         kind: TokenKind,
-        portrait?: { key: string; surface?: HTMLCanvasElement },
+        portrait?: { key: string; surface?: HTMLCanvasElement; frame?: PortraitFrame },
       ) => {
         const surface = portrait?.surface;
         const usable = !!surface && surface.width > 0 && surface.height > 0;
-        const key = actorTokenKey(kind, usable ? portrait!.key : undefined);
+        const key = actorTokenKey(kind, usable ? portrait!.key : undefined, portrait?.frame);
         let texture = tokenTextures.get(key);
         if (!texture) {
           const canvas = document.createElement('canvas');
@@ -506,7 +506,12 @@ function PositionedGameCanvas({
             TOKEN_TEXTURE_SIDE,
             kind,
             usable
-              ? { source: surface!, width: surface!.width, height: surface!.height }
+              ? {
+                  source: surface!,
+                  width: surface!.width,
+                  height: surface!.height,
+                  frame: portrait!.frame,
+                }
               : undefined,
           );
           texture = Texture.from(canvas);
@@ -914,13 +919,18 @@ function PositionedGameCanvas({
               );
             const boundTexture = binding && artTextures.get(binding.url);
             // Characters are shown as a round face frame instead of a small full-body sprite.
-            let portrait: { key: string; surface?: HTMLCanvasElement } | undefined;
+            let portrait:
+              { key: string; surface?: HTMLCanvasElement; frame?: PortraitFrame } | undefined;
             if (entity.kind === 'npc' || entity.kind === 'player') {
               const pinned = sceneArt().find(
                 (entry) => entry.slot === `entity:${entity.id}:portrait`,
               );
               if (pinned)
-                portrait = { key: pinned.revisionId, surface: artSurfaces.get(pinned.url) };
+                portrait = {
+                  key: pinned.revisionId,
+                  surface: artSurfaces.get(pinned.url),
+                  frame: entity.publicProfile?.portraitFrame,
+                };
               else {
                 const loaded = actorPortraits.get(entity.id);
                 if (loaded?.surface && loaded.key)
@@ -1349,6 +1359,7 @@ function PositionedGameCanvas({
                   ? actorPortraitUrl(campaignId, artEntity.id)
                   : undefined
             }
+            portraitFrame={artPortrait ? artEntity.publicProfile?.portraitFrame : undefined}
             role={artEntity.publicProfile?.role || artEntity.supportingNpc?.roleLabel}
             lifeState={artLifeState !== 'conscious' ? turnText(artLifeState) : undefined}
             canTalk={artEntity.kind === 'npc' && !disabled && !npcUnavailable(artEntity)}
