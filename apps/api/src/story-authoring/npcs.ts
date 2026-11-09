@@ -90,7 +90,11 @@ export class StoryNpcService {
       fail(400, 'VALIDATION_FAILED', 'MODEL_NOT_FOUND');
     if (data.characterPackageVersionId) {
       const { manifest } = await ownedCharacterPackage(c, userId, data.characterPackageVersionId);
-      const portrait = manifest.parts.find((part) => part.role === 'portrait');
+      const portrait = manifest.parts.find(
+        (part) =>
+          part.role === 'portrait' ||
+          (manifest.representation === 'static' && part.role === 'sprite'),
+      );
       if (portrait) data.portraitAssetId = portrait.uploadId;
     }
     return data;
