@@ -40,6 +40,7 @@ export function ActorArtWindow({
   kind,
   portraitUrl,
   portraitFrame,
+  fullLength,
   role,
   lifeState,
   canTalk,
@@ -51,6 +52,8 @@ export function ActorArtWindow({
   kind: TokenKind;
   portraitUrl?: string;
   portraitFrame?: PortraitFrame | null;
+  /** Show the whole picture (a standing character) instead of the face crop used on the map. */
+  fullLength?: boolean;
   role?: string;
   lifeState?: string;
   canTalk: boolean;
@@ -93,12 +96,16 @@ export function ActorArtWindow({
       >
         <X size={18} aria-hidden="true" />
       </button>
-      <div className={styles.artFrame} data-has-art={!!shownUrl}>
+      <div
+        className={styles.artFrame}
+        data-has-art={!!shownUrl}
+        data-full-length={!!shownUrl && !!fullLength}
+      >
         {shownUrl ? (
           <FramedPortrait
             src={shownUrl}
             alt={name}
-            frame={portraitFrame}
+            frame={fullLength ? undefined : portraitFrame}
             onError={() => setBrokenUrl(shownUrl)}
           />
         ) : (
