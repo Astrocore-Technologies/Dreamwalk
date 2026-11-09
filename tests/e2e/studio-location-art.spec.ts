@@ -321,7 +321,7 @@ async function setup(page: Page, approved = false, existing = false, mapped = fa
     },
   };
 }
-test('Studio Locations visibly shows the real-image control, model and plain blocker before any geometry', async ({
+test('Studio Locations visibly shows the real-image control and plain blocker, without a model line, before any geometry', async ({
   page,
 }) => {
   await page.setViewportSize({ width: 1440, height: 1000 });
@@ -329,7 +329,8 @@ test('Studio Locations visibly shows the real-image control, model and plain blo
   const control = page.locator(`[data-location-art="${mock.locationId}"]`);
   await expect(control.getByRole('button', { name: 'Estimate cost', exact: true })).toBeVisible();
   await expect(control.getByRole('button', { name: 'Estimate cost', exact: true })).toBeDisabled();
-  await expect(control).toContainText(mock.config.requestProfile.model);
+  await expect(control).not.toContainText(mock.config.requestProfile.model);
+  await expect(control.getByText('Advanced options', { exact: true })).toHaveCount(0);
   await expect(control).toContainText(
     'Generation is unavailable until a limit is authorized. An administrator can review the safeguards.',
   );

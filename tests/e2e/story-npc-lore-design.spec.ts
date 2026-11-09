@@ -105,7 +105,7 @@ test('story NPC composition retains private drafts, selection, validation and pr
   await page.reload();
   await nav.getByRole('button').nth(3).click();
   await expect(page.getByTestId('story-lorebook-editor')).toHaveCount(0);
-  await expect(publicPreview).toContainText('Synthetic scout revised');
+  await expect(publicPreview).toContainText('Public keeper description');
 
   for (const locale of ['ru', 'uk', 'en']) {
     for (const viewport of [
