@@ -21,6 +21,7 @@ require.extensions['.ts'] = (module, filename) =>
   );
 const {
   validateTravelMapPlan,
+  planTravelPlacement,
   travelMapPlanDefinition,
   travelArrivalRoster,
 } = require('../../apps/api/src/game/travel-map-plan.ts');
@@ -129,7 +130,6 @@ test('actual raster evidence admits all and only named travellers, leaving uncer
 for (const [name, mutate] of [
   ['stale image', (f) => (f.plan.spatialGrounding.imageRevisionId = randomUUID())],
   ['wrong hash', (f) => (f.plan.spatialGrounding.imageSha256 = hash('wrong'))],
-  ['low confidence', (f) => (f.plan.spatialGrounding.confidence = 0.849)],
   ['unknown player cell', (f) => (f.plan.spawns[0] = { x: 2, y: 2 })],
   ['unknown return point', (f) => (f.plan.returnPoint = { x: 2, y: 2 })],
   ['duplicate spawn', (f) => (f.plan.spawns[1] = f.plan.spawns[0])],
@@ -148,6 +148,116 @@ for (const [name, mutate] of [
     mutate(f);
     assert.throws(() => validateTravelMapPlan(f.context, f.plan));
   });
+const proposalOf = (f, rows, extra = {}) => ({
+  version: 1,
+  spatialGrounding: {
+    ...f.plan.spatialGrounding,
+    ...(rows ? { rows } : {}),
+    ...extra,
+  },
+});
+const gridOf = (floor, special = {}) =>
+  Array.from({ length: 24 }, (_, y) =>
+    Array.from({ length: 24 }, (_, x) => special[`${x},${y}`] ?? (floor(x, y) ? '.' : '?')).join(
+      '',
+    ),
+  );
+test('travel placement is computed by the server from the observed floor only', () => {
+  const f = spatial(),
+    proposal = proposalOf(f),
+    plan = planTravelPlacement(f.context, proposal);
+  assert.deepEqual(planTravelPlacement(f.context, structuredClone(proposal)), plan);
+  assert.deepEqual(validateTravelMapPlan(f.context, plan), plan);
+  assert.deepEqual(plan.returnPoint, { x: 11, y: 11 });
+  assert.deepEqual(
+    plan.arrivals.map((a) => a.id),
+    ['player', 'companion'],
+  );
+  assert.equal(new Set(plan.spawns.map((p) => `${p.x},${p.y}`)).size, 4);
+  assert.deepEqual(plan.spatialGrounding, proposal.spatialGrounding);
+});
+test('self-reported confidence never blocks travel; only missing floor does', () => {
+  const f = spatial();
+  assert.ok(planTravelPlacement(f.context, proposalOf(f, null, { confidence: 0.05 })));
+  assert.doesNotThrow(() =>
+    validateTravelMapPlan(f.context, {
+      ...planTravelPlacement(f.context, proposalOf(f)),
+      spatialGrounding: { ...f.plan.spatialGrounding, confidence: 0.05 },
+    }),
+  );
+  assert.throws(
+    () =>
+      planTravelPlacement(
+        f.context,
+        proposalOf(
+          f,
+          gridOf(() => false),
+        ),
+      ),
+    /MAP_IMAGE_UNSAFE_SPAWN/,
+  );
+});
+test('placement fails closed when the observed floor cannot hold the arrivals', () => {
+  const f = spatial();
+  // A 2x2 floor: return point + player leave no 2x2 footprint for the large companion.
+  assert.throws(
+    () =>
+      planTravelPlacement(
+        f.context,
+        proposalOf(
+          f,
+          gridOf((x, y) => x >= 4 && x <= 5 && y >= 4 && y <= 5),
+        ),
+      ),
+    /MAP_IMAGE_UNSAFE_NPC/,
+  );
+  // One traveller on four floor cells leaves only two cells for four spawns.
+  const solo = { ...f.context, arrivals: [f.context.arrivals[0]] };
+  assert.throws(
+    () =>
+      planTravelPlacement(
+        solo,
+        proposalOf(
+          f,
+          gridOf((x, y) => y === 6 && x >= 4 && x <= 7),
+        ),
+      ),
+    /MAP_IMAGE_UNSAFE_SPAWN/,
+  );
+});
+test('placement uses the largest connected floor and anchors at an observed door', () => {
+  const f = spatial(),
+    rows = gridOf(
+      (x, y) =>
+        (x >= 2 && x <= 4 && y >= 2 && y <= 4) || (x >= 14 && x <= 21 && y >= 14 && y <= 21),
+      {
+        '13,17': 'D',
+      },
+    ),
+    plan = planTravelPlacement(
+      f.context,
+      proposalOf(f, rows, { doors: [{ x: 13, y: 17, label: 'Door', open: true }] }),
+    );
+  for (const p of [plan.returnPoint, ...plan.spawns, ...plan.arrivals])
+    assert.ok(p.x >= 14 && p.y >= 14, `${p.x},${p.y} is on the larger area`);
+  assert.deepEqual(plan.returnPoint, { x: 14, y: 17 });
+});
+test('the model proposal carries the observed grid only', () => {
+  const f = spatial(),
+    proposal = proposalOf(f);
+  assert.doesNotThrow(() => travelMapPlanDefinition.validateProposal(proposal));
+  assert.throws(() => travelMapPlanDefinition.validateProposal(f.plan));
+  assert.throws(() =>
+    travelMapPlanDefinition.validateProposal({ ...proposal, spawns: f.plan.spawns }),
+  );
+  assert.equal(travelMapPlanDefinition.version, 'travel-map-grounding-v2');
+  assert.doesNotMatch(travelMapPlanDefinition.instructions, /0\.85|four distinct|returnPoint/);
+  assert.match(JSON.stringify(travelMapPlanDefinition.schema), /spatialGrounding/);
+  assert.doesNotMatch(
+    JSON.stringify(travelMapPlanDefinition.schema),
+    /spawns|returnPoint|arrivals/,
+  );
+});
 function financial() {
   const ownerId = randomUUID(),
     preparationId = randomUUID(),
