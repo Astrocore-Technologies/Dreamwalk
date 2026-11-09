@@ -32,10 +32,10 @@ import {
   Loading,
   Modal,
   Select,
-  Textarea,
   UploadField,
 } from '../ui';
 import { CharacterSpriteControl } from '../visual-authoring/character-sprite-control';
+import { MarkdownField } from '../markdown';
 import { NpcTemplateField } from './npc-template-field';
 import { AutosaveStatus } from './autosave-status';
 import { npcDesignText } from './npc-design-copy';
@@ -380,22 +380,20 @@ export function NpcEditor({ id }: { id: string }) {
                   placeholder={t('Смотритель обсерватории')}
                 />
               </Field>
-              <Field label={t('Публичное описание NPC')}>
-                <Textarea
-                  rows={3}
-                  maxLength={4000}
-                  value={draft.description}
-                  onChange={(e) => change('description', e.target.value)}
-                />
-              </Field>
-              <Field label={t('Внешность')}>
-                <Textarea
-                  rows={3}
-                  maxLength={4000}
-                  value={draft.appearance}
-                  onChange={(e) => change('appearance', e.target.value)}
-                />
-              </Field>
+              <MarkdownField
+                label={t('Публичное описание NPC')}
+                rows={3}
+                maxLength={4000}
+                value={draft.description}
+                onChange={(e) => change('description', e.target.value)}
+              />
+              <MarkdownField
+                label={t('Внешность')}
+                rows={3}
+                maxLength={4000}
+                value={draft.appearance}
+                onChange={(e) => change('appearance', e.target.value)}
+              />
               <Field label={t('Язык оригинала')}>
                 <Select
                   value={draft.sourceLanguage}
@@ -440,20 +438,20 @@ export function NpcEditor({ id }: { id: string }) {
                     label={t('Характер')}
                     maxLength={4000}
                     value={draft.personality}
+                    markdown
                     templates={['personality', 'motivation', 'reaction']}
                     onChange={(value) => change('personality', value)}
                   />
                 </div>
                 <div id="npc-section-biography" hidden={section !== 'biography'}>
                   <h2>{text('biography')}</h2>
-                  <Field label={t('Биография')}>
-                    <Textarea
-                      rows={7}
-                      maxLength={6000}
-                      value={draft.biography}
-                      onChange={(e) => change('biography', e.target.value)}
-                    />
-                  </Field>
+                  <MarkdownField
+                    label={t('Биография')}
+                    rows={7}
+                    maxLength={6000}
+                    value={draft.biography}
+                    onChange={(e) => change('biography', e.target.value)}
+                  />
                 </div>
                 <div id="npc-section-speech" hidden={section !== 'speech'}>
                   <h2>{text('speech')}</h2>
@@ -475,17 +473,15 @@ export function NpcEditor({ id }: { id: string }) {
                   <ShieldCheck size={16} />
                   {text('private')}
                 </p>
-                <Field
+                <MarkdownField
                   label={t('Секреты и скрытые знания')}
                   hint={t('Не показываются в публичной карточке. Только автор и модератор.')}
-                >
-                  <Textarea
-                    rows={7}
-                    maxLength={6000}
-                    value={draft.secrets}
-                    onChange={(e) => change('secrets', e.target.value)}
-                  />
-                </Field>
+
+                  rows={7}
+                  maxLength={6000}
+                  value={draft.secrets}
+                  onChange={(e) => change('secrets', e.target.value)}
+                />
               </section>
             </div>
           </section>
