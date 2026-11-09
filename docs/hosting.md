@@ -13,14 +13,19 @@ reviewed commit, never the temporary shared preview directory or its launchers.
 - Railway: repository root (shared contracts/game-core are required), Node 22,
   `infra/railway-service-settings.json` (reviewable settings worksheet, not an auto-applied platform config). One persistent API replica; no scale-to-zero. Game simulation,
   socket subscriptions and image workers have process-local state.
-- Supabase PostgreSQL 17 (eu-central-1): the API connects over TLS through the
-  **session-mode pooler** (confirmed by the owner on 2026-11-07). Never use a
-  transaction-mode pooler: the migration runner holds a session advisory lock. The
-  database is not exposed through the Supabase Data API; Nest owns all access. See
-  `database-connections.md` for `DATABASE_URL`, `DATABASE_MIGRATION_URL` and
-  `DATABASE_SSL` rules. An earlier Railway PostgreSQL service was replaced because of
-  database problems there; do not delete it until the owner has confirmed that its
-  accounts, ledger and assets were migrated as one recovery unit.
+- Railway PostgreSQL 17 (service `pg-dreamwalk`, europe-west4, same project and
+  region as the API). The API connects over Railway's private network
+  (`pg-dreamwalk.railway.internal:5432`), so `DATABASE_SSL=false` and no
+  `DATABASE_SSL_CA`. There is one application role, `dreamwalk`, which owns the
+  `dreamwalk` database; `DATABASE_URL` and `DATABASE_MIGRATION_URL` use it. The
+  database default `search_path` is `dreamwalk, public` and `pgcrypto` lives in
+  `public`. Nest owns all access. See `database-connections.md`.
+  Supabase was abandoned on 2026-11-08 and is no longer used. Only user accounts
+  (users, Google identities, wallet rows) were carried over; stories, campaigns,
+  assets and balances were not. A full copy of the earlier data may still exist in
+  Supabase and in database `dreamwalk_rehearsal` on `pg-dreamwalk`. The older
+  PostgreSQL 18 service `Postgres` (sfo) is unused; delete it only after the owner
+  confirms.
 - API volume: mount `/data/assets`, set `ASSET_DIR=/data/assets`. Do not mount
   uploads into the frontend public directory. Media stays behind existing API ACL.
 
@@ -137,9 +142,9 @@ Source: https://docs.railway.com/infrastructure-as-code#migrating-from-config-as
 
 ## Production database prerequisite
 
-On Supabase, `pgcrypto` is installed in the `extensions` schema (observed read-only on
-2026-11-07). The migration runner's check that `digest(text,text)` resolves in the
-current search path still applies, so that schema must be on the runtime role's path.
+On Railway PostgreSQL, `pgcrypto` is installed in `public` and `public` is on the
+database's default `search_path`. The migration runner's check that
+`digest(text,text)` resolves in the current search path still applies.
 
 The database operator must install `pgcrypto` once using their database console.
 It is needed by existing SQL digest-based erasure triggers, not only UUIDs.

@@ -26,12 +26,12 @@ parameters and set the server variables above. Query host overrides are likewise
 rejected so the URL's hostname is the peer being verified. Normal non-TLS query
 settings such as `application_name` are retained.
 
-Use a direct PostgreSQL endpoint or a **session-mode** pooler verified by the
-operator. Do not use a transaction-mode pooler for migrations: the runner uses a
+Use a direct PostgreSQL endpoint (production: Railway private network, no TLS,
+`DATABASE_SSL=false`) or a **session-mode** pooler verified by the operator. Do not use a transaction-mode pooler for migrations: the runner uses a
 session advisory lock. Current role/search-path decisions must be configured on
 the database role, not simulated by changing application authorization. The
-runtime remains Nest-owned; this does not enable a public Supabase Data API or
-replace the application's existing cookie sessions and server ACLs.
+runtime remains Nest-owned and uses the application's existing cookie sessions
+and server ACLs.
 
 `npm run db:migrate:production` explicitly enables production safeguards even if
 `NODE_ENV` was omitted. Before schema DDL, it reads whether pgcrypto is installed
@@ -49,7 +49,6 @@ perform migrations, or establish that a remote database connection works.
 References:
 
 - https://node-postgres.com/features/ssl
-- https://supabase.com/docs/guides/database/connecting-to-postgres
 
 Ancillary operator scripts (for example account grants or backup/restore helpers)
 may construct their own PostgreSQL connections and do not automatically inherit
