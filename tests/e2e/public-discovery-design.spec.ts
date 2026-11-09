@@ -120,9 +120,8 @@ test('catalog filters, sorting, hero links, query navigation and empty/error rec
   );
   await page.locator('.sort-control select').selectOption('new');
   await expect(cards.first()).toHaveAttribute('href', /synthetic-discovery-5\?/);
-  await page.locator('.filter-chips button').nth(1).click();
-  await expect(cards).toHaveCount(3);
-  await expect(page.locator('.filter-chips button').nth(1)).toHaveAttribute('aria-pressed', 'true');
+  // Genres are no longer authored, so the catalog has no genre filter chips.
+  await expect(page.locator('.filter-chips')).toHaveCount(0);
   await page.locator('.search-field input').fill('no such synthetic world');
   await expect(cards).toHaveCount(0);
   await page.locator('.empty button').click();

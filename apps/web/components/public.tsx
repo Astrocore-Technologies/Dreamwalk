@@ -75,23 +75,19 @@ export function AdventureCard({
 }
 export { HomePage } from './home/home-page';
 export function ExplorePage() {
-  const { t: tr, locale, taxonomy } = useT();
+  const { t: tr, locale } = useT();
   const params = useSearchParams();
   const [query, setQuery] = useState(params.get('q') || ''),
-    [genre, setGenre] = useState(''),
     [sort, setSort] = useState('popular');
   useEffect(() => {
     setQuery(params.get('q') || '');
   }, [params]);
-  const genres = useResource<string[]>('/genres');
   const {
     data: catalog,
     loading,
     error,
     reload,
-  } = useResource<Adventure[]>(
-    `/adventures?q=${encodeURIComponent(query)}&genre=${encodeURIComponent(genre)}&sort=${sort}`,
-  );
+  } = useResource<Adventure[]>(`/adventures?q=${encodeURIComponent(query)}&sort=${sort}`);
   const data = catalog?.filter(isDiscoveryStory);
   return (
     <div className="discovery-page discovery-catalog">
@@ -122,25 +118,6 @@ export function ExplorePage() {
           </Select>
         </div>
       </div>
-      <div className="filter-chips">
-        <button
-          className={!genre ? 'active' : ''}
-          aria-pressed={!genre}
-          onClick={() => setGenre('')}
-        >
-          {tr('Все миры')}
-        </button>
-        {(genres.data || ['Фэнтези', 'Мистика', 'Приключения']).map((item) => (
-          <button
-            className={genre === item ? 'active' : ''}
-            aria-pressed={genre === item}
-            key={item}
-            onClick={() => setGenre(item)}
-          >
-            {taxonomy(item)}
-          </button>
-        ))}
-      </div>
       <ErrorBox message={error} retry={reload} />
       {loading ? (
         <Loading />
@@ -156,13 +133,7 @@ export function ExplorePage() {
             title={tr('Этот мир пока не найден')}
             description={tr('Попробуй другое название или убери фильтры.')}
             action={
-              <Button
-                variant="secondary"
-                onClick={() => {
-                  setQuery('');
-                  setGenre('');
-                }}
-              >
+              <Button variant="secondary" onClick={() => setQuery('')}>
                 {tr('Сбросить фильтры')}
               </Button>
             }
