@@ -1441,10 +1441,12 @@ for (const locale of ['ru', 'en', 'uk'] as const)
     await expect(wallet.getByTestId('dreams-balance')).toHaveText(
       formatSparkSubunits('500000', locale),
     );
+    // The player never sees a cost block: generation needs no confirmation.
     const forecast = page.getByTestId('world-cost-forecast');
-    await expect(forecast).toContainText(formatSparkSubunits(estimate, locale));
+    await expect(page.getByTestId('world-generation-confirmation')).toBeAttached();
+    await expect(forecast).toHaveCount(0);
     estimate = '25000';
-    await expect(forecast).toContainText(formatSparkSubunits(estimate, locale));
+    await expect(forecast).toHaveCount(0);
     expect(quotes).toHaveLength(0);
     expect(consents).toHaveLength(0);
     await page.screenshot({
@@ -1483,27 +1485,22 @@ for (const locale of ['ru', 'en', 'uk'] as const)
       phaseEpoch: f.projection.turn!.phaseEpoch + 1,
     };
     await page.reload();
-    await expect(forecast).toContainText(formatSparkSubunits(estimate, locale));
+    await expect(forecast).toHaveCount(0);
     await expect(page.getByTestId('story-reply-confirmation')).toHaveCount(0);
     expect(quotes).toHaveLength(0);
     expect(consents).toHaveLength(0);
-    // New-location media remains the explicit-confirmation exception.
+    // A new location is quoted and confirmed in the background: no prices, no button.
     media = true;
     await page.reload();
-    const confirmation = page.getByTestId('story-reply-confirmation');
-    const confirm = confirmation.getByRole('button', {
-      name: { ru: 'Подтвердить ход', en: 'Confirm turn', uk: 'Підтвердити хід' }[locale],
-      exact: true,
-    });
-    await expect(confirm).toBeEnabled();
-    expect(quotes).toHaveLength(1);
-    expect(consents).toHaveLength(0);
-    await expect(confirmation.locator('[data-wallet-funding]')).toBeVisible();
-    await confirmation.screenshot({
-      path: test.info().outputPath(`live-round-approval-${locale}.png`),
-    });
-    await confirm.click();
     await expect.poll(() => consents.length).toBe(1);
+    expect(quotes).toHaveLength(1);
+    await expect(
+      page.getByRole('button', {
+        name: { ru: 'Подтвердить ход', en: 'Confirm turn', uk: 'Підтвердити хід' }[locale],
+        exact: true,
+      }),
+    ).toHaveCount(0);
+    await expect(page.locator('[data-wallet-funding]')).toHaveCount(0);
     expect(consents[0]).toEqual({
       operationId: quotes[0].operationId,
       quoteId: 'synthetic-live-world-quote',

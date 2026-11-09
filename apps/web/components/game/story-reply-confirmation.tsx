@@ -20,6 +20,8 @@ export function StoryReplyConfirmation({
   declineSpeech = false,
   endpoint,
   worldBatch = false,
+  autoConfirm = false,
+  quiet = false,
 }: {
   campaignId: string;
   turnId: string;
@@ -30,6 +32,10 @@ export function StoryReplyConfirmation({
   declineSpeech?: boolean;
   endpoint?: string;
   worldBatch?: boolean;
+  /** The player's own action is the consent: confirm the prepared world quote at once. */
+  autoConfirm?: boolean;
+  /** Render only errors, an uncertain outcome and a retry; never prices or controls. */
+  quiet?: boolean;
 }) {
   const h = useStoryText();
   const { t, locale } = useT();
@@ -102,6 +108,11 @@ export function StoryReplyConfirmation({
       clearTimeout(timer);
     };
   }, [worldBatch, path, scope, disabled, unknown, declineUnknown, refreshVersion]);
+  useEffect(() => {
+    if (!autoConfirm || !prepared || unknown || declineUnknown || confirmed.current || disabled)
+      return;
+    void confirm();
+  }, [autoConfirm, prepared, unknown, declineUnknown, disabled]);
   async function estimate() {
     if (flight.current || disabled || unknown || declineUnknown || confirmed.current) return;
     flight.current = true;
@@ -259,6 +270,33 @@ export function StoryReplyConfirmation({
       setBusy(false);
     }
   }
+  if (quiet)
+    return (
+      <div data-testid="story-reply-confirmation" data-live-world-cost={worldBatch || undefined}>
+        <ErrorBox message={error} />
+        {unknown ? (
+          <>
+            <p role="status">{h('unknown')}</p>
+            <Button type="button" disabled={busy || disabled} onClick={() => void confirm()}>
+              {h('retrySame')}
+            </Button>
+          </>
+        ) : (
+          !prepared &&
+          !confirmed.current &&
+          !!error && (
+            <Button
+              type="button"
+              busy={busy}
+              disabled={busy || disabled}
+              onClick={() => void estimate()}
+            >
+              {h('retryEstimate')}
+            </Button>
+          )
+        )}
+      </div>
+    );
   return (
     <div
       className={worldBatch ? styles.liveCost : styles.quote}

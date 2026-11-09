@@ -76,7 +76,7 @@ const errorKeys: Record<string, string> = {
   VALIDATION_FAILED: 'Проверь заполненные поля и попробуй ещё раз.',
   STATE_CONFLICT: 'Данные изменились или уже существуют. Обнови страницу и проверь ввод.',
   RATE_LIMITED: 'Слишком много запросов. Подожди немного и повтори.',
-  INSUFFICIENT_SPARKS: 'Недостаточно искр для этой операции.',
+  INSUFFICIENT_SPARKS: 'Не хватает Искр',
   INSUFFICIENT_CREDITS: 'Недостаточно тестовых искр для этой операции.',
   INTERNAL_ERROR: 'Сервис временно недоступен. Попробуй позже.',
   EMAIL_DELIVERY_UNAVAILABLE:

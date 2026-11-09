@@ -1,10 +1,5 @@
 'use client';
 import { useCallback, useEffect, useRef, useState } from 'react';
-import {
-  formatSparkSubunits,
-  type AutonomousSpeechReceipt,
-  type AutonomousSpeechSkip,
-} from '@dreamwalk/contracts';
 import { useT } from '@/lib/i18n';
 import { api, errorMessage } from '@/lib/client';
 import { ErrorBox } from '../ui';
@@ -14,37 +9,18 @@ import { useStoryText, type StoryMessageKey } from './story-messages';
 type WorldGenerationStatus = {
   ordinary?: { state: 'pending' | 'accepted' | 'blocked'; code: string | null } | null;
   available: boolean;
-  availableFunding?: {
-    sparksSubunits: string;
-    dreamsSubunits: string;
-    totalSubunits: string;
-  } | null;
-  speechReceipts?: AutonomousSpeechReceipt[];
-  speechReceiptNext?: string;
-  speechSkips?: AutonomousSpeechSkip[];
   generatedLocationImages?: number;
-  pendingLocationIds?: string[];
   estimateRiskConsentRequired?: boolean;
   pending: boolean;
   unknown?: boolean;
   reason?: string;
-  forecast?: {
-    estimatedSparkSubunits: string | null;
-    estimatedTotalMicros: number | null;
-    requestCount: number;
-    optionalAutonomousSpeechRequests?: number;
-    optionalAutonomousSpeechSparkSubunits?: string | null;
-    optionalAutonomousSpeechAllowanceSubunits?: string | null;
-    optionalAutonomousSpeechUnestimatedRequests?: number;
-    baseEstimatedSparkSubunits?: string | null;
-    basis: 'local_round_forecast';
-    includesMapAnalysis: false;
-    finalQuoteRequired: true;
-    unavailableReason?: string;
-  } | null;
 };
 
-/** One world batch covers pending decisions and replies; legacy composer-covered jobs stay excluded. */
+/**
+ * Generation for the world turn carries no prices or buttons: the player's own action is the
+ * consent. A new location is quoted and confirmed here in the background; the player only sees
+ * a reason when something blocks it (for example, not enough Sparks) or an uncertain outcome.
+ */
 export function WorldGenerationConfirmation({
   campaignId,
   scope,
@@ -63,26 +39,9 @@ export function WorldGenerationConfirmation({
   phase?: string;
 }) {
   const h = useStoryText();
-  const { locale, t } = useT();
+  const { t } = useT();
   const [status, setStatus] = useState<WorldGenerationStatus | null>(null);
-  const pricingKey = `${campaignId}:${access}:${scope}`;
-  const pricingScope = useRef({ key: pricingKey });
-  if (pricingScope.current.key !== pricingKey) pricingScope.current = { key: pricingKey };
-  const currentPricingScope = pricingScope.current;
-  const [pricedScope, setPricedScope] = useState<typeof currentPricingScope | null>(null);
   const [error, setError] = useState('');
-  const [receiptBefore, setReceiptBefore] = useState<string>();
-  const receiptKey = `${campaignId}:${access}:${receiptBefore ?? ''}`;
-  const currentReceiptKey = useRef(receiptKey);
-  currentReceiptKey.current = receiptKey;
-  const [receiptPage, setReceiptPage] = useState<{
-    key: string;
-    items: AutonomousSpeechReceipt[];
-    skips: AutonomousSpeechSkip[];
-    next?: string;
-  } | null>(null);
-  const visibleReceipts =
-    access === 'owner' && receiptPage?.key === receiptKey ? receiptPage : null;
   const epoch = useRef(0);
   const polling = useRef(false);
   const path = `/game/campaigns/${campaignId}/world-generation`;
@@ -91,37 +50,20 @@ export function WorldGenerationConfirmation({
     polling.current = true;
     const stamp = epoch.current;
     try {
-      const result = await api<WorldGenerationStatus>(
-        receiptBefore ? `${path}?speechReceiptBefore=${encodeURIComponent(receiptBefore)}` : path,
-      );
-      if (stamp === epoch.current && currentReceiptKey.current === receiptKey) {
+      const result = await api<WorldGenerationStatus>(path);
+      if (stamp === epoch.current) {
         setStatus(result);
-        setPricedScope(currentPricingScope);
-        setReceiptPage({
-          key: receiptKey,
-          items: result.speechReceipts ?? [],
-          skips: result.speechSkips ?? [],
-          next: result.speechReceiptNext,
-        });
         setError('');
       }
     } catch (err) {
-      if (stamp === epoch.current && currentReceiptKey.current === receiptKey) {
-        // Keep an uncertain consent mounted; a failed status read must not erase
-        // its immutable retry operation or offer a fresh paid operation.
-        setError(errorMessage(err));
-      }
+      // Keep an uncertain consent mounted; a failed status read must not erase its retry.
+      if (stamp === epoch.current) setError(errorMessage(err));
     } finally {
       polling.current = false;
     }
-  }, [path, access, receiptBefore, receiptKey, currentPricingScope]);
-  useEffect(() => {
-    setReceiptBefore(undefined);
-  }, [campaignId, access]);
+  }, [path, access]);
   useEffect(() => {
     epoch.current++;
-    // Keep the existing confirmation mounted across scope refreshes: it owns
-    // the immutable operation for a consent whose response may have been lost.
     setStatus((previous) => (previous?.unknown || previous?.available ? previous : null));
     if (access !== 'owner') return;
     void refresh();
@@ -137,20 +79,8 @@ export function WorldGenerationConfirmation({
       clearInterval(timer);
     };
   }, [refresh, scope, access, phase]);
-  if (access !== 'owner' && phase !== 'world') return null;
   if (access !== 'owner')
-    return access === 'error' ? (
-      <ErrorBox message={h('worldMembersError')} />
-    ) : (
-      <p role="status">{h(access === 'loading' ? 'worldCheckingOwner' : 'worldOwnerReview')}</p>
-    );
-  // A retained consent/receipt may outlive a refresh, but its prices and balance
-  // must never be presented as current after navigation or an unsuccessful read.
-  const pricingCurrent =
-    pricedScope === currentPricingScope && !error && !membershipError && !membershipPending;
-  const forecast = pricingCurrent ? status?.forecast : null;
-  const baseEstimate = forecast?.baseEstimatedSparkSubunits ?? forecast?.estimatedSparkSubunits;
-  const optionalRequests = forecast?.optionalAutonomousSpeechRequests ?? 0;
+    return access === 'error' ? <ErrorBox message={h('worldMembersError')} /> : null;
   const blockedCode = status?.ordinary?.code;
   const blockedCopy: Record<string, StoryMessageKey> = {
     GENERATION_UNAVAILABLE: 'worldGenerationUnavailable',
@@ -166,196 +96,35 @@ export function WorldGenerationConfirmation({
   };
   const blockedMessage =
     blockedCode === 'INSUFFICIENT_SPARKS'
-      ? t('Недостаточно искр для этой операции.')
+      ? t('Не хватает Искр')
       : h(blockedCopy[blockedCode || ''] || 'worldGenerationBlocked');
+  const locationConsent =
+    status?.available &&
+    !status.pending &&
+    !status.unknown &&
+    phase === 'world' &&
+    ((status.generatedLocationImages ?? 0) > 0 ||
+      status.estimateRiskConsentRequired ||
+      blockedCode === 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED');
   return (
     <div data-testid="world-generation-confirmation">
       <ErrorBox message={membershipError ? h('worldMembersError') : error} />
-      {membershipPending && <p role="status">{h('worldCheckingOwner')}</p>}
       {status?.unknown ? (
         <p role="status">{h('worldCostUnresolved')}</p>
-      ) : status?.pending ? (
-        <p role="status">{h('worldPending')}</p>
-      ) : status?.available &&
-        phase === 'world' &&
-        ((status.generatedLocationImages ?? 0) > 0 ||
-          status.estimateRiskConsentRequired ||
-          blockedCode === 'IMAGE_ESTIMATE_RISK_CONSENT_REQUIRED') ? (
+      ) : locationConsent ? (
         <StoryReplyConfirmation
           campaignId={campaignId}
           turnId="world"
           endpoint={path}
           worldBatch
+          autoConfirm
+          quiet
           scope={scope}
           disabled={disabled || !!error || membershipError || membershipPending}
           onChanged={refresh}
-          onDecline={
-            status.pendingLocationIds?.length
-              ? async () => {
-                  const requestIds = status.pendingLocationIds!;
-                  await api(`${path}/decline`, {
-                    method: 'POST',
-                    body: JSON.stringify({ requestIds }),
-                  });
-                  await refresh();
-                }
-              : undefined
-          }
         />
-      ) : status?.ordinary?.state === 'blocked' ? (
-        <ErrorBox message={blockedMessage} />
-      ) : status?.ordinary?.state === 'pending' ? (
-        <p role="status">{h('worldPending')}</p>
-      ) : phase !== 'world' || status?.available ? (
-        <div data-testid="world-cost-forecast">
-          <p role="status">
-            {baseEstimate != null
-              ? h('worldCostForecast', { amount: formatSparkSubunits(baseEstimate, locale) })
-              : h(error || status ? 'worldCostUnavailable' : 'worldCostCalculating')}
-          </p>
-          {optionalRequests > 0 && (
-            <>
-              <p>
-                {forecast?.optionalAutonomousSpeechSparkSubunits != null
-                  ? h('worldOptionalSpeechForecast', {
-                      amount: formatSparkSubunits(
-                        forecast.optionalAutonomousSpeechSparkSubunits,
-                        locale,
-                      ),
-                      count: optionalRequests,
-                    })
-                  : h('worldOptionalSpeechForecastUnavailable', {
-                      count:
-                        forecast?.optionalAutonomousSpeechUnestimatedRequests || optionalRequests,
-                    })}
-              </p>
-              {forecast?.estimatedSparkSubunits != null && (
-                <p>
-                  {h('worldTotalCostForecast', {
-                    amount: formatSparkSubunits(forecast.estimatedSparkSubunits, locale),
-                  })}
-                </p>
-              )}
-              <p>{h('worldOptionalSpeechConditions')}</p>
-              {forecast?.optionalAutonomousSpeechAllowanceSubunits != null && (
-                <details data-testid="world-speech-allowance">
-                  <summary>{h('worldSpeechAllowanceDetails')}</summary>
-                  <p>
-                    {h('worldOptionalSpeechAllowance', {
-                      amount: formatSparkSubunits(
-                        forecast.optionalAutonomousSpeechAllowanceSubunits,
-                        locale,
-                      ),
-                      count: optionalRequests,
-                    })}
-                  </p>
-                </details>
-              )}
-            </>
-          )}
-        </div>
       ) : (
-        <p role="status">
-          {h(
-            !status
-              ? 'worldCheckingStatus'
-              : status.reason === 'manual_authorization_required'
-                ? 'worldManualAuthorization'
-                : status.reason === 'no_pending_generation'
-                  ? 'worldNoPendingGeneration'
-                  : 'worldGenerationUnavailable',
-          )}
-        </p>
-      )}
-      {!!visibleReceipts?.skips.length && (
-        <section aria-label={h('worldSpeechSkips')}>
-          <h3>{h('worldSpeechSkips')}</h3>
-          <ul>
-            {visibleReceipts.skips.map((skip) => (
-              <li key={skip.id}>
-                <time dateTime={skip.createdAt}>
-                  {new Date(skip.createdAt).toLocaleString(locale)}
-                </time>
-                <p>
-                  {h(
-                    skip.reason === 'insufficient_funds'
-                      ? 'worldSpeechSkipInsufficientFunds'
-                      : skip.reason === 'allowance_exhausted'
-                        ? 'worldSpeechSkipExhausted'
-                        : skip.reason === 'legacy_uncovered'
-                          ? 'worldSpeechSkipLegacy'
-                          : 'worldSpeechSkipUnavailable',
-                  )}
-                </p>
-              </li>
-            ))}
-          </ul>
-        </section>
-      )}
-      {(!!visibleReceipts?.items.length || receiptBefore) && (
-        <section aria-label={h('worldSpeechReceipts')} data-testid="world-speech-receipts">
-          <h3>{h('worldSpeechReceipts')}</h3>
-          <p>{h('worldSpeechReceiptHistory')}</p>
-          <ul>
-            {visibleReceipts?.items.map((receipt) => (
-              <li key={receipt.id}>
-                <time dateTime={receipt.createdAt}>
-                  {new Date(receipt.createdAt).toLocaleString(locale)}
-                </time>
-                <strong>
-                  {h(
-                    receipt.outcome === 'delivered'
-                      ? 'worldSpeechDelivered'
-                      : receipt.outcome === 'silent'
-                        ? 'worldSpeechSilent'
-                        : receipt.outcome === 'failed'
-                          ? 'worldSpeechFailed'
-                          : 'worldSpeechPending',
-                  )}
-                </strong>
-                <p>
-                  {h(
-                    receipt.status === 'unknown'
-                      ? 'worldSpeechReceiptUnknown'
-                      : receipt.capturedSubunits !== null
-                        ? 'worldSpeechReceiptCharged'
-                        : 'worldSpeechReceiptHeld',
-                    {
-                      amount: formatSparkSubunits(
-                        receipt.capturedSubunits ?? receipt.reservedSubunits,
-                        locale,
-                      ),
-                    },
-                  )}
-                </p>
-                {receipt.capturedSubunits !== null && (
-                  <small>
-                    {h('worldSpeechReceiptFunding', {
-                      dreams: formatSparkSubunits(
-                        receipt.funding.dreamsCapturedSubunits ?? '0',
-                        locale,
-                      ),
-                      sparks: formatSparkSubunits(
-                        receipt.funding.sparksCapturedSubunits ?? '0',
-                        locale,
-                      ),
-                    })}
-                  </small>
-                )}
-              </li>
-            ))}
-          </ul>
-          {receiptBefore && (
-            <button type="button" onClick={() => setReceiptBefore(undefined)}>
-              {h('worldSpeechNewest')}
-            </button>
-          )}
-          {visibleReceipts?.next && (
-            <button type="button" onClick={() => setReceiptBefore(visibleReceipts.next)}>
-              {h('worldSpeechOlder')}
-            </button>
-          )}
-        </section>
+        status?.ordinary?.state === 'blocked' && <ErrorBox message={blockedMessage} />
       )}
     </div>
   );
