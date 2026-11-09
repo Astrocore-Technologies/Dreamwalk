@@ -26,6 +26,7 @@ import { HeroSelection, useHeroSelection } from '../game/hero-selection';
 import { LaunchGate } from './launch-gate';
 import { useHomeText } from './messages';
 import styles from './home.module.css';
+import { stripMarkdown } from '@/lib/markdown';
 function Rail({
   kind,
   adventures,
@@ -96,7 +97,7 @@ function Rail({
                 <ArrowUpRight className={styles.cardArrow} size={20} />
               </div>
               <h3>{text.title}</h3>
-              <p>{text.synopsis}</p>
+              <p>{stripMarkdown(text.synopsis)}</p>
               <StoryMetrics adventure={adventure} />
               <div className={styles.cardFoot}>
                 <span>{adventure.author.handle}</span>
@@ -304,7 +305,7 @@ export function HomePage() {
                   {h('spotlight')}
                 </p>
                 <h2 className={styles.featureTitle}>{text.title}</h2>
-                <p className={styles.hook}>{text.synopsis}</p>
+                <p className={styles.hook}>{stripMarkdown(text.synopsis)}</p>
                 <Link className={styles.byline} href={`/creators/${active.author.handle}`}>
                   @{active.author.handle}
                   <ArrowUpRight size={12} />

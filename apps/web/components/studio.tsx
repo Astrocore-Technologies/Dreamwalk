@@ -63,7 +63,6 @@ import {
   Panel,
   Select,
   Tabs,
-  Textarea,
   UploadField,
 } from './ui';
 import {
@@ -71,6 +70,7 @@ import {
   LocationImageDialog,
   useLocationImageConfiguration,
 } from './visual-authoring/location-image';
+import { MarkdownField } from './markdown';
 import styles from './studio/studio.module.css';
 
 const statuses: Record<string, string> = {
@@ -696,17 +696,15 @@ function AdventureEditor({ id }: { id: string }) {
                       placeholder={t('Например, Тайна старой обсерватории')}
                     />
                   </Field>
-                  <Field
+                  <MarkdownField
                     label={t('Синопсис')}
                     hint={t('Что ждёт игрока? Не раскрывайте главную тайну.')}
-                  >
-                    <Textarea
-                      maxLength={4000}
-                      value={draft.synopsis}
-                      onChange={(e) => change('synopsis', e.target.value)}
-                      placeholder={t('Когда над городом погасла последняя звезда…')}
-                    />
-                  </Field>
+
+                    maxLength={4000}
+                    value={draft.synopsis}
+                    onChange={(e) => change('synopsis', e.target.value)}
+                    placeholder={t('Когда над городом погасла последняя звезда…')}
+                  />
                   <Field
                     label={t('Язык оригинала')}
                     hint={t(
@@ -828,28 +826,24 @@ function AdventureEditor({ id }: { id: string }) {
             {step === 1 && (
               <div className={styles.worldGrid}>
                 <div className="stack">
-                  <Field
+                  <MarkdownField
                     label={t('Мир и атмосфера')}
                     hint={t('Где происходит история, какие у мира особенности?')}
-                  >
-                    <Textarea
-                      rows={8}
-                      maxLength={12000}
-                      value={draft.content.world}
-                      onChange={(e) => content('world', e.target.value)}
-                    />
-                  </Field>
-                  <Field
+
+                    rows={8}
+                    maxLength={12000}
+                    value={draft.content.world}
+                    onChange={(e) => content('world', e.target.value)}
+                  />
+                  <MarkdownField
                     label={t('Правила мира')}
                     hint={t('Что возможно, что запрещено и какие последствия важны?')}
-                  >
-                    <Textarea
-                      rows={6}
-                      maxLength={8000}
-                      value={draft.content.rules}
-                      onChange={(e) => content('rules', e.target.value)}
-                    />
-                  </Field>
+
+                    rows={6}
+                    maxLength={8000}
+                    value={draft.content.rules}
+                    onChange={(e) => content('rules', e.target.value)}
+                  />
                 </div>
                 <aside className={styles.worldContext}>
                   <img src={coverUrl(draft)} alt="" />
@@ -951,20 +945,19 @@ function AdventureEditor({ id }: { id: string }) {
                           }
                         />
                       </Field>
-                      <Field label={t('Описание локации')}>
-                        <Textarea
-                          maxLength={6000}
-                          value={location.description}
-                          onChange={(e) =>
-                            content(
-                              'locations',
-                              draft.content.locations.map((l) =>
-                                l.id === location.id ? { ...l, description: e.target.value } : l,
-                              ),
-                            )
-                          }
-                        />
-                      </Field>
+                      <MarkdownField
+                        label={t('Описание локации')}
+                        maxLength={6000}
+                        value={location.description}
+                        onChange={(e) =>
+                          content(
+                            'locations',
+                            draft.content.locations.map((l) =>
+                              l.id === location.id ? { ...l, description: e.target.value } : l,
+                            ),
+                          )
+                        }
+                      />
                       <LocationMapIntent
                         value={location.mapIntent}
                         onChange={(mapIntent) =>
@@ -1129,23 +1122,22 @@ function AdventureEditor({ id }: { id: string }) {
                                     </Select>
                                   </Field>
                                 </div>
-                                <Field label={t('Начальная ситуация')}>
-                                  <Textarea
-                                    rows={5}
-                                    maxLength={6000}
-                                    value={scene.description}
-                                    onChange={(e) =>
-                                      content(
-                                        'scenes',
-                                        draft.content.scenes.map((s) =>
-                                          s.id === scene.id
-                                            ? { ...s, description: e.target.value }
-                                            : s,
-                                        ),
-                                      )
-                                    }
-                                  />
-                                </Field>
+                                <MarkdownField
+                                  label={t('Начальная ситуация')}
+                                  rows={5}
+                                  maxLength={6000}
+                                  value={scene.description}
+                                  onChange={(e) =>
+                                    content(
+                                      'scenes',
+                                      draft.content.scenes.map((s) =>
+                                        s.id === scene.id
+                                          ? { ...s, description: e.target.value }
+                                          : s,
+                                      ),
+                                    )
+                                  }
+                                />
                                 <SceneParticipants
                                   adventureId={isNew ? undefined : id}
                                   storyNpcIds={draft.content.npcIds}
