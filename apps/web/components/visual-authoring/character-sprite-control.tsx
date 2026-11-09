@@ -19,16 +19,6 @@ const messages = {
     'Образ будується за полем «Зовнішність» цього персонажа. Заповніть його та збережіть NPC.',
   ],
   prepare: ['Подготовить спрайт', 'Prepare sprite', 'Підготувати спрайт'],
-  photo: [
-    'Разрешаю использовать мой загруженный портрет как приватный референс',
-    'Allow my uploaded portrait as a private reference',
-    'Дозволяю використати мій завантажений портрет як приватний референс',
-  ],
-  share: [
-    'Разрешить отдельные разрешения на использование результата другими авторами',
-    'Allow separate grants to reuse the result',
-    'Дозволити окремі дозволи на використання результату іншими авторами',
-  ],
   review: [
     'Проверь внешность и полный рост перед утверждением образа',
     'Review identity and full body before approving this appearance',
@@ -59,8 +49,8 @@ export function CharacterSpriteControl({
     i = locale === 'ru' ? 0 : locale === 'en' ? 1 : 2,
     text = (k: keyof typeof messages) => messages[k][i];
   const [appearance, setAppearance] = useState(''),
-    [photo, setPhoto] = useState(false),
-    [share, setShare] = useState(false);
+    photo = false,
+    share = false;
   const [project, setProject] = useState<GenerationProject | null>(null),
     [generation, setGeneration] = useState<GenerationState | null>(null),
     [session, setSession] = useState<LiveTestStatus | null>(null),
@@ -170,16 +160,6 @@ export function CharacterSpriteControl({
           ) : (
             <p>{text('fromProfile')}</p>
           )}
-          <label>
-            <input type="checkbox" checked={photo} onChange={(e) => setPhoto(e.target.checked)} />
-            {text('photo')}
-          </label>
-          <br />
-          <label>
-            <input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} />
-            {text('share')}
-          </label>
-          <br />
           <Button busy={busy} onClick={() => void act('prepare')}>
             {text('prepare')}
           </Button>
