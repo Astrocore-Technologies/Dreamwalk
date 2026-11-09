@@ -18,6 +18,8 @@ import {
   UploadField,
   Loading,
 } from '../ui';
+import { FramedPortrait } from '../framed-portrait';
+import { PortraitFrameEditor } from '../portrait-frame-editor';
 import { CharacterSpriteControl } from '../visual-authoring/character-sprite-control';
 
 const messages = {
@@ -342,7 +344,10 @@ export function StoryNpcEditor({
                     onClick={() => setPreviewId(npc.id)}
                   >
                     {npc.portraitAssetId ? (
-                      <img src={assetUrl(npc.portraitAssetId)} alt="" />
+                      <FramedPortrait
+                        src={assetUrl(npc.portraitAssetId)}
+                        frame={npc.portraitFrame}
+                      />
                     ) : (
                       <span className={styles.portraitFallback}>
                         <UserRound size={38} />
@@ -370,7 +375,11 @@ export function StoryNpcEditor({
             {previewNpc && (
               <aside className={styles.npcPreview} data-testid="story-npc-preview">
                 {previewNpc.portraitAssetId ? (
-                  <img src={assetUrl(previewNpc.portraitAssetId)} alt={t('Портрет NPC')} />
+                  <FramedPortrait
+                    src={assetUrl(previewNpc.portraitAssetId)}
+                    alt={t('Портрет NPC')}
+                    frame={previewNpc.portraitFrame}
+                  />
                 ) : (
                   <div className={styles.previewFallback}>
                     <UserRound size={80} />
@@ -467,22 +476,38 @@ export function StoryNpcEditor({
               <UploadField
                 label={t('Загрузить портрет')}
                 onUploaded={(asset) => {
-                  if (formEpoch === epoch.current && !lock.current)
+                  if (formEpoch === epoch.current && !lock.current) {
                     change('portraitAssetId', asset.id);
+                    change('portraitFrame', null);
+                  }
                 }}
               />
               {draft.portraitAssetId && (
-                <div className="row">
-                  <img
+                <>
+                  <div className="row">
+                    <span style={{ display: 'block', width: 80, height: 80 }}>
+                      <FramedPortrait
+                        src={assetUrl(draft.portraitAssetId)}
+                        alt={t('Портрет NPC')}
+                        frame={draft.portraitFrame}
+                      />
+                    </span>
+                    <Button
+                      type="button"
+                      onClick={() => {
+                        change('portraitAssetId', null);
+                        change('portraitFrame', null);
+                      }}
+                    >
+                      {t('Убрать портрет')}
+                    </Button>
+                  </div>
+                  <PortraitFrameEditor
                     src={assetUrl(draft.portraitAssetId)}
-                    alt={t('Портрет NPC')}
-                    width={80}
-                    height={80}
+                    value={draft.portraitFrame}
+                    onChange={(frame) => change('portraitFrame', frame)}
                   />
-                  <Button type="button" onClick={() => change('portraitAssetId', null)}>
-                    {t('Убрать портрет')}
-                  </Button>
-                </div>
+                </>
               )}
               <div className="row">
                 <Button type="submit" busy={busy}>

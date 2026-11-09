@@ -1,6 +1,8 @@
 'use client';
 import { useEffect, useRef, useState } from 'react';
 import { X } from 'lucide-react';
+import type { PortraitFrame } from '@dreamwalk/contracts';
+import { FramedPortrait } from '../framed-portrait';
 import { useTurnText } from './turn-messages';
 import { TOKEN_COLORS, type TokenKind } from './actor-token';
 import styles from './game.module.css';
@@ -37,6 +39,7 @@ export function ActorArtWindow({
   name,
   kind,
   portraitUrl,
+  portraitFrame,
   role,
   lifeState,
   canTalk,
@@ -47,6 +50,7 @@ export function ActorArtWindow({
   name: string;
   kind: TokenKind;
   portraitUrl?: string;
+  portraitFrame?: PortraitFrame | null;
   role?: string;
   lifeState?: string;
   canTalk: boolean;
@@ -91,7 +95,12 @@ export function ActorArtWindow({
       </button>
       <div className={styles.artFrame} data-has-art={!!shownUrl}>
         {shownUrl ? (
-          <img src={shownUrl} alt={name} onError={() => setBrokenUrl(shownUrl)} />
+          <FramedPortrait
+            src={shownUrl}
+            alt={name}
+            frame={portraitFrame}
+            onError={() => setBrokenUrl(shownUrl)}
+          />
         ) : (
           <BustArt kind={kind} />
         )}

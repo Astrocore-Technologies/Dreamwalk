@@ -36,6 +36,8 @@ import {
   UploadField,
 } from '../ui';
 import { CharacterSpriteControl } from '../visual-authoring/character-sprite-control';
+import { FramedPortrait } from '../framed-portrait';
+import { PortraitFrameEditor } from '../portrait-frame-editor';
 import { NpcTemplateField } from './npc-template-field';
 import { AutosaveStatus } from './autosave-status';
 import { npcDesignText } from './npc-design-copy';
@@ -109,7 +111,7 @@ export function NpcLibrary({ tabs }: { tabs: ReactNode }) {
               <Link href={`/studio/npcs/${npc.id}`} key={npc.id} className={styles.card}>
                 <div className={styles.cardPortrait}>
                   {npc.portraitAssetId ? (
-                    <img src={assetUrl(npc.portraitAssetId)} alt="" />
+                    <FramedPortrait src={assetUrl(npc.portraitAssetId)} frame={npc.portraitFrame} />
                   ) : (
                     <div className={styles.portraitPlaceholder}>
                       <UserRound size={56} strokeWidth={1} aria-hidden="true" />
@@ -173,6 +175,7 @@ const blankNpc: NpcDraft = {
   modelProfileId: null,
   visibility: 'private',
   portraitAssetId: null,
+  portraitFrame: null,
 };
 function toNpcDraft(n: Npc): NpcDraft {
   return {
@@ -193,6 +196,7 @@ function toNpcDraft(n: Npc): NpcDraft {
     modelProfileId: n.modelProfileId,
     visibility: 'private',
     portraitAssetId: n.portraitAssetId,
+    portraitFrame: n.portraitFrame ?? null,
   };
 }
 export function NpcEditor({ id }: { id: string }) {
@@ -328,7 +332,11 @@ export function NpcEditor({ id }: { id: string }) {
             <section className={styles.portraitPanel} aria-label={t('Портрет NPC')}>
               <div className={styles.editorPortrait}>
                 {draft.portraitAssetId ? (
-                  <img src={assetUrl(draft.portraitAssetId)} alt={t('Портрет NPC')} />
+                  <FramedPortrait
+                    src={assetUrl(draft.portraitAssetId)}
+                    alt={t('Портрет NPC')}
+                    frame={draft.portraitFrame}
+                  />
                 ) : (
                   <div className={styles.portraitPlaceholder}>
                     <UserRound size={88} strokeWidth={1} aria-hidden="true" />
@@ -339,16 +347,29 @@ export function NpcEditor({ id }: { id: string }) {
               <div className={styles.portraitActions}>
                 <UploadField
                   label={t('Загрузить портрет')}
-                  onUploaded={(asset) => change('portraitAssetId', asset.id)}
+                  onUploaded={(asset) => {
+                    change('portraitAssetId', asset.id);
+                    change('portraitFrame', null);
+                  }}
                 />
                 {draft.portraitAssetId && (
                   <Button
                     variant="ghost"
                     type="button"
-                    onClick={() => change('portraitAssetId', null)}
+                    onClick={() => {
+                      change('portraitAssetId', null);
+                      change('portraitFrame', null);
+                    }}
                   >
                     {t('Убрать портрет')}
                   </Button>
+                )}
+                {draft.portraitAssetId && (
+                  <PortraitFrameEditor
+                    src={assetUrl(draft.portraitAssetId)}
+                    value={draft.portraitFrame}
+                    onChange={(frame) => change('portraitFrame', frame)}
+                  />
                 )}
               </div>
             </section>

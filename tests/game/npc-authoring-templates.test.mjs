@@ -72,7 +72,10 @@ test('NPC extraction keeps private drafts, CAS autosave and explicit destructive
   assert.match(source, /dirty \? setLeave\(true\)/);
   assert.match(source, /onClick=\{\(\) => setConfirm\(true\)\}/);
   assert.match(source, /<CharacterSpriteControl target=\{\{ kind: 'npc', id \}\}/);
-  assert.match(source, /onUploaded=\{\(asset\) => change\('portraitAssetId', asset.id\)\}/);
+  assert.match(
+    source,
+    /onUploaded=\{\(asset\) => \{\s*change\('portraitAssetId', asset.id\);\s*change\('portraitFrame', null\);\s*\}\}/,
+  );
   assert.doesNotMatch(source, /dangerouslySetInnerHTML|\/dispatch|\/quote|\/generate/);
   const shell = await readFile(
     new URL('../../apps/web/components/studio.tsx', import.meta.url),

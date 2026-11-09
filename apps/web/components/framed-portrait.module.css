@@ -1,0 +1,55 @@
+.frame {
+  position: relative;
+  display: block;
+  width: 100%;
+  height: 100%;
+  overflow: hidden;
+}
+.frame img {
+  position: absolute;
+  max-width: none;
+  max-height: none;
+  object-fit: fill;
+}
+.editor {
+  display: grid;
+  grid-template-columns: auto 1fr;
+  gap: 16px;
+  align-items: start;
+  margin-top: 8px;
+}
+.round {
+  width: 144px;
+  height: 144px;
+  border-radius: 50%;
+  border: 2px solid var(--accent);
+  overflow: hidden;
+  background: var(--surface-soft);
+  touch-action: none;
+  cursor: grab;
+  position: relative;
+}
+.round:active {
+  cursor: grabbing;
+}
+.controls {
+  display: grid;
+  gap: 10px;
+}
+.controls label {
+  display: grid;
+  gap: 4px;
+  font-size: 12px;
+}
+.controls input[type='range'] {
+  width: 100%;
+}
+@media (max-width: 480px) {
+  .editor {
+    grid-template-columns: 1fr;
+    justify-items: center;
+  }
+  .controls {
+    width: 100%;
+  }
+}

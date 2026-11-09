@@ -2,6 +2,7 @@ export * from './established-roleplay';
 import { tokenSizeSchema, footprintCells, hasPosition, type TokenSize } from './battlemap';
 export * from './battlemap';
 import { npcPlaceholderSchema, type NpcPlaceholder } from './npc-placeholder';
+import { portraitFrameSchema, type PortraitFrame } from '../portrait-frame';
 export * from './npc-placeholder';
 import type { NarrativePreferences } from './narrative-corrections';
 export * from './narrative-corrections';
@@ -235,6 +236,8 @@ export interface GameEntityBase {
     /** Already-public author presentation, never biography or secrets. */
     personality?: string;
     greeting?: string;
+    /** Which part of the portrait to show in round/square frames. */
+    portraitFrame?: PortraitFrame;
   };
   tokenSize?: TokenSize;
   characterAnimation?: CharacterAnimation;
@@ -688,6 +691,7 @@ export const gamePublicEntitySchema = z
         appearance: z.string().max(4000),
         personality: z.string().max(4000).optional(),
         greeting: z.string().max(2000).optional(),
+        portraitFrame: portraitFrameSchema.optional(),
       })
       .strict()
       .optional(),
@@ -1020,6 +1024,7 @@ export const authoredGameDraftSchema = z
                 appearance: z.string().max(4000),
                 personality: z.string().max(4000).optional(),
                 greeting: z.string().max(2000).optional(),
+                portraitFrame: portraitFrameSchema.optional(),
               })
               .strict()
               .optional(),

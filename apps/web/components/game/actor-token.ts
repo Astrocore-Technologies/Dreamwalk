@@ -5,6 +5,7 @@
  * A visible portrait is cover-cropped into the circle; without one a neutral
  * bust is drawn in the role colour. No identity is inferred from names or text.
  */
+import { portraitCropRect, type PortraitFrame } from '@dreamwalk/contracts';
 export type TokenKind = 'self' | 'player' | 'npc';
 export const TOKEN_TEXTURE_SIDE = 128;
 /** The frame is drawn this much larger than its cell, around the same centre. */
@@ -33,11 +34,22 @@ export function portraitCrop(width: number, height: number) {
 }
 
 /** A new texture is needed only when the role or the pinned portrait revision changes. */
-export function actorTokenKey(kind: TokenKind, portraitRevisionId?: string) {
-  return `${kind}|${portraitRevisionId ?? 'bust'}`;
+export function actorTokenKey(
+  kind: TokenKind,
+  portraitRevisionId?: string,
+  frame?: PortraitFrame | null,
+) {
+  const framed = portraitRevisionId && frame ? `|${frame.x}:${frame.y}:${frame.zoom}` : '';
+  return `${kind}|${portraitRevisionId ?? 'bust'}${framed}`;
 }
 
-export type TokenPortrait = { source: CanvasImageSource; width: number; height: number };
+export type TokenPortrait = {
+  source: CanvasImageSource;
+  width: number;
+  height: number;
+  /** The author's chosen part of the portrait; without it the default crop is used. */
+  frame?: PortraitFrame | null;
+};
 
 export function drawActorToken(
   ctx: CanvasRenderingContext2D,
@@ -56,7 +68,7 @@ export function drawActorToken(
   ctx.closePath();
   ctx.clip();
   if (portrait && portrait.width > 0 && portrait.height > 0) {
-    const { sx, sy, side } = portraitCrop(portrait.width, portrait.height);
+    const { sx, sy, side } = portraitCropRect(portrait.width, portrait.height, portrait.frame);
     ctx.drawImage(
       portrait.source,
       sx,

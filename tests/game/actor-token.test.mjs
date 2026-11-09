@@ -2,14 +2,19 @@ import test from 'node:test';
 import assert from 'node:assert/strict';
 import { readFileSync } from 'node:fs';
 import ts from 'typescript';
+import * as contracts from '../../packages/contracts/dist/index.js';
 const load = (path) => {
   const exports = {};
   new Function(
     'exports',
+    'require',
     ts.transpileModule(readFileSync(new URL(path, import.meta.url), 'utf8'), {
       compilerOptions: { module: ts.ModuleKind.CommonJS },
     }).outputText,
-  )(exports);
+  )(exports, (id) => {
+    if (id === '@dreamwalk/contracts') return contracts;
+    throw new Error(`unexpected import ${id}`);
+  });
   return exports;
 };
 const { actorPortraitUrl } = load('../../apps/web/components/game/actor-portrait.ts');
@@ -131,4 +136,28 @@ test('player portraits use only the authorized per-actor endpoint for real playe
     assert.equal(actorPortraitUrl('campaign-1', bad), undefined);
   // The campaign id is encoded, never interpolated raw into the path.
   assert.ok(!actorPortraitUrl('a/b?c', actor).includes('a/b?c'));
+});
+
+test('a chosen portrait frame selects that part of the image and changes the token key', () => {
+  const frame = { x: 0.5, y: 0.1, zoom: 2 };
+  const { ctx, calls } = recordingContext();
+  drawActorToken(ctx, TOKEN_TEXTURE_SIDE, 'npc', {
+    source: {},
+    width: 400,
+    height: 800,
+    frame,
+  });
+  const draw = calls.find((c) => c[0] === 'drawImage');
+  // zoom 2 on a 400x800 image selects a 200px square around the focal point, kept inside the image.
+  assert.deepEqual(draw.slice(2, 6), [100, 0, 200, 200]);
+  assert.notEqual(actorTokenKey('npc', 'rev-1', frame), actorTokenKey('npc', 'rev-1'));
+  assert.equal(
+    actorTokenKey('npc', undefined, frame),
+    'npc|bust',
+    'no portrait, no frame in the key',
+  );
+  assert.notEqual(
+    actorTokenKey('npc', 'rev-1', frame),
+    actorTokenKey('npc', 'rev-1', { ...frame, zoom: 3 }),
+  );
 });
