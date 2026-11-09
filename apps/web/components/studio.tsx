@@ -6,7 +6,6 @@ import { CollectionEditor } from './studio/collection-editor';
 import { AutosaveStatus } from './studio/autosave-status';
 import { useDraftAutosave } from '@/lib/use-draft-autosave';
 import { LocationMapIntent } from './studio/location-map-intent';
-import { StoryLorebookEditor } from './studio/story-lorebook-editor';
 import { StoryNpcEditor } from './studio/story-npc-editor';
 import { SceneParticipants } from './studio/scene-participants';
 import { PrivateRelease } from './studio/private-release';
@@ -28,7 +27,6 @@ import {
   Plus,
   Save,
   Send,
-  ShieldCheck,
   Trash2,
   Users,
 } from 'lucide-react';
@@ -87,7 +85,6 @@ const steps = [
   'Локации',
   'NPC',
   'Стартовая сцена',
-  'Ограничения',
   'Просмотр',
   'Публикация',
 ];
@@ -400,7 +397,6 @@ function AdventureEditor({ id }: { id: string }) {
     { toast, user } = useClient(),
     isNew = id === 'new';
   const resource = useResource<Adventure>(isNew ? null : `/studio/adventures/${id}`),
-    genres = useResource<string[]>('/genres'),
     tagDefinitions = useResource<ControlledTag[]>('/tags');
   const [draft, setDraft] = useState<AdventureDraft>(() => ({
       ...blankDraft,
@@ -613,11 +609,11 @@ function AdventureEditor({ id }: { id: string }) {
           <Badge tone={status === 'published' ? 'green' : ''}>{t(statuses[status])}</Badge>
         </div>
         <div className={styles.editorActions}>
-          <Button variant="secondary" onClick={() => setStep(6)}>
+          <Button variant="secondary" onClick={() => setStep(5)}>
             <Eye size={17} />
             {t('Просмотр')}
           </Button>
-          <Button variant="secondary" onClick={() => setStep(7)}>
+          <Button variant="secondary" onClick={() => setStep(6)}>
             <Send size={17} />
             {t('Публикация')}
           </Button>
@@ -680,7 +676,6 @@ function AdventureEditor({ id }: { id: string }) {
                       t('Опиши локации и добавь проверяемую игровую карту.'),
                       t('Добавьте жителей мира из своей библиотеки.'),
                       t('Определите, где и с чего начнётся приключение.'),
-                      t('Позаботьтесь о комфортном опыте будущих игроков.'),
                       t('Проверь историю и запусти отдельную приватную тестовую версию.'),
                       t('Проверьте готовность истории и выберите, кто её увидит.'),
                     ][step]
@@ -730,32 +725,6 @@ function AdventureEditor({ id }: { id: string }) {
                     </Select>
                   </Field>
                   <div className="field-grid">
-                    <Field label={t('Жанр')}>
-                      <Select value={draft.genre} onChange={(e) => change('genre', e.target.value)}>
-                        {[
-                          ...new Set([
-                            draft.genre,
-                            ...(genres.data || ['Тайна', 'Фэнтези', 'Приключение', 'Драма']),
-                          ]),
-                        ].map((g) => (
-                          <option key={g} value={g}>
-                            {taxonomy(g)}
-                          </option>
-                        ))}
-                      </Select>
-                    </Field>
-                    <Field label={t('Сложность')}>
-                      <Select
-                        value={draft.difficulty}
-                        onChange={(e) =>
-                          change('difficulty', e.target.value as AdventureDraft['difficulty'])
-                        }
-                      >
-                        <option value="Легко">{t('Легко')}</option>
-                        <option value="Средне">{t('Средне')}</option>
-                        <option value="Сложно">{t('Сложно')}</option>
-                      </Select>
-                    </Field>
                     <Field label={t('Минимум игроков')}>
                       <Input
                         type="number"
@@ -1209,65 +1178,6 @@ function AdventureEditor({ id }: { id: string }) {
               </div>
             )}
             {step === 5 && (
-              <div className={styles.boundariesGrid}>
-                <div className="stack">
-                  <p className="muted">
-                    {t(
-                      'Укажите темы и границы истории. Эти сведения будут видны в карточке приключения.',
-                    )}
-                  </p>
-                  {[
-                    'Без откровенного контента',
-                    'Неоткровенная романтика',
-                    'Фантастическое насилие',
-                    'Тревожная атмосфера',
-                    'Без жестокости к животным',
-                  ].map((item) => (
-                    <label key={item} className={styles.checkRow}>
-                      <input
-                        type="checkbox"
-                        checked={draft.content.boundaries.includes(item)}
-                        onChange={(e) =>
-                          content(
-                            'boundaries',
-                            e.target.checked
-                              ? [...draft.content.boundaries, item]
-                              : draft.content.boundaries.filter((x) => x !== item),
-                          )
-                        }
-                      />
-                      {t(item)}
-                    </label>
-                  ))}
-                  <Field
-                    label={t('Все границы и предупреждения')}
-                    hint={t('Одна строка — одно предупреждение, максимум 20')}
-                  >
-                    <Textarea
-                      value={draft.content.boundaries.join('\n')}
-                      onChange={(e) =>
-                        content('boundaries', e.target.value.split('\n').slice(0, 20))
-                      }
-                    />
-                  </Field>
-                  <div className="notice">
-                    <ShieldCheck size={18} />
-                    {t(
-                      'Dreamwalk — приключения, загадки и отношения без откровенного контента. Публикация требует ручной проверки.',
-                    )}
-                  </div>
-                </div>
-                <aside className={styles.boundariesContext}>
-                  <img src={coverUrl(draft)} alt="" />
-                  <div>
-                    <ShieldCheck size={26} />
-                    <h3>{draft.title || t('Новая история')}</h3>
-                    <p>{t('Позаботьтесь о комфортном опыте будущих игроков.')}</p>
-                  </div>
-                </aside>
-              </div>
-            )}
-            {step === 6 && (
               <div className="stack">
                 <div
                   className={styles.previewCover}
@@ -1329,7 +1239,7 @@ function AdventureEditor({ id }: { id: string }) {
                 )}
               </div>
             )}
-            {step === 7 && (
+            {step === 6 && (
               <div className={styles.publicationGrid}>
                 <div className={styles.publicationChecklist}>
                   <div className={styles.readiness}>
@@ -1452,7 +1362,7 @@ function AdventureEditor({ id }: { id: string }) {
               {step + 1} {t('из')}
               {steps.length}
             </span>
-            {step < 7 ? (
+            {step < 6 ? (
               <Button type="button" onClick={() => setStep((s) => s + 1)}>
                 {t('Продолжить')}
                 <ArrowRight size={16} />
@@ -1466,7 +1376,7 @@ function AdventureEditor({ id }: { id: string }) {
           </div>
         </fieldset>
       </form>
-      {!isNew && step === 6 && (
+      {!isNew && step === 5 && (
         <StoryPlayableBuilder
           adventureId={id}
           beforePrepare={autosave.flush}
@@ -1502,25 +1412,14 @@ function AdventureEditor({ id }: { id: string }) {
           onChanged={refreshStoryAuthoring}
         />
       )}
-      {step === 3 && (
-        <StoryLorebookEditor
-          adventureId={isNew ? undefined : id}
-          value={draft.content.lorebook}
-          selectedNpcIds={draft.content.npcIds}
-          locations={draft.content.locations}
-          onChange={(value) => content('lorebook', value)}
-          beforePreview={autosave.flush}
-          disabled={busy}
-        />
-      )}
-      {!isNew && step === 7 && draft.visibility === 'private' && (
+      {!isNew && step === 6 && draft.visibility === 'private' && (
         <PrivateRelease
           adventureId={id}
           beforePublish={autosave.flush}
           onPublished={refreshArtModeration}
         />
       )}
-      {step === 7 &&
+      {step === 6 &&
         draft.visibility === 'private' &&
         (isNew || resource.data?.visibility !== 'private' ? (
           <div className="notice">{t('Сначала сохраните историю и выбранный режим доступа.')}</div>

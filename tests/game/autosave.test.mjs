@@ -209,7 +209,7 @@ test('Studio lifecycle and publication actions flush the shared CAS writer befor
   assert.ok(publish.indexOf('if (!saved) return;') < publish.indexOf('/submit'));
   assert.doesNotMatch(publish, /JSON.stringify\(draft\)|\.\.\.draft/);
   assert.match(source, /JSON.stringify\(\{ \.\.\.value, expectedEditRevision: revision \}\)/);
-  assert.match(source, /<\/form>\s*\{!isNew && step === 6 && \([\s\S]*?<StoryPlayableBuilder\b/);
+  assert.match(source, /<\/form>\s*\{!isNew && step === 5 && \([\s\S]*?<StoryPlayableBuilder\b/);
   assert.match(source, /<StoryPlayableBuilder\b[^>]*beforePrepare=\{autosave.flush\}/);
   assert.match(source, /<PrivateRelease\b[^>]*beforePublish=\{autosave.flush\}/);
   assert.match(source, /resource.data !== acknowledged.current/);

@@ -29,7 +29,7 @@ async function fixture(page: Page) {
   });
 }
 
-test('story NPC and lore composition retains private drafts, selection, validation, deletion focus and previews', async ({
+test('story NPC composition retains private drafts, selection, validation and previews, and has no lore editor', async ({
   page,
 }, info) => {
   test.setTimeout(180_000);
@@ -55,32 +55,6 @@ test('story NPC and lore composition retains private drafts, selection, validati
       role: 'Scout',
     },
   });
-  const current = await request(page, root);
-  const lorebook = [
-    {
-      id: 'keeper-fact',
-      title: 'Keeper fact',
-      text: 'Private keeper knowledge',
-      disclosure: 'never',
-      knowerNpcIds: [first.npc.id],
-      locationId: 'hall',
-      topics: ['key'],
-      publicQuestion: 'Where is the key?',
-    },
-    {
-      id: 'scout-fact',
-      title: 'Scout fact',
-      text: 'Private scout knowledge',
-      disclosure: 'asked',
-      knowerNpcIds: [second.npc.id],
-    },
-  ];
-  await request(
-    page,
-    root,
-    { expectedEditRevision: current.editRevision, content: { ...current.content, lorebook } },
-    'PATCH',
-  );
   let dispatches = 0;
   await page.route(
     /\/api\/v1\/(?:npc-ai|story-builds|image-generation)\/.*(?:dispatch|jobs|quote|generate)/,
@@ -125,74 +99,13 @@ test('story NPC and lore composition retains private drafts, selection, validati
     ).secrets,
   ).toBe('Private scout secret');
 
-  const lore = page.getByTestId('story-lorebook-editor');
-  const collection = lore.locator('[data-studio-collection="lore"]');
-  await collection.getByRole('button', { name: 'Scout fact', exact: true }).click();
-  const secondTitle = lore.getByRole('textbox', { name: 'Entry title 2', exact: true });
-  await secondTitle.fill('Scout fact revised');
-  await expect(page.locator('[data-autosave-status="saved"]').first()).toBeVisible();
-  await collection.getByRole('button', { name: 'Keeper fact', exact: true }).click();
-  const firstTitle = lore.getByRole('textbox', { name: 'Entry title 1', exact: true });
-  await firstTitle.fill('');
-  await collection.getByRole('button', { name: 'Scout fact revised', exact: true }).click();
-  await expect(collection.locator('button[aria-invalid="true"]')).toHaveCount(1);
-  await page.getByRole('button', { name: 'Save draft', exact: true }).click();
-  await expect(page.locator('[data-autosave-status="invalid"]').first()).toBeVisible();
-  expect((await request(page, root)).content.lorebook[0].title).toBe('Keeper fact');
-  await collection.locator('button[aria-invalid="true"]').click();
-  await expect(firstTitle).toHaveValue('');
-  await firstTitle.fill('Keeper fact');
-  await expect(firstTitle).toBeFocused();
-  await expect(page.locator('[data-autosave-status="saved"]').first()).toBeVisible();
-
-  // Save failure keeps the selected entry and all private fields; manual retry uses CAS.
-  let failSave = true;
-  await page.route(`**/api/v1${root}`, async (route) => {
-    if (route.request().method() === 'PATCH' && failSave) {
-      failSave = false;
-      await route.fulfill({ status: 500, json: { code: 'INTERNAL_ERROR' } });
-    } else await route.continue();
-  });
-  await firstTitle.fill('Keeper fact revised');
-  await expect(page.locator('[data-autosave-status="error"]').first()).toBeVisible();
-  await expect(firstTitle).toHaveValue('Keeper fact revised');
-  await page.locator('[data-autosave-status="error"]').first().getByRole('button').click();
-  await expect(page.locator('[data-autosave-status="saved"]').first()).toBeVisible();
-  await page.unroute(`**/api/v1${root}`);
-
-  await lore
-    .getByRole('combobox', { name: 'Character to preview', exact: true })
-    .selectOption(first.npc.id);
-  await lore.getByRole('combobox', { name: 'Related location', exact: true }).selectOption('hall');
-  await lore.getByRole('textbox', { name: 'Conversation topic', exact: true }).fill('key');
-  await lore.getByRole('button', { name: 'Preview knowledge selection', exact: true }).click();
-  const result = lore.getByTestId('lore-preview-result');
-  await expect(result).toContainText('Private keeper knowledge');
-  await expect(result).not.toContainText('Private scout knowledge');
-  await lore.getByRole('textbox', { name: 'Conversation topic', exact: true }).fill('new topic');
-  await expect(lore.getByRole('status')).toContainText('The draft changed');
-  await expect(result).toHaveCount(0);
-
-  // Collection selection never removes mounted inputs or resets draft values.
-  await collection.getByRole('button', { name: 'Add lore entry', exact: true }).focus();
-  await page.keyboard.press('Enter');
-  await expect(lore.getByRole('textbox', { name: 'Entry title 3', exact: true })).toHaveValue('');
-  await lore.getByRole('button', { name: 'Remove Entry title 3', exact: true }).focus();
-  await page.keyboard.press('Enter');
-  await expect(
-    collection.getByRole('button', { name: 'Keeper fact revised', exact: true }),
-  ).toBeFocused();
-  await expect(page.locator('[data-autosave-status="saved"]').first()).toBeVisible();
   const persisted = await request(page, root);
-  expect(persisted.content.lorebook).toEqual([
-    { ...lorebook[0], title: 'Keeper fact revised' },
-    { ...lorebook[1], title: 'Scout fact revised' },
-  ]);
   expect(persisted.visibility).toBe('private');
   expect(persisted.status).toBe('draft');
   await page.reload();
   await nav.getByRole('button').nth(3).click();
-  await expect(firstTitle).toHaveValue('Keeper fact revised');
+  await expect(page.getByTestId('story-lorebook-editor')).toHaveCount(0);
+  await expect(publicPreview).toContainText('Public keeper description');
 
   for (const locale of ['ru', 'uk', 'en']) {
     for (const viewport of [
@@ -221,20 +134,6 @@ test('story NPC and lore composition retains private drafts, selection, validati
       });
     }
   }
-  // Removing the final record returns keyboard focus to Add and persists an empty lorebook.
-  await lore.getByRole('button', { name: 'Remove Entry title 1', exact: true }).focus();
-  await page.keyboard.press('Enter');
-  await expect(
-    collection.getByRole('button', { name: 'Scout fact revised', exact: true }),
-  ).toBeFocused();
-  await lore.getByRole('button', { name: 'Remove Entry title 1', exact: true }).focus();
-  await page.keyboard.press('Enter');
-  await expect(
-    collection.getByRole('button', { name: 'Add lore entry', exact: true }),
-  ).toBeFocused();
-  await expect(lore.getByText('No entries', { exact: true })).toBeVisible();
-  await expect(page.locator('[data-autosave-status="saved"]').first()).toBeVisible();
-  expect((await request(page, root)).content.lorebook).toEqual([]);
   expect(dispatches).toBe(0);
 });
 
@@ -275,11 +174,6 @@ test('story character loading, read failure, retry and empty states remain disti
     panel.getByText('Create a character or copy a template.', { exact: true }),
   ).toBeVisible();
   await expect(page.getByTestId('story-npc-preview')).toHaveCount(0);
-  await expect(
-    page
-      .getByTestId('story-lorebook-editor')
-      .getByRole('button', { name: 'Add lore entry', exact: true }),
-  ).toBeDisabled();
   await panel.getByRole('button', { name: 'Create NPC here', exact: true }).click();
   await expect(panel.getByRole('textbox', { name: 'NPC name', exact: true })).toHaveValue('');
   await panel.getByRole('button', { name: 'Close', exact: true }).click();

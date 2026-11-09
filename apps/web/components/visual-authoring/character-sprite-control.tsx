@@ -13,17 +13,12 @@ const messages = {
     'Appearance (required for a hero without a portrait)',
     'Опис зовнішності (для героя обов’язковий без портрета)',
   ],
+  fromProfile: [
+    'Образ строится по полю «Внешность» этого персонажа. Заполните его и сохраните NPC.',
+    'The sprite is built from this character’s Appearance field. Fill it in and save the NPC.',
+    'Образ будується за полем «Зовнішність» цього персонажа. Заповніть його та збережіть NPC.',
+  ],
   prepare: ['Подготовить спрайт', 'Prepare sprite', 'Підготувати спрайт'],
-  photo: [
-    'Разрешаю использовать мой загруженный портрет как приватный референс',
-    'Allow my uploaded portrait as a private reference',
-    'Дозволяю використати мій завантажений портрет як приватний референс',
-  ],
-  share: [
-    'Разрешить отдельные разрешения на использование результата другими авторами',
-    'Allow separate grants to reuse the result',
-    'Дозволити окремі дозволи на використання результату іншими авторами',
-  ],
   review: [
     'Проверь внешность и полный рост перед утверждением образа',
     'Review identity and full body before approving this appearance',
@@ -54,8 +49,8 @@ export function CharacterSpriteControl({
     i = locale === 'ru' ? 0 : locale === 'en' ? 1 : 2,
     text = (k: keyof typeof messages) => messages[k][i];
   const [appearance, setAppearance] = useState(''),
-    [photo, setPhoto] = useState(false),
-    [share, setShare] = useState(false);
+    photo = false,
+    share = false;
   const [project, setProject] = useState<GenerationProject | null>(null),
     [generation, setGeneration] = useState<GenerationState | null>(null),
     [session, setSession] = useState<LiveTestStatus | null>(null),
@@ -106,7 +101,7 @@ export function CharacterSpriteControl({
       if (kind === 'prepare') {
         const p = (await mutate('/visual-authoring/character-sprite/prepare', {
           target,
-          ...(appearance.trim() ? { appearance: appearance.trim() } : {}),
+          ...(target.kind === 'hero' && appearance.trim() ? { appearance: appearance.trim() } : {}),
           sourcePhotoPermission: photo,
           allowOutputReuse: share,
         })) as GenerationProject;
@@ -154,23 +149,17 @@ export function CharacterSpriteControl({
       <p>{text('info')}</p>
       {!project && (
         <>
-          <Field label={text('appearance')}>
-            <Textarea
-              value={appearance}
-              onChange={(e) => setAppearance(e.target.value)}
-              maxLength={1500}
-            />
-          </Field>
-          <label>
-            <input type="checkbox" checked={photo} onChange={(e) => setPhoto(e.target.checked)} />
-            {text('photo')}
-          </label>
-          <br />
-          <label>
-            <input type="checkbox" checked={share} onChange={(e) => setShare(e.target.checked)} />
-            {text('share')}
-          </label>
-          <br />
+          {target.kind === 'hero' ? (
+            <Field label={text('appearance')}>
+              <Textarea
+                value={appearance}
+                onChange={(e) => setAppearance(e.target.value)}
+                maxLength={1500}
+              />
+            </Field>
+          ) : (
+            <p>{text('fromProfile')}</p>
+          )}
           <Button busy={busy} onClick={() => void act('prepare')}>
             {text('prepare')}
           </Button>

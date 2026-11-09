@@ -69,7 +69,7 @@ test('scoped character profile and lore save, discard and preview preserve autho
     expectedStoryRevision: story.editRevision,
     npc: { name: 'Северин', characterProfile: profile, modelProfileId: models[0].id },
   });
-  const second = await authoringRequest(page, `${root}/npcs`, {
+  await authoringRequest(page, `${root}/npcs`, {
     requestId: randomUUID(),
     expectedStoryRevision: first.storyEditRevision,
     npc: { name: 'Мира' },
@@ -139,30 +139,7 @@ test('scoped character profile and lore save, discard and preview preserve autho
   );
   await panel.getByRole('button', { name: 'Закрыть', exact: true }).click();
 
-  const lore = page.getByTestId('story-lorebook-editor');
-  await lore.getByRole('button', { name: 'Добавить запись лора', exact: true }).click();
-  await lore.getByLabel('Название записи 1', { exact: true }).fill('Тайник Северина');
-  await lore.getByLabel('Содержание знания 1', { exact: true }).fill('Ключ лежит под верстаком.');
-  await lore
-    .getByRole('combobox', { name: 'Персонаж для проверки', exact: true })
-    .selectOption(second.npc.id);
-  await lore.getByRole('button', { name: 'Проверить отбор знаний', exact: true }).click();
-  const preview = lore.getByTestId('lore-preview-result');
-  await expect(preview).toContainText('Персонаж не знает запись');
-  await expect(preview).not.toContainText('Ключ лежит под верстаком.');
-  await lore
-    .getByRole('combobox', { name: 'Персонаж для проверки', exact: true })
-    .selectOption(first.npc.id);
-  await expect(lore.getByRole('status')).toContainText('Черновик изменился');
-  await lore.getByRole('button', { name: 'Проверить отбор знаний', exact: true }).click();
-  await expect(preview).toContainText('Ключ лежит под верстаком.');
-  const persisted = await authoringRequest(page, root);
-  expect(persisted.content.lorebook[0].knowerNpcIds).toEqual([first.npc.id]);
-  await page.reload();
-  await page.getByRole('button', { name: /NPC$/ }).click();
-  await expect(
-    page.getByTestId('story-lorebook-editor').getByLabel('Содержание знания 1', { exact: true }),
-  ).toHaveValue('Ключ лежит под верстаком.');
+  await expect(page.getByTestId('story-lorebook-editor')).toHaveCount(0);
   expect(dispatches).toBe(0);
 });
 

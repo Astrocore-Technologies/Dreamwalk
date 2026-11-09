@@ -1291,10 +1291,23 @@ export class VisualAuthoringService {
       ).rows[0];
       if (!hero) fail(404, 'NOT_FOUND', 'NOT_FOUND');
       if (manifest.representation === 'static') {
-        await c.query(
-          `UPDATE ${table} SET ${table === 'npcs' ? 'edit_revision=edit_revision+1,' : ''}data=jsonb_set(data,'{characterPackageVersionId}',$3::jsonb),updated_at=now() WHERE id=$1 AND owner_id=$2`,
-          [targetId, owner, JSON.stringify(id)],
-        );
+        // A static package has only the generated sprite. A story NPC shows it as its portrait;
+        // a hero keeps its own uploaded portrait.
+        const art =
+          table === 'npcs'
+            ? manifest.parts.find((p) => p.role === 'portrait' || p.role === 'sprite')
+            : undefined;
+        if (table === 'npcs' && !art) fail(409, 'ART_UNAVAILABLE', 'ART_UNAVAILABLE');
+        if (art)
+          await c.query(
+            "UPDATE npcs SET edit_revision=edit_revision+1,data=jsonb_set(jsonb_set(data,'{characterPackageVersionId}',$3::jsonb),'{portraitAssetId}',$4::jsonb),updated_at=now() WHERE id=$1 AND owner_id=$2",
+            [targetId, owner, JSON.stringify(id), JSON.stringify(art.uploadId)],
+          );
+        else
+          await c.query(
+            "UPDATE heroes SET data=jsonb_set(data,'{characterPackageVersionId}',$3::jsonb),updated_at=now() WHERE id=$1 AND owner_id=$2",
+            [targetId, owner, JSON.stringify(id)],
+          );
         return {
           equipped: true,
           targetType: b.targetType,
