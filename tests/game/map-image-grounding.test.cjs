@@ -174,9 +174,10 @@ test('grounded safe floor spawns compile with advisory terrain and no invented h
   const { draft, playable } = compileStoryPlan(source, proposal);
   assert.deepEqual(draft.maps[0].blocked, []);
   const state = g.createStateFromPlayable(playable, ['hero']);
-  assert.deepEqual({ x: state.entities.hero.x, y: state.entities.hero.y }, { x: 14, y: 8 });
+  assert.deepEqual({ x: state.entities.hero.x, y: state.entities.hero.y }, { x: 12, y: 11 });
+  Object.assign(state.entities.hero, { x: 14, y: 8 });
   const context = spatialContext(state, 'hero');
-  assert.equal(context.rows[8][14], '.');
+  assert.equal(context.rows[11][12], '.');
   assert.equal(
     context.landmarks.some((l) => l.label === 'Distant rock'),
     false,
@@ -187,37 +188,43 @@ test('grounded safe floor spawns compile with advisory terrain and no invented h
     'Lit corridor',
   );
 });
-test('rocks, water, unknown, disconnected floor and low confidence never become random starts', () => {
-  for (const cell of ['~', '#', '?', 'X', 'D']) {
+test('the server places spawns on observed open floor; no floor means no start; confidence is not a gate', () => {
+  for (const cell of ['~', '#', 'X', 'D']) {
     const { source, proposal } = fixture();
     const r = proposal.rooms[0];
-    // No original safe anchor remains: the bounded repair must not choose
-    // an unrelated opening merely because some other floor exists.
-    for (const point of r.spawns)
-      r.spatialGrounding.rows[point.y] =
-        r.spatialGrounding.rows[point.y].slice(0, point.x) +
-        cell +
-        r.spatialGrounding.rows[point.y].slice(point.x + 1);
+    // Model-chosen spawn coordinates are ignored: with no open floor left nothing can be placed.
+    r.spatialGrounding.rows = r.spatialGrounding.rows.map((row) => row.replace(/[.?]/g, cell));
     assert.throws(() => compileStoryPlan(source, proposal), /UNSAFE_SPAWN/);
   }
+  const mark = fixture();
+  mark.proposal.rooms[0].spawns = [
+    { x: 2, y: 2 },
+    { x: 3, y: 2 },
+    { x: 4, y: 2 },
+    { x: 5, y: 2 },
+  ];
+  const marked = compileStoryPlan(mark.source, mark.proposal).playable.maps.room;
+  assert.ok(marked.spawns.every((p) => marked.spatialGrounding.rows[p.y][p.x] === '.'));
+  assert.equal(new Set(marked.spawns.map((p) => `${p.x},${p.y}`)).size, 4);
   const { source, proposal } = fixture();
   proposal.rooms[0].spatialGrounding.confidence = 0.2;
-  const before = structuredClone({ source, proposal });
+  // Unknown cells inside the border are open ground for placement.
+  proposal.rooms[0].spatialGrounding.rows = proposal.rooms[0].spatialGrounding.rows.map((row, y) =>
+    y === 11 ? row.slice(0, 12) + '??' + row.slice(14) : row,
+  );
   const uncertain = compileStoryPlan(source, proposal).playable.maps.room;
-  assert.equal(uncertain.spatialMode, 'location_only');
-  assert.deepEqual(uncertain.spawns, []);
+  assert.notEqual(uncertain.spatialMode, 'location_only');
+  assert.equal(uncertain.spawns.length, 4);
+  assert.equal(uncertain.spatialGrounding.confidence, 0.2);
+  assert.ok(uncertain.spawns.every((p) => uncertain.spatialGrounding.rows[p.y][p.x] === '.'));
   assert.deepEqual(uncertain.blocked, []);
-  assert.equal(uncertain.spatialGrounding, undefined);
-  assert.deepEqual(uncertain.locationImage, {
-    revisionId: source.mapImages[0].revisionId,
-    sha256: source.mapImages[0].sha256,
-  });
-  assert.deepEqual({ source, proposal }, before);
-  const f = fixture();
-  const r = f.proposal.rooms[0];
-  r.spawns[3] = { x: 2, y: 2 };
-  r.spatialGrounding.rows[2] = '~~.' + r.spatialGrounding.rows[2].slice(3);
-  assert.throws(() => compileStoryPlan(f.source, f.proposal), /DISCONNECTED_SPAWN/);
+  const split = fixture();
+  // A second floor strip separated by walls never joins the opening component.
+  split.proposal.rooms[0].spatialGrounding.rows = split.proposal.rooms[0].spatialGrounding.rows.map(
+    (row, y) => (y === 2 ? '~~.' + row.slice(3) : row),
+  );
+  const joined = compileStoryPlan(split.source, split.proposal).playable.maps.room;
+  assert.ok(joined.spawns.every((p) => p.x >= 12));
 });
 test('stale source image, duplicate geometry and anonymous grounding cannot silently apply', () => {
   const { source, proposal } = fixture();
@@ -395,14 +402,32 @@ test('NPC placement checks the entire creature footprint, not just its anchor', 
   proposal.npcs = [
     { sourceNpcId: id, tokenSize: 'large', locationId: 'room', x: 12, y: 12, stock: [] },
   ];
-  assert.ok(compileStoryPlan(source, proposal).playable);
-  proposal.npcs[0].x = 17;
-  assert.throws(() => compileStoryPlan(source, proposal), /UNSAFE_NPC/);
+  const placed = compileStoryPlan(source, proposal).playable;
+  const npc = placed.entities[id],
+    rows = placed.maps.room.spatialGrounding.rows;
+  for (let y = npc.y; y < npc.y + 2; y++)
+    for (let x = npc.x; x < npc.x + 2; x++) assert.equal(rows[y][x], '.');
+  assert.ok(
+    placed.maps.room.spawns.every(
+      (p) => p.x < npc.x || p.x > npc.x + 1 || p.y < npc.y || p.y > npc.y + 1,
+    ),
+  );
+  // The model's coordinates are ignored: a 1-cell wide corridor cannot hold a 2x2 token.
+  const narrow = fixture();
+  narrow.source.content.npcIds = [id];
+  narrow.source.npcs = source.npcs;
+  narrow.proposal.npcs = proposal.npcs;
+  narrow.proposal.rooms[0].spatialGrounding.rows =
+    narrow.proposal.rooms[0].spatialGrounding.rows.map((row) =>
+      row.replace(/\./g, (_, i) => (i === 12 ? '.' : '#')),
+    );
+  assert.throws(() => compileStoryPlan(narrow.source, narrow.proposal), /UNSAFE_NPC/);
 });
 
 test('raster walls and closed observed doors occlude knowledge without movement collision', () => {
   const { source, proposal } = fixture();
   const state = g.createStateFromPlayable(compileStoryPlan(source, proposal).playable, ['hero']);
+  Object.assign(state.entities.hero, { x: 14, y: 8 });
   const grounding = state.maps.room.spatialGrounding;
   grounding.landmarks = [
     { label: 'Unseen room name', kind: 'room', x: 13, y: 10, width: 4, height: 4 },
@@ -591,10 +616,9 @@ test('builder analyzes effective manual art bindings, aliases old map IDs and ho
     );
     exactPlan.rooms[0].spatialGrounding.confidence = 0.2;
     const uncertain = compileStoryPlan(changed.source, exactPlan).playable.maps.room;
-    assert.equal(uncertain.spatialMode, 'location_only');
-    assert.equal(uncertain.locationImage.revisionId, studio);
-    assert.deepEqual(uncertain.spawns, []);
-    assert.deepEqual(uncertain.scenePresence.scenes[0].participantIds, []);
+    assert.notEqual(uncertain.spatialMode, 'location_only');
+    assert.equal(uncertain.spatialGrounding.imageRevisionId, studio);
+    assert.equal(uncertain.spawns.length, 4);
   } finally {
     imagesModule.prepareStoryMapImages = original;
   }

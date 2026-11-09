@@ -21,7 +21,11 @@ function fixture() {
   };
   const source = {
     title: 'Tower',
-    mapImages: [image],
+    // A location whose image was deliberately not analyzed is the only location-only case:
+    // low model confidence no longer demotes an analyzed image.
+    omittedMapImages: [
+      { locationId: image.locationId, revisionId: image.revisionId, sha256: image.sha256 },
+    ],
     npcs: [
       {
         id: npc,
@@ -53,14 +57,6 @@ function fixture() {
     spawns: [],
     blocked: [],
     surfaces: [],
-    spatialGrounding: {
-      version: 1,
-      imageRevisionId: image.revisionId,
-      imageSha256: image.sha256,
-      confidence: 0.2,
-      rows: Array(24).fill('?'.repeat(24)),
-      landmarks: [],
-    },
     scenePresence: {
       version: 1,
       entrySceneId: 'welcome',
@@ -95,8 +91,8 @@ test('uncertain exact image creates semantic scene, no numeric entities or inven
   const map = playable.maps.tower;
   assert.equal(map.spatialMode, 'location_only');
   assert.deepEqual(map.locationImage, {
-    revisionId: source.mapImages[0].revisionId,
-    sha256: source.mapImages[0].sha256,
+    revisionId: source.omittedMapImages[0].revisionId,
+    sha256: source.omittedMapImages[0].sha256,
   });
   for (const key of ['spawns', 'blocked', 'exits']) assert.deepEqual(map[key], []);
   assert.equal(map.spatialGrounding, undefined);
@@ -108,7 +104,7 @@ test('uncertain exact image creates semantic scene, no numeric entities or inven
   assert.equal(startMapGroundingCompatible(source, playable), false);
   assert.equal(
     startMapGroundingCompatible(
-      { ...source, mapImages: [{ ...source.mapImages[0], sha256: hash('changed') }] },
+      { ...source, mapImages: [{ ...source.omittedMapImages[0], sha256: hash('changed') }] },
       playable,
     ),
     false,
@@ -129,7 +125,15 @@ test('new uncertain plan derives authored scene presence without model technical
 });
 test('source and image identity remain mandatory for semantic fallback', () => {
   const { source, proposal, room } = fixture();
-  room.spatialGrounding.imageSha256 = hash('other');
+  // An omitted image cannot also carry a model-supplied observation.
+  room.spatialGrounding = {
+    version: 1,
+    imageRevisionId: source.omittedMapImages[0].revisionId,
+    imageSha256: hash('other'),
+    confidence: 0.9,
+    rows: Array(24).fill('.'.repeat(24)),
+    landmarks: [],
+  };
   assert.throws(() => compileStoryPlan(source, proposal), /MAP_IMAGE_SOURCE_MISMATCH/);
 });
 for (const [name, mutate] of [
@@ -186,7 +190,7 @@ test('malformed scene IDs and extra private payload are rejected', () => {
   delete f.room.scenePresence.scenes[0].privateFacts;
   f.room.scenePresence.scenes[0].id = '__proto__';
   assert.throws(() => compileStoryPlan(f.source, f.proposal));
-  assert.equal(storyPlanDefinition.version, 'authored-story-plan-v11-positioned-text-source');
+  assert.equal(storyPlanDefinition.version, 'authored-story-plan-v12-server-placement');
 });
 for (const text of [
   'Keeper is absent.',
@@ -257,12 +261,7 @@ test('unsubstantiated same-location NPC remains isolated offstage and absent fro
 });
 test('unanalysed omitted map still retains exact original image without invented geometry or image input', () => {
   const f = fixture();
-  const [image] = f.source.mapImages;
-  delete f.source.mapImages;
-  f.source.omittedMapImages = [
-    { locationId: image.locationId, revisionId: image.revisionId, sha256: image.sha256 },
-  ];
-  delete f.room.spatialGrounding;
+  const [image] = f.source.omittedMapImages;
   const result = compileStoryPlan(f.source, f.proposal);
   assert.equal(result.playable.maps.tower.spatialMode, 'location_only');
   assert.equal(result.playable.maps.tower.backgroundMode, undefined);
@@ -315,21 +314,15 @@ function threeMapFixture() {
     startSceneId: 'welcome',
   });
   f.source.npcs = ids.map((id) => ({ ...f.source.npcs[0], id }));
-  f.source.mapImages = locations.map((locationId) => ({
-    ...f.source.mapImages[0],
+  f.source.omittedMapImages = locations.map((locationId) => ({
     locationId,
     revisionId: randomUUID(),
-    sha256: hash(locationId),
+    sha256: hash(locationId).slice(0, 64),
   }));
-  f.proposal.rooms = f.source.mapImages.map((image) => ({
+  f.proposal.rooms = f.source.omittedMapImages.map((image) => ({
     ...structuredClone(f.room),
     locationId: image.locationId,
     scenePresence: undefined,
-    spatialGrounding: {
-      ...f.room.spatialGrounding,
-      imageRevisionId: image.revisionId,
-      imageSha256: image.sha256,
-    },
   }));
   f.proposal.npcs = ids.map((sourceNpcId, index) => ({
     sourceNpcId,
@@ -363,7 +356,7 @@ test('three imaged locations with one untyped opening require no model-built sce
     assert.equal(npc.unresolvedScenePresence, undefined);
     assert.equal(
       map.locationImage.revisionId,
-      f.source.mapImages.find((image) => image.locationId === id).revisionId,
+      f.source.omittedMapImages.find((image) => image.locationId === id).revisionId,
     );
   }
   assert.deepEqual(f, before);
@@ -433,7 +426,9 @@ test('normalization never relocates an authored participant or repairs invalid s
 test('authored opening placement cannot bypass membership by switching to a positioned map', () => {
   const f = threeMapFixture();
   f.source.content.scenes[0].participantNpcIds = [f.ids[0]];
-  f.source.mapImages = f.source.mapImages.filter((image) => image.locationId !== 'archive');
+  f.source.omittedMapImages = f.source.omittedMapImages.filter(
+    (image) => image.locationId !== 'archive',
+  );
   const room = f.proposal.rooms.find((entry) => entry.locationId === 'archive');
   delete room.spatialGrounding;
   room.spawns = [

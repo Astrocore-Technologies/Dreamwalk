@@ -14,8 +14,7 @@ export function startMapGroundingCompatible(source: StoryPlanSource, compiled: P
     return (
       map?.backgroundMode !== 'schematic' &&
       grounding?.imageRevisionId === image.revisionId &&
-      grounding.imageSha256 === image.sha256 &&
-      grounding.confidence >= 0.85
+      grounding.imageSha256 === image.sha256
     );
   });
 }

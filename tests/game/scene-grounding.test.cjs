@@ -56,8 +56,9 @@ test('new image-aware starts cannot reuse schematic, mismatched or low-confidenc
   compiled.maps.tower.spatialGrounding.imageSha256 = 'b'.repeat(64);
   assert.equal(startMapGroundingCompatible(source, compiled), false);
   compiled.maps.tower.spatialGrounding.imageSha256 = image.sha256;
+  // Model-reported confidence is not a gate for reusing a grounded layout.
   compiled.maps.tower.spatialGrounding.confidence = 0.84;
-  assert.equal(startMapGroundingCompatible(source, compiled), false);
+  assert.equal(startMapGroundingCompatible(source, compiled), true);
   assert.equal(
     startMapGroundingCompatible({ mapImages: [{ ...image, locationId: 'other' }] }, compiled),
     false,

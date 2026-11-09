@@ -2,11 +2,11 @@
 
 A new playable release, story build or campaign must contain positioned maps and actors. A location-only fallback remains readable for historical saves, but is no longer a successful new preparation. An image-backed source cannot silently become a text-only layout when the configured planner lacks vision.
 
-## Bounded local observation
+## Server placement
 
-The story planner may include `localSpatialGrounding` in the same quoted multimodal response when the primary whole-image observation is uncertain. It must retain the original primary evidence and identify the same immutable image revision/hash. Local evidence requires confidence of at least 0.85, at most 96 classified cells, a visible room/path landmark, and no contradiction of classified primary cells. Unknown space remains unknown.
+The story planner observes each analyzed image once and returns only the 24x24 grid (`.` floor, `D` door, `#` wall, `~` water, `X` furniture, `?` unknown). The model's self-reported confidence is stored with the evidence but is not an admission gate: an image never silently becomes a location-only map. Spawns, NPC cells and passage anchors are computed by the server (`placeStoryRoom` in `story-plan.ts`) and any coordinates the model supplies are ignored.
 
-Admission verifies all player anchors, NPC footprints and passages. Local recovery never invents NPC positions or moves offstage characters into the authored opening. Offstage components must remain separated in projection, art access, sight, hearing and direct contact. Information topology does not add movement collision or restrict ordinary RP movement. Actual authored door state takes precedence over the original door observation.
+Placement treats unknown cells inside the border as open ground, picks the largest connected floor area anchored at the first observed door (else the map centre), reserves passage anchors near the map edge, then the four player spawns nearest the anchor, then each NPC's full footprint. It fails with `MAP_IMAGE_UNSAFE_SPAWN`, `MAP_IMAGE_UNSAFE_NPC` or `MAP_IMAGE_UNSAFE_PASSAGE` only when the grid has no room. Only an image deliberately omitted from analysis stays location-only. Information topology does not add movement collision or restrict ordinary RP movement. Actual authored door state takes precedence over the original door observation.
 
 There is no second provider request or automatic regeneration. The definition version, JSON schema and prompt are part of the existing request estimate and body binding. A known provider result that fails grid admission remains a known billable result under its original settlement policy, not an unknown result or an automatic refund/retry.
 
