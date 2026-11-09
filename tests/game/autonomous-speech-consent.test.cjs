@@ -433,9 +433,12 @@ test('new UI sends bounded consent once and never prompts for uncovered autonomo
   const copy = readFileSync('apps/web/components/game/story-messages.ts', 'utf8');
   assert.match(page, /ordinarySpeechPolicy: 'bounded-npc-speech-v1'/);
   assert.doesNotMatch(world, /status\.communicationConsentRequired|status\.pendingSpeechIds/);
-  assert.match(world, /worldSpeechSkipLegacy/);
-  assert.doesNotMatch(world, /h\('worldCostForecastHint'\)/);
-  assert.match(world, /baseEstimatedSparkSubunits/);
+  // The world block shows no prices, forecast, receipts or skip explanations; consent is automatic.
+  assert.doesNotMatch(
+    world,
+    /worldSpeechSkip|worldCostForecast|baseEstimatedSparkSubunits|receipt/i,
+  );
+  assert.match(world, /autoConfirm/);
   assert.match(confirm, /autonomousSpeechPolicyHash: quote\.autonomousSpeechPolicyHash/);
   assert.match(confirm, /declineSpeech \? 'declineSpeech'/);
   for (const phrase of [
@@ -581,14 +584,10 @@ test('receipt pagination is bounded and exact-owner scoped without mutable priva
   assert.equal(result.speechReceiptNext, rows[19].id);
 });
 
-test('receipt UI fences stale campaign/access/cursor responses before displaying private own-account amounts', () => {
+test('the world block no longer renders speech receipts or private own-account amounts', () => {
   const fs = require('node:fs');
   const ui = fs.readFileSync('apps/web/components/game/world-generation-confirmation.tsx', 'utf8');
-  assert.match(ui, /receiptPage\?\.key === receiptKey/);
-  assert.match(ui, /currentReceiptKey.current === receiptKey/);
-  assert.match(ui, /\[campaignId, access\]/);
-  assert.match(ui, /visibleReceipts\?\.items.map/);
-  assert.match(ui, /dateTime=\{receipt.createdAt\}/);
+  assert.doesNotMatch(ui, /receiptPage|visibleReceipts|speechReceipts|capturedSubunits/);
 });
 test('exhausted one-child allowance skips another distinct action without another confirmation or quote', async () => {
   const { WorldGenerationBatch } = require('../../apps/api/dist/game/world-generation-batch');
