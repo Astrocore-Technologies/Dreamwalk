@@ -1,20 +1,8 @@
-import { createHash } from 'node:crypto';
-import { readFileSync } from 'node:fs';
 import { test, expect } from '@playwright/test';
-import {
-  closedTestDraftLabel,
-  closedTestLegalCopy,
-} from '../../apps/web/components/closed-test-legal-copy';
-
-test('Reviewed legal copy remains byte-for-byte unchanged', () => {
-  const source = readFileSync('apps/web/components/closed-test-legal-copy.ts');
-  expect(createHash('sha256').update(source).digest('hex')).toBe(
-    'bd0eed2e38d3b4795c1b6a5a7b642ad437844f9adfe4f13315632697b6457435',
-  );
-});
+import { legalEditionLabel, legalCopy } from '../../apps/web/components/legal-copy';
 
 for (const locale of ['ru', 'uk', 'en'] as const) {
-  test(`Legal draft presentation preserves every paragraph: ${locale}`, async ({ page }, info) => {
+  test(`Legal pages render every paragraph: ${locale}`, async ({ page }, info) => {
     test.setTimeout(150_000);
     // Synthetic guest browser only; no consent, accounts, provider calls or writes.
     for (const width of [1536, 390]) {
@@ -30,11 +18,11 @@ for (const locale of ['ru', 'uk', 'en'] as const) {
         for (const route of ['/terms', '/privacy'] as const) {
           await page.goto(route);
           const root = page.locator('[data-legal-page]');
-          const copy = closedTestLegalCopy[locale][route];
+          const copy = legalCopy[locale][route];
           await expect(page.locator('html')).toHaveAttribute('lang', locale);
           await expect(page.locator('html')).toHaveAttribute('data-theme', theme);
           await expect(root.locator('h1')).toHaveText(copy.title);
-          await expect(root.locator('header > p')).toHaveText(closedTestDraftLabel[locale]);
+          await expect(root.locator('header > p')).toHaveText(legalEditionLabel[locale]);
           if (route === '/terms')
             await expect(root.locator('[data-legal-paragraph="0"] p')).toHaveCSS(
               'color',

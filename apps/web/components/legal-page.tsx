@@ -3,7 +3,7 @@
 import Link from 'next/link';
 import { BookOpen, FileText, Info, LockKeyhole, Settings, ShieldCheck, Users } from 'lucide-react';
 import { useT } from '@/lib/i18n';
-import { closedTestDraftLabel, closedTestLegalCopy } from './closed-test-legal-copy';
+import { legalEditionLabel, legalCopy } from './legal-copy';
 import styles from './legal-page.module.css';
 
 // Presentation only. The reviewed draft is the sole source of document text.
@@ -37,7 +37,7 @@ const navigation = {
 
 export function LegalPage({ path }: { path: '/terms' | '/privacy' }) {
   const { locale } = useT();
-  const page = closedTestLegalCopy[locale][path];
+  const page = legalCopy[locale][path];
   const labels = navigation[locale];
   const terms = path === '/terms';
   const relatedPath = terms ? '/privacy' : '/terms';
@@ -47,7 +47,7 @@ export function LegalPage({ path }: { path: '/terms' | '/privacy' }) {
       data-legal-page={path}
     >
       <header className={styles.heading}>
-        <p>{closedTestDraftLabel[locale]}</p>
+        <p>{legalEditionLabel[locale]}</p>
         <h1 id="legal-top" tabIndex={-1}>
           {page.title}
         </h1>
@@ -105,7 +105,7 @@ export function LegalPage({ path }: { path: '/terms' | '/privacy' }) {
       </div>
       <footer className={styles.footer}>
         <a href="#legal-top">{labels.top}</a>
-        <Link href={relatedPath}>{closedTestLegalCopy[locale][relatedPath].title}</Link>
+        <Link href={relatedPath}>{legalCopy[locale][relatedPath].title}</Link>
       </footer>
     </article>
   );
