@@ -1,10 +1,11 @@
-# Closed-test legal reading layout
+# Legal pages reading layout
 
-Presentation-only adaptation of desktop references 51 (Terms) and 52 (Privacy).
-The references contain placeholder copy that is not authority to replace the reviewed
-closed-test drafts. The existing document titles, draft label and every paragraph in
-all three locales remain sourced verbatim from `closed-test-legal-copy.ts`. No operator,
-contact, dates, agreement, consent or new policy claims are introduced.
+Presentation of the About, Rules (Terms) and Privacy pages. The public text lives in
+`apps/web/components/legal-copy.ts` (RU/UK/EN): operator, contact and edition date are
+constants at the top of that file. The text is not legal advice and should be reviewed
+by a lawyer before a public launch with payments or EU users. Facts it states (14+,
+sexual content only as AI text in 18+ stories, 30-day erasure, OpenRouter for text) are
+owner decisions and must be kept in step with the product.
 
 Terms uses an illustrated introductory notice and illustrated reading rows. Privacy
 uses one inset panel, a prominent introductory notice and icon-led reading sections.

@@ -5,7 +5,7 @@ import { MissingPage } from './missing-page';
 import { useT } from '@/lib/i18n';
 import './help-about.css';
 import { LegalPage } from './legal-page';
-import { closedTestLegalCopy, closedTestDraftLabel } from './closed-test-legal-copy';
+import { legalCopy, legalEditionLabel } from './legal-copy';
 export function StaticPage({ path }: { path: string }) {
   const { t, locale } = useT();
   const legalPath = path === '/content-policy' ? '/terms' : path;
@@ -21,7 +21,7 @@ export function StaticPage({ path }: { path: string }) {
         ),
       );
   if (legalPath === '/about') {
-    const page = closedTestLegalCopy[locale][legalPath];
+    const page = legalCopy[locale][legalPath];
     const headings = {
       ru: ['Истории и развитие проекта', 'Пространство для авторов'],
       uk: ['Історії та розвиток проєкту', 'Простір для авторів'],
@@ -31,7 +31,7 @@ export function StaticPage({ path }: { path: string }) {
       <div className="about-page editorial-about">
         <img className="about-banner" src="/images/about-observatory.webp" alt="" />
         <Panel className="about-body">
-          <PageHeading eyebrow={closedTestDraftLabel[locale]} title={page.title} />
+          <PageHeading eyebrow={legalEditionLabel[locale]} title={page.title} />
           <p className="about-intro">{renderParagraph(page.paragraphs[1])}</p>
           <p className="about-draft-note">{renderParagraph(page.paragraphs[0])}</p>
           <div className="about-divider" aria-hidden="true">
@@ -60,10 +60,10 @@ export function StaticPage({ path }: { path: string }) {
     );
   }
   if (legalPath === '/terms' || legalPath === '/privacy') {
-    const page = closedTestLegalCopy[locale][legalPath];
+    const page = legalCopy[locale][legalPath];
     return (
       <div>
-        <PageHeading eyebrow={closedTestDraftLabel[locale]} title={page.title} />
+        <PageHeading eyebrow={legalEditionLabel[locale]} title={page.title} />
         <Panel className="static-prose">
           {page.paragraphs.map((paragraph, index) => (
             <p key={index}>{renderParagraph(paragraph)}</p>
