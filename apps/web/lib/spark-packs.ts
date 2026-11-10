@@ -12,11 +12,11 @@ export const SPARK_PACKS = [
   { sparks: 5000, priceCents: 10499 },
   { sparks: 10000, priceCents: 19999 },
 ] as const;
-export const SPARK_BASE_CENTS = 2.5;
 
 export type SparkPack = (typeof SPARK_PACKS)[number];
 /** Price of one Spark in cents. */
 export const centsPerSpark = (pack: SparkPack) => pack.priceCents / pack.sparks;
-/** Whole-percent saving against the base rate of the smallest pack. */
-export const packSavingPercent = (pack: SparkPack) =>
-  Math.max(0, Math.round((1 - centsPerSpark(pack) / SPARK_BASE_CENTS) * 100));
+/** Bonus on a user's first purchase, as a share of the pack (+25%). Display only for now. */
+export const FIRST_PURCHASE_BONUS = 0.25;
+export const firstPurchaseBonusSparks = (pack: SparkPack) =>
+  Math.round(pack.sparks * FIRST_PURCHASE_BONUS);
