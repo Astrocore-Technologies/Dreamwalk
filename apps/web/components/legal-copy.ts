@@ -1,8 +1,16 @@
 // Public texts of the About, Rules and Privacy pages. Plain text with **bold** only; the pages
 // render it as escaped text. The operator facts below are the single place to change them.
 // Not legal advice: have a lawyer review before the public launch.
-const operator = 'Astrocore Technologies';
+// The operator is an individual for now. When the company is registered, change only these lines.
+const operatorName = {
+  ru: 'Yurii Serhieiev, физическое лицо, Украина',
+  uk: 'Yurii Serhieiev, фізична особа, Україна',
+  en: 'Yurii Serhieiev, an individual, Ukraine',
+};
 const email = 'dreamwalkrp@gmail.com';
+const operator_ru = operatorName.ru;
+const operator_uk = operatorName.uk;
+const operator_en = operatorName.en;
 
 export const legalCopy = {
   ru: {
@@ -13,14 +21,14 @@ export const legalCopy = {
         'Dreamwalk — платформа, где игрок и ИИ вместе рассказывают визуальную историю. Автор задаёт начало мира и его правила, а дальше история продолжается в игре: появляются новые события, герои и места, а иллюстрации опираются на то, что уже произошло.',
         'Выбирай приключения в каталоге, создавай своего героя и играй один или с друзьями. Персонажи помнят разговоры, а игровой движок хранит состояние истории и следит, чтобы мир оставался последовательным. ИИ может ошибаться, поэтому последнее слово о том, что произошло, всегда за движком, а не за ИИ.',
         'В студии автор создаёт историю, локации, персонажей и рисованные иллюстрации. Историю можно оставить приватной, поделиться ею по приглашению или предложить в публичный каталог — после проверки. Права на изображения остаются за их автором: использовать чужие изображения без его разрешения нельзя.',
-        `**Кто за этим стоит.** Dreamwalk разрабатывает ${operator} (Украина). Вопросы, жалобы и обращения: ${email}.`,
+        `**Кто за этим стоит.** Dreamwalk разрабатывает ${operator_ru}. Вопросы, жалобы и обращения: ${email}.`,
       ],
     },
     '/terms': {
       title: 'Правила Dreamwalk',
       paragraphs: [
         `**Коротко.** Это правила пользования Dreamwalk (www.dreamwalk.online). Пользуясь сервисом, ты принимаешь их; если не согласен — не пользуйся. Мы можем обновлять правила: действует редакция на этой странице.`,
-        `**Кто мы.** Сервис предоставляет ${operator}, Украина. Связаться с нами можно по адресу ${email}.`,
+        `**Кто мы.** Сервис предоставляет ${operator_ru}. Связаться с нами можно по адресу ${email}.`,
         '**Возраст.** Dreamwalk предназначен для людей от 14 лет. Автор указывает возрастную категорию публичной истории — 14+, 16+ или 18+ — и отвечает за то, чтобы содержание ей соответствовало. Не открывай истории, категория которых выше твоего возраста. Мы можем изменить категорию или скрыть историю, если она ей не соответствует.',
         '**Аккаунт и безопасность.** Храни доступ к аккаунту в тайне и не пользуйся чужим. Не пытайся получить доступ к чужим приватным материалам. Не загружай вредоносные файлы, не рассылай спам, не обходи лимиты и не собирай данные сервиса автоматически.',
         '**Что запрещено.** Любая эксплуатация и сексуализация детей, в том числе вымышленных персонажей, которые изображены или описаны как дети. Инструкции, помогающие причинить реальный вред людям. Травля и преследование. Разжигание ненависти по признаку расы, национальности, религии, пола, ориентации или инвалидности. Тёмные темы в художественной истории допустимы, пока она не превращается в инструкцию, пропаганду ненависти или травлю; о чувствительных темах предупреждай в описании истории.',
@@ -39,7 +47,7 @@ export const legalCopy = {
     '/privacy': {
       title: 'Политика конфиденциальности',
       paragraphs: [
-        `**Коротко.** Мы собираем только то, что нужно для работы Dreamwalk, не продаём данные и не показываем рекламу. Ответственный за данные — ${operator} (Украина), обращения: ${email}.`,
+        `**Коротко.** Мы собираем только то, что нужно для работы Dreamwalk, не продаём данные и не показываем рекламу. Ответственный за данные — ${operator_ru}, обращения: ${email}.`,
         '**Какие данные мы получаем.** Данные аккаунта: email, имя, хеш пароля, профиль и настройки. При входе через Google — email, имя и идентификатор Google; пароль Google мы не получаем. Твои материалы: истории, герои, NPC и изображения. Игровые данные: действия, сообщения, состояние игры и память персонажей. Технические данные: сессии, IP-адрес и время запросов для безопасности и защиты от злоупотреблений, учёт Искр.',
         '**Зачем мы это используем.** Чтобы работали аккаунт, игра и студия, отправлялись письма (подтверждение, уведомления), работала защита от злоупотреблений и модерация, а также чтобы разбирать обращения. Для этого достаточно данных выше, больше мы не собираем.',
         '**Кому данные передаются.** Сайт размещён на Vercel, API и база данных — на Railway; письма отправляет Brevo; вход через Google обеспечивает Google. Серверы этих сервисов могут находиться за пределами Украины. Для генерации текста мы используем OpenRouter, который передаёт запрос выбранной модели стороннего провайдера; список моделей меняется. Если включена генерация изображений, запрос уходит выбранному провайдеру изображений. Остальным третьим лицам данные мы не продаём.',
@@ -60,14 +68,14 @@ export const legalCopy = {
         'Dreamwalk — платформа, де гравець і ШІ разом розповідають візуальну історію. Автор задає початок світу та його правила, а далі історія триває в грі: з’являються нові події, герої й місця, а ілюстрації спираються на те, що вже сталося.',
         'Обирай пригоди в каталозі, створюй свого героя й грай сам або з друзями. Персонажі пам’ятають розмови, а ігровий рушій зберігає стан історії та стежить, щоб світ залишався послідовним. ШІ може помилятися, тому останнє слово про те, що сталося, завжди за рушієм, а не за ШІ.',
         'У студії автор створює історію, локації, персонажів і намальовані ілюстрації. Історію можна залишити приватною, поділитися нею за запрошенням або запропонувати до публічного каталогу — після перевірки. Права на зображення залишаються за їхнім автором: використовувати чужі зображення без його дозволу не можна.',
-        `**Хто за цим стоїть.** Dreamwalk розробляє ${operator} (Україна). Питання, скарги та звернення: ${email}.`,
+        `**Хто за цим стоїть.** Dreamwalk розробляє ${operator_uk}. Питання, скарги та звернення: ${email}.`,
       ],
     },
     '/terms': {
       title: 'Правила Dreamwalk',
       paragraphs: [
         '**Коротко.** Це правила користування Dreamwalk (www.dreamwalk.online). Користуючись сервісом, ти приймаєш їх; якщо не згоден — не користуйся. Ми можемо оновлювати правила: діє редакція на цій сторінці.',
-        `**Хто ми.** Сервіс надає ${operator}, Україна. Зв’язатися з нами можна за адресою ${email}.`,
+        `**Хто ми.** Сервіс надає ${operator_uk}. Зв’язатися з нами можна за адресою ${email}.`,
         '**Вік.** Dreamwalk призначений для людей від 14 років. Автор указує вікову категорію публічної історії — 14+, 16+ або 18+ — і відповідає за те, щоб зміст їй відповідав. Не відкривай історії, категорія яких вища за твій вік. Ми можемо змінити категорію або приховати історію, якщо вона їй не відповідає.',
         '**Акаунт і безпека.** Зберігай доступ до акаунта в таємниці й не користуйся чужим. Не намагайся отримати доступ до чужих приватних матеріалів. Не завантажуй шкідливі файли, не розсилай спам, не обходь ліміти й не збирай дані сервісу автоматично.',
         '**Що заборонено.** Будь-яка експлуатація та сексуалізація дітей, зокрема вигаданих персонажів, зображених або описаних як діти. Інструкції, що допомагають завдати реальної шкоди людям. Цькування та переслідування. Розпалювання ненависті за ознакою раси, національності, релігії, статі, орієнтації чи інвалідності. Темні теми в художній історії припустимі, доки вона не перетворюється на інструкцію, пропаганду ненависті чи цькування; про чутливі теми попереджай в описі історії.',
@@ -86,7 +94,7 @@ export const legalCopy = {
     '/privacy': {
       title: 'Політика конфіденційності',
       paragraphs: [
-        `**Коротко.** Ми збираємо лише те, що потрібно для роботи Dreamwalk, не продаємо дані й не показуємо рекламу. Відповідальний за дані — ${operator} (Україна), звернення: ${email}.`,
+        `**Коротко.** Ми збираємо лише те, що потрібно для роботи Dreamwalk, не продаємо дані й не показуємо рекламу. Відповідальний за дані — ${operator_uk}, звернення: ${email}.`,
         '**Які дані ми отримуємо.** Дані акаунта: email, ім’я, хеш пароля, профіль і налаштування. Під час входу через Google — email, ім’я та ідентифікатор Google; пароль Google ми не отримуємо. Твої матеріали: історії, герої, NPC і зображення. Ігрові дані: дії, повідомлення, стан гри та пам’ять персонажів. Технічні дані: сесії, IP-адреса й час запитів для безпеки та захисту від зловживань, облік Іскор.',
         '**Навіщо ми це використовуємо.** Щоб працювали акаунт, гра й студія, надсилалися листи (підтвердження, сповіщення), діяли захист від зловживань і модерація, а також щоб розглядати звернення. Для цього достатньо даних вище, більше ми не збираємо.',
         '**Кому дані передаються.** Сайт розміщено на Vercel, API й базу даних — на Railway; листи надсилає Brevo; вхід через Google забезпечує Google. Сервери цих сервісів можуть бути за межами України. Для генерації тексту ми використовуємо OpenRouter, який передає запит обраній моделі стороннього провайдера; список моделей змінюється. Якщо ввімкнено генерацію зображень, запит надходить обраному провайдеру зображень. Іншим третім особам дані ми не продаємо.',
@@ -107,14 +115,14 @@ export const legalCopy = {
         'Dreamwalk is a platform where a player and an AI tell a visual story together. An author sets the opening of the world and its rules, and the story carries on in play: new events, characters and places appear, and the artwork follows what has already happened.',
         'Pick an adventure from the catalogue, create your hero and play alone or with friends. Characters remember conversations, and the game engine keeps the story state and keeps the world consistent. An AI can make mistakes, so the engine, not the AI, has the final word on what happened.',
         'In the studio an author creates a story, locations, characters and drawn illustrations. A story can stay private, be shared by invitation or be proposed for the public catalogue after review. Image rights stay with the image’s author: other people’s images may not be used without permission.',
-        `**Who is behind it.** Dreamwalk is developed by ${operator} (Ukraine). Questions, complaints and requests: ${email}.`,
+        `**Who is behind it.** Dreamwalk is developed by ${operator_en}. Questions, complaints and requests: ${email}.`,
       ],
     },
     '/terms': {
       title: 'Dreamwalk Rules',
       paragraphs: [
         '**In short.** These are the rules for using Dreamwalk (www.dreamwalk.online). By using the service you accept them; if you disagree, please do not use it. We may update the rules: the edition on this page applies.',
-        `**Who we are.** The service is provided by ${operator}, Ukraine. You can reach us at ${email}.`,
+        `**Who we are.** The service is provided by ${operator_en}. You can reach us at ${email}.`,
         '**Age.** Dreamwalk is for people aged 14 and over. An author sets the age category of a public story — 14+, 16+ or 18+ — and is responsible for its content matching it. Do not open stories whose category is above your age. We may change the category or hide a story that does not match it.',
         '**Account and security.** Keep your access private and do not use anyone else’s account. Do not try to reach other people’s private material. Do not upload harmful files, send spam, bypass limits or scrape the service automatically.',
         '**What is not allowed.** Any exploitation or sexualisation of children, including fictional characters shown or described as children. Instructions that help cause real harm to people. Harassment and bullying. Hate directed at people because of race, nationality, religion, sex, orientation or disability. Dark themes are fine in a fictional story as long as it does not turn into instructions, hate propaganda or harassment; warn about sensitive themes in the story description.',
@@ -133,7 +141,7 @@ export const legalCopy = {
     '/privacy': {
       title: 'Privacy Policy',
       paragraphs: [
-        `**In short.** We collect only what Dreamwalk needs to work, we do not sell data and we do not show ads. The party responsible for data is ${operator} (Ukraine); contact: ${email}.`,
+        `**In short.** We collect only what Dreamwalk needs to work, we do not sell data and we do not show ads. The party responsible for data is ${operator_en}; contact: ${email}.`,
         '**What data we get.** Account data: email, name, a password hash, profile and settings. When you sign in with Google: email, name and Google ID; we never receive your Google password. Your material: stories, heroes, NPCs and images. Game data: actions, messages, game state and character memory. Technical data: sessions, IP address and request times for security and abuse prevention, and Sparks accounting.',
         '**Why we use it.** To run the account, the game and the studio, send emails (confirmation, notifications), prevent abuse, moderate content and handle requests. The data above is enough for this; we do not collect more.',
         '**Who receives data.** The site is hosted on Vercel, the API and database on Railway; Brevo sends emails; Google provides sign-in. The servers of these services may be outside Ukraine. For text generation we use OpenRouter, which passes the request to the chosen model of a third-party provider; the list of models changes. If image generation is enabled, the request goes to the chosen image provider. We do not sell data to other third parties.',

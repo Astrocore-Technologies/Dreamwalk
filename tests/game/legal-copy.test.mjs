@@ -36,7 +36,7 @@ test('About, Rules and Privacy exist in every locale with the same structure', (
 test('public texts state the operator and contact and make no claims the service does not meet', () => {
   for (const locale of ['en', 'ru', 'uk']) {
     const text = JSON.stringify(legalCopy[locale]);
-    assert.match(text, /Astrocore Technologies/);
+    assert.match(text, /Yurii Serhieiev/);
     assert.match(text, /dreamwalkrp@gmail\.com/);
     assert.match(text, /OpenRouter/);
     assert.match(text, /14/);
