@@ -12,6 +12,7 @@ import { usePathname } from 'next/navigation';
 import { HomePage, ExplorePage, AdventurePage, CreatorPage } from '@/components/public';
 import { AuthPage, AccountPage, OnboardingPage, Protected } from '@/components/account';
 import { LibraryPage, HeroesPage, WalletPage, NotificationsPage } from '@/components/personal';
+import { SparkShopPage } from '@/components/shop';
 import { StudioPage } from '@/components/studio';
 import { AdminPage } from '@/components/admin';
 import { StaticPage } from '@/components/static';
@@ -90,6 +91,12 @@ function Router() {
     content = (
       <Protected>
         <WalletSettlementsPage />
+      </Protected>
+    );
+  else if (path === '/shop')
+    content = (
+      <Protected>
+        <SparkShopPage />
       </Protected>
     );
   else if (path === '/wallet')

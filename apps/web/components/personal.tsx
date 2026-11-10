@@ -6,6 +6,7 @@ import { DreamsWalletSection, useDreamsText } from './dreams-wallet';
 import { useDreamsWallet } from '@/lib/use-dreams-wallet';
 import { useSparksWallet } from '@/lib/use-sparks-wallet';
 import { sparksBalanceMessages } from './sparks-balance';
+import { shopButtonLabel } from './shop';
 import { HeroPortraitControl } from './hero-portrait-control';
 import { CharacterSpriteControl } from './visual-authoring/character-sprite-control';
 import { useVisualText } from './visual-authoring/messages';
@@ -731,6 +732,9 @@ export function WalletPage() {
               {dreamsText.held}: {formatSparkSubunits(sparks.data.heldSubunits, locale, 'exact')}
             </small>
           )}
+          <Link className="button primary compact" href="/shop" data-testid="open-spark-shop">
+            {shopButtonLabel[locale]}
+          </Link>
         </section>
       </div>
       <ErrorBox message={sparks.unavailable ? text.unavailable : ''} retry={sparks.reload} />
