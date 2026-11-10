@@ -47,7 +47,7 @@ export const legalCopy = {
     '/privacy': {
       title: 'Политика конфиденциальности',
       paragraphs: [
-        `**Коротко.** Мы собираем только то, что нужно для работы Dreamwalk, не продаём данные и не показываем рекламу. Ответственный за данные — ${operator_ru}, обращения: ${email}.`,
+        `**Коротко.** Мы собираем только то, что нужно для работы Dreamwalk, не продаём данные. Ответственный за данные — ${operator_ru}, обращения: ${email}.`,
         '**Какие данные мы получаем.** Данные аккаунта: email, имя, хеш пароля, профиль и настройки. При входе через Google — email, имя и идентификатор Google; пароль Google мы не получаем. Твои материалы: истории, герои, NPC и изображения. Игровые данные: действия, сообщения, состояние игры и память персонажей. Технические данные: сессии, IP-адрес и время запросов для безопасности и защиты от злоупотреблений, учёт Искр.',
         '**Зачем мы это используем.** Чтобы работали аккаунт, игра и студия, отправлялись письма (подтверждение, уведомления), работала защита от злоупотреблений и модерация, а также чтобы разбирать обращения. Для этого достаточно данных выше, больше мы не собираем.',
         '**Кому данные передаются.** Сайт размещён на Vercel, API и база данных — на Railway; письма отправляет Brevo; вход через Google обеспечивает Google. Серверы этих сервисов могут находиться за пределами Украины. Для генерации текста мы используем OpenRouter, который передаёт запрос выбранной модели стороннего провайдера; список моделей меняется. Если включена генерация изображений, запрос уходит выбранному провайдеру изображений. Остальным третьим лицам данные мы не продаём.',
@@ -94,7 +94,7 @@ export const legalCopy = {
     '/privacy': {
       title: 'Політика конфіденційності',
       paragraphs: [
-        `**Коротко.** Ми збираємо лише те, що потрібно для роботи Dreamwalk, не продаємо дані й не показуємо рекламу. Відповідальний за дані — ${operator_uk}, звернення: ${email}.`,
+        `**Коротко.** Ми збираємо лише те, що потрібно для роботи Dreamwalk, не продаємо дані. Відповідальний за дані — ${operator_uk}, звернення: ${email}.`,
         '**Які дані ми отримуємо.** Дані акаунта: email, ім’я, хеш пароля, профіль і налаштування. Під час входу через Google — email, ім’я та ідентифікатор Google; пароль Google ми не отримуємо. Твої матеріали: історії, герої, NPC і зображення. Ігрові дані: дії, повідомлення, стан гри та пам’ять персонажів. Технічні дані: сесії, IP-адреса й час запитів для безпеки та захисту від зловживань, облік Іскор.',
         '**Навіщо ми це використовуємо.** Щоб працювали акаунт, гра й студія, надсилалися листи (підтвердження, сповіщення), діяли захист від зловживань і модерація, а також щоб розглядати звернення. Для цього достатньо даних вище, більше ми не збираємо.',
         '**Кому дані передаються.** Сайт розміщено на Vercel, API й базу даних — на Railway; листи надсилає Brevo; вхід через Google забезпечує Google. Сервери цих сервісів можуть бути за межами України. Для генерації тексту ми використовуємо OpenRouter, який передає запит обраній моделі стороннього провайдера; список моделей змінюється. Якщо ввімкнено генерацію зображень, запит надходить обраному провайдеру зображень. Іншим третім особам дані ми не продаємо.',
@@ -141,7 +141,7 @@ export const legalCopy = {
     '/privacy': {
       title: 'Privacy Policy',
       paragraphs: [
-        `**In short.** We collect only what Dreamwalk needs to work, we do not sell data and we do not show ads. The party responsible for data is ${operator_en}; contact: ${email}.`,
+        `**In short.** We collect only what Dreamwalk needs to work, we do not sell data. The party responsible for data is ${operator_en}; contact: ${email}.`,
         '**What data we get.** Account data: email, name, a password hash, profile and settings. When you sign in with Google: email, name and Google ID; we never receive your Google password. Your material: stories, heroes, NPCs and images. Game data: actions, messages, game state and character memory. Technical data: sessions, IP address and request times for security and abuse prevention, and Sparks accounting.',
         '**Why we use it.** To run the account, the game and the studio, send emails (confirmation, notifications), prevent abuse, moderate content and handle requests. The data above is enough for this; we do not collect more.',
         '**Who receives data.** The site is hosted on Vercel, the API and database on Railway; Brevo sends emails; Google provides sign-in. The servers of these services may be outside Ukraine. For text generation we use OpenRouter, which passes the request to the chosen model of a third-party provider; the list of models changes. If image generation is enabled, the request goes to the chosen image provider. We do not sell data to other third parties.',
