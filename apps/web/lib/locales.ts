@@ -4743,6 +4743,7 @@ const messages: Record<string, Record<Locale, string>> = {
     en: 'The location image uses roughly the first 2,400 characters: put the most important details first.',
     uk: 'До картинки локації потрапляють перші ~2400 символів: найважливіше пиши на початку.',
   },
+  'Стоимость хода': { ru: 'Стоимость хода', en: 'Turn cost', uk: 'Вартість ходу' },
   'Режим поля': { ru: 'Режим поля', en: 'Field mode', uk: 'Режим поля' },
   Редактирование: { ru: 'Редактирование', en: 'Write', uk: 'Редагування' },
   Предпросмотр: { ru: 'Предпросмотр', en: 'Formatted view', uk: 'Перегляд з форматуванням' },
