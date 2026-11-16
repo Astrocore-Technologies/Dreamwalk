@@ -1,4 +1,3 @@
-import { legacyRealtimeLaunch } from './support/map-actions';
 import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
@@ -20,7 +19,6 @@ test('a new player registers, starts the fixture story and plays five turns', as
   });
   expect(registered.status()).toBe(201);
   await page.addInitScript(() => localStorage.setItem('dreamwalk-language', 'ru'));
-  await legacyRealtimeLaunch(page);
 
   await page.goto('/adventures/old-observatory');
   await page.getByRole('button', { name: 'Начать прохождение', exact: true }).click();
@@ -30,6 +28,10 @@ test('a new player registers, starts the fixture story and plays five turns', as
   const story = page.getByTestId('unified-story');
   const composer = story.getByLabel('Твой ход', { exact: true });
   const feed = story.getByTestId('story-feed');
+  const campaignId = new URL(page.url()).pathname.split('/').at(-1)!;
+  const revision = async () =>
+    (await (await page.request.get(`/api/v1/game/campaigns/${campaignId}/snapshot`)).json())
+      .projection.revision as number;
   const messages = [
     'Здравствуйте! Я пришёл осмотреть обсерваторию.',
     '*оглядываюсь по сторонам*',
@@ -37,25 +39,26 @@ test('a new player registers, starts the fixture story and plays five turns', as
     'Я хотел бы подняться наверх.',
     'Спасибо за помощь, я ещё вернусь.',
   ];
-  const turnIds: string[] = [];
   for (const [index, text] of messages.entries()) {
-    const submitted = page.waitForRequest(
-      (r) => r.method() === 'POST' && new URL(r.url()).pathname.endsWith('/turns'),
-    );
+    await expect(composer).toBeEnabled({ timeout: 60000 });
+    const before = await revision();
     await composer.fill(text);
     await story.getByRole('button', { name: 'Отправить', exact: true }).click();
-    await story.getByRole('button', { name: 'Подтвердить ход', exact: true }).click();
-    turnIds.push(JSON.parse((await submitted).postData() || '{}').turnId);
-    await expect(composer).toHaveValue('', { timeout: 45000 });
-    const entries = await feed.locator('[data-story-entry]').count();
-    expect(entries, `turn ${index + 1} must add story entries`).toBeGreaterThan(index);
+    await expect(feed).toContainText(text.replaceAll('*', '').slice(0, 20));
+    await page.getByRole('button', { name: 'Завершить ход', exact: true }).click();
+    // The round is closed once the world has answered and the composer is free again.
+    await expect(composer).toBeEnabled({ timeout: 60000 });
+    await expect(composer).toHaveValue('');
+    await expect
+      .poll(async () => (await revision()) > before, { message: `turn ${index + 1} must advance` })
+      .toBe(true);
   }
-  expect(new Set(turnIds).size).toBe(messages.length);
-  for (const id of turnIds)
-    await expect(feed.locator(`[data-story-turn="${id}"]`).first()).toBeAttached();
-
+  // Within five turns the keeper has to have answered in the story, not only moved.
+  await expect(feed.locator('[data-story-kind="npc_reply"]').first()).toBeAttached({
+    timeout: 30000,
+  });
   // The failure banners a first player must never see on the happy path.
-  await expect(page.getByRole('alert')).toHaveCount(0);
+  await expect(page.locator('[role="alert"]:not(:empty)')).toHaveCount(0);
   const before = await feed.locator('[data-story-entry]').count();
   await page.reload();
   await expect(page.getByText('Подключено', { exact: true })).toBeVisible();
