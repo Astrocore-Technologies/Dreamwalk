@@ -276,7 +276,7 @@ function addressedSpeakers(
   segments: StorySegment[],
   voices: { npcId: string; segmentIndex: number }[],
 ) {
-  const found: { segmentIndex: number; npcId: string }[] = [];
+  const found: string[] = [];
   for (const segment of segments) {
     if (segment.kind !== 'speech') continue;
     const text = segment.text.normalize('NFKC').toLocaleLowerCase();
@@ -286,7 +286,7 @@ function addressedSpeakers(
       if (stem.length < 3) continue;
       const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
       if (new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}`, 'u').test(text))
-        found.push({ segmentIndex: segment.index, npcId: voice.npcId });
+        found.push(`${segment.index}:${voice.npcId}`);
     }
   }
   return found;
@@ -994,7 +994,7 @@ export function buildStoryTurnContext(
           sceneSpeakers,
           sceneSpeakerImpactBases: impactVoices.bases,
           sceneSpeakerImpactVariants: impactVoices.variants,
-          ...(addressed.length ? { addressedSpeakers: addressed } : {}),
+          ...(addressed.length ? { addressed } : {}),
         }
       : {}),
     ...(mode === 'director'

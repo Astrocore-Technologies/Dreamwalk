@@ -36,27 +36,24 @@ test('naming a present character, even in a declined form, marks them as address
   const label = keeper.label;
   const named = contextFor(`*подхожу* ${label}, что вы тут чините?`).context;
   assert.ok(named.sceneSpeakers.length > 0);
-  assert.deepEqual(
-    named.addressedSpeakers?.map((a) => a.npcId),
-    ['keeper'],
-  );
-  assert.equal(context.addressedSpeakers, undefined);
+  assert.deepEqual(named.addressed, ['1:keeper']);
+  assert.equal(context.addressed, undefined);
 });
 
 test('requests without a named addressee keep their previous shape', () => {
   const { context } = contextFor('*осматриваюсь* Здравствуйте всем.');
-  assert.equal('addressedSpeakers' in context, false);
-  assert.doesNotMatch(instructions(context), /addressedSpeakers lists/);
+  assert.equal('addressed' in context, false);
+  assert.doesNotMatch(instructions(context), /addressed \(segment:npc\)/);
 });
 
 test('with an addressee the narrator is told who answers and not to deflect', () => {
   const { state } = contextFor('*осматриваюсь* Привет.');
   const label = state.entities.keeper.label;
   const { context } = contextFor(`*подхожу* ${label}, что вы тут чините?`);
-  assert.match(instructions(context), /must never answer on behalf of, deflect to or announce/);
+  assert.match(instructions(context), /never for or instead of them/);
 });
 
 test('narration is told to add something rather than restate the action', () => {
   const { context } = contextFor('*осматриваюсь*');
-  assert.match(instructions(context), /never merely restate what the player already wrote/);
+  assert.match(instructions(context), /never restate it/);
 });
