@@ -284,7 +284,7 @@ test('estimate planning remains non-dispatchable even with synthetic approval fl
   assert.equal(calls, 0);
 });
 
-test('bounded provider validates 2000 authored characters before adding hidden style', async () => {
+test('bounded provider validates 3500 authored characters before adding hidden style', async () => {
   let sent;
   const runtime = createImageRuntime(configured(), {
     now,
@@ -300,7 +300,7 @@ test('bounded provider validates 2000 authored characters before adding hidden s
       );
     },
   });
-  const prompt = 'x'.repeat(2000);
+  const prompt = 'x'.repeat(3500);
   await runtime.provider.generate(
     { ...input(), prompt, requestPolicyVersion: 2 },
     randomUUID(),
@@ -308,5 +308,5 @@ test('bounded provider validates 2000 authored characters before adding hidden s
   );
   assert.match(sent, /Default art: detailed drawn 2D anime/);
   assert.ok(sent.endsWith(prompt));
-  assert.ok(sent.length > 2000);
+  assert.ok(sent.length > 3500);
 });

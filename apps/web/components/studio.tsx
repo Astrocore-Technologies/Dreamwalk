@@ -947,6 +947,9 @@ function AdventureEditor({ id }: { id: string }) {
                       </Field>
                       <MarkdownField
                         label={t('Описание локации')}
+                        hint={t(
+                          'В картинку локации попадают первые ~2400 символов: самое важное пиши в начале.',
+                        )}
                         maxLength={6000}
                         value={location.description}
                         onChange={(e) =>

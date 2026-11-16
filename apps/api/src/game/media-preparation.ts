@@ -80,7 +80,7 @@ export function prepareSceneMedia(
       : undefined;
   const instructions =
     input.kind === 'background'
-      ? 'Draw a top-down 2D battlemap at constant cell scale. Compose the full map extent: a small location stays small with canon-compatible surroundings (lake centered inside cave), never enlarged to fill it. No drawn grid: mandatory straight cells are engine overlays. Walls and blocked geometry, characters, collectible items, doors, exits, labels and UI are separate engine overlays: do not bake them into this image. The image never defines collision or interactions. Never invent an interactable or mechanism.'
+      ? 'Draw a top-down 2D battlemap at constant cell scale. Compose the full map extent: a small location stays small with canon-compatible surroundings, never enlarged to fill it. Draw exactly the place described below and no other setting. No drawn grid: mandatory straight cells are engine overlays. Walls and blocked geometry, characters, collectible items, doors, exits, labels and UI are separate engine overlays: do not bake them into this image. The image never defines collision or interactions. Never invent an interactable or mechanism.'
       : 'Draw a 2D illustrated portrait of this existing fictional NPC only. Follow the supplied public appearance if present. Do not add canonical facts, secret knowledge, new inventory, other characters or game mechanics. This is a portrait, not an animated directional sprite.';
   const promptData =
     input.kind === 'background'
@@ -112,7 +112,8 @@ export function prepareSceneMedia(
   let prompt = buildPrompt();
   // The fixed 24x24 geometry is never truncated. Reduce only explicitly marked
   // public atmosphere excerpts so valid long descriptions fit the existing cap.
-  while (input.kind === 'background' && prompt.length > 2000) {
+  const tooLong = (text: string) => text.length > 3500 || Buffer.byteLength(text, 'utf8') > 7500;
+  while (input.kind === 'background' && tooLong(prompt)) {
     const longest = [
       storyReference.summary,
       storyReference.world,
@@ -123,7 +124,7 @@ export function prepareSceneMedia(
     longest.excerpted = true;
     prompt = buildPrompt();
   }
-  if (prompt.length > 2000) fail(413, 'MEDIA_CONTEXT_TOO_LARGE', 'MEDIA_CONTEXT_TOO_LARGE');
+  if (tooLong(prompt)) fail(413, 'MEDIA_CONTEXT_TOO_LARGE', 'MEDIA_CONTEXT_TOO_LARGE');
   const spec = {
     kind: input.kind,
     style: 'drawn2D' as const,
