@@ -55,6 +55,7 @@ import { fixtureRaster } from './fixture-art';
 import { createLocationFixture } from './location-fixture';
 import { characterTargetSchema, readCharacterVisualSource } from './character-source';
 import { normalizeStaticSprite } from './static-sprite';
+import { characterBriefTexts } from './character-brief-text';
 import { ownedCharacterPackage } from './character-package';
 import { visualDigest as digest } from './fingerprint';
 import { authorizeSpatialPlan, spatialReadset, type SpatialAuthority } from './spatial-plan';
@@ -790,7 +791,8 @@ export class VisualAuthoringService {
       .parse(input);
     const source = await this.db.tx((c) => readCharacterVisualSource(c, owner, b.target));
     const portraitId = b.sourcePhotoPermission ? source.portraitAssetId : null;
-    const appearance = (b.appearance ?? source.appearance).trim();
+    // The saved appearance can be far longer (and Markdown) than the brief limits.
+    const { description, appearance } = characterBriefTexts(b.appearance ?? source.appearance);
     if (appearance.length < 10 && !portraitId)
       fail(400, 'CHARACTER_APPEARANCE_REQUIRED', 'CHARACTER_APPEARANCE_REQUIRED');
     return this.create(owner, {
@@ -799,7 +801,8 @@ export class VisualAuthoringService {
       generationMode: 'external',
       brief: {
         name: source.name,
-        description: appearance || 'Use the owner-authorized portrait as the appearance reference.',
+        description:
+          description || 'Use the owner-authorized portrait as the appearance reference.',
         outfit: 'Preserve described or referenced clothing.',
         appearance,
         style: 'drawn2D',
