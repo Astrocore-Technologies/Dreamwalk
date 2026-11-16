@@ -367,7 +367,6 @@ export class PlayableService {
             characterPackageVersionId?: string;
             portraitFrame?: unknown;
             portraitAssetId?: unknown;
-            nonPhysical?: unknown;
           }
         | undefined;
       if (!source) continue;
@@ -394,7 +393,6 @@ export class PlayableService {
         ...(source.personality ? { personality: source.personality.slice(0, 4000) } : {}),
         ...(source.greeting ? { greeting: source.greeting.slice(0, 2000) } : {}),
         ...(portraitFrame.success ? { portraitFrame: portraitFrame.data } : {}),
-        ...(source.nonPhysical === true ? { nonPhysical: true } : {}),
         ...(z.uuid().safeParse(source.portraitAssetId).success
           ? { portraitAssetId: source.portraitAssetId as string }
           : {}),

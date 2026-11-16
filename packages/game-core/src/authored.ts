@@ -216,6 +216,7 @@ export function compilePlayableDraft(input: unknown): {
       ...(n.unresolvedScenePresence
         ? { unresolvedScenePresence: structuredClone(n.unresolvedScenePresence) }
         : {}),
+      ...(n.plannedPresence ? { plannedPresence: structuredClone(n.plannedPresence) } : {}),
       ...(n.characterAnimation
         ? { characterAnimation: structuredClone(n.characterAnimation) }
         : {}),
@@ -451,7 +452,8 @@ export function compilePlayableDraft(input: unknown): {
     npcBrains,
     roundPolicy: { ...d.roundPolicy },
   };
-  const state = createStateFromPlayable(playable, [], 1);
+  // Validate the whole authored world, including characters who start off stage.
+  const state = createStateFromPlayable(playable, [], 1, { keepPlannedPresence: true });
   errors.push(...validateMapState(state));
   for (const m of Object.values(maps)) {
     if (m.spatialMode === 'location_only') continue;
@@ -614,6 +616,7 @@ export function createStateFromPlayable(
   playable: PlayablePackage,
   actorIds: string[] = [],
   seed = 1,
+  options: { keepPlannedPresence?: boolean } = {},
 ): GameState {
   let state: GameState = {
     ...(playable.worldItemDefinitions
@@ -649,8 +652,32 @@ export function createStateFromPlayable(
     entities: structuredClone(playable.entities),
     encounters: {},
     npcBrains: structuredClone(playable.npcBrains),
+    ...(playable.offstage && Object.keys(playable.offstage).length
+      ? { offstage: structuredClone(playable.offstage) }
+      : {}),
     roundPolicy: { ...playable.roundPolicy },
   };
+  // Characters the story keeps out of the opening scene wait off stage: no token, no cell, no
+  // visibility, until the story brings them in (npc_arrival) or, for gods and voices, never.
+  for (const [id, entity] of Object.entries(state.entities)) {
+    if (options.keepPlannedPresence || entity.kind !== 'npc' || !entity.plannedPresence) continue;
+    const { plannedPresence, ...held } = structuredClone(entity);
+    delete held.x;
+    delete held.y;
+    const items = Object.fromEntries(
+      Object.entries(state.entities).filter(([, item]) => item.ownerId === id),
+    );
+    for (const itemId of Object.keys(items)) delete state.entities[itemId];
+    (state.offstage ??= {})[id] = {
+      entity: held,
+      ...(Object.keys(items).length ? { items: structuredClone(items) } : {}),
+      ...(state.npcBrains?.[id] ? { brain: state.npcBrains[id] } : {}),
+      mode: plannedPresence!.mode,
+      ...(plannedPresence!.hint ? { hint: plannedPresence!.hint } : {}),
+    };
+    delete state.entities[id];
+    delete state.npcBrains?.[id];
+  }
   for (const id of actorIds) {
     if (state.entities[id]) throw new Error('ACTOR_ID_COLLISION');
     const added = addPlayer(state, id);

@@ -214,9 +214,15 @@ export const unresolvedScenePresenceSchema = z
   })
   .strict();
 export type UnresolvedScenePresence = z.infer<typeof unresolvedScenePresenceSchema>;
+/** Planned from the story text: this character is not in the opening scene. Applied when a game starts. */
+export const plannedPresenceSchema = z
+  .object({ mode: z.enum(['later', 'beyond']), hint: z.string().trim().max(300).optional() })
+  .strict();
+export type PlannedPresence = z.infer<typeof plannedPresenceSchema>;
 export interface GameEntityBase {
   /** Server-private opening provenance. Never part of public projection or NPC knowledge. */
   unresolvedScenePresence?: UnresolvedScenePresence;
+  plannedPresence?: PlannedPresence;
 
   lifeState?: import('./lifecycle').ActorLifeState;
   /** Changes on any lifecycle transition, invalidating pre-incapacity jobs even after revival. */
@@ -240,8 +246,6 @@ export interface GameEntityBase {
     portraitFrame?: PortraitFrame;
     /** The author's uploaded portrait; served only through the authorized per-actor endpoint. */
     portraitAssetId?: string;
-    /** A god, spirit or voice: no map token, never narrated as standing nearby. */
-    nonPhysical?: boolean;
   };
   tokenSize?: TokenSize;
   characterAnimation?: CharacterAnimation;
@@ -432,6 +436,17 @@ export const objectiveProjectionSchema = publicObjectiveCopySchema
   );
 export type ObjectiveProjection = z.infer<typeof objectiveProjectionSchema>;
 
+/** An authored character who is not in the scene (yet): hidden from players until the story brings them in. */
+export interface OffstageNpc {
+  entity: GameEntity;
+  /** What the character carries or sells (entities owned by them), restored on arrival. */
+  items?: Record<string, GameEntity>;
+  brain?: NpcBrain;
+  /** later: arrives through the story; beyond: a god, spirit or voice that never stands in the scene. */
+  mode: 'later' | 'beyond';
+  /** What the author's text says about when or how they show up (never shown to players). */
+  hint?: string;
+}
 export interface GameState {
   /** Server-private, requester-scoped presentation state; never included in player projections. */
   narrativePreferences?: Record<string, NarrativePreferences>;
@@ -452,6 +467,7 @@ export interface GameState {
   rulesetVersion: 'observatory-v1' | 'hybrid-v2' | 'hybrid-v3';
   startMapId?: string;
   npcBrains?: Record<string, NpcBrain>;
+  offstage?: Record<string, OffstageNpc>;
   npcNotices?: PrivateNpcNotice[];
   npcUtterances?: PrivateNpcUtterance[];
   roundPolicy?: { maxRounds: number; planningMs: number };
@@ -697,7 +713,6 @@ export const gamePublicEntitySchema = z
         greeting: z.string().max(2000).optional(),
         portraitFrame: portraitFrameSchema.optional(),
         portraitAssetId: z.uuid().optional(),
-        nonPhysical: z.boolean().optional(),
       })
       .strict()
       .optional(),
@@ -1014,6 +1029,7 @@ export const authoredGameDraftSchema = z
             npcPlaceholder: npcPlaceholderSchema.optional(),
             sourceNpcId: z.string().uuid().optional(),
             unresolvedScenePresence: unresolvedScenePresenceSchema.optional(),
+            plannedPresence: plannedPresenceSchema.optional(),
             itemStock: npcItemStockSchema.optional(),
             label: authoredLabel,
             labelTranslations: gameLabelTranslationsSchema.optional(),
@@ -1032,7 +1048,6 @@ export const authoredGameDraftSchema = z
                 greeting: z.string().max(2000).optional(),
                 portraitFrame: portraitFrameSchema.optional(),
                 portraitAssetId: z.uuid().optional(),
-                nonPhysical: z.boolean().optional(),
               })
               .strict()
               .optional(),
@@ -1138,6 +1153,7 @@ export interface PlayablePackage {
   maps: Record<string, GameMap>;
   entities: Record<string, GameEntity>;
   npcBrains: Record<string, NpcBrain>;
+  offstage?: Record<string, OffstageNpc>;
   roundPolicy: { maxRounds: number; planningMs: number };
 }
 

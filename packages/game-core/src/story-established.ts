@@ -12,7 +12,7 @@ import {
   type GameEntity,
   type StoryTurnInput,
 } from '@dreamwalk/contracts';
-import { visible, walkable } from './index';
+import { findPath, visible, walkable } from './index';
 import { observedVisible } from './observation-visibility';
 import { groundedArrivalArea } from './grounded-arrival';
 import { entityPlacement, copyEntityPlacement, enterScene } from './scene-presence';
@@ -73,6 +73,36 @@ export function establishedRoleplayContext(
         : {}),
     })),
     destinations: travelLocations(state),
+    // Authored characters who are not in the scene yet; the story may bring one in with npc_arrival.
+    // Server-side context only: players never see these names or notes before the arrival.
+    ...(Object.values(state.offstage ?? {}).some((held) => held.mode === 'later')
+      ? {
+          offstage: Object.values(state.offstage!)
+            .filter((held) => held.mode === 'later')
+            .map(({ entity, hint }) => ({
+              id: entity.id,
+              label: entity.label,
+              role: entity.publicProfile?.role,
+              description: entity.publicProfile?.description,
+              appearance: entity.publicProfile?.appearance,
+              ...(hint ? { arrivesWhen: hint } : {}),
+            })),
+        }
+      : {}),
+    // Gods, spirits and voices: part of the world and the story, never people standing in the scene.
+    ...(Object.values(state.offstage ?? {}).some((held) => held.mode === 'beyond')
+      ? {
+          beyond: Object.values(state.offstage!)
+            .filter((held) => held.mode === 'beyond')
+            .map(({ entity, hint }) => ({
+              id: entity.id,
+              label: entity.label,
+              role: entity.publicProfile?.role,
+              description: entity.publicProfile?.description,
+              ...(hint ? { nature: hint } : {}),
+            })),
+        }
+      : {}),
     surfaces:
       map?.composition?.layers
         .filter((layer) => ['table', 'counter', 'shelf'].includes(layer.visual))
@@ -131,6 +161,50 @@ export function establishedRoleplayContext(
       bindings: state.artBindings,
     }),
   };
+}
+
+/** The story chooses where a character shows up; the server only snaps it to the nearest valid free cell. */
+function arrivalSpot(
+  state: GameState,
+  mapId: string,
+  entity: GameEntity,
+  want: { x: number; y: number },
+  actorId: string,
+) {
+  const map = state.maps[mapId];
+  if (!map) return undefined;
+  const actor = state.entities[actorId];
+  for (let radius = 0; radius <= 3; radius++)
+    for (let dy = -radius; dy <= radius; dy++)
+      for (let dx = -radius; dx <= radius; dx++) {
+        if (Math.max(Math.abs(dx), Math.abs(dy)) !== radius) continue;
+        const point = { x: want.x + dx, y: want.y + dy };
+        const footprint = { ...entity, ...point, spatialMode: undefined };
+        if (
+          point.x < 0 ||
+          point.y < 0 ||
+          point.x >= map.width ||
+          point.y >= map.height ||
+          !footprintInside(footprint, { x: 0, y: 0, width: map.width, height: map.height }) ||
+          !imageSafe(state, entity, mapId, point) ||
+          !walkable(state, mapId, point, undefined, true) ||
+          map.exits.some((exit) => footprintOverlaps(footprint, exit)) ||
+          Object.values(state.entities).some(
+            (other) =>
+              other.mapId === mapId && !other.ownerId && footprintOverlaps(footprint, other),
+          ) ||
+          Object.values(state.encounters).some(
+            (encounter) =>
+              encounter.phase === 'planning' &&
+              encounter.mapId === mapId &&
+              footprintIntersectsArea(footprint, encounter.area),
+          ) ||
+          (actor && hasPosition(actor) && !findPath(state, mapId, actor, point, actorId))
+        )
+          continue;
+        return point;
+      }
+  return undefined;
 }
 
 function imageSafe(
@@ -313,6 +387,32 @@ export function applyEstablishedRoleplayEvent(
       currentActor.revision++;
       refs.set(effect.ref, id);
       emit('action.pick_up', id);
+    } else if (effect.kind === 'npc_arrival') {
+      const held = next.offstage?.[effect.targetId],
+        map = next.maps[currentActor.mapId];
+      if (
+        input.channel !== 'say' ||
+        held?.mode !== 'later' ||
+        !map ||
+        map.spatialMode === 'location_only' ||
+        !allowedMapIds.includes(map.id)
+      )
+        return reject();
+      const entity = structuredClone(held.entity);
+      const spot = arrivalSpot(next, map.id, entity, effect.point, actorId);
+      if (!spot) return reject('PATH_BLOCKED');
+      delete entity.spatialMode;
+      delete entity.sceneId;
+      Object.assign(entity, spot, { mapId: map.id, revision: (entity.revision ?? 0) + 1 });
+      next.entities[entity.id] = entity;
+      for (const [itemId, item] of Object.entries(held.items ?? {})) {
+        next.entities[itemId] = structuredClone(item);
+        copyEntityPlacement(next.entities[itemId], entity);
+      }
+      if (held.brain) (next.npcBrains ??= {})[entity.id] = held.brain;
+      delete next.offstage![effect.targetId];
+      map.revision++;
+      emitted.push({ kind: 'actor.transitioned', actorId: entity.id, mapId: map.id });
     } else if (effect.kind === 'door_state') {
       const target = accessible(effect.targetId);
       if (target?.kind !== 'door' || (effect.open && effect.locked)) return reject();
