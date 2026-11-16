@@ -1,8 +1,22 @@
 # Scene writer: one reply call for everyone who answers a message
 
-Status: design, not implemented. The cheap parts already shipped (reply written before the
-inner thought, names of co-responders, craft rules, prose metrics). This document records what
-the full change must preserve before anyone touches the paid request path.
+Status: implemented behind `ENSEMBLE_REPLIES=true` (default off). The cheap parts shipped first
+(reply written before the inner thought, names of co-responders, craft rules, prose metrics).
+This document records what the change preserves in the paid request path.
+
+## As built
+
+- `planEnsembleGroups` (`game/ensemble-replies.ts`) groups the queued public `say` replies of one
+  message (2–4 requests; a whisper, an all-optional group or a bigger one never merges).
+- `prepareWorldRequests` (before pricing) writes the lead's context with `ensemble.members`
+  (each member's public speech context only, no history or private memory) and every other
+  request with `ensembleFollowerOf`. The lead's quote therefore prices the real combined body.
+- The speech schema/instructions for the lead add `ensembleLines [{speakerId, text}]`; the provider
+  accepts only speakers listed in the ensemble, each at most once.
+- A follower job is served from the lead's stored proposal through the existing application-cache
+  settlement (hold released, zero cost, `CACHE_REUSED`). If the lead is still running the follower
+  waits; if the lead failed or wrote no line, the follower makes its own call as before.
+- Not verified here: the DB paths run only with the flag on; enable it for a rehearsal first.
 
 ## Problem
 

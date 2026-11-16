@@ -61,6 +61,7 @@ import {
   type QueueDecision,
   type ReadyDecision,
 } from './types';
+import { ensembleReplyFor } from '../game/ensemble-replies';
 
 const defaults: AiPolicy = {
   creditPrice: 0,
@@ -1607,11 +1608,27 @@ export class NpcAiEngine {
         j.provider_version,
         j.policy_version,
       );
-      const cached = (
+      let cached = (
         await c.query('SELECT proposal FROM npc_ai_cache WHERE cache_key=$1 AND expires_at>now()', [
           key,
         ])
       ).rows[0];
+      if (!cached && typeof j.context.ensembleFollowerOf === 'string') {
+        // Ensemble reply: this character's line was written by the lead request. Serve it through
+        // the same zero-cost cache settlement; if the lead is still running, wait for it.
+        const lead = (
+          await c.query(
+            "SELECT status,proposal FROM npc_ai_jobs WHERE campaign_id=$1 AND request_meta->>'runtimeRequestId'=$2 ORDER BY created_at DESC LIMIT 1",
+            [j.campaign_id, j.context.ensembleFollowerOf],
+          )
+        ).rows[0];
+        if (lead?.status === 'running') return null;
+        const reply =
+          lead?.proposal && ['result_received', 'validated', 'accepted'].includes(lead.status)
+            ? ensembleReplyFor(lead.proposal, String(j.npc_id))
+            : undefined;
+        if (reply) cached = { proposal: reply };
+      }
       if (cached) {
         await this.settleNpcSparks(c, j, {
           outcome: 'application_cache',

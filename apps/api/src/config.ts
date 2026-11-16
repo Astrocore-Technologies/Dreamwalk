@@ -13,6 +13,8 @@ export function readConfig(env = process.env) {
       WEB_ORIGIN: z.string().url().default('http://localhost:3000'),
       AI_PROVIDER: z.enum(['mock', 'openai', 'local']).default('mock'),
       PAID_GENERATION_ENABLED: flag,
+      /** One reply request for every character answering the same message (default off). */
+      ENSEMBLE_REPLIES: flag,
       PAYMENTS_ENABLED: flag,
       DISCORD_ENABLED: flag,
       DEV_AUTH_ENABLED: flag,

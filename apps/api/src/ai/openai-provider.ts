@@ -103,6 +103,16 @@ const hasEstablishedRoleplay = (context: unknown) =>
   typeof context === 'object' &&
   (context as { mode?: string }).mode === 'director' &&
   !!(context as { establishedRoleplay?: unknown }).establishedRoleplay;
+/** The characters whose replies the lead request also writes (ensemble reply), if any. */
+const ensembleMembers = (context: unknown): { npcId: string; label?: string }[] => {
+  const members = (context as { ensemble?: { members?: unknown } } | null)?.ensemble?.members;
+  return Array.isArray(members)
+    ? members.filter(
+        (m): m is { npcId: string; label?: string } =>
+          !!m && typeof (m as { npcId?: unknown }).npcId === 'string',
+      )
+    : [];
+};
 const otherRespondersNote = (context: unknown) => {
   const names = (context as { otherResponders?: unknown } | null)?.otherResponders;
   return Array.isArray(names) && names.length
@@ -653,6 +663,20 @@ export function openAiOutputSchema(
           'NPC reply, optionally including a brief observable gesture or expression alongside spoken words. No invented player actions or mechanical outcomes.',
       },
       cognition: cognitionOutput,
+      ...(ensembleMembers(context).length
+        ? {
+            ensembleLines: {
+              type: 'array',
+              maxItems: 3,
+              description:
+                'Replies of the other characters listed in ensemble.members, one entry per character who speaks.',
+              items: object({
+                speakerId: { type: 'string', enum: ensembleMembers(context).map((m) => m.npcId) },
+                text: { type: 'string', minLength: 1, maxLength: 1000 },
+              }),
+            },
+          }
+        : {}),
       companionIntent: autonomousCommunication(context) ? { type: 'null' } : companionIntentOutput,
       actionIntent: autonomousCommunication(context) ? { type: 'null' } : npcActionIntentOutput,
       itemIntents: {
@@ -811,6 +835,10 @@ export function buildOpenAiNpcRequestBody(
     : purpose === 'speech'
       ? ' Set silent=false with a nonempty text for an ordinary reply. When responseOptional=true, this is an overheard utterance, not a demand that every nearby NPC speak. Decide individually whether to reply or quietly continue observing according to this NPC situation and character. To remain silent, set silent=true, text=null, itemIntents=[], companionIntent=null and actionIntent=null. You may still provide bounded cognition. Silence produces no spoken acknowledgment and no mechanical action. Without responseOptional=true, silent must be false.'
       : '';
+  const ensemblePolicy =
+    purpose === 'speech' && ensembleMembers(context).length
+      ? ` This one request writes the replies of several characters to the same message. Your own reply stays in text. For every character in ensemble.members who would answer, add an ensembleLines entry {speakerId, text} in that character's own voice and manner, in the output language. Each character may use only their own claims and public identity from ensemble.members[].context and must not know what only another character knows. Every reply must be clearly different from the others in content, rhythm and attitude: never repeat or echo another line, and omit a character who would stay silent.`
+      : '';
   const speechCraftPolicy =
     purpose === 'speech' && !communicationOnly
       ? ` Speak as this one character, in their own voice, manner and rhythm, not as a generic helpful assistant. Never echo or restate the player's last words and never copy a phrase another character is likely to use. Do not end every reply with a question: a reply may be a reaction, a decision, a concrete detail, an offer or a plain statement, and the character may take initiative instead of waiting for the player. If the message wounded, threatened or attacked someone present, react at once and in character (defend, shield someone, flee, restrain the attacker, call for help or freeze in shock), never with calm small talk.${otherRespondersNote(context)}`
@@ -836,7 +864,7 @@ export function buildOpenAiNpcRequestBody(
         ? storyDirectorResolutionPolicy
         : legacyStoryDirectorResolutionPolicy
       : '';
-  const instructions = `${currentResolutionPolicy} ${narrativeEvidencePolicy} ${handledReplyPolicy}${narratorCraftPolicy} ${optionalResponsePolicy}${speechCraftPolicy} ${audienceMemoryPolicy} ${cognitionPolicy} ${actionPolicy} ${companionPolicy} ${common} ${socialGuidance} ${inherited} ${
+  const instructions = `${currentResolutionPolicy} ${narrativeEvidencePolicy} ${handledReplyPolicy}${narratorCraftPolicy} ${optionalResponsePolicy}${speechCraftPolicy}${ensemblePolicy} ${audienceMemoryPolicy} ${cognitionPolicy} ${actionPolicy} ${companionPolicy} ${common} ${socialGuidance} ${inherited} ${
     established
       ? establishedRoleplayInstructions +
         (hasOffstageCast(context) ? offstageCastInstructions : '') +
@@ -1740,9 +1768,22 @@ export class OpenAiNpcProvider implements NpcProvider {
             itemIntents: z.array(z.record(z.string(), z.unknown())).max(2).optional(),
             companionIntent: z.unknown().optional(),
             actionIntent: z.unknown().optional(),
+            ensembleLines: z
+              .array(z.object({ speakerId: z.string(), text: z.string() }).strict())
+              .max(3)
+              .optional(),
           })
           .strict()
           .parse(parsed);
+        const allowed = new Set(ensembleMembers(context).map((m) => m.npcId));
+        if (
+          raw.ensembleLines &&
+          (!allowed.size ||
+            new Set(raw.ensembleLines.map((line) => line.speakerId)).size !==
+              raw.ensembleLines.length ||
+            raw.ensembleLines.some((line) => !allowed.has(line.speakerId)))
+        )
+          return failed('PROVIDER_INVALID_RESULT');
         if (
           autonomousCommunication(context) &&
           (raw.itemIntents?.length || raw.companionIntent != null || raw.actionIntent != null)
