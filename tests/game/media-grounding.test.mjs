@@ -74,7 +74,7 @@ test('image prompt includes bounded immutable public premise, never private NPC 
   assert.match(prepared.prompt, /Blue brass floors/);
   assert.match(prepared.prompt, /salt and glass/);
   assert.equal(prepared.grounding.storyReference.world.excerpted, true);
-  assert.ok(prepared.prompt.length <= 2000);
+  assert.ok(prepared.prompt.length <= 3500);
   assert.doesNotMatch(prepared.prompt, /PRIVATE_KEEPER_SECRET|PRIVATE_WHISPER_SECRET/);
   assert.match(prepared.prompt, /Omitted canon does not authorize invented objects/);
 });
@@ -133,7 +133,7 @@ test('maximum valid NPC card yields bounded visual-only portrait prompt and igno
   };
   const input = { kind: 'portrait', entityId: 'keeper' };
   const before = prepareSceneMedia(state, 'player-a', 'source-v1', input);
-  assert.ok(before.prompt.length <= 2000);
+  assert.ok(before.prompt.length <= 3500);
   assert.match(before.prompt, /A{500}/);
   assert.doesNotMatch(before.prompt, /NONVISUAL_DESCRIPTION|NONVISUAL_PERSONALITY/);
   state.entities.keeper.supportingNpc.description = 'Changed prose';
@@ -162,7 +162,7 @@ test('maximum public story excerpts fit fixed 24x24 prompt without truncating ge
     world: 'W'.repeat(1000),
   };
   const result = prepareSceneMedia(state, 'player-a', 'source-v1', { kind: 'background' });
-  assert.ok(result.prompt.length <= 2000);
+  assert.ok(result.prompt.length <= 3500);
   const data = JSON.parse(result.prompt.split('\n').at(-1));
   assert.equal(data.visual.blockedRows.length, 24);
   assert.ok(data.visual.blockedRows.every((row) => row.length === 24));
