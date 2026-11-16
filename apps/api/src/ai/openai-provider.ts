@@ -103,6 +103,12 @@ const hasEstablishedRoleplay = (context: unknown) =>
   typeof context === 'object' &&
   (context as { mode?: string }).mode === 'director' &&
   !!(context as { establishedRoleplay?: unknown }).establishedRoleplay;
+const otherRespondersNote = (context: unknown) => {
+  const names = (context as { otherResponders?: unknown } | null)?.otherResponders;
+  return Array.isArray(names) && names.length
+    ? ` ${names.filter((n) => typeof n === 'string').join(', ')} answer the same message at the same time and you cannot see their words: give your own distinct reaction and keep it brief, and if someone else is clearly better placed to answer, speak only to your part or stay silent when that is allowed.`
+    : '';
+};
 const rpPoint = object({
   x: { type: 'integer', minimum: 0, maximum: 63 },
   y: { type: 'integer', minimum: 0, maximum: 63 },
@@ -637,8 +643,8 @@ export function openAiOutputSchema(
       messageCode: { type: ['string', 'null'], enum: ['AMBIGUOUS', 'UNSUPPORTED', null] },
     });
   if (purpose === 'speech')
+    // The reply comes first so the character speaks before it reflects on it.
     return object({
-      cognition: cognitionOutput,
       silent: { type: 'boolean' },
       text: {
         type: ['string', 'null'],
@@ -646,6 +652,7 @@ export function openAiOutputSchema(
         description:
           'NPC reply, optionally including a brief observable gesture or expression alongside spoken words. No invented player actions or mechanical outcomes.',
       },
+      cognition: cognitionOutput,
       companionIntent: autonomousCommunication(context) ? { type: 'null' } : companionIntentOutput,
       actionIntent: autonomousCommunication(context) ? { type: 'null' } : npcActionIntentOutput,
       itemIntents: {
@@ -804,6 +811,14 @@ export function buildOpenAiNpcRequestBody(
     : purpose === 'speech'
       ? ' Set silent=false with a nonempty text for an ordinary reply. When responseOptional=true, this is an overheard utterance, not a demand that every nearby NPC speak. Decide individually whether to reply or quietly continue observing according to this NPC situation and character. To remain silent, set silent=true, text=null, itemIntents=[], companionIntent=null and actionIntent=null. You may still provide bounded cognition. Silence produces no spoken acknowledgment and no mechanical action. Without responseOptional=true, silent must be false.'
       : '';
+  const speechCraftPolicy =
+    purpose === 'speech' && !communicationOnly
+      ? ` Speak as this one character, in their own voice, manner and rhythm, not as a generic helpful assistant. Never echo or restate the player's last words and never copy a phrase another character is likely to use. Do not end every reply with a question: a reply may be a reaction, a decision, a concrete detail, an offer or a plain statement, and the character may take initiative instead of waiting for the player. If the message wounded, threatened or attacked someone present, react at once and in character (defend, shield someone, flee, restrain the attacker, call for help or freeze in shock), never with calm small talk.${otherRespondersNote(context)}`
+      : '';
+  const narratorCraftPolicy =
+    purpose === 'story_turn'
+      ? ' Vary the scenery: do not reuse a detail you already used in recent narration, and do not close every narration with a question or a prompt to the player; end on a concrete beat when that fits.'
+      : '';
   const handledReplyPolicy =
     purpose === 'story_turn' &&
     (context as { npcRepliesHandled?: boolean }).npcRepliesHandled === true
@@ -821,7 +836,7 @@ export function buildOpenAiNpcRequestBody(
         ? storyDirectorResolutionPolicy
         : legacyStoryDirectorResolutionPolicy
       : '';
-  const instructions = `${currentResolutionPolicy} ${narrativeEvidencePolicy} ${handledReplyPolicy} ${optionalResponsePolicy} ${audienceMemoryPolicy} ${cognitionPolicy} ${actionPolicy} ${companionPolicy} ${common} ${socialGuidance} ${inherited} ${
+  const instructions = `${currentResolutionPolicy} ${narrativeEvidencePolicy} ${handledReplyPolicy}${narratorCraftPolicy} ${optionalResponsePolicy}${speechCraftPolicy} ${audienceMemoryPolicy} ${cognitionPolicy} ${actionPolicy} ${companionPolicy} ${common} ${socialGuidance} ${inherited} ${
     established
       ? establishedRoleplayInstructions +
         (hasOffstageCast(context) ? offstageCastInstructions : '') +

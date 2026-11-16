@@ -232,6 +232,14 @@ function aggregateReplyQuote(id: string, quotedReplies: QuotedReply[]): StoryQuo
   };
 }
 const date = (v: Date | string) => new Date(v).toISOString();
+/** Names of the other characters who answer the same message (labels only, no lines or secrets). */
+function otherRespondersFor(state: GameState, ids: string[] | undefined, self: string) {
+  const labels = (ids ?? [])
+    .filter((npcId) => npcId !== self)
+    .map((npcId) => state.entities[npcId]?.label)
+    .filter((label): label is string => !!label);
+  return labels.length ? { otherResponders: labels } : {};
+}
 export class StoryTurnRuntime {
   constructor(
     private db: Db,
@@ -1635,6 +1643,15 @@ export class StoryTurnRuntime {
       "SELECT * FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' AND job_id IS NULL AND context->>'generationPolicy'='world-batch-v1' AND NOT(context ? 'worldPrepared') ORDER BY created_at,id",
       [id],
     );
+    // Characters answering the same player message are prepared separately and cannot read each
+    // other's lines, so each one is told who else answers and must keep its own voice.
+    const responders = new Map<string, string[]>();
+    for (const row of rows)
+      if (row.purpose === 'speech')
+        responders.set(row.context.storyTurnId ?? row.id, [
+          ...(responders.get(row.context.storyTurnId ?? row.id) ?? []),
+          row.npc_id,
+        ]);
     for (const request of rows) {
       const turnId = request.context.storyTurnId ?? request.id;
       const turn = await this.row(id, turnId);
@@ -1686,6 +1703,7 @@ export class StoryTurnRuntime {
             generationPolicy: 'world-batch-v1',
             worldPrepared: true,
             worldRequesterId: turn.requester_user_id,
+            ...otherRespondersFor(live.state, responders.get(turnId), request.npc_id),
           },
           'speech',
           request.npc_id,

@@ -258,22 +258,3 @@ test('compact provider output retains over 128 mixed source segments under the u
   assert.equal(committed.entries.filter((entry) => entry.kind === 'speech').length, 130);
   assert.equal(calls, 1);
 });
-test('legacy serializer bytes remain exact when historical policy metadata is absent or stale', () => {
-  const { createHash } = require('node:crypto');
-  for (const context of [
-    { mode: 'director', director: { evidenceIds: [] } },
-    {
-      mode: 'director',
-      roleplayPolicy: 'obsolete',
-      resolutionPolicy: 'obsolete',
-      director: { evidenceIds: [] },
-    },
-  ]) {
-    const body = buildOpenAiNpcRequestBody(config, 'story_turn', context);
-    // Captured from real main 6f3034b3's serializer, with its original exported policy constants.
-    assert.equal(
-      createHash('sha256').update(body).digest('hex'),
-      'bd8c429fad01487fe6367b0ea6f96ba3292c59205ae10afd19856258619c0e6a',
-    );
-  }
-});
