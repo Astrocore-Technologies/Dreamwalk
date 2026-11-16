@@ -112,7 +112,8 @@ export function prepareSceneMedia(
   let prompt = buildPrompt();
   // The fixed 24x24 geometry is never truncated. Reduce only explicitly marked
   // public atmosphere excerpts so valid long descriptions fit the existing cap.
-  while (input.kind === 'background' && prompt.length > 2000) {
+  const tooLong = (text: string) => text.length > 3500 || Buffer.byteLength(text, 'utf8') > 7500;
+  while (input.kind === 'background' && tooLong(prompt)) {
     const longest = [
       storyReference.summary,
       storyReference.world,
@@ -123,7 +124,7 @@ export function prepareSceneMedia(
     longest.excerpted = true;
     prompt = buildPrompt();
   }
-  if (prompt.length > 2000) fail(413, 'MEDIA_CONTEXT_TOO_LARGE', 'MEDIA_CONTEXT_TOO_LARGE');
+  if (tooLong(prompt)) fail(413, 'MEDIA_CONTEXT_TOO_LARGE', 'MEDIA_CONTEXT_TOO_LARGE');
   const spec = {
     kind: input.kind,
     style: 'drawn2D' as const,

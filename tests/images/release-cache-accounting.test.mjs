@@ -6,9 +6,7 @@ import { createRequire } from 'node:module';
 import { db } from '../game/support-runtime.mjs';
 import { requestEstimateOwnerProfile } from './owner-config-fixture.mjs';
 const require = createRequire(import.meta.url);
-const {
-  activateReleaseDeployment,
-} = require('../images/release-deployment-fixture.cjs');
+const { activateReleaseDeployment } = require('../images/release-deployment-fixture.cjs');
 const { GenerationAuthority } = require('../../apps/api/dist/generation/service.js');
 const { readGenerationConfig } = require('../../apps/api/dist/generation/config.js');
 const { ReleaseGenerationProvider } = require('../../apps/api/dist/generation/release-provider.js');

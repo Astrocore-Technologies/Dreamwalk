@@ -48,7 +48,7 @@ export const generationRequestSchema = z
       })
       .strict()
       .optional(),
-    prompt: z.string().trim().min(1).max(2000),
+    prompt: z.string().trim().min(1).max(3500),
     title: z.string().trim().min(1).max(120),
     kind: z.enum(['background', 'sprite', 'portrait', 'object']),
     camera: z.enum(['top-down', 'portrait', 'unrestricted']),

@@ -198,7 +198,7 @@ test('pricing expiry, alias mismatch, oversized prompt and references reject bef
     runtime.provider.generate(request({ referenceRevisionIds: [randomUUID()] }), 'id', []),
     /IMAGE_REFERENCE_ESTIMATE_UNAVAILABLE/,
   );
-  await assert.rejects(runtime.provider.generate(request({ prompt: 'x'.repeat(2001) }), 'id', []));
+  await assert.rejects(runtime.provider.generate(request({ prompt: 'x'.repeat(3501) }), 'id', []));
   clock = Date.parse(config().image.pricing.validUntil);
   await assert.rejects(
     runtime.provider.generate(request(), 'id', []),
@@ -521,16 +521,16 @@ test('maximum authored prompt gets hidden style after public validation; old req
       return result();
     },
   });
-  const prompt = 'x'.repeat(2000);
+  const prompt = 'x'.repeat(3500);
   await runtime.provider.generate(request({ prompt, requestPolicyVersion: 2 }), randomUUID(), []);
-  assert.ok(sent[0].length > 2000);
+  assert.ok(sent[0].length > 3500);
   assert.match(sent[0], /Default art: detailed drawn 2D anime/);
   assert.ok(sent[0].endsWith(prompt));
   await runtime.provider.generate(request({ prompt }), randomUUID(), []);
   assert.equal(sent[1], prompt);
   await assert.rejects(
     runtime.provider.generate(
-      request({ prompt: 'x'.repeat(2001), requestPolicyVersion: 2 }),
+      request({ prompt: 'x'.repeat(3501), requestPolicyVersion: 2 }),
       randomUUID(),
       [],
     ),
