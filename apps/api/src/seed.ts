@@ -1,4 +1,5 @@
 import { seedCompleteObservatory } from './game/seed-observatory';
+import { seedFirstPartyStories } from './game/seed-first-party-stories';
 import { Pool } from 'pg';
 import { postgresConnectionConfig } from './postgres-connection';
 import { isDeepStrictEqual } from 'node:util';
@@ -481,6 +482,7 @@ async function main() {
       );
     }
     await seedCompleteObservatory(db, owner, stories[0]);
+    await seedFirstPartyStories(db, owner);
     console.log(
       'Seed ready: original stories, model profiles and disabled external runtimes. No login passwords created.',
     );
