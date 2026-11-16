@@ -6,6 +6,7 @@ import {
   restoreStory,
 } from './admin-story-deletion';
 import { grantAdminDreams } from './admin-dreams';
+import { summarizeTurnCosts, type TurnJobRow } from './game/turn-cost-report';
 import { directorStyleUpdateSchema } from '@dreamwalk/contracts/dist/director-style';
 import {
   readDirectorCatalog,
@@ -89,6 +90,23 @@ export class AdminController {
       ),
     });
     return profileStyle(next, directorProfile(next));
+  }
+  @Get('admin/turn-costs')
+  async turnCosts(@Req() req: Request, @Query('days') days?: string) {
+    await this.auth.admin(req);
+    const window = Math.min(90, Math.max(1, Number(days) || 7));
+    const rows = await this.db.query(
+      `SELECT key, min(created_at) AS started, max(result_at) AS finished, count(*)::int AS calls,
+              sum(input_tokens)::bigint AS in_tokens, sum(output_tokens)::bigint AS out_tokens,
+              COALESCE(sum(provider_actual_micros),0)::bigint AS micros,
+              count(*) FILTER (WHERE status IN ('failed','stale','cancelled'))::int AS failed,
+              count(*) FILTER (WHERE result_code='CACHE_REUSED')::int AS cached
+       FROM (SELECT j.*, COALESCE(j.context->>'storyTurnId', j.request_meta->>'runtimeRequestId', j.id::text) AS key
+             FROM npc_ai_jobs j WHERE j.created_at > now() - make_interval(days => $1)) x
+       GROUP BY key ORDER BY min(created_at) DESC LIMIT 1000`,
+      [window],
+    );
+    return { days: window, ...summarizeTurnCosts(rows as TurnJobRow[]) };
   }
   @Get('admin/npc-ai/metrics')
   async npcAiMetrics(@Req() req: Request) {

@@ -3,6 +3,7 @@ import { AdminStoryDeleteButton, AdminStoryTrash } from './studio/admin-story-de
 import { adminStoryDeletionCopy } from './studio/admin-story-deletion-copy';
 import { AdminDreams } from './studio/admin-dreams';
 import { AdminDirector } from './studio/admin-director';
+import { AdminTurnCosts } from './studio/admin-turn-costs';
 import { PlayableReview } from './studio/playable-review';
 import { formatSparkSubunits, selectAdventureText, selectNpcText } from '@dreamwalk/contracts';
 import { readSparksWallet, type SparksWallet } from '@/lib/sparks-wallet';
@@ -133,6 +134,7 @@ const links = [
   { href: '/admin/taxonomy', label: 'Жанры и теги' },
   { href: '/admin/models', label: 'Модели' },
   { href: '/admin/credits', label: 'Искры' },
+  { href: '/admin/costs', label: 'Стоимость хода' },
   { href: '/admin/audit', label: 'Аудит' },
 ];
 export function AdminPage({ path }: { path: string }) {
@@ -179,6 +181,8 @@ export function AdminPage({ path }: { path: string }) {
         <AdminModels />
       ) : path === '/admin/credits' ? (
         <AdminCredits />
+      ) : path === '/admin/costs' ? (
+        <AdminTurnCosts />
       ) : path === '/admin/audit' ? (
         <AdminAudit />
       ) : (
