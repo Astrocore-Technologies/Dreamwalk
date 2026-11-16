@@ -37,6 +37,7 @@ const messages = {
     tokens: 'Токенов на ход (вход / выход)',
     failed: 'Доля ходов с ошибкой',
     starter: 'Хватит стартовых {dreams} грёз на ходов',
+    p90: 'p90',
     average: 'среднее',
     median: 'медиана',
     recent: 'Последние ходы',
@@ -55,6 +56,7 @@ const messages = {
     tokens: 'Токенів на хід (вхід / вихід)',
     failed: 'Частка ходів з помилкою',
     starter: 'Вистачить стартових {dreams} мрій на ходів',
+    p90: 'p90',
     average: 'середнє',
     median: 'медіана',
     recent: 'Останні ходи',
@@ -73,6 +75,7 @@ const messages = {
     tokens: 'Tokens per turn (in / out)',
     failed: 'Share of turns with an error',
     starter: 'Turns the starter {dreams} Dreams cover',
+    p90: 'p90',
     average: 'average',
     median: 'median',
     recent: 'Recent turns',
@@ -112,14 +115,15 @@ export function AdminTurnCosts() {
               <dt>{text.cents}</dt>
               <dd>
                 {text.average} {format(data.apiCentsPerTurn.average, 2)} · {text.median}{' '}
-                {format(data.apiCentsPerTurn.median, 2)} · p90 {format(data.apiCentsPerTurn.p90, 2)}
+                {format(data.apiCentsPerTurn.median, 2)} {' · '}
+                {text.p90} {format(data.apiCentsPerTurn.p90, 2)}
               </dd>
             </div>
             <div>
               <dt>{text.seconds}</dt>
               <dd>
-                {text.median} {format(data.secondsPerTurn.median, 1)} · p90{' '}
-                {format(data.secondsPerTurn.p90, 1)}
+                {text.median} {format(data.secondsPerTurn.median, 1)} {' · '}
+                {text.p90} {format(data.secondsPerTurn.p90, 1)}
               </dd>
             </div>
             <div>
