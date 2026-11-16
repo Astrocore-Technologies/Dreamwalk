@@ -866,6 +866,8 @@ function PositionedGameCanvas({
           lastRevision = p.revision;
           const present = new Set<string>();
           for (const entity of p.entities) {
+            // A god, spirit or voice is not a figure on the map.
+            if (entity.kind === 'npc' && entity.publicProfile?.nonPhysical) continue;
             present.add(entity.id);
             const frame =
               entity.kind === 'player'

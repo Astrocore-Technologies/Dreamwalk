@@ -240,6 +240,8 @@ export interface GameEntityBase {
     portraitFrame?: PortraitFrame;
     /** The author's uploaded portrait; served only through the authorized per-actor endpoint. */
     portraitAssetId?: string;
+    /** A god, spirit or voice: no map token, never narrated as standing nearby. */
+    nonPhysical?: boolean;
   };
   tokenSize?: TokenSize;
   characterAnimation?: CharacterAnimation;
@@ -695,6 +697,7 @@ export const gamePublicEntitySchema = z
         greeting: z.string().max(2000).optional(),
         portraitFrame: portraitFrameSchema.optional(),
         portraitAssetId: z.uuid().optional(),
+        nonPhysical: z.boolean().optional(),
       })
       .strict()
       .optional(),
@@ -1029,6 +1032,7 @@ export const authoredGameDraftSchema = z
                 greeting: z.string().max(2000).optional(),
                 portraitFrame: portraitFrameSchema.optional(),
                 portraitAssetId: z.uuid().optional(),
+                nonPhysical: z.boolean().optional(),
               })
               .strict()
               .optional(),

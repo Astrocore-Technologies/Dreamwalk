@@ -220,6 +220,7 @@ export function buildNarrativeContext(
             revision: e.revision,
             ...(['npc', 'player'].includes(e.kind) ? { lifeState: actorLifeState(e) } : {}),
             ...(e.supportingNpc?.generated ? { publicRole: e.supportingNpc.roleLabel } : {}),
+            ...(e.publicProfile?.nonPhysical ? { nonPhysical: true } : {}),
             ...(e.kind === 'door' ? { open: e.open, locked: e.locked } : {}),
           }))
           .sort((a, b) => a.id.localeCompare(b.id))
