@@ -238,6 +238,8 @@ export interface GameEntityBase {
     greeting?: string;
     /** Which part of the portrait to show in round/square frames. */
     portraitFrame?: PortraitFrame;
+    /** The author's uploaded portrait; served only through the authorized per-actor endpoint. */
+    portraitAssetId?: string;
   };
   tokenSize?: TokenSize;
   characterAnimation?: CharacterAnimation;
@@ -692,6 +694,7 @@ export const gamePublicEntitySchema = z
         personality: z.string().max(4000).optional(),
         greeting: z.string().max(2000).optional(),
         portraitFrame: portraitFrameSchema.optional(),
+        portraitAssetId: z.uuid().optional(),
       })
       .strict()
       .optional(),
@@ -1025,6 +1028,7 @@ export const authoredGameDraftSchema = z
                 personality: z.string().max(4000).optional(),
                 greeting: z.string().max(2000).optional(),
                 portraitFrame: portraitFrameSchema.optional(),
+                portraitAssetId: z.uuid().optional(),
               })
               .strict()
               .optional(),

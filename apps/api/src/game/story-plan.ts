@@ -134,6 +134,8 @@ function placeStoryRoom(
     other: string;
   }[],
   otherIsLocationOnly: (locationId: string) => boolean,
+  /** Characters the author did not put in the opening scene: placed away from the player. */
+  awayNpcIds: ReadonlySet<string> = new Set(),
 ) {
   const g = {
     ...grounding,
@@ -215,11 +217,30 @@ function placeStoryRoom(
     spawns.push(p);
   }
   if (spawns.length !== 4) throw Error('MAP_IMAGE_UNSAFE_SPAWN');
-  for (const npc of npcs) {
-    const size = footprintCells({ kind: 'npc', tokenSize: npc.tokenSize }),
-      spot = candidates.find((p) => fits(p, size));
+  // Opening participants stand near the player; everyone else is spread over the open floor, as
+  // far as possible from the spawns and from each other, so the story does not start with all of
+  // them at the player's side.
+  const placed: Cell[] = [...spawns];
+  const ordered = [...npcs].sort(
+    (a, b) => Number(awayNpcIds.has(a.sourceNpcId)) - Number(awayNpcIds.has(b.sourceNpcId)),
+  );
+  for (const npc of ordered) {
+    const size = footprintCells({ kind: 'npc', tokenSize: npc.tokenSize });
+    let spot: Cell | undefined;
+    if (awayNpcIds.has(npc.sourceNpcId)) {
+      let best = -1;
+      for (const p of candidates) {
+        if (!fits(p, size)) continue;
+        const gap = Math.min(...placed.map((q) => (q.x - p.x) ** 2 + (q.y - p.y) ** 2));
+        if (gap > best) {
+          best = gap;
+          spot = p;
+        }
+      }
+    } else spot = candidates.find((p) => fits(p, size));
     if (!spot) throw Error('MAP_IMAGE_UNSAFE_NPC');
     take(spot, size);
+    placed.push(spot);
     npc.x = spot.x;
     npc.y = spot.y;
   }
@@ -246,6 +267,13 @@ export type StoryPlanSource = {
 };
 const exact = (a: string[], b: string[]) =>
   a.length === b.length && new Set(a).size === a.length && a.every((x) => b.includes(x));
+/** NPCs the author left out of an explicit opening scene at this location. */
+function awayNpcIds(content: z.infer<typeof contentSchema>, locationId: string) {
+  const opening = content.scenes.find((scene) => scene.id === content.startSceneId);
+  if (!opening || opening.locationId !== locationId || !opening.participantNpcIds)
+    return new Set<string>();
+  return new Set(content.npcIds.filter((npcId) => !opening.participantNpcIds!.includes(npcId)));
+}
 export function compileStoryPlan(source: StoryPlanSource, value: unknown) {
   const proposal = storyPlanSchema.parse(value),
     content = contentSchema.parse(source.content);
@@ -382,6 +410,7 @@ export function compileStoryPlan(source: StoryPlanSource, value: unknown) {
         return side ? [{ connection: c, side, other: side === 'atA' ? c.b : c.a }] : [];
       }),
       (other) => !!source.omittedMapImages?.some((i) => i.locationId === other),
+      awayNpcIds(content, r.locationId),
     );
     const g = placed.grounding;
     r.spawns = placed.spawns;

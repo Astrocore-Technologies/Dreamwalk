@@ -136,6 +136,14 @@ test('player portraits use only the authorized per-actor endpoint for real playe
     assert.equal(actorPortraitUrl('campaign-1', bad), undefined);
   // The campaign id is encoded, never interpolated raw into the path.
   assert.ok(!actorPortraitUrl('a/b?c', actor).includes('a/b?c'));
+  // An NPC with an author-uploaded portrait uses the same authorized endpoint.
+  const npc = '123e4567-e89b-12d3-a456-426614174000';
+  assert.equal(actorPortraitUrl('campaign-1', npc), undefined);
+  assert.equal(
+    actorPortraitUrl('campaign-1', npc, true),
+    `/api/v1/game/campaigns/campaign-1/actors/${npc}/portrait`,
+  );
+  assert.equal(actorPortraitUrl('campaign-1', '../x', true), undefined);
 });
 
 test('a chosen portrait frame selects that part of the image and changes the token key', () => {

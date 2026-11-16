@@ -366,6 +366,7 @@ export class PlayableService {
             characterProfile?: unknown;
             characterPackageVersionId?: string;
             portraitFrame?: unknown;
+            portraitAssetId?: unknown;
           }
         | undefined;
       if (!source) continue;
@@ -392,6 +393,9 @@ export class PlayableService {
         ...(source.personality ? { personality: source.personality.slice(0, 4000) } : {}),
         ...(source.greeting ? { greeting: source.greeting.slice(0, 2000) } : {}),
         ...(portraitFrame.success ? { portraitFrame: portraitFrame.data } : {}),
+        ...(z.uuid().safeParse(source.portraitAssetId).success
+          ? { portraitAssetId: source.portraitAssetId as string }
+          : {}),
       };
       const memory = compiled.playable!.npcBrains[npc.id].living;
       if (memory && (!source.characterProfile || memory.personality.biography === undefined))

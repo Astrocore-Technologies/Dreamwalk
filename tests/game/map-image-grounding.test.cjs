@@ -392,6 +392,48 @@ test('mock dispatch sends exactly the consented image body once, stale bytes nev
   assert.equal(calls, 1);
 });
 
+test('NPCs outside the authored opening scene are placed away from the player and each other', () => {
+  const { source, proposal } = fixture();
+  const ids = [randomUUID(), randomUUID(), randomUUID()];
+  source.content = contentSchema.parse({
+    locations: [{ id: 'room', name: 'Tower', description: 'A lit corridor.' }],
+    npcIds: ids,
+    scenes: [
+      {
+        id: 'opening',
+        name: 'Opening',
+        locationId: 'room',
+        description: 'Only the first character is here.',
+        participantNpcIds: [ids[0]],
+      },
+    ],
+    startSceneId: 'opening',
+  });
+  source.npcs = ids.map((id, i) => ({
+    id,
+    name: 'NPC ' + i,
+    role: 'villager',
+    description: 'A villager.',
+    appearance: 'Plain clothes',
+  }));
+  proposal.npcs = ids.map((sourceNpcId) => ({
+    sourceNpcId,
+    locationId: 'room',
+    stock: [],
+  }));
+  const { playable } = compileStoryPlan(source, proposal);
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const spawn = playable.maps.room.spawns[0],
+    near = playable.entities[ids[0]],
+    away = [playable.entities[ids[1]], playable.entities[ids[2]]];
+  for (const npc of away) assert.ok(dist(npc, spawn) > dist(near, spawn) + 4);
+  assert.ok(dist(away[0], away[1]) >= 4);
+  // Without an explicit opening participant list nobody is pushed away.
+  delete source.content.scenes[0].participantNpcIds;
+  const unspecified = compileStoryPlan(source, proposal).playable;
+  for (const id of ids) assert.ok(dist(unspecified.entities[id], spawn) < 6);
+});
+
 test('NPC placement checks the entire creature footprint, not just its anchor', () => {
   const { source, proposal } = fixture(),
     id = randomUUID();

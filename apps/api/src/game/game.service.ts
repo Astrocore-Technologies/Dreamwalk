@@ -41,7 +41,7 @@ import { semanticGameProjection } from './projection-clock';
 import { pruneNpcMemory } from './npc-retention';
 import { recordNpcMetric } from './npc-telemetry';
 import { extendContextHistory, reuseFrozenContext } from './context-history';
-import { framedPortrait } from './portrait-frame';
+import { boundedPortrait, framedPortrait } from './portrait-frame';
 import { Inject, Injectable, OnModuleDestroy, Optional } from '@nestjs/common';
 import { createHash, randomInt, randomUUID } from 'node:crypto';
 import type { Request } from 'express';
@@ -3158,13 +3158,35 @@ export class GameService implements OnModuleDestroy {
   }
   async heroPortrait(req: Request, id: string, actorId: string) {
     z.string()
-      .regex(/^player-[a-f0-9-]{36}$/)
+      .regex(/^(?:player-[a-f0-9-]{36}|[A-Za-z0-9_-]{1,80})$/)
       .parse(actorId);
     return this.serial(id, async () => {
       const access = await this.access(req, id),
         live = await this.load(id, false);
-      if (!projectState(live.state, access.actorId).entities.some((e) => e.id === actorId))
-        fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      const visibleActor = projectState(live.state, access.actorId).entities.find(
+        (e) => e.id === actorId,
+      );
+      if (!visibleActor) return fail(404, 'NOT_FOUND', 'NOT_FOUND');
+      if (!actorId.startsWith('player-')) {
+        // A story NPC shows the portrait its author uploaded. Same visibility, source-access and
+        // takedown checks as a hero portrait; the whole picture is returned and the client frames it.
+        const assetId =
+          visibleActor.kind === 'npc' ? visibleActor.publicProfile?.portraitAssetId : '';
+        if (!assetId) fail(404, 'NOT_FOUND', 'NOT_FOUND');
+        const npcRow = (
+          await this.db.query(
+            `SELECT a.filename FROM game_campaigns c JOIN game_playable_versions v ON v.id=c.source_version_id JOIN adventures s ON s.id=v.adventure_id JOIN assets a ON a.id::text=$2 AND a.owner_id=s.owner_id WHERE c.id=$1 AND ${sourceAccessSql('$3::uuid')} AND NOT EXISTS(SELECT 1 FROM art_asset_revisions r JOIN art_asset_takedowns t ON t.revision_id=r.id WHERE r.upload_id=a.id)`,
+            [id, assetId, access.user.id],
+          )
+        )[0];
+        if (!npcRow || basename(npcRow.filename) !== npcRow.filename)
+          fail(404, 'NOT_FOUND', 'NOT_FOUND');
+        try {
+          return await boundedPortrait(await readFile(resolve(config.ASSET_DIR, npcRow.filename)));
+        } catch {
+          return fail(404, 'NOT_FOUND', 'NOT_FOUND');
+        }
+      }
       const row = (
         await this.db.query(
           `SELECT a.filename,h.snapshot->'portraitFrame' AS frame FROM game_member_heroes h JOIN game_members m ON m.campaign_id=h.campaign_id AND m.user_id=h.user_id JOIN users u ON u.id=h.user_id JOIN game_campaigns c ON c.id=h.campaign_id JOIN assets a ON a.id::text=h.snapshot->>'portraitAssetId' AND a.owner_id=h.user_id WHERE h.campaign_id=$1 AND m.actor_id=$2 AND m.status='accepted' AND u.deleted_at IS NULL AND ${sourceAccessSql('h.user_id')} AND NOT EXISTS(SELECT 1 FROM art_asset_revisions r JOIN art_asset_takedowns t ON t.revision_id=r.id WHERE r.upload_id=a.id)`,
