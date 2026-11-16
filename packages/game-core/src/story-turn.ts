@@ -266,6 +266,31 @@ function safeSpeech(
 }
 /** Bind a generated voice to the public evidence it actually received. The engine's
  * full speech hash additionally binds current listeners/private mechanics at commit. */
+const nameStem = (label: string) => {
+  const word = label.normalize('NFKC').toLocaleLowerCase().trim();
+  return word.length > 3 ? word.slice(0, -1) : word;
+};
+/** Characters the player named in a spoken segment: only a hint of who is being talked to. */
+function addressedSpeakers(
+  state: GameState,
+  segments: StorySegment[],
+  voices: { npcId: string; segmentIndex: number }[],
+) {
+  const found: { segmentIndex: number; npcId: string }[] = [];
+  for (const segment of segments) {
+    if (segment.kind !== 'speech') continue;
+    const text = segment.text.normalize('NFKC').toLocaleLowerCase();
+    for (const voice of voices) {
+      if (voice.segmentIndex !== segment.index) continue;
+      const stem = nameStem(state.entities[voice.npcId]?.label ?? '');
+      if (stem.length < 3) continue;
+      const escaped = stem.replace(/[.*+?^${}()|[\]\\]/g, '\\$&');
+      if (new RegExp(`(^|[^\\p{L}\\p{N}])${escaped}`, 'u').test(text))
+        found.push({ segmentIndex: segment.index, npcId: voice.npcId });
+    }
+  }
+  return found;
+}
 function directorVoice(context: ReturnType<typeof safeSpeech>['context']) {
   const evidence = {
     npcId: context.npcId,
@@ -799,6 +824,14 @@ export function buildStoryTurnContext(
               });
           })
       : [];
+  const addressed =
+    mode === 'director'
+      ? addressedSpeakers(
+          state,
+          parsed.segments,
+          sceneSpeakers as { npcId: string; segmentIndex: number }[],
+        )
+      : [];
   const impactVoices =
     mode === 'director'
       ? prospectiveImpactVoices(
@@ -961,6 +994,7 @@ export function buildStoryTurnContext(
           sceneSpeakers,
           sceneSpeakerImpactBases: impactVoices.bases,
           sceneSpeakerImpactVariants: impactVoices.variants,
+          ...(addressed.length ? { addressedSpeakers: addressed } : {}),
         }
       : {}),
     ...(mode === 'director'
