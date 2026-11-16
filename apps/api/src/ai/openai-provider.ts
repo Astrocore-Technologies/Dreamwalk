@@ -186,7 +186,7 @@ const establishedEventsOutput = {
 const offstageCastInstructions =
   ' establishedRoleplay.offstage lists authored characters who are not in the scene yet, with who they are and when they are meant to show up. Never mention, describe or hint at them as present before they arrive. When the story, the passage of time or the player actions bring one of them in, add an event with the typed effect npc_arrival {targetId, point}: choose point on walkable floor at the place that fits the story (a road in the distance, a doorway, the far end of a field), not automatically next to the player, and keep targetId in entityIds.';
 const beyondCastInstructions =
-  ' establishedRoleplay.beyond lists gods, spirits and voices of this world with who they are. They are not people standing in the scene: never describe them as present, nearby, visible or among other characters. They may speak or act only as a voice, vision, dream or omen when the player addresses them or the story invites it, in their own manner and consistent with their description.';
+  ' establishedRoleplay.beyond lists gods, spirits and voices of this world with who they are. They are not people standing in the scene: never describe them as present, nearby, visible or among other characters. They may speak or act only as a voice, vision, dream or omen when the player addresses them or the story invites it, in their own manner and consistent with their description. When the player addresses one of them by name or title, answer inside the narration as that being: its own words in quotation marks as a voice, vision or omen in its style (establishedRoleplay.beyond[].style), or a concrete sign if it chooses not to speak. Never hand its words to a character standing in the scene, never leave only silence, and keep it out of replyNpcId.';
 const newCharacterInstructions =
   ' When the player sees or meets a person who does not exist yet (a figure far away, a passer-by, a traveller), you may bring that person into the world with narrative.newNpc, placing the spawn on walkable floor at the place the player described (far down the road, by the mill), not automatically next to the player. They need no picture.';
 const establishedRoleplayInstructions = `Complete the entire ordered post, one steps entry for every original segment, without dropping or reordering. Use compact positional entries to fit the quoted output budget: null for no effect or reply; an array of established events for an RP segment; a plain string inside that array for an ordinary nonmechanical event, or a typed event object for physical effects. Array position preserves the original segment index. Use the full step object only for a legacy action, encounter, impact or NPC reply. Do not omit speech positions or authored RP outcomes. Interpret the player's current authored RP semantically in its original language, not a command vocabulary. A completed authored fictional event is established, including a door opening despite a lock or prior fictional impossibility. Do not downgrade it to merely intending or trying, introduce a skill check, or refuse because ordinary RP lacks mechanical stock or action resources.
@@ -721,6 +721,32 @@ export function openAiOutputSchema(
       }),
     },
   });
+}
+/**
+ * Deterministic repair of a story-turn answer that failed validation, with no further provider call.
+ * Only a malformed new character or a malformed NPC reply may be dropped; any other issue (items,
+ * placement, effects, scenes, evidence) still fails closed.
+ */
+export function salvageStoryTurn<
+  T extends { steps: Record<string, unknown>[]; narrative: unknown },
+>(raw: T, issues: readonly { path: readonly PropertyKey[] }[]): T | null {
+  if (!issues.length) return null;
+  const replies = new Set<number>();
+  let newNpc = false;
+  for (const { path } of issues) {
+    if (path[0] === 'narrative' && path[1] === 'newNpc') newNpc = true;
+    else if (path[0] === 'steps' && typeof path[1] === 'number' && path[2] === 'reply')
+      replies.add(path[1]);
+    else return null;
+  }
+  const narrative = raw.narrative;
+  if (newNpc && (!narrative || typeof narrative !== 'object' || Array.isArray(narrative)))
+    return null;
+  return {
+    ...raw,
+    narrative: newNpc ? { ...(narrative as object), newNpc: null } : narrative,
+    steps: raw.steps.map((step, index) => (replies.has(index) ? { ...step, reply: null } : step)),
+  };
 }
 export function buildOpenAiNpcRequestBody(
   config: Pick<
@@ -1609,30 +1635,46 @@ export class OpenAiNpcProvider implements NpcProvider {
           value && typeof value === 'object' && !Array.isArray(value)
             ? Object.fromEntries(Object.entries(value).filter(([, v]) => v !== null))
             : value;
-        proposal = storyTurnProposalSchema.parse({
-          ...raw,
-          narrative: cleanNarrativeSpatialInput(raw.narrative),
-          steps: raw.steps.map((step) => ({
-            ...step,
-            sceneEncounter: step.sceneEncounter ?? undefined,
-            establishedEvents: step.establishedEvents ?? undefined,
-            action: step.action === null ? null : clean(step.action),
-            reply:
-              step.reply === null
-                ? null
-                : {
-                    ...(clean(step.reply) as Record<string, unknown>),
-                    ...(step.reply &&
-                    typeof step.reply === 'object' &&
-                    'actionIntent' in step.reply &&
-                    step.reply.actionIntent != null
-                      ? { actionIntent: cleanNpcActionIntent(step.reply.actionIntent) }
-                      : {}),
-                  },
-          })),
-          turnId: context.turnId,
-          contextHash: context.contextHash,
-        });
+        type StoryRaw = typeof raw;
+        const assemble = (source: StoryRaw) =>
+          storyTurnProposalSchema.parse({
+            ...source,
+            narrative: cleanNarrativeSpatialInput(source.narrative),
+            steps: source.steps.map((step) => ({
+              ...step,
+              sceneEncounter: step.sceneEncounter ?? undefined,
+              establishedEvents: step.establishedEvents ?? undefined,
+              action: step.action === null ? null : clean(step.action),
+              reply:
+                step.reply === null
+                  ? null
+                  : {
+                      ...(clean(step.reply) as Record<string, unknown>),
+                      ...(step.reply &&
+                      typeof step.reply === 'object' &&
+                      'actionIntent' in step.reply &&
+                      step.reply.actionIntent != null
+                        ? { actionIntent: cleanNpcActionIntent(step.reply.actionIntent) }
+                        : {}),
+                    },
+            })),
+            turnId: context.turnId,
+            contextHash: context.contextHash,
+          });
+        try {
+          proposal = assemble(raw);
+        } catch (invalid) {
+          // A malformed new character or NPC reply must not cost the player the whole paid turn:
+          // drop only that part and keep the narration and every valid step.
+          const salvaged =
+            invalid instanceof z.ZodError ? salvageStoryTurn(raw, invalid.issues) : null;
+          if (!salvaged) throw invalid;
+          try {
+            proposal = assemble(salvaged as StoryRaw);
+          } catch {
+            throw invalid;
+          }
+        }
         if (
           !hasEstablishedRoleplay(context) &&
           (proposal as { steps: { establishedEvents?: unknown[] }[] }).steps.some(

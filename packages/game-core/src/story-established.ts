@@ -94,11 +94,14 @@ export function establishedRoleplayContext(
       ? {
           beyond: Object.values(state.offstage!)
             .filter((held) => held.mode === 'beyond')
-            .map(({ entity, hint }) => ({
+            .map(({ entity, hint, brain }) => ({
               id: entity.id,
               label: entity.label,
               role: entity.publicProfile?.role,
               description: entity.publicProfile?.description,
+              ...(brain?.living?.personality.speechStyle
+                ? { style: brain.living.personality.speechStyle }
+                : {}),
               ...(hint ? { nature: hint } : {}),
             })),
         }
