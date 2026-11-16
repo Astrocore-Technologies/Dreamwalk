@@ -10,6 +10,7 @@ import {
 } from '@dreamwalk/contracts';
 import { AssetReuseService } from '../assets/reuse.service';
 import { fail } from '../errors';
+import { plainText } from '../text/plain';
 import type { GenerationRequest } from './contracts';
 export const studioLocationSelectionSchema = z
   .object({ adventureId: z.uuid(), locationId: z.string().trim().min(1).max(80) })
@@ -31,14 +32,7 @@ export const studioLocationBindingSchema = studioLocationSelectionSchema
     (v) =>
       !v.mapId || (v.expectedPlayableRevision !== undefined && v.expectedArtRevision !== undefined),
   );
-/** Author text may carry Markdown (headings, bold, lists); the image prompt only needs the words. */
-export const plainDescription = (text: string) =>
-  text
-    .replace(/^\s{0,3}(?:#{1,6}\s+|>\s?|[-*+]\s+|\d+[.)]\s+)/gm, '')
-    .replace(/[*_`]{1,3}/g, '')
-    .replace(/\s*\n+\s*/g, ' ')
-    .replace(/\s{2,}/g, ' ')
-    .trim();
+export const plainDescription = plainText;
 const digest = (v: unknown) => createHash('sha256').update(JSON.stringify(v)).digest('hex');
 export async function prepareStudioLocationTx(
   c: PoolClient,
