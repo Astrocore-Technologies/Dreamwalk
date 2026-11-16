@@ -37,6 +37,7 @@ export const establishedRoleplayEffectSchema = z.discriminatedUnion('kind', [
   z
     .object({ kind: z.literal('relocate'), targetId: id, mapId: id, point: point.nullable() })
     .strict(),
+  z.object({ kind: z.literal('npc_arrival'), targetId: id, point }).strict(),
   z
     .object({
       kind: z.literal('create_prop'),

@@ -392,6 +392,96 @@ test('mock dispatch sends exactly the consented image body once, stale bytes nev
   assert.equal(calls, 1);
 });
 
+test('NPCs outside the authored opening scene are placed away from the player and each other', () => {
+  const { source, proposal } = fixture();
+  const ids = [randomUUID(), randomUUID(), randomUUID()];
+  source.content = contentSchema.parse({
+    locations: [{ id: 'room', name: 'Tower', description: 'A lit corridor.' }],
+    npcIds: ids,
+    scenes: [
+      {
+        id: 'opening',
+        name: 'Opening',
+        locationId: 'room',
+        description: 'Only the first character is here.',
+        participantNpcIds: [ids[0]],
+      },
+    ],
+    startSceneId: 'opening',
+  });
+  source.npcs = ids.map((id, i) => ({
+    id,
+    name: 'NPC ' + i,
+    role: 'villager',
+    description: 'A villager.',
+    appearance: 'Plain clothes',
+  }));
+  proposal.npcs = ids.map((sourceNpcId) => ({
+    sourceNpcId,
+    locationId: 'room',
+    stock: [],
+  }));
+  const { playable } = compileStoryPlan(source, proposal);
+  const dist = (a, b) => Math.hypot(a.x - b.x, a.y - b.y);
+  const spawn = playable.maps.room.spawns[0],
+    near = playable.entities[ids[0]],
+    away = [playable.entities[ids[1]], playable.entities[ids[2]]];
+  for (const npc of away) assert.ok(dist(npc, spawn) > dist(near, spawn) + 4);
+  assert.ok(dist(away[0], away[1]) >= 4);
+  // Without an explicit opening participant list nobody is pushed away.
+  delete source.content.scenes[0].participantNpcIds;
+  const unspecified = compileStoryPlan(source, proposal).playable;
+  for (const id of ids) assert.ok(dist(unspecified.entities[id], spawn) < 6);
+});
+
+test('presence from the story text marks later and beyond characters; opening participants stay', () => {
+  const { source, proposal } = fixture();
+  const ids = [randomUUID(), randomUUID(), randomUUID()];
+  source.content = contentSchema.parse({
+    locations: [{ id: 'room', name: 'Tower', description: 'A lit corridor.' }],
+    npcIds: ids,
+    scenes: [
+      {
+        id: 'opening',
+        name: 'Opening',
+        locationId: 'room',
+        description: 'The first character is here.',
+        participantNpcIds: [ids[0]],
+      },
+    ],
+    startSceneId: 'opening',
+  });
+  source.npcs = ids.map((id, i) => ({
+    id,
+    name: 'NPC ' + i,
+    role: 'villager',
+    description: 'A villager.',
+    appearance: 'Plain clothes',
+  }));
+  const presence = [
+    // An opening participant stays even if the model says otherwise.
+    { presence: 'later', presenceNote: 'ignored' },
+    { presence: 'later', presenceNote: 'arrives at dusk' },
+    { presence: 'beyond', presenceNote: 'the god of this world' },
+  ];
+  proposal.npcs = ids.map((sourceNpcId, i) => ({
+    sourceNpcId,
+    locationId: 'room',
+    stock: [],
+    ...presence[i],
+  }));
+  const { draft } = compileStoryPlan(source, proposal);
+  const planned = Object.fromEntries(draft.npcs.map((n) => [n.id, n.plannedPresence]));
+  assert.equal(planned[ids[0]], undefined);
+  assert.deepEqual(planned[ids[1]], { mode: 'later', hint: 'arrives at dusk' });
+  assert.deepEqual(planned[ids[2]], { mode: 'beyond', hint: 'the god of this world' });
+  const state = g.createStateFromPlayable(compileStoryPlan(source, proposal).playable, ['hero']);
+  assert.ok(state.entities[ids[0]]);
+  assert.equal(state.entities[ids[1]], undefined);
+  assert.equal(state.offstage[ids[1]].mode, 'later');
+  assert.equal(state.offstage[ids[2]].mode, 'beyond');
+});
+
 test('NPC placement checks the entire creature footprint, not just its anchor', () => {
   const { source, proposal } = fixture(),
     id = randomUUID();

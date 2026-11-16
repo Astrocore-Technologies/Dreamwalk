@@ -503,7 +503,10 @@ export function applyNarrativeProposal(
         Object.values(next.entities).some(
           (e) => e.mapId === mapId && !e.ownerId && footprintOverlaps(proposedFootprint, e),
         ) ||
+        // Free roleplay may bring a new character in wherever the story puts them (a figure far
+        // down the road); the cells must still be walkable, free and reachable.
         (n.placement === 'current' &&
+          !establishedRoleplay &&
           !context.availableConnections.some((c) => c.x === n.spawn!.x && c.y === n.spawn!.y))
       )
         return error(state, 'PATH_BLOCKED');

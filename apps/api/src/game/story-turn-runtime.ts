@@ -69,6 +69,7 @@ import { extendContextHistory } from './context-history';
 import { fail } from '../errors';
 import { sourceAccessSql } from './source-access';
 import { insertNpcRequest, type NpcDecisionRequest } from './npc-requests';
+import { planEnsembleGroups, type EnsembleRow } from './ensemble-replies';
 export interface StoryLive {
   state: GameState;
   eventSeq: number;
@@ -232,6 +233,14 @@ function aggregateReplyQuote(id: string, quotedReplies: QuotedReply[]): StoryQuo
   };
 }
 const date = (v: Date | string) => new Date(v).toISOString();
+/** Names of the other characters who answer the same message (labels only, no lines or secrets). */
+function otherRespondersFor(state: GameState, ids: string[] | undefined, self: string) {
+  const labels = (ids ?? [])
+    .filter((npcId) => npcId !== self)
+    .map((npcId) => state.entities[npcId]?.label)
+    .filter((label): label is string => !!label);
+  return labels.length ? { otherResponders: labels } : {};
+}
 export class StoryTurnRuntime {
   constructor(
     private db: Db,
@@ -1635,11 +1644,25 @@ export class StoryTurnRuntime {
       "SELECT * FROM game_npc_decision_requests WHERE campaign_id=$1 AND status='queued' AND job_id IS NULL AND context->>'generationPolicy'='world-batch-v1' AND NOT(context ? 'worldPrepared') ORDER BY created_at,id",
       [id],
     );
+    // Characters answering the same player message are prepared separately and cannot read each
+    // other's lines, so each one is told who else answers and must keep its own voice.
+    const responders = new Map<string, string[]>();
+    for (const row of rows)
+      if (row.purpose === 'speech')
+        responders.set(row.context.storyTurnId ?? row.id, [
+          ...(responders.get(row.context.storyTurnId ?? row.id) ?? []),
+          row.npc_id,
+        ]);
+    const groups =
+      process.env.ENSEMBLE_REPLIES === 'true' ? planEnsembleGroups(rows as EnsembleRow[]) : [];
+    const grouped = new Set(groups.flatMap((g) => [g.leadId, ...g.memberIds]));
+    const held = new Map<string, { context: DecisionContext; base: DecisionContext }>();
     for (const request of rows) {
       const turnId = request.context.storyTurnId ?? request.id;
       const turn = await this.row(id, turnId);
       if (!turn || turn.erased_at || turn.status !== 'committed') continue;
       let context: DecisionContext;
+      let publicBase: DecisionContext | undefined;
       if (request.purpose === 'speech') {
         const speaker = live.state.entities[turn.actor_id];
         const recipient = live.state.entities[request.npc_id];
@@ -1686,10 +1709,12 @@ export class StoryTurnRuntime {
             generationPolicy: 'world-batch-v1',
             worldPrepared: true,
             worldRequesterId: turn.requester_user_id,
+            ...otherRespondersFor(live.state, responders.get(turnId), request.npc_id),
           },
           'speech',
           request.npc_id,
         );
+        publicBase = base;
       } else if (request.purpose === 'story_turn') {
         if (
           turn.context.travelOriginMapId &&
@@ -1761,6 +1786,11 @@ export class StoryTurnRuntime {
           },
         );
       } else continue;
+      if (grouped.has(request.id) && publicBase) {
+        // Written together below, once the lead knows who else it speaks for.
+        held.set(request.id, { context, base: publicBase });
+        continue;
+      }
       await this.db.tx(async (c) => {
         if (request.purpose === 'story_turn')
           await assertPresentationAliasAuthority(
@@ -1781,6 +1811,41 @@ export class StoryTurnRuntime {
             [turn.id, JSON.stringify({ ...turn.context, ...context })],
           );
       });
+    }
+    for (const group of groups) {
+      const lead = held.get(group.leadId),
+        members = group.memberIds.map((memberId) => ({ id: memberId, held: held.get(memberId) }));
+      const write = (requestId: string, context: DecisionContext) =>
+        this.db.tx(async (c) => {
+          await c.query(
+            "UPDATE game_npc_decision_requests SET context=$2 WHERE id=$1 AND status='queued' AND job_id IS NULL AND NOT(context ? 'worldPrepared')",
+            [requestId, JSON.stringify(context)],
+          );
+        });
+      // If any member could not be prepared (stale, out of range) nobody is merged.
+      const complete = lead && members.every((member) => member.held);
+      if (!complete) {
+        for (const [requestId, entry] of held)
+          if ([group.leadId, ...group.memberIds].includes(requestId))
+            await write(requestId, entry.context);
+        continue;
+      }
+      await write(group.leadId, {
+        ...lead.context,
+        ensemble: {
+          members: members.map((member) => ({
+            npcId: rows.find((row) => row.id === member.id)!.npc_id,
+            label: live.state.entities[rows.find((row) => row.id === member.id)!.npc_id]?.label,
+            // The member's public speech context only: never its history or private memory.
+            context: member.held!.base,
+          })),
+        },
+      } as DecisionContext);
+      for (const member of members)
+        await write(member.id, {
+          ...member.held!.context,
+          ensembleFollowerOf: group.leadId,
+        } as DecisionContext);
     }
   }
   /** Upgrade only proven-unpaid pre-composer requests; never reset a permit or provider outcome. */

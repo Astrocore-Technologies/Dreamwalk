@@ -25,3 +25,11 @@ export async function framedPortrait(bytes: Buffer, rawFrame: unknown): Promise<
     return bytes;
   }
 }
+
+/** The whole picture of an uploaded NPC portrait, bounded in size, never cropped. */
+export async function boundedPortrait(bytes: Buffer): Promise<Buffer> {
+  return sharp(bytes)
+    .resize(1024, 1024, { fit: 'inside', withoutEnlargement: true })
+    .webp({ quality: 90 })
+    .toBuffer();
+}

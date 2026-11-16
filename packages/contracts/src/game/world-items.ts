@@ -103,6 +103,18 @@ export const npcPublicReplySchema = z.union([
       itemIntents: npcItemIntentsSchema.optional(),
       companionIntent: npcCompanionIntentSchema.optional(),
       actionIntent: npcActionIntentSchema.optional(),
+      /** Lines for the other characters answering the same message (ensemble reply). */
+      ensembleLines: z
+        .array(
+          z
+            .object({
+              speakerId: z.string().min(1).max(100),
+              text: z.string().trim().min(1).max(1000),
+            })
+            .strict(),
+        )
+        .max(3)
+        .optional(),
     })
     .strict(),
   z.object({ code: z.literal('acknowledged') }).strict(),

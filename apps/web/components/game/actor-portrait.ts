@@ -7,8 +7,14 @@ export const ACTOR_PORTRAIT_RECHECK_MS = 60_000;
 export const ACTOR_PORTRAIT_MAX_SIDE = 256;
 const PLAYER_ACTOR = /^player-[a-f0-9-]{36}$/;
 
-export function actorPortraitUrl(campaignId: string | undefined, actorId: string) {
-  if (!campaignId || !PLAYER_ACTOR.test(actorId)) return undefined;
+/** `npcPortrait`: the NPC has an author-uploaded portrait (public profile), served the same way. */
+export function actorPortraitUrl(
+  campaignId: string | undefined,
+  actorId: string,
+  npcPortrait = false,
+) {
+  if (!campaignId || !(npcPortrait ? /^[A-Za-z0-9_-]{1,80}$/ : PLAYER_ACTOR).test(actorId))
+    return undefined;
   return `/api/v1/game/campaigns/${encodeURIComponent(campaignId)}/actors/${actorId}/portrait`;
 }
 

@@ -1721,8 +1721,10 @@ export function applyStoryTurnProposal(
         }
         if (p.steps[i].establishedEvents?.length) {
           for (const [eventIndex, established] of p.steps[i].establishedEvents!.entries()) {
-            const allowedIds =
-              context.establishedRoleplay?.entities.map((entity) => entity.id) ?? [];
+            const allowedIds = [
+              ...(context.establishedRoleplay?.entities.map((entity) => entity.id) ?? []),
+              ...(context.establishedRoleplay?.offstage?.map((entity) => entity.id) ?? []),
+            ];
             const outcome = applyEstablishedRoleplayEvent(
               next,
               actorId,

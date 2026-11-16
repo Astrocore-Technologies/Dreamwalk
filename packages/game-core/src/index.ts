@@ -1308,6 +1308,7 @@ export * from './npc';
 export * from './living';
 
 export * from './living-policy';
+export * from './prose-metrics';
 
 export * from './living-reasoning';
 

@@ -437,8 +437,8 @@ function PositionedGameCanvas({
         { surface?: HTMLCanvasElement; key?: string; checkedAt: number; pending: boolean }
       >();
       const actorPortraitRequests = new Set<AbortController>();
-      const requestActorPortrait = (actorId: string) => {
-        const url = actorPortraitUrl(latest.current.campaignId, actorId);
+      const requestActorPortrait = (actorId: string, npcPortrait = false) => {
+        const url = actorPortraitUrl(latest.current.campaignId, actorId, npcPortrait);
         if (!url) return;
         const now = Date.now();
         const known = actorPortraits.get(actorId);
@@ -826,10 +826,11 @@ function PositionedGameCanvas({
         synchronizeArt();
         for (const entity of p.entities)
           if (
-            entity.kind === 'player' &&
+            (entity.kind === 'player' ||
+              (entity.kind === 'npc' && entity.publicProfile?.portraitAssetId)) &&
             !sceneArt().some((entry) => entry.slot === `entity:${entity.id}:portrait`)
           )
-            requestActorPortrait(entity.id);
+            requestActorPortrait(entity.id, entity.kind === 'npc');
         const key = `${p.map.id}:${p.map.revision}:${p.map.width}:${p.map.height}:${p.map.sceneProfile || ''}:${JSON.stringify(p.map.composition)}`;
         if (key !== mapKey) {
           mapKey = key;
@@ -934,7 +935,11 @@ function PositionedGameCanvas({
               else {
                 const loaded = actorPortraits.get(entity.id);
                 if (loaded?.surface && loaded.key)
-                  portrait = { key: loaded.key, surface: loaded.surface };
+                  portrait = {
+                    key: loaded.key,
+                    surface: loaded.surface,
+                    frame: entity.kind === 'npc' ? entity.publicProfile?.portraitFrame : undefined,
+                  };
               }
             }
             const token =
@@ -1357,7 +1362,9 @@ function PositionedGameCanvas({
                 ? artPreviewUrl(artPortrait.url)
                 : artEntity.kind === 'player'
                   ? actorPortraitUrl(campaignId, artEntity.id)
-                  : undefined
+                  : artEntity.kind === 'npc' && artEntity.publicProfile?.portraitAssetId
+                    ? actorPortraitUrl(campaignId, artEntity.id, true)
+                    : undefined
             }
             portraitFrame={artPortrait ? artEntity.publicProfile?.portraitFrame : undefined}
             fullLength={artEntity.kind === 'npc'}
