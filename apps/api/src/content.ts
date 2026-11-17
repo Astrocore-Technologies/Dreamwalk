@@ -212,19 +212,10 @@ export class Content {
       if (rows.length !== new Set(c.npcIds).size)
         fail(403, 'FORBIDDEN', 'Можно использовать только своих NPC.');
     }
-    if (
-      publish &&
-      (!data.synopsis.trim() ||
-        !c.world.trim() ||
-        !c.locations.length ||
-        !c.scenes.length ||
-        !c.startSceneId)
-    )
-      fail(
-        400,
-        'VALIDATION_FAILED',
-        'Заполните описание, мир, локацию и стартовую сцену перед публикацией.',
-      );
+    // Locations, scenes and the starting point are planned by the AI from the world text,
+    // the characters and the opening message; an author only has to describe the story.
+    if (publish && (!data.synopsis.trim() || !c.world.trim()))
+      fail(400, 'VALIDATION_FAILED', 'Заполните синопсис и описание истории перед публикацией.');
   }
   async save(id: string, userId: string, body: unknown) {
     const input = draftPatch(body);

@@ -66,7 +66,7 @@ test('story NPC composition retains private drafts, selection, validation and pr
   await page.setViewportSize({ width: 1536, height: 1024 });
   await page.goto(root);
   const nav = page.getByRole('navigation', { name: 'Adventure creation steps' });
-  await nav.getByRole('button').nth(3).click();
+  await nav.getByRole('button').nth(2).click();
   const npcPanel = page.getByTestId('story-npc-editor').locator('..');
   const publicPreview = page.getByTestId('story-npc-preview');
   await expect(publicPreview).toContainText('Public keeper description');
@@ -103,7 +103,7 @@ test('story NPC composition retains private drafts, selection, validation and pr
   expect(persisted.visibility).toBe('private');
   expect(persisted.status).toBe('draft');
   await page.reload();
-  await nav.getByRole('button').nth(3).click();
+  await nav.getByRole('button').nth(2).click();
   await expect(page.getByTestId('story-lorebook-editor')).toHaveCount(0);
   await expect(publicPreview).toContainText('Public keeper description');
 
@@ -155,7 +155,7 @@ test('story character loading, read failure, retry and empty states remain disti
   await page
     .getByRole('navigation', { name: 'Adventure creation steps' })
     .getByRole('button')
-    .nth(3)
+    .nth(2)
     .click();
   const panel = page.getByTestId('story-npc-editor').locator('..');
   await expect(panel.getByRole('status', { name: 'Loading' })).toBeVisible();

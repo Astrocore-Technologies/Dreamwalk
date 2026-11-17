@@ -150,6 +150,9 @@ jobs:
       - name: Browser end-to-end tests (shard 1 of 3)
         env:
           ASSET_DIR: ${{ runner.temp }}/dreamwalk-browser-1-assets
+          # All browser journeys share one loopback IP; the per-IP request budget is raised for the test app only.
+          RATE_LIMIT_ALL_PER_MINUTE: '6000'
+          RATE_LIMIT_AUTH_PER_MINUTE: '600'
         run: |
           # Compile this exact checkout once, rather than compiling each route
           # during browser journeys. API mock gates and shard isolation stay intact.
@@ -259,6 +262,9 @@ jobs:
       - name: Browser end-to-end tests (shard 2 of 3)
         env:
           ASSET_DIR: ${{ runner.temp }}/dreamwalk-browser-2-assets
+          # All browser journeys share one loopback IP; the per-IP request budget is raised for the test app only.
+          RATE_LIMIT_ALL_PER_MINUTE: '6000'
+          RATE_LIMIT_AUTH_PER_MINUTE: '600'
         run: |
           # Compile this exact checkout once, rather than compiling each route
           # during browser journeys. API mock gates and shard isolation stay intact.
@@ -368,6 +374,9 @@ jobs:
       - name: Browser end-to-end tests (shard 3 of 3)
         env:
           ASSET_DIR: ${{ runner.temp }}/dreamwalk-browser-3-assets
+          # All browser journeys share one loopback IP; the per-IP request budget is raised for the test app only.
+          RATE_LIMIT_ALL_PER_MINUTE: '6000'
+          RATE_LIMIT_AUTH_PER_MINUTE: '600'
         run: |
           # Compile this exact checkout once, rather than compiling each route
           # during browser journeys. API mock gates and shard isolation stay intact.

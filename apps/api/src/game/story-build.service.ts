@@ -1,3 +1,4 @@
+import { withOpeningScene } from './story-opening';
 import { assertPlayableGrid } from './map-readiness';
 import { schematicStorySource } from './story-map-mode';
 import { prepareStoryMapImages } from './story-map-images';
@@ -41,7 +42,10 @@ export class StoryBuildService {
       )
     ).rows[0];
     if (!story) fail(404, 'NOT_FOUND', 'NOT_FOUND');
-    const content = contentSchema.parse(story.data.content);
+    const content = withOpeningScene(
+      contentSchema.parse(story.data.content),
+      String(story.data.sourceLanguage ?? 'ru'),
+    );
     if (!content.locations.length || content.locations.length > 4 || content.npcIds.length > 8)
       fail(400, 'STORY_PLAN_CAPACITY', 'STORY_PLAN_CAPACITY');
     if (

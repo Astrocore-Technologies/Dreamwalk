@@ -68,8 +68,8 @@ export function validateStoryLoreReferences(content: {
 /** Strip all author-only records, including public-disclosure lore not yet learned in play. */
 export function readerStoryContent<T extends Record<string, unknown>>(
   content: T,
-): Omit<T, 'lorebook'> {
-  const { lorebook: _lorebook, ...safe } = content;
+): Omit<T, 'lorebook' | 'firstMessage'> {
+  const { lorebook: _lorebook, firstMessage: _firstMessage, ...safe } = content;
   if (Array.isArray(safe.scenes))
     (safe as Record<string, unknown>).scenes = safe.scenes.map((scene: unknown) => {
       if (!scene || typeof scene !== 'object' || Array.isArray(scene)) return scene;

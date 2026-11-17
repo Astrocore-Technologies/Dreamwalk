@@ -42,21 +42,12 @@ test('Studio composition uses only owned story data and preserves all authoring 
   assert.match(studio, /src=\{coverUrl\(recent\)\}/);
   assert.match(studio, /src=\{coverUrl\(story\)\}/);
   assert.match(studio, /src=\{coverUrl\(draft\)\}/);
-  for (const step of [
-    'Основное',
-    'Мир и правила',
-    'Локации',
-    'NPC',
-    'Стартовая сцена',
-    'Просмотр',
-    'Публикация',
-  ])
+  for (const step of ['Основное', 'Мир и история', 'NPC', 'Публикация'])
     assert.ok(
       studio
         .slice(studio.indexOf('const steps ='), studio.indexOf('const newContent'))
         .includes(step),
     );
-  assert.match(studio, /onClick=\{\(\) => setStep\(5\)\}/);
   assert.match(studio, /onClick=\{\(\) => setStep\(6\)\}/);
   assert.doesNotMatch(
     studio.slice(studio.indexOf('const steps ='), studio.indexOf('const newContent')),
@@ -67,7 +58,6 @@ test('Studio composition uses only owned story data and preserves all authoring 
     studio,
     /<StoryLorebookEditor|label=\{t\('Жанр'\)\}|label=\{t\('Сложность'\)\}/,
   );
-  assert.match(studio, /<LocationMapIntent/);
   assert.match(studio, /<StoryNpcEditor/);
 });
 
@@ -105,11 +95,7 @@ test('inner Studio selection is presentation-only and retains every mounted draf
   assert.match(collection, /document\.activeElement === document\.body/);
   assert.match(collection, /target\?\.focus\(\)/);
   assert.match(collection, /aria-invalid=\{invalidIds\.includes\(item\.id\)/);
-  assert.match(studio, /!locationSchema\.safeParse\(item\).success/);
-  assert.match(studio, /!sceneSchema\.safeParse\(item\).success/);
   assert.doesNotMatch(collection, /\bapi\(|fetch\(|onChange|localStorage/);
-  assert.match(studio, /items=\{draft\.content\.locations\}/);
-  assert.match(studio, /items=\{draft\.content\.scenes\}/);
   assert.match(studio, /adventureSchema\.safeParse/);
   assert.match(studio, /expectedEditRevision: revision/);
   assert.match(css, /\.collectionPage\[hidden\]\s*\{\s*display: none/);
