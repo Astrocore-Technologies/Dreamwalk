@@ -76,26 +76,17 @@ test('application is reviewed and separate from publication, with localized dura
     assert.ok(source.includes(text));
 });
 
-test('Studio preview exposes the saved story builder outside the editor form', async () => {
+test('the story builder is no longer mounted in the Studio form and keeps its own route', async () => {
   const studio = await readFile(
     new URL('../../apps/web/components/studio.tsx', import.meta.url),
     'utf8',
   );
-  assert.match(
-    studio,
-    /import \{ StoryPlayableBuilder \} from '\.\/visual-authoring\/story-playable-builder'/,
+  assert.doesNotMatch(studio, /StoryPlayableBuilder/);
+  const route = await readFile(
+    new URL('../../apps/web/app/studio/gameplay/[id]/page.tsx', import.meta.url),
+    'utf8',
   );
-  const mount = studio.indexOf('<StoryPlayableBuilder');
-  assert.ok(
-    mount > studio.indexOf('</form>'),
-    'builder controls must not nest in the authoring form',
-  );
-  assert.match(studio.slice(mount - 50, mount), /!isNew && step === 5/);
-  assert.match(
-    studio.slice(mount, mount + 220),
-    /adventureId=\{id\}[\s\S]*beforePrepare=\{autosave.flush\}[\s\S]*onApplied=\{refreshArtModeration\}/,
-  );
-  assert.match(studio.slice(mount, mount + 220), /\bembedded\s*\/>/);
+  assert.match(route, /StoryPlayableBuilder/);
   assert.match(source, /embedded = false/);
   assert.match(
     source,
@@ -103,9 +94,6 @@ test('Studio preview exposes the saved story builder outside the editor form', a
   );
   assert.match(source, /embedded \? <h2>\{copyText\('title'\)\}<\/h2> : <h1>/);
   assert.match(source, /\{!embedded && \(\s*<Link href=/);
-  const preview = studio.slice(studio.indexOf('{step === 5 &&'), studio.indexOf('{step === 6 &&'));
-  assert.match(preview, /isNew \?/);
-  assert.match(preview, /onClick=\{\(\) => void save\(\)\}/);
 });
 
 test('scene encounter membership requires explicit selection of an owned story NPC', async () => {
@@ -124,12 +112,6 @@ test('scene encounter membership requires explicit selection of an owned story N
   );
   assert.match(control, /checked=\{value\?\.includes\(npc.id\)/);
   assert.doesNotMatch(control, /description|biography|secrets|useEffect|method: 'POST'/);
-  const studio = await readFile(
-    new URL('../../apps/web/components/studio.tsx', import.meta.url),
-    'utf8',
-  );
-  assert.match(studio, /value=\{scene.participantNpcIds\}/);
-  assert.match(studio, /storyNpcIds=\{draft.content.npcIds\}/);
 });
 
 test('builder review composition uses only actual draft labels and retains the disabled map', async () => {

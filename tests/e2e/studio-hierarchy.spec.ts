@@ -3,7 +3,7 @@ import { test, expect } from '@playwright/test';
 import { randomUUID } from 'node:crypto';
 
 // Local synthetic accounts only. No production content, provider calls or publication.
-test('author dashboard and all eight editor steps retain edits and cancel safely at desktop/mobile sizes', async ({
+test('author dashboard and all four editor steps retain edits and cancel safely at desktop/mobile sizes', async ({
   page,
 }, info) => {
   test.setTimeout(120_000);
@@ -50,11 +50,11 @@ test('author dashboard and all eight editor steps retain edits and cancel safely
   await capture('studio-desktop-dark');
   await page.locator(`a[href="/studio/adventures/${story.id}"]`).first().click();
   const nav = page.getByRole('navigation', { name: 'Adventure creation steps' });
-  await expect(nav.getByRole('button')).toHaveCount(7);
+  await expect(nav.getByRole('button')).toHaveCount(4);
   await page.getByLabel('Adventure title', { exact: true }).fill('Synthetic observatory revised');
   await expect(page.locator('[data-autosave-status="saved"]').first()).toBeVisible();
   await nav.getByRole('button').nth(1).click();
-  await page.getByLabel(/^World and atmosphere/).fill('Synthetic floating islands.');
+  await page.getByLabel(/^Story description/).fill('Synthetic floating islands.');
   await expect(page.locator('[data-autosave-status="saved"]').first()).toBeVisible();
   await capture('studio-world-desktop');
   await expect
@@ -74,15 +74,13 @@ test('author dashboard and all eight editor steps retain edits and cancel safely
       navigationWrites.push(request.url());
   };
   page.on('request', recordWrite);
-  for (let step = 2; step < 7; step++) {
+  for (let step = 2; step < 4; step++) {
     const button = nav.getByRole('button').nth(step);
     await button.click();
     await expect(button).toHaveAttribute('aria-current', 'step');
   }
-  await page.getByRole('button', { name: 'Preview', exact: true }).first().click();
-  await expect(nav.getByRole('button').nth(5)).toHaveAttribute('aria-current', 'step');
   await page.getByRole('button', { name: 'Publication', exact: true }).first().click();
-  await expect(nav.getByRole('button').nth(6)).toHaveAttribute('aria-current', 'step');
+  await expect(nav.getByRole('button').nth(3)).toHaveAttribute('aria-current', 'step');
   expect(navigationWrites).toEqual([]);
   page.off('request', recordWrite);
   await nav.getByRole('button').first().click();
@@ -100,7 +98,7 @@ test('author dashboard and all eight editor steps retain edits and cancel safely
     'Synthetic observatory revised',
   );
   await nav.getByRole('button').nth(1).click();
-  await expect(page.getByLabel(/^World and atmosphere/)).toHaveValue('Synthetic floating islands.');
+  await expect(page.getByLabel(/^Story description/)).toHaveValue('Synthetic floating islands.');
   const saved = await (await page.request.get(`/api/v1/studio/adventures/${story.id}`)).json();
   expect(saved.coverAssetId).toBeNull();
   expect(saved.status).toBe('draft');
@@ -115,7 +113,7 @@ test('author dashboard and all eight editor steps retain edits and cancel safely
         await withShellPreferences(page, () => page.locator('.theme-button').click());
       await page.setViewportSize({ width: 390, height: 844 });
       const steps = page.locator('nav').filter({ has: page.locator('[aria-current="step"]') });
-      await expect(steps.getByRole('button')).toHaveCount(7);
+      await expect(steps.getByRole('button')).toHaveCount(4);
       await steps.getByRole('button').first().click();
       expect(await page.evaluate(() => document.documentElement.scrollWidth <= innerWidth)).toBe(
         true,
