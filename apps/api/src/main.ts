@@ -226,7 +226,7 @@ async function bootstrap() {
     }
     next();
   });
-  app.use(json({ limit: '256kb' }));
+  app.use(json({ limit: '4mb' }));
   app.useGlobalFilters(new Errors());
   app.useGlobalInterceptors(app.get(TranslationInterceptor));
   const windows = new Map<

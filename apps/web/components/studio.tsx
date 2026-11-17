@@ -2,14 +2,10 @@
 import { NpcEditor, NpcLibrary } from './studio/npc-library';
 import { AssetLibrary } from './assets/asset-library';
 import { useAssetText } from './assets/messages';
-import { CollectionEditor } from './studio/collection-editor';
 import { AutosaveStatus } from './studio/autosave-status';
 import { useDraftAutosave } from '@/lib/use-draft-autosave';
-import { LocationMapIntent } from './studio/location-map-intent';
 import { StoryNpcEditor } from './studio/story-npc-editor';
-import { SceneParticipants } from './studio/scene-participants';
 import { PrivateRelease } from './studio/private-release';
-import { StoryPlayableBuilder } from './visual-authoring/story-playable-builder';
 import { StoryCoverDialog, useStoryCoverText } from './studio/story-cover-dialog';
 import { useT } from '@/lib/i18n';
 import { useRouter } from 'next/navigation';
@@ -17,23 +13,18 @@ import { useEffect, useRef, useState, type FormEvent } from 'react';
 import {
   ArrowLeft,
   ArrowRight,
-  BookOpen,
   Check,
   Copy,
   Eye,
   Feather,
   ImagePlus,
-  MapPin,
   Plus,
   Save,
   Send,
-  Trash2,
   Users,
 } from 'lucide-react';
 import {
   adventureSchema,
-  locationSchema,
-  sceneSchema,
   selectAdventureText,
   findControlledTag,
   type ControlledTag,
@@ -65,12 +56,8 @@ import {
   Tabs,
   UploadField,
 } from './ui';
-import {
-  LocationImageAction,
-  LocationImageDialog,
-  useLocationImageConfiguration,
-} from './visual-authoring/location-image';
 import { MarkdownField } from './markdown';
+import { StoryTokenInfo } from './studio/story-token-info';
 import styles from './studio/studio.module.css';
 
 const statuses: Record<string, string> = {
@@ -79,18 +66,23 @@ const statuses: Record<string, string> = {
   published: 'Опубликовано',
   archived: 'В архиве',
 };
+/** Author-facing steps. `id` keeps the stable internal step number; the AI plans locations and the start. */
 const steps = [
-  'Основное',
-  'Мир и правила',
-  'Локации',
-  'NPC',
-  'Стартовая сцена',
-  'Просмотр',
-  'Публикация',
-];
+  { id: 0, label: 'Основное' },
+  { id: 1, label: 'Мир и история' },
+  { id: 3, label: 'NPC' },
+  { id: 6, label: 'Публикация' },
+] as const;
+const stepDescriptions: Record<number, string> = {
+  0: 'Дайте истории имя и пригласите читателя внутрь.',
+  1: 'Опишите мир и напишите первое сообщение. Локации и старт ИИ подготовит сам.',
+  3: 'Добавьте жителей мира из своей библиотеки.',
+  6: 'Проверьте готовность истории и выберите, кто её увидит.',
+};
 const newContent = {
   world: '',
   rules: '',
+  firstMessage: '',
   locations: [],
   npcIds: [],
   scenes: [],
@@ -389,10 +381,8 @@ function MediaPicker({
 function AdventureEditor({ id }: { id: string }) {
   const coverText = useStoryCoverText();
   const [coverGenerationOpen, setCoverGenerationOpen] = useState(false);
-  const locationImages = useLocationImageConfiguration();
-  const [locationImageId, setLocationImageId] = useState<string | null>(null);
   const date = useDate();
-  const { t, taxonomy, locale } = useT();
+  const { t, locale } = useT();
   const router = useRouter(),
     { toast, user } = useClient(),
     isNew = id === 'new';
@@ -404,13 +394,17 @@ function AdventureEditor({ id }: { id: string }) {
       duration: t('1–2 часа'),
       visibility: user?.settings.defaultVisibility === 'public' ? 'public' : 'private',
     })),
-    [step, setStep] = useState(0),
+    [step, setStep] = useState<number>(0),
     [dirty, setDirty] = useState(false),
     [busy, setBusy] = useState(false),
     [error, setError] = useState(''),
     [confirm, setConfirm] = useState<'submit' | 'leave' | 'archive' | null>(null),
     [versionsOpen, setVersionsOpen] = useState(false);
   const [hydration, setHydration] = useState(0);
+  const stepPosition = Math.max(
+    0,
+    steps.findIndex((entry) => entry.id === step),
+  );
   const baseline = useRef<AdventureDraft | null>(null);
   const acknowledged = useRef<Adventure | null>(null);
   const reloadAllowed = useRef(false);
@@ -576,21 +570,6 @@ function AdventureEditor({ id }: { id: string }) {
       setBusy(false);
     }
   }
-  const savedOriginal = resource.data;
-  const metadataChanged =
-    !savedOriginal ||
-    draft.title !== savedOriginal.title ||
-    draft.synopsis !== savedOriginal.synopsis ||
-    draft.sourceLanguage !== savedOriginal.sourceLanguage ||
-    JSON.stringify(draft.tags) !== JSON.stringify(savedOriginal.tags);
-  const previewText = selectAdventureText(
-    {
-      ...draft,
-      sourceRevision: savedOriginal?.sourceRevision || 1,
-      translations: metadataChanged ? {} : savedOriginal.translations,
-    },
-    locale,
-  );
   const status = resource.data?.status || 'draft';
   if (resource.loading) return <Loading />;
   if (resource.error) return <ErrorBox message={resource.error} retry={resource.reload} />;
@@ -609,10 +588,6 @@ function AdventureEditor({ id }: { id: string }) {
           <Badge tone={status === 'published' ? 'green' : ''}>{t(statuses[status])}</Badge>
         </div>
         <div className={styles.editorActions}>
-          <Button variant="secondary" onClick={() => setStep(5)}>
-            <Eye size={17} />
-            {t('Просмотр')}
-          </Button>
           <Button variant="secondary" onClick={() => setStep(6)}>
             <Send size={17} />
             {t('Публикация')}
@@ -641,13 +616,13 @@ function AdventureEditor({ id }: { id: string }) {
         </div>
       )}
       <nav className={styles.steps} aria-label={t('Шаги создания приключения')}>
-        {steps.map((label, i) => (
+        {steps.map(({ id: stepId, label }) => (
           <button
             type="button"
             key={label}
-            className={i === step ? styles.stepActive : ''}
-            aria-current={i === step ? 'step' : undefined}
-            onClick={() => setStep(i)}
+            className={stepId === step ? styles.stepActive : ''}
+            aria-current={stepId === step ? 'step' : undefined}
+            onClick={() => setStep(stepId)}
           >
             {t(label)}
           </button>
@@ -665,22 +640,10 @@ function AdventureEditor({ id }: { id: string }) {
         <fieldset disabled={busy} style={{ border: 0, padding: 0, margin: 0, minWidth: 0 }}>
           <Panel>
             <div className={styles.editorTitle}>
-              <span>0{step + 1}</span>
+              <span>0{stepPosition + 1}</span>
               <div>
-                <h2>{t(steps[step])}</h2>
-                <p>
-                  {
-                    [
-                      t('Дайте истории имя и пригласите читателя внутрь.'),
-                      t('Задайте атмосферу и законы вашего мира.'),
-                      t('Опиши локации и добавь проверяемую игровую карту.'),
-                      t('Добавьте жителей мира из своей библиотеки.'),
-                      t('Определите, где и с чего начнётся приключение.'),
-                      t('Проверь историю и запусти отдельную приватную тестовую версию.'),
-                      t('Проверьте готовность истории и выберите, кто её увидит.'),
-                    ][step]
-                  }
-                </p>
+                <h2>{t(steps[stepPosition].label)}</h2>
+                <p>{t(stepDescriptions[step])}</p>
               </div>
             </div>
             {step === 0 && (
@@ -827,22 +790,29 @@ function AdventureEditor({ id }: { id: string }) {
               <div className={styles.worldGrid}>
                 <div className="stack">
                   <MarkdownField
-                    label={t('Мир и атмосфера')}
-                    hint={t('Где происходит история, какие у мира особенности?')}
-
-                    rows={8}
-                    maxLength={12000}
+                    label={t('Описание истории')}
+                    hint={t(
+                      'Мир, атмосфера, правила, ключевые события. Пишите свободно: ИИ сам выберет локации и старт.',
+                    )}
+                    rows={16}
                     value={draft.content.world}
                     onChange={(e) => content('world', e.target.value)}
                   />
                   <MarkdownField
-                    label={t('Правила мира')}
-                    hint={t('Что возможно, что запрещено и какие последствия важны?')}
-
-                    rows={6}
-                    maxLength={8000}
-                    value={draft.content.rules}
-                    onChange={(e) => content('rules', e.target.value)}
+                    label={t('Первое сообщение')}
+                    hint={t(
+                      'Открывающий текст истории: где всё начинается и кто рядом. По нему ИИ поймёт, какие персонажи участвуют.',
+                    )}
+                    rows={8}
+                    value={draft.content.firstMessage}
+                    onChange={(e) => content('firstMessage', e.target.value)}
+                  />
+                  <StoryTokenInfo
+                    adventureId={isNew ? undefined : id}
+                    world={draft.content.world}
+                    rules={draft.content.rules}
+                    firstMessage={draft.content.firstMessage}
+                    npcIds={draft.content.npcIds}
                   />
                 </div>
                 <aside className={styles.worldContext}>
@@ -852,387 +822,8 @@ function AdventureEditor({ id }: { id: string }) {
                 </aside>
               </div>
             )}
-            {step === 2 && (
-              <CollectionEditor
-                items={draft.content.locations}
-                label={t('Локации')}
-                kind="locations"
-                invalidIds={draft.content.locations
-                  .filter((item) => !locationSchema.safeParse(item).success)
-                  .map((item) => item.id)}
-                invalidLabel={t('Изменения пока только здесь: исправь неполные или неверные поля.')}
-                actions={
-                  <>
-                    {!draft.content.locations.length && (
-                      <p className="muted">
-                        {t(
-                          'Добавьте хотя бы одну локацию: двор, зал обсерватории или забытый архив.',
-                        )}
-                      </p>
-                    )}
-                    <Button
-                      variant="secondary"
-                      type="button"
-                      disabled={draft.content.locations.length >= 30}
-                      onClick={() =>
-                        content('locations', [
-                          ...draft.content.locations,
-                          {
-                            id: crypto.randomUUID(),
-                            name: t('Локация {number}', {
-                              number: draft.content.locations.length + 1,
-                            }),
-                            description: '',
-                          },
-                        ])
-                      }
-                    >
-                      <Plus size={16} />
-                      {t('Добавить локацию')}
-                    </Button>
-                  </>
-                }
-              >
-                {(_item, i) => {
-                  const location = draft.content.locations[i];
-                  return (
-                    <div className={styles.nestedCard} key={location.id}>
-                      <div className="row">
-                        <MapPin size={18} />
-                        <h3>
-                          {t('Локация ')}
-                          {i + 1}
-                        </h3>
-                        <Button
-                          variant="ghost"
-                          type="button"
-                          aria-label={t('Удалить локацию {name}', {
-                            name: location.name,
-                          })}
-                          onClick={() => {
-                            const scenes = draft.content.scenes.filter(
-                              (s) => s.locationId !== location.id,
-                            );
-                            setDraft((d) => ({
-                              ...d,
-                              content: {
-                                ...d.content,
-                                locations: d.content.locations.filter((l) => l.id !== location.id),
-                                scenes,
-                                startSceneId: scenes.some((s) => s.id === d.content.startSceneId)
-                                  ? d.content.startSceneId
-                                  : '',
-                              },
-                            }));
-                            setDirty(true);
-                          }}
-                        >
-                          <Trash2 size={16} />
-                        </Button>
-                      </div>
-                      <Field label={t('Название локации')}>
-                        <Input
-                          required
-                          maxLength={120}
-                          value={location.name}
-                          onChange={(e) =>
-                            content(
-                              'locations',
-                              draft.content.locations.map((l) =>
-                                l.id === location.id ? { ...l, name: e.target.value } : l,
-                              ),
-                            )
-                          }
-                        />
-                      </Field>
-                      <MarkdownField
-                        label={t('Описание локации')}
-                        hint={t(
-                          'В картинку локации попадают первые ~2400 символов: самое важное пиши в начале.',
-                        )}
-                        maxLength={6000}
-                        value={location.description}
-                        onChange={(e) =>
-                          content(
-                            'locations',
-                            draft.content.locations.map((l) =>
-                              l.id === location.id ? { ...l, description: e.target.value } : l,
-                            ),
-                          )
-                        }
-                      />
-                      <LocationMapIntent
-                        value={location.mapIntent}
-                        onChange={(mapIntent) =>
-                          content(
-                            'locations',
-                            draft.content.locations.map((l) =>
-                              l.id === location.id ? { ...l, mapIntent } : l,
-                            ),
-                          )
-                        }
-                      />
-                      <LocationImageAction
-                        settings={locationImages}
-                        adventureId={id}
-                        locationId={location.id}
-                        sourceKey={JSON.stringify([
-                          location.name,
-                          location.description,
-                          location.mapIntent,
-                        ])}
-                        beforePrepare={autosave.flush}
-                        playableDirty={false}
-                        onSaved={refreshArtModeration}
-                        saved={!isNew}
-                        disabled={busy}
-                        onOpen={() => setLocationImageId(location.id)}
-                      />
-                    </div>
-                  );
-                }}
-              </CollectionEditor>
-            )}
             {step === 3 && isNew && (
               <p>{t('Сначала сохраните историю и выбранный режим доступа.')}</p>
-            )}
-            {step === 4 && (
-              <div className="stack">
-                {!draft.content.locations.length ? (
-                  <div className="notice">
-                    {t('Сначала добавьте локацию на шаге 3.')}
-                    <Button variant="ghost" type="button" onClick={() => setStep(2)}>
-                      {t('К локациям')}
-                    </Button>
-                  </div>
-                ) : (
-                  <>
-                    <CollectionEditor
-                      items={draft.content.scenes}
-                      label={t('Стартовая сцена')}
-                      kind="scenes"
-                      invalidIds={draft.content.scenes
-                        .filter((item) => !sceneSchema.safeParse(item).success)
-                        .map((item) => item.id)}
-                      invalidLabel={t(
-                        'Изменения пока только здесь: исправь неполные или неверные поля.',
-                      )}
-                      actions={
-                        <>
-                          <Button
-                            variant="secondary"
-                            type="button"
-                            disabled={draft.content.scenes.length >= 50}
-                            onClick={() => {
-                              const scene = {
-                                id: crypto.randomUUID(),
-                                name: t('Сцена {number}', {
-                                  number: draft.content.scenes.length + 1,
-                                }),
-                                locationId: draft.content.locations[0].id,
-                                description: '',
-                              };
-                              content('scenes', [...draft.content.scenes, scene]);
-                              if (!draft.content.startSceneId) content('startSceneId', scene.id);
-                            }}
-                          >
-                            <Plus size={16} />
-                            {t('Добавить сцену')}
-                          </Button>
-                          {draft.content.scenes.length > 0 && (
-                            <Field label={t('Стартовая сцена')}>
-                              <Select
-                                value={draft.content.startSceneId}
-                                onChange={(e) => content('startSceneId', e.target.value)}
-                              >
-                                <option value="">{t('Выберите сцену')}</option>
-                                {draft.content.scenes.map((s) => (
-                                  <option key={s.id} value={s.id}>
-                                    {s.name}
-                                  </option>
-                                ))}
-                              </Select>
-                            </Field>
-                          )}
-                        </>
-                      }
-                    >
-                      {(_item, i) => {
-                        const scene = draft.content.scenes[i];
-                        return (
-                          <div className={styles.nestedCard} key={scene.id}>
-                            <div className="row">
-                              <BookOpen size={18} />
-                              <h3>
-                                {t('Сцена ')}
-                                {i + 1}
-                              </h3>
-                              <Button
-                                variant="ghost"
-                                type="button"
-                                aria-label={t('Удалить сцену {name}', {
-                                  name: scene.name,
-                                })}
-                                onClick={() => {
-                                  content(
-                                    'scenes',
-                                    draft.content.scenes.filter((s) => s.id !== scene.id),
-                                  );
-                                  if (draft.content.startSceneId === scene.id)
-                                    content('startSceneId', '');
-                                }}
-                              >
-                                <Trash2 size={16} />
-                              </Button>
-                            </div>
-                            <div className={styles.sceneWorkspace}>
-                              <div className="stack">
-                                <div className="field-grid">
-                                  <Field label={t('Название сцены')}>
-                                    <Input
-                                      required
-                                      maxLength={120}
-                                      value={scene.name}
-                                      onChange={(e) =>
-                                        content(
-                                          'scenes',
-                                          draft.content.scenes.map((s) =>
-                                            s.id === scene.id ? { ...s, name: e.target.value } : s,
-                                          ),
-                                        )
-                                      }
-                                    />
-                                  </Field>
-                                  <Field label={t('Локация сцены')}>
-                                    <Select
-                                      value={scene.locationId}
-                                      onChange={(e) =>
-                                        content(
-                                          'scenes',
-                                          draft.content.scenes.map((s) =>
-                                            s.id === scene.id
-                                              ? { ...s, locationId: e.target.value }
-                                              : s,
-                                          ),
-                                        )
-                                      }
-                                    >
-                                      {draft.content.locations.map((l) => (
-                                        <option value={l.id} key={l.id}>
-                                          {l.name}
-                                        </option>
-                                      ))}
-                                    </Select>
-                                  </Field>
-                                </div>
-                                <MarkdownField
-                                  label={t('Начальная ситуация')}
-                                  rows={5}
-                                  maxLength={6000}
-                                  value={scene.description}
-                                  onChange={(e) =>
-                                    content(
-                                      'scenes',
-                                      draft.content.scenes.map((s) =>
-                                        s.id === scene.id
-                                          ? { ...s, description: e.target.value }
-                                          : s,
-                                      ),
-                                    )
-                                  }
-                                />
-                                <SceneParticipants
-                                  adventureId={isNew ? undefined : id}
-                                  storyNpcIds={draft.content.npcIds}
-                                  value={scene.participantNpcIds}
-                                  disabled={busy}
-                                  onChange={(participantNpcIds) =>
-                                    content(
-                                      'scenes',
-                                      draft.content.scenes.map((s) =>
-                                        s.id === scene.id ? { ...s, participantNpcIds } : s,
-                                      ),
-                                    )
-                                  }
-                                />
-                              </div>
-                              <aside className={styles.sceneContext}>
-                                <img src={coverUrl(draft)} alt="" />
-                                <div>
-                                  <span>{t('Мир истории')}</span>
-                                  <h3>{draft.title || t('Новая история')}</h3>
-                                </div>
-                              </aside>
-                            </div>
-                          </div>
-                        );
-                      }}
-                    </CollectionEditor>
-                  </>
-                )}
-              </div>
-            )}
-            {step === 5 && (
-              <div className="stack">
-                <div
-                  className={styles.previewCover}
-                  style={{
-                    backgroundImage: `linear-gradient(0deg,rgba(8,15,16,.9),transparent),url("${coverUrl(draft)}")`,
-                  }}
-                >
-                  <Badge>{taxonomy(draft.genre)}</Badge>
-                  <h2>{previewText.title || t('Название вашей истории')}</h2>
-                  <p>
-                    {previewText.synopsis ||
-                      t('Добавьте синопсис, чтобы представить приключение читателям.')}
-                  </p>
-                  <span>
-                    {draft.playersMin}–{draft.playersMax} {t(' игроков · ')}
-                    {t(draft.difficulty)}
-                  </span>
-                </div>
-                <h3>{t('Мир истории')}</h3>
-                <p className={styles.preWrap}>
-                  {draft.content.world || t('Описание пока не добавлено.')}
-                </p>
-                <div className={styles.summaryGrid}>
-                  <div>
-                    <MapPin />
-                    <strong>{draft.content.locations.length}</strong>
-                    <span>{t('локаций')}</span>
-                  </div>
-                  <div>
-                    <Users />
-                    <strong>{draft.content.npcIds.length}</strong>
-                    <span>{t('персонажей')}</span>
-                  </div>
-                  <div>
-                    <BookOpen />
-                    <strong>{draft.content.scenes.length}</strong>
-                    <span>{t('сцен')}</span>
-                  </div>
-                </div>
-                {draft.content.boundaries.length > 0 && (
-                  <p className="muted">{draft.content.boundaries.join(' · ')}</p>
-                )}
-                {isNew ? (
-                  <div className="form-actions">
-                    <p className="muted">
-                      {t('Сначала сохраните историю и выбранный режим доступа.')}
-                    </p>
-                    <Button type="button" busy={busy} onClick={() => void save()}>
-                      <Save size={16} />
-                      {t('Сохранить')}
-                    </Button>
-                  </div>
-                ) : (
-                  <p className="muted">
-                    {t(
-                      'Игровая карта и тестовый запуск доступны ниже. История без карты остаётся литературным черновиком.',
-                    )}
-                  </p>
-                )}
-              </div>
             )}
             {step === 6 && (
               <div className={styles.publicationGrid}>
@@ -1241,9 +832,8 @@ function AdventureEditor({ id }: { id: string }) {
                     {[
                       [t('Название'), draft.title.trim().length >= 2],
                       [t('Синопсис'), !!draft.synopsis.trim()],
-                      [t('Описание мира'), !!draft.content.world.trim()],
-                      [t('Хотя бы одна локация'), draft.content.locations.length > 0],
-                      [t('Стартовая сцена'), !!draft.content.startSceneId],
+                      [t('Описание истории'), !!draft.content.world.trim()],
+                      [t('Первое сообщение'), !!draft.content.firstMessage.trim()],
                     ].map(([label, ready]) => (
                       <div key={String(label)}>
                         <span className={ready ? styles.ready : styles.notReady}>
@@ -1346,19 +936,22 @@ function AdventureEditor({ id }: { id: string }) {
             <Button
               type="button"
               variant="secondary"
-              disabled={step === 0}
-              onClick={() => setStep((s) => s - 1)}
+              disabled={stepPosition === 0}
+              onClick={() => setStep(steps[Math.max(0, stepPosition - 1)].id)}
             >
               <ArrowLeft size={16} />
               {t('Назад')}
             </Button>
             <span className="muted">
               {t('Шаг')}
-              {step + 1} {t('из')}
+              {stepPosition + 1} {t('из')}
               {steps.length}
             </span>
-            {step < 6 ? (
-              <Button type="button" onClick={() => setStep((s) => s + 1)}>
+            {stepPosition < steps.length - 1 ? (
+              <Button
+                type="button"
+                onClick={() => setStep(steps[Math.min(steps.length - 1, stepPosition + 1)].id)}
+              >
                 {t('Продолжить')}
                 <ArrowRight size={16} />
               </Button>
@@ -1371,14 +964,6 @@ function AdventureEditor({ id }: { id: string }) {
           </div>
         </fieldset>
       </form>
-      {!isNew && step === 5 && (
-        <StoryPlayableBuilder
-          adventureId={id}
-          beforePrepare={autosave.flush}
-          onApplied={refreshArtModeration}
-          embedded
-        />
-      )}
       {coverGenerationOpen && (
         <StoryCoverDialog
           adventureId={isNew ? undefined : id}
@@ -1386,17 +971,6 @@ function AdventureEditor({ id }: { id: string }) {
           synopsis={draft.synopsis}
           onSelected={(assetId) => change('coverAssetId', assetId)}
           onClose={() => setCoverGenerationOpen(false)}
-        />
-      )}
-      {!isNew && locationImageId && (
-        <LocationImageDialog
-          adventureId={id}
-          locationId={locationImageId}
-          settings={locationImages}
-          beforePrepare={autosave.flush}
-          playableDirty={false}
-          onClose={() => setLocationImageId(null)}
-          onSaved={refreshArtModeration}
         />
       )}
       {!isNew && step === 3 && (

@@ -52,7 +52,7 @@ export class PrivateReleaseService {
       if (Number(story.edit_revision) !== input.expectedEditRevision)
         fail(409, 'STALE_STATE', 'STALE_STATE');
       const data = adventureSchema.parse(story.data);
-      if (!data.title.trim() || !data.content.locations.length)
+      if (!data.title.trim() || (!data.content.locations.length && !data.content.world.trim()))
         fail(400, 'NOT_PLAYABLE', 'NOT_PLAYABLE');
       const playableVersionId = await this.playable.freeze(
         c,

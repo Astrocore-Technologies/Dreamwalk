@@ -11,11 +11,14 @@ import type { Request } from 'express';
 import type { PoolClient } from 'pg';
 import { createHash, randomUUID } from 'node:crypto';
 import { z } from 'zod';
+import { clip, withOpeningScene } from './story-opening';
 import {
   authoredGameDraftSchema,
   fixedMapExtentsAllowed,
   gameActionSchema,
   contentSchema,
+  STORY_OPENING_AI_CHARS,
+  STORY_WORLD_AI_CHARS,
   npcSchema,
   validateStoryLoreReferences,
   type PlayablePackage,
@@ -406,13 +409,19 @@ export class PlayableService {
     }
 
     compiled.playable!.narrativePremise = {
-      rules: content.rules ?? '',
+      rules: clip(content.rules, STORY_WORLD_AI_CHARS),
       boundaries: content.boundaries ?? [],
-      openingScene:
-        content.scenes?.find((scene) => scene.id === content.startSceneId)?.description ?? '',
+      openingScene: clip(
+        content.firstMessage ||
+          content.scenes?.find((scene) => scene.id === content.startSceneId)?.description,
+        STORY_OPENING_AI_CHARS,
+      ),
       title: String(story.title),
       summary: String(story.synopsis ?? ''),
-      world: String((narrative.content as { world?: unknown } | undefined)?.world ?? ''),
+      world: clip(
+        String((narrative.content as { world?: unknown } | undefined)?.world ?? ''),
+        STORY_WORLD_AI_CHARS,
+      ),
       genre: String(story.genre ?? ''),
     };
 
@@ -476,7 +485,10 @@ export class PlayableService {
     priorDraft?: z.infer<typeof authoredGameDraftSchema>,
   ) {
     const narrative = story.data as Record<string, unknown>;
-    const content = contentSchema.parse(narrative.content);
+    const content = withOpeningScene(
+      contentSchema.parse(narrative.content),
+      String(narrative.sourceLanguage ?? 'ru'),
+    );
     if (
       !content.locations.length ||
       new Set(content.locations.map((l) => l.id)).size !== content.locations.length ||
@@ -573,7 +585,12 @@ export class PlayableService {
       priorDraft,
       title: String(story.title),
       synopsis: String(story.synopsis ?? ''),
-      content,
+      content: {
+        ...content,
+        world: clip(content.world, STORY_WORLD_AI_CHARS),
+        rules: clip(content.rules, STORY_WORLD_AI_CHARS),
+        firstMessage: clip(content.firstMessage, STORY_OPENING_AI_CHARS),
+      },
       npcs: npcDefinitions.map((n) => ({
         id: n.id,
         name: n.data.name,
@@ -602,11 +619,15 @@ export class PlayableService {
       narrativePremise: {
         title: String(story.title),
         summary: String(story.synopsis ?? ''),
-        world: content.world ?? '',
+        world: clip(content.world, STORY_WORLD_AI_CHARS),
         genre: String(story.genre ?? ''),
-        rules: content.rules ?? '',
+        rules: clip(content.rules, STORY_WORLD_AI_CHARS),
         boundaries: content.boundaries ?? [],
-        openingScene: content.scenes.find((x) => x.id === content.startSceneId)?.description ?? '',
+        openingScene: clip(
+          content.firstMessage ||
+            content.scenes.find((x) => x.id === content.startSceneId)?.description,
+          STORY_OPENING_AI_CHARS,
+        ),
       },
     };
     const checksum = hash(payload),

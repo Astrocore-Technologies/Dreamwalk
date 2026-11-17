@@ -7,6 +7,11 @@ export * from './portrait-frame';
 export * from './game/map-intent';
 export const idSchema = z.string().uuid();
 const text = (max = 1000) => z.string().trim().max(max);
+/** Technical guard against absurd payloads, not an authoring limit. */
+export const STORY_TEXT_HARD_LIMIT = 1_000_000;
+/** How much of the world description the AI reads on each turn. */
+export const STORY_WORLD_AI_CHARS = 40_000;
+export const STORY_OPENING_AI_CHARS = 20_000;
 export const localeSchema = z.enum(['uk', 'en', 'ru']);
 export type Locale = z.infer<typeof localeSchema>;
 export const metadataTranslationSchema = z
@@ -346,8 +351,11 @@ export const sceneSchema = z.object({
 export const contentSchema = z
   .object({
     lorebook: storyLorebookSchema.optional(),
-    world: text(12000).default(''),
-    rules: text(8000).default(''),
+    // Authors write freely; only a technical guard remains. The model reads a bounded excerpt.
+    world: text(STORY_TEXT_HARD_LIMIT).default(''),
+    rules: text(STORY_TEXT_HARD_LIMIT).default(''),
+    /** The story's opening message: tells the AI where the story starts and who is there. */
+    firstMessage: text(STORY_TEXT_HARD_LIMIT).default(''),
     locations: z.array(locationSchema).max(30).default([]),
     npcIds: z.array(idSchema).max(30).default([]),
     scenes: z.array(sceneSchema).max(50).default([]),

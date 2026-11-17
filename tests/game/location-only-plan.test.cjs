@@ -190,7 +190,7 @@ test('malformed scene IDs and extra private payload are rejected', () => {
   delete f.room.scenePresence.scenes[0].privateFacts;
   f.room.scenePresence.scenes[0].id = '__proto__';
   assert.throws(() => compileStoryPlan(f.source, f.proposal));
-  assert.equal(storyPlanDefinition.version, 'authored-story-plan-v13-presence');
+  assert.equal(storyPlanDefinition.version, 'authored-story-plan-v14-opening');
 });
 for (const text of [
   'Keeper is absent.',

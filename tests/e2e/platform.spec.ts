@@ -75,32 +75,15 @@ test('author: NPC and complete adventure draft survive reload and submit confirm
     .fill(
       'Письмо смотрителя приглашает исследовать забытую обсерваторию и найти потерянную карту.',
     );
-  await page.getByRole('button', { name: /Мир и правила$/ }).click();
+  await page.getByRole('button', { name: /Мир и история$/ }).click();
   await page
-    .getByLabel('Мир и атмосфера')
+    .getByLabel('Описание истории')
     .fill('Город на побережье, где звёзды отражаются в старых каналах.');
-  await page.getByLabel('Правила мира').fill('Любопытство и внимание важнее силы.');
-  await page.getByRole('button', { name: /Локации$/ }).click();
-  await page.getByRole('button', { name: /Добавить локацию/ }).click();
-  await page.getByLabel('Название локации').first().fill('Двор обсерватории');
-  await page.getByLabel('Описание локации').first().fill('Каменные ступени ведут к башне.');
-  await page.getByRole('button', { name: /Стартовая сцена$/ }).click();
-  await page.getByRole('button', { name: /Добавить сцену/ }).click();
-  await page.getByLabel('Название сцены').first().fill('Прибытие');
-  await page.getByLabel('Локация сцены').first().selectOption({ label: 'Двор обсерватории' });
-  await page.getByLabel('Начальная ситуация').first().fill('У ворот ждёт смотритель с письмом.');
-  await page
-    .getByRole('combobox', { name: 'Стартовая сцена', exact: true })
-    .selectOption({ label: 'Прибытие' });
-  await page
-    .getByRole('navigation', { name: 'Шаги создания приключения', exact: true })
-    .getByRole('button', { name: 'Просмотр', exact: true })
-    .click();
-  // An unsaved source must be saved before playable preparation becomes available.
-  await expect(
-    page.getByText('Сначала сохраните историю и выбранный режим доступа.', { exact: true }),
-  ).toBeVisible();
-  await expect(page.getByRole('button', { name: 'Подготовить план', exact: true })).toHaveCount(0);
+  await page.getByLabel('Первое сообщение').fill('У ворот обсерватории ждёт смотритель с письмом.');
+  // Locations, scenes and the start are planned by the AI; the author never edits them.
+  await expect(page.getByRole('button', { name: /Локации$/ })).toHaveCount(0);
+  await expect(page.getByRole('button', { name: /Стартовая сцена$/ })).toHaveCount(0);
+  await expect(page.getByTestId('story-token-info')).toBeVisible();
   await page
     .getByRole('navigation', { name: 'Шаги создания приключения', exact: true })
     .getByRole('button', { name: 'Публикация', exact: true })
