@@ -11,7 +11,11 @@ export class ImageGenerationController {
   ) {}
   @Get('config') async configuration(@Req() req: Request) {
     await this.auth.require(req);
-    return this.images.configuration();
+    // The start switch is reported next to the image capabilities the author already reads.
+    return {
+      ...this.images.configuration(),
+      openingArt: process.env.STORY_OPENING_ART === 'required' ? 'required' : 'off',
+    };
   }
   @Post('studio-locations/prepare') async prepareLocation(
     @Req() req: Request,

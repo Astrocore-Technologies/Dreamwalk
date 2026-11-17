@@ -37,6 +37,9 @@ export function readConfig(env = process.env) {
         .optional(),
       ASSET_DIR: z.string().default('.local/assets'),
       GLOBAL_SPEND_CAP: z.coerce.number().int().min(0).default(0),
+      // `required`: a story written as a description plus first message cannot be started until its
+      // opening picture exists. Off by default; read lazily by the start flow.
+      STORY_OPENING_ART: z.enum(['off', 'required']).default('off'),
       // Per-IP request budgets per minute. Browser test runs share one loopback IP, so CI raises them.
       RATE_LIMIT_ALL_PER_MINUTE: z.coerce.number().int().min(60).max(1000000).default(600),
       RATE_LIMIT_AUTH_PER_MINUTE: z.coerce.number().int().min(10).max(100000).default(30),

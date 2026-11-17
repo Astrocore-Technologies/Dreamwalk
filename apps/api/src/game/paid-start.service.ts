@@ -12,6 +12,7 @@ import { AuthoringTextEngine, type AuthoringTextBinding } from '../live-test/aut
 import { visualDigest as digest } from '../visual-authoring/fingerprint';
 import { fail } from '../errors';
 import { startMapGroundingCompatible } from './story-map-mode';
+import { openingArtMissing } from './story-opening';
 const operation = z.object({ operationId: z.uuid() }).strict();
 @Injectable()
 export class PaidStartService {
@@ -104,6 +105,14 @@ export class PaidStartService {
         id = randomUUID();
       if (!source.package.compiled && source.package.kind !== 'launch-source')
         fail(409, 'NOT_PLAYABLE', 'NOT_PLAYABLE');
+      // Owner switch: no opening picture, no start. Never reads config at import time.
+      if (
+        process.env.STORY_OPENING_ART === 'required' &&
+        !source.package.compiled &&
+        source.package.plannerSource &&
+        openingArtMissing(source.package.plannerSource)
+      )
+        fail(409, 'OPENING_ART_REQUIRED', 'OPENING_ART_REQUIRED');
       if (
         source.package.compiled &&
         (requiresMapRecovery(source.package.compiled) ||

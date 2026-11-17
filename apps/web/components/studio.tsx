@@ -58,6 +58,7 @@ import {
 } from './ui';
 import { MarkdownField } from './markdown';
 import { StoryTokenInfo } from './studio/story-token-info';
+import { OpeningArt } from './studio/opening-art';
 import styles from './studio/studio.module.css';
 
 const statuses: Record<string, string> = {
@@ -814,6 +815,17 @@ function AdventureEditor({ id }: { id: string }) {
                     firstMessage={draft.content.firstMessage}
                     npcIds={draft.content.npcIds}
                   />
+                  {!isNew && !draft.content.locations.length && (
+                    <OpeningArt
+                      adventureId={id}
+                      world={draft.content.world}
+                      firstMessage={draft.content.firstMessage}
+                      saved={!isNew}
+                      disabled={busy}
+                      beforePrepare={autosave.flush}
+                      onSaved={refreshArtModeration}
+                    />
+                  )}
                 </div>
                 <aside className={styles.worldContext}>
                   <img src={coverUrl(draft)} alt="" />

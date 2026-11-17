@@ -99,6 +99,7 @@ try {
     'integration-generation.test.mjs',
     'integration-campaign.test.mjs',
     'integration-studio-location.test.mjs',
+    'integration-opening-location.test.mjs',
   ];
   if (selectedTestFile) {
     if (!files.includes(selectedTestFile)) throw new Error('Unknown image test file');
