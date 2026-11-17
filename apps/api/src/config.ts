@@ -37,6 +37,9 @@ export function readConfig(env = process.env) {
         .optional(),
       ASSET_DIR: z.string().default('.local/assets'),
       GLOBAL_SPEND_CAP: z.coerce.number().int().min(0).default(0),
+      // Per-IP request budgets per minute. Browser test runs share one loopback IP, so CI raises them.
+      RATE_LIMIT_ALL_PER_MINUTE: z.coerce.number().int().min(60).max(1000000).default(600),
+      RATE_LIMIT_AUTH_PER_MINUTE: z.coerce.number().int().min(10).max(100000).default(30),
     })
     .parse({ ...env, API_PORT: env.API_PORT ?? env.PORT });
   if (

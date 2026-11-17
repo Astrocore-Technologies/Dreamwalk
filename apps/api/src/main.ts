@@ -274,7 +274,7 @@ async function bootstrap() {
       ['/api/v1/auth/google/start', '/api/v1/auth/google/callback'].includes(req.path);
     const key = `${req.ip}:${isAuth ? 'auth' : 'all'}`,
       now = Date.now(),
-      limit = isAuth ? 30 : 600;
+      limit = isAuth ? config.RATE_LIMIT_AUTH_PER_MINUTE : config.RATE_LIMIT_ALL_PER_MINUTE;
     let w = windows.get(key);
     if (!w || w.reset < now) {
       w = { count: 0, reset: now + 60000 };
