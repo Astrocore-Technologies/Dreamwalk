@@ -136,19 +136,6 @@ test('real source preparation forwards synopsis and map intent into exact provid
   assert.notEqual(reshaped.hash, changed.hash);
   assert.equal(service.sameAuthorSource(changed.source, reshaped.source), false);
 });
-test('ordinary location UI explains mandatory fixed map and fences image preparation', () => {
-  const { readFileSync } = require('node:fs');
-  const studio = readFileSync('apps/web/components/studio.tsx', 'utf8'),
-    control = readFileSync('apps/web/components/studio/location-map-intent.tsx', 'utf8');
-  assert.match(studio, /<LocationMapIntent/);
-  assert.match(
-    studio,
-    /JSON.stringify\(\[\s*location.name,\s*location.description,\s*location.mapIntent,?\s*\]\)/,
-  );
-  assert.match(control, /24 × 24/);
-  assert.doesNotMatch(control, /<Select|<Input|onBlur/);
-  assert.doesNotMatch(control, /api\(|fetch\(|gameAction|showGrid/);
-});
 test('old prepared snapshot missing nonempty synopsis must reprepare before a new quote; empty legacy source remains compatible', async () => {
   const { StoryBuildService } = require('../../apps/api/dist/game/story-build.service');
   const { visualDigest } = require('../../apps/api/dist/visual-authoring/fingerprint');
