@@ -187,6 +187,11 @@ const offstageCastInstructions =
   ' establishedRoleplay.offstage lists authored characters who are not in the scene yet, with who they are and when they are meant to show up. Never mention, describe or hint at them as present before they arrive. When the story, the passage of time or the player actions bring one of them in, add an event with the typed effect npc_arrival {targetId, point}: choose point on walkable floor at the place that fits the story (a road in the distance, a doorway, the far end of a field), not automatically next to the player, and keep targetId in entityIds.';
 const beyondCastInstructions =
   ' establishedRoleplay.beyond lists gods, spirits and voices of this world with who they are. They are not people standing in the scene: never describe them as present, nearby, visible or among other characters. They may speak or act only as a voice, vision, dream or omen when the player addresses them or the story invites it, in their own manner and consistent with their description. When the player addresses one of them by name or title, answer inside the narration as that being: its own words in quotation marks as a voice, vision or omen in its style (establishedRoleplay.beyond[].style), or a concrete sign if it chooses not to speak. Never hand its words to a character standing in the scene, never leave only silence, and keep it out of replyNpcId.';
+const hasAddressedSpeakers = (context: unknown) =>
+  Array.isArray((context as { addressed?: unknown } | null)?.addressed) &&
+  ((context as { addressed: unknown[] }).addressed.length ?? 0) > 0;
+const addressedSpeakersInstructions =
+  ' addressed (segment:npc) = who the player spoke to: they answer (replyNpcId). Others speak only if they would plainly react, never for or instead of them; if they cannot answer, reply null.';
 const newCharacterInstructions =
   ' When the player sees or meets a person who does not exist yet (a figure far away, a passer-by, a traveller), you may bring that person into the world with narrative.newNpc, placing the spawn on walkable floor at the place the player described (far down the road, by the mill), not automatically next to the player. They need no picture.';
 const establishedRoleplayInstructions = `Complete the entire ordered post, one steps entry for every original segment, without dropping or reordering. Use compact positional entries to fit the quoted output budget: null for no effect or reply; an array of established events for an RP segment; a plain string inside that array for an ordinary nonmechanical event, or a typed event object for physical effects. Array position preserves the original segment index. Use the full step object only for a legacy action, encounter, impact or NPC reply. Do not omit speech positions or authored RP outcomes. Interpret the player's current authored RP semantically in its original language, not a command vocabulary. A completed authored fictional event is established, including a door opening despite a lock or prior fictional impossibility. Do not downgrade it to merely intending or trying, introduce a skill check, or refuse because ordinary RP lacks mechanical stock or action resources.
@@ -871,7 +876,7 @@ export function buildOpenAiNpcRequestBody(
       : '';
   const narratorCraftPolicy =
     purpose === 'story_turn'
-      ? ' Vary the scenery: do not reuse a detail you already used in recent narration, and do not close every narration with a question or a prompt to the player; end on a concrete beat when that fits.'
+      ? ' Vary the scenery: do not reuse a detail you already used in recent narration, and do not close every narration with a question or a prompt to the player; end on a concrete beat when that fits. Narrate what the action reveals; never restate it.'
       : '';
   const handledReplyPolicy =
     purpose === 'story_turn' &&
@@ -895,6 +900,7 @@ export function buildOpenAiNpcRequestBody(
       ? establishedRoleplayInstructions +
         (hasOffstageCast(context) ? offstageCastInstructions : '') +
         (hasBeyondCast(context) ? beyondCastInstructions : '') +
+        (hasAddressedSpeakers(context) ? addressedSpeakersInstructions : '') +
         (established ? newCharacterInstructions : '')
       : guidance[purpose]
   } ${outputLanguage}${itemPolicy}${presentation}${directorStyleInstructions(purpose, context)}`;
