@@ -12,6 +12,7 @@ import { AssetReuseService } from '../assets/reuse.service';
 import { fail } from '../errors';
 import { plainText } from '../text/plain';
 import type { GenerationRequest } from './contracts';
+import { OPENING_LOCATION_ID, openingLocationName } from '../game/story-opening';
 export const studioLocationSelectionSchema = z
   .object({ adventureId: z.uuid(), locationId: z.string().trim().min(1).max(80) })
   .strict();
@@ -53,11 +54,26 @@ export async function prepareStudioLocationTx(
   const data = story.data as {
     title?: string;
     synopsis?: string;
-    content?: { world?: string; locations?: { id: string; name: string; description: string }[] };
+    sourceLanguage?: string;
+    content?: {
+      world?: string;
+      firstMessage?: string;
+      locations?: { id: string; name: string; description: string }[];
+    };
   };
+  // A story written as a description plus a first message has no author-made locations: its
+  // generic opening location is described by that opening text.
+  const openingText =
+    (data.content?.firstMessage ?? '').trim() || (data.content?.world ?? '').trim();
   const location =
     data.content?.locations?.find((v) => v.id === b.locationId) ??
-    fail(404, 'LOCATION_NOT_FOUND', 'LOCATION_NOT_FOUND');
+    (b.locationId === OPENING_LOCATION_ID && !data.content?.locations?.length && openingText
+      ? {
+          id: OPENING_LOCATION_ID,
+          name: openingLocationName(data.sourceLanguage),
+          description: openingText,
+        }
+      : fail(404, 'LOCATION_NOT_FOUND', 'LOCATION_NOT_FOUND'));
   const game = (
     await c.query(
       'SELECT draft,revision FROM adventure_game_drafts WHERE adventure_id=$1 FOR SHARE',

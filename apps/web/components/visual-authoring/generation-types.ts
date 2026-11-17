@@ -7,6 +7,8 @@ import type {
   RequestPricingProfileSnapshot,
 } from '../live-test/request-reserve-types';
 export type ImageConfiguration = {
+  /** `required`: players cannot start a story that has no opening picture. */
+  openingArt?: 'off' | 'required';
   requestEstimationEnabled?: boolean;
   pricingProfileId?: string;
   pricingProfileHash?: string;
