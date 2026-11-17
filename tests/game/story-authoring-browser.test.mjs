@@ -236,13 +236,28 @@ test(
       await page.getByRole('button', { name: 'Сохранить черновик', exact: true }).click();
       await page.waitForURL(/\/studio\/adventures\/[0-9a-f-]{36}$/);
       const storyId = page.url().split('/').at(-1);
-      await page.getByRole('button', { name: /Локации$/ }).click();
-      await page.getByRole('button', { name: 'Добавить локацию', exact: true }).click();
-      await page.getByLabel('Название локации', { exact: true }).fill('Проверочный двор');
-      await page
-        .getByLabel('Описание локации', { exact: true })
-        .fill('Небольшой двор для синтетической проверки.');
-      await page.getByRole('button', { name: 'Сохранить черновик', exact: true }).click();
+      // Locations are planned by the AI in the simplified Studio; the fixture installs one through the
+      // API, as a legacy story that already carries a location would have it.
+      const created = await owner.request(`/studio/adventures/${storyId}`);
+      await owner.request(
+        `/studio/adventures/${storyId}`,
+        {
+          expectedEditRevision: created.editRevision,
+          content: {
+            ...created.content,
+            world: 'Синтетический мир для проверки приватной публикации.',
+            locations: [
+              {
+                id: 'fixture-courtyard',
+                name: 'Проверочный двор',
+                description: 'Небольшой двор для синтетической проверки.',
+              },
+            ],
+          },
+        },
+        'PATCH',
+      );
+      await page.reload();
       await page.getByRole('button', { name: /NPC$/ }).click();
       const npcEditor = page.getByTestId('story-npc-editor').locator('..');
       await page.getByRole('button', { name: 'Создать NPC здесь', exact: true }).click();
@@ -300,10 +315,6 @@ test(
       await expect(
         npcEditor.getByRole('button', { name: 'Копия для этой истории', exact: true }),
       ).toBeVisible();
-      await page.getByRole('button', { name: /Локации$/ }).click();
-      await expect(page.getByRole('button', { name: 'Подготовить план', exact: true })).toHaveCount(
-        0,
-      );
       // No quote or provider dispatch. Install only a validated deterministic playable fixture
       // in this disposable database, preserving real author location/NPC source IDs.
       const story = await owner.request(`/studio/adventures/${storyId}`);
