@@ -274,8 +274,12 @@
   overflow-y: auto;
 }
 @media (max-width: 760px) {
+  /* The composer stays on the first screen; the page scrolls on to the map. */
   :global(.game-shell) .panel {
-    height: max(600px, 85dvh);
+    height: max(480px, calc(100dvh - 170px));
+  }
+  :global(.game-shell) .tabs button {
+    min-height: 40px;
   }
 }
 

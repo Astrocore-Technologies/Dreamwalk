@@ -865,6 +865,13 @@
   :global(.game-shell) .playGrid {
     grid-template-columns: minmax(0, 1fr);
   }
+  /* On a phone the story and its composer come first; the map follows below. */
+  :global(.game-shell) .sceneColumn {
+    order: 2;
+  }
+  .gameWallet {
+    min-height: 40px;
+  }
   :global(.game-shell) .canvasWrap {
     height: clamp(330px, 53dvh, 550px);
   }
