@@ -171,12 +171,16 @@ test('four players retain the legacy realtime Observatory ending with owned hero
           // Guests keep reading their hero/party while the owner explores. A narrow
           // reader window retains document scrolling, unlike the fixed desktop layout; keep the socket live and verify normal renderer suspension.
           await page.setViewportSize({ width: 700, height: 600 });
-          await page
-            .getByTestId('campaign-hero')
-            .evaluate((element) => element.scrollIntoView({ block: 'start', behavior: 'instant' }));
+          // The story comes first on a narrow screen, so the map is below the first screen.
+          await page.evaluate(() => window.scrollTo(0, 0));
           const renderer = page.locator('[data-renderer-active]');
           await expect
-            .poll(() => renderer.evaluate((element) => element.getBoundingClientRect().bottom <= 0))
+            .poll(() =>
+              renderer.evaluate((element) => {
+                const rect = element.getBoundingClientRect();
+                return rect.bottom <= 0 || rect.top >= innerHeight;
+              }),
+            )
             .toBe(true);
           await expect(renderer).toHaveAttribute('data-renderer-active', 'false');
           await expect(page.locator('[data-connected]')).toHaveAttribute('data-connected', 'true');
