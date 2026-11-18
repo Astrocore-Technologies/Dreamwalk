@@ -10,6 +10,27 @@ import {
 
 // Real canvas/WebGL and real server movement: only account/story setup is synthetic.
 // This does not substitute for the existing four-client completed-adventure journey.
+/** On phones the story comes first and the map follows, so "away" is layout-dependent. */
+const mapIsBelowStory = (page: import('@playwright/test').Page) =>
+  page.evaluate(() => {
+    const map = document.querySelector('[data-renderer-active]')!.getBoundingClientRect().top;
+    const story = document
+      .querySelector('[data-testid="unified-story"]')!
+      .getBoundingClientRect().top;
+    return map > story;
+  });
+const scrollAwayFromMap = async (page: import('@playwright/test').Page) => {
+  const below = await mapIsBelowStory(page);
+  await page.evaluate(
+    (below) => window.scrollTo(0, below ? 0 : document.documentElement.scrollHeight),
+    below,
+  );
+};
+const mapOffscreen = (host: import('@playwright/test').Locator) =>
+  host.evaluate((element) => {
+    const rect = element.getBoundingClientRect();
+    return rect.bottom <= 0 || rect.top >= innerHeight;
+  });
 test('offscreen renderer pauses without stopping shared state and resumes the same canvas at current geometry', async ({
   page,
 }) => {
@@ -42,23 +63,27 @@ test('offscreen renderer pauses without stopping shared state and resumes the sa
   )!;
 
   // Leave a real sliver intersecting the viewport: partial visibility stays active.
-  await host.evaluate((element) => {
+  const below = await mapIsBelowStory(page);
+  await host.evaluate((element, below) => {
     const rect = element.getBoundingClientRect();
-    window.scrollTo(0, window.scrollY + rect.bottom - 24);
-  });
+    window.scrollTo(
+      0,
+      below ? window.scrollY + rect.top - innerHeight + 24 : window.scrollY + rect.bottom - 24,
+    );
+  }, below);
   await expect
     .poll(() =>
-      host.evaluate((element) => {
+      host.evaluate((element, below) => {
         const rect = element.getBoundingClientRect();
-        return rect.top < 0 && rect.bottom > 0 && rect.bottom < innerHeight;
-      }),
+        return below
+          ? rect.top > 0 && rect.top < innerHeight && rect.bottom > innerHeight
+          : rect.top < 0 && rect.bottom > 0 && rect.bottom < innerHeight;
+      }, below),
     )
     .toBe(true);
   await expect(host).toHaveAttribute('data-renderer-active', 'true');
-  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
-  await expect
-    .poll(() => host.evaluate((element) => element.getBoundingClientRect().bottom <= 0))
-    .toBe(true);
+  await scrollAwayFromMap(page);
+  await expect.poll(() => mapOffscreen(host)).toBe(true);
   await expect(host).toHaveAttribute('data-renderer-active', 'false');
 
   const target = { x: 4, y: 2 };
@@ -91,7 +116,7 @@ test('offscreen renderer pauses without stopping shared state and resumes the sa
   await expect(host).toHaveAttribute('data-renderer-active', 'false');
 
   await page.setViewportSize({ width: 520, height: 600 });
-  await page.evaluate(() => window.scrollTo(0, document.documentElement.scrollHeight));
+  await scrollAwayFromMap(page);
   await expect(host).toHaveAttribute('data-renderer-active', 'false');
   await host.scrollIntoViewIfNeeded();
   await expect(host).toHaveAttribute('data-renderer-active', 'true');
