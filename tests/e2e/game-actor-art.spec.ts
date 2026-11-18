@@ -48,6 +48,8 @@ async function start(page: Page, turnBased: boolean, withPortrait = false) {
   const id = (await created.json()).campaignId as string;
   await page.goto(`/game/${id}`);
   await expect(page.getByText('Подключено', { exact: true })).toBeVisible();
+  // On a phone the map sits below the story; the renderer mounts its canvas once it scrolls in.
+  await page.locator('[data-renderer-active]').scrollIntoViewIfNeeded();
   await expect(page.locator('[data-camera-scale]')).toBeVisible();
   return id;
 }

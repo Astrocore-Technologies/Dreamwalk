@@ -130,6 +130,8 @@ test('Studio narrative autosave plus API-authored fixture launches its pinned ca
   const campaignId = await launchPrivateFixture(page, adventureId, true);
   await expect(page.getByText('Подключено', { exact: true })).toBeVisible();
   await expect(page.getByRole('heading', { name: mapName, exact: true, level: 1 })).toBeVisible();
+  // On a phone the map sits below the story; its renderer mounts when it scrolls into view.
+  await page.locator('[data-renderer-active]').scrollIntoViewIfNeeded();
   await expect(page.locator('canvas')).toBeVisible();
   await expect(page.locator('[data-battlemap-grid]')).toHaveAttribute(
     'data-battlemap-grid',

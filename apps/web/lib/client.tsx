@@ -2,6 +2,7 @@
 import { SPARKS_REFRESH_EVENT } from './sparks-wallet';
 import { useT, getLocale, tr } from './i18n';
 import { formatDate } from './locales';
+import { describeErrorCode } from './error-catalog';
 import { createContext, useCallback, useContext, useEffect, useState, type ReactNode } from 'react';
 import type { User, Adventure } from '@dreamwalk/contracts';
 export type { User, Adventure, Hero, Asset, Settings } from '@dreamwalk/contracts';
@@ -110,7 +111,12 @@ export async function api<T>(
   if (!response.ok) {
     const error = data as { message?: string; code?: string } | null;
     throw new ApiError(
-      tr(errorKeys[error?.code || ''] || 'Не удалось выполнить запрос. Попробуйте ещё раз.'),
+      tr(
+        errorKeys[error?.code || ''] ||
+          (error?.code
+            ? describeErrorCode(error.code).ru
+            : 'Не удалось выполнить запрос. Попробуйте ещё раз.'),
+      ),
       response.status,
       error?.code || 'REQUEST_FAILED',
     );

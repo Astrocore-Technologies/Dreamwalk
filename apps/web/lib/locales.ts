@@ -1,5 +1,6 @@
 import { directorMessages } from './director-locales';
 import { gameMessages } from './game-locales';
+import { errorMessages } from './error-catalog';
 /** UI copy only. User-authored content must never pass through this dictionary. */
 export type Locale = 'ru' | 'en' | 'uk';
 export const supportedLocales: readonly Locale[] = ['uk', 'en', 'ru'];
@@ -190,6 +191,7 @@ const messages: Record<string, Record<Locale, string>> = {
     uk: 'Історію відновлено до чернеток',
   },
   ...gameMessages,
+  ...errorMessages,
   ...directorMessages,
   'Показать пароль': { ru: 'Показать пароль', en: 'Show password', uk: 'Показати пароль' },
   'Скрыть пароль': { ru: 'Скрыть пароль', en: 'Hide password', uk: 'Приховати пароль' },
