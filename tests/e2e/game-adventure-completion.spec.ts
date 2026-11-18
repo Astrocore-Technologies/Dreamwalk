@@ -132,9 +132,8 @@ test('four players retain the legacy realtime Observatory ending with owned hero
       // The privacy and renderer-suspension assertions below remain unchanged.
       await guest.setViewportSize({ width: 700, height: 600 });
       await campaignDetails(guest);
-      await guest
-        .getByTestId('campaign-hero')
-        .evaluate((element) => element.scrollIntoView({ block: 'start', behavior: 'instant' }));
+      // On a phone the story comes first and the map follows below the first screen.
+      await guest.evaluate(() => window.scrollTo(0, 0));
       await expect(guest.locator('[data-renderer-active]')).toHaveAttribute(
         'data-renderer-active',
         'false',
