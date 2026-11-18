@@ -1358,6 +1358,8 @@ for (const locale of ['uk', 'en', 'ru'] as const)
     );
     await page.screenshot({ path: test.info().outputPath(`location-grid-${locale}-mobile.png`) });
     await page.reload();
+    // On a phone the map sits below the story; its renderer mounts when it scrolls into view.
+    await page.locator('[data-renderer-active]').scrollIntoViewIfNeeded();
     await expect(scene).toHaveAttribute('data-art-loaded', '1');
     await expect(scene).toHaveAttribute('data-rendered-actor-x', String(target.x));
     await expect(scene).toHaveAttribute(
