@@ -114,6 +114,8 @@ test('original raster reuse grant UI, API binding fixture and pinned actual play
     await launchPrivateFixture(page, storyId, false);
     const campaignUrl = page.url(),
       campaignId = campaignUrl.split('/').at(-1)!;
+    // On a phone the map sits below the story; its renderer mounts when it scrolls into view.
+    await page.locator('[data-renderer-active]').scrollIntoViewIfNeeded();
     await expect(page.locator('[data-art-loaded]')).toHaveAttribute('data-art-loaded', '1');
     // Actual canvas evidence only: no account fields, cookies or synthetic mock screenshot.
     await page
@@ -140,6 +142,8 @@ test('original raster reuse grant UI, API binding fixture and pinned actual play
     expect(second.id).not.toBe(original.id);
     expect(second.familyId).toBe(original.familyId);
     await page.goto(campaignUrl);
+    // On a phone the map sits below the story; its renderer mounts when it scrolls into view.
+    await page.locator('[data-renderer-active]').scrollIntoViewIfNeeded();
     await expect(page.locator('[data-art-loaded]')).toHaveAttribute('data-art-loaded', '1');
     const pinned = await page.request.get(`/api/v1/asset-library/campaigns/${campaignId}/manifest`);
     const pinnedBody = await pinned.json();
@@ -156,6 +160,8 @@ test('original raster reuse grant UI, API binding fixture and pinned actual play
       ),
     ).toBe(true);
     await page.goto(campaignUrl);
+    // On a phone the map sits below the story; its renderer mounts when it scrolls into view.
+    await page.locator('[data-renderer-active]').scrollIntoViewIfNeeded();
     await expect(page.locator('[data-art-loaded]')).toHaveAttribute('data-art-loaded', '1');
     const management = await page.context().newPage();
     await management.goto('/studio/assets');
